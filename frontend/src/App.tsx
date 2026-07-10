@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { fetchWatchlist, fetchCandles } from './api';
 import { useStream } from './useStream';
 import { Chart } from './Chart';
-import type { CandlesResponse, Trade, WatchItem } from '@invest/shared';
+import type { CandlesResponse, PriceSign, Trade, WatchItem } from '@invest/shared';
 
-/** 전일대비 부호 → 표시 색상 (KIS: 1/2 상승계열, 4/5 하락계열, 3 보합) */
-function signColor(sign: string): string {
+/** 전일대비 부호 → 표시 색상 (1/2 상승계열, 4/5 하락계열, 3 보합) */
+function signColor(sign: PriceSign): string {
   if (sign === '1' || sign === '2') return '#e5484d';
   if (sign === '4' || sign === '5') return '#3b82f6';
   return '#c7ccd6';
@@ -91,7 +91,7 @@ export function App(): JSX.Element {
           data-connected={stream.kisConnected}
           title={stream.message ?? ''}
         >
-          {stream.kisConnected ? 'KIS 실시간 연결됨' : stream.socketOpen ? 'KIS 연결 대기' : '서버 연결 끊김'}
+          {stream.kisConnected ? '실시간 시세 연결됨' : stream.socketOpen ? '시세 연결 대기' : '서버 연결 끊김'}
         </span>
       </header>
 

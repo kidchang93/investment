@@ -29,7 +29,10 @@ export interface CandlesResponse {
   candles: Candle[];
 }
 
-/** 실시간 체결 1건 (KIS H0STCNT0을 정규화) */
+/** 전일대비 부호: 1(상한) 2(상승) 3(보합) 4(하한) 5(하락) */
+export type PriceSign = '1' | '2' | '3' | '4' | '5';
+
+/** 실시간 체결 1건 */
 export interface Trade {
   /** 단축종목코드 */
   code: string;
@@ -39,8 +42,8 @@ export interface Trade {
   time: string;
   /** 현재가(체결가) */
   price: number;
-  /** 전일대비 부호: 1(상한) 2(상승) 3(보합) 4(하한) 5(하락) */
-  sign: string;
+  /** 전일대비 부호 */
+  sign: PriceSign;
   /** 전일대비 */
   change: number;
   /** 전일대비율(%) */
@@ -57,13 +60,13 @@ export interface Trade {
   accVolume: number;
 }
 
-/** 단순 현재가 스냅샷 (REST inquire-price) */
+/** 단순 현재가 스냅샷 */
 export interface Quote {
   code: string;
   price: number;
   change: number;
   changeRate: number;
-  sign: string;
+  sign: PriceSign;
   open: number;
   high: number;
   low: number;

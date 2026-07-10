@@ -7,6 +7,14 @@ loadEnv({ path: resolve(process.cwd(), '.env') });
 
 const isProd = process.env.APP_ENV === 'prod';
 
+function parsePort(raw: string | undefined): number {
+  const port = Number(raw ?? 4000);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error(`PORT 값이 올바르지 않습니다: ${raw ?? ''}`);
+  }
+  return port;
+}
+
 export const config = {
   /** 'vts'(모의) | 'prod'(실전) */
   env: (isProd ? 'prod' : 'vts') as 'prod' | 'vts',
@@ -20,7 +28,7 @@ export const config = {
   wsBase: isProd
     ? 'ws://ops.koreainvestment.com:21000'
     : 'ws://ops.koreainvestment.com:31000',
-  port: Number(process.env.PORT ?? 4000),
+  port: parsePort(process.env.PORT),
   /** 개인(P) / 법인(B). 개인 계정은 'P' */
   custType: 'P' as const,
 } as const;

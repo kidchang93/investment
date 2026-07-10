@@ -2,13 +2,25 @@ import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 import { config } from '../config.js';
 import { getApprovalKey } from './auth.js';
-import type { Trade, ConnectionStatus } from '@invest/shared';
+import type { Trade, ConnectionStatus, PriceSign } from '@invest/shared';
 
 /** 실시간 주식체결가 TR */
 const TR_TRADE = 'H0STCNT0';
 /** H0STCNT0 레코드당 필드 수 (여러 체결이 한 프레임에 붙어올 때 분할 기준) */
 const FIELDS_PER_RECORD = 46;
 const RECONNECT_MS = 3_000;
+
+function isPriceSign(value: string | undefined): value is PriceSign {
+  return value === '1' || value === '2' || value === '3' || value === '4' || value === '5';
+}
+
+function isPositiveFinite(value: number): boolean {
+  return Number.isFinite(value) && value > 0;
+}
+
+function isNonNegativeFinite(value: number): boolean {
+  return Number.isFinite(value) && value >= 0;
+}
 
 /**
  * KIS 실시간 WebSocket 클라이언트.
@@ -108,20 +120,42 @@ export class KisRealtime extends EventEmitter {
     const fields = parts[3].split('^');
     for (let i = 0; i < count; i++) {
       const f = fields.slice(i * FIELDS_PER_RECORD, (i + 1) * FIELDS_PER_RECORD);
-      if (f.length < 14) continue;
+      if (f.length < FIELDS_PER_RECORD || !isPriceSign(f[3]) || !/^\d{8}$/.test(f[33] ?? '')) {
+        continue;
+      }
+      const price = Number(f[2]);
+      const change = Number(f[4]);
+      const changeRate = Number(f[5]);
+      const open = Number(f[7]);
+      const high = Number(f[8]);
+      const low = Number(f[9]);
+      const volume = Number(f[12]);
+      const accVolume = Number(f[13]);
+      if (
+        !isPositiveFinite(price) ||
+        !Number.isFinite(change) ||
+        !Number.isFinite(changeRate) ||
+        !isPositiveFinite(open) ||
+        !isPositiveFinite(high) ||
+        !isPositiveFinite(low) ||
+        !isNonNegativeFinite(volume) ||
+        !isNonNegativeFinite(accVolume)
+      ) {
+        continue;
+      }
       const trade: Trade = {
         code: f[0],
         time: f[1],
-        price: Number(f[2]),
+        price,
         sign: f[3],
-        change: Number(f[4]),
-        changeRate: Number(f[5]),
-        open: Number(f[7]),
-        high: Number(f[8]),
-        low: Number(f[9]),
-        volume: Number(f[12]),
-        accVolume: Number(f[13]),
-        date: f[33] ?? '',
+        change,
+        changeRate,
+        open,
+        high,
+        low,
+        volume,
+        accVolume,
+        date: f[33],
       };
       this.emit('trade', trade);
     }

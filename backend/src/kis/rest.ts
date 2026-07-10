@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 import { getAccessToken } from './auth.js';
-import type { Candle, CandlesResponse, Quote } from '@invest/shared';
+import type { Candle, CandlesResponse, PriceSign, Quote } from '@invest/shared';
 
 /** KIS REST GET 공통 헬퍼. tr_id별로 헤더/인증을 채워 호출한다. */
 async function kisGet(
@@ -32,6 +32,33 @@ function yyyymmdd(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}${m}${day}`;
+}
+
+function toNumber(value: string | undefined): number {
+  return Number(value);
+}
+
+function isPositiveFinite(value: number): boolean {
+  return Number.isFinite(value) && value > 0;
+}
+
+function isNonNegativeFinite(value: number): boolean {
+  return Number.isFinite(value) && value >= 0;
+}
+
+function parseSign(value: string | undefined): PriceSign {
+  if (value === '1' || value === '2' || value === '3' || value === '4' || value === '5') {
+    return value;
+  }
+  return '3';
+}
+
+function requireNumber(value: string | undefined, field: string): number {
+  const n = toNumber(value);
+  if (!Number.isFinite(n)) {
+    throw new Error(`현재가 응답 숫자 필드가 올바르지 않습니다: ${field}`);
+  }
+  return n;
 }
 
 /**
@@ -69,14 +96,22 @@ export async function getDailyCandles(code: string, days = 120): Promise<Candles
       const d = Number(r.stck_bsop_date.slice(6, 8));
       return {
         time: Math.floor(Date.UTC(y, m - 1, d) / 1000),
-        open: Number(r.stck_oprc),
-        high: Number(r.stck_hgpr),
-        low: Number(r.stck_lwpr),
-        close: Number(r.stck_clpr),
-        volume: Number(r.acml_vol),
+        open: toNumber(r.stck_oprc),
+        high: toNumber(r.stck_hgpr),
+        low: toNumber(r.stck_lwpr),
+        close: toNumber(r.stck_clpr),
+        volume: toNumber(r.acml_vol),
       };
     })
-    .filter((c) => Number.isFinite(c.open) && c.open > 0)
+    .filter(
+      (c) =>
+        Number.isFinite(c.time) &&
+        isPositiveFinite(c.open) &&
+        isPositiveFinite(c.high) &&
+        isPositiveFinite(c.low) &&
+        isPositiveFinite(c.close) &&
+        isNonNegativeFinite(c.volume ?? 0),
+    )
     .sort((a, b) => a.time - b.time);
 
   return { code, name, candles };
@@ -92,13 +127,13 @@ export async function getQuote(code: string): Promise<Quote> {
   const o = (json.output ?? {}) as Record<string, string>;
   return {
     code,
-    price: Number(o.stck_prpr),
-    change: Number(o.prdy_vrss),
-    changeRate: Number(o.prdy_ctrt),
-    sign: o.prdy_vrss_sign ?? '3',
-    open: Number(o.stck_oprc),
-    high: Number(o.stck_hgpr),
-    low: Number(o.stck_lwpr),
-    accVolume: Number(o.acml_vol),
+    price: requireNumber(o.stck_prpr, 'stck_prpr'),
+    change: requireNumber(o.prdy_vrss, 'prdy_vrss'),
+    changeRate: requireNumber(o.prdy_ctrt, 'prdy_ctrt'),
+    sign: parseSign(o.prdy_vrss_sign),
+    open: requireNumber(o.stck_oprc, 'stck_oprc'),
+    high: requireNumber(o.stck_hgpr, 'stck_hgpr'),
+    low: requireNumber(o.stck_lwpr, 'stck_lwpr'),
+    accVolume: requireNumber(o.acml_vol, 'acml_vol'),
   };
 }

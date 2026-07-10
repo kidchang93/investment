@@ -24,7 +24,9 @@ let approvalKey: string | null = null;
 
 async function readTokenCache(): Promise<TokenCache | null> {
   try {
-    return JSON.parse(await fs.readFile(CACHE_FILE, 'utf8')) as TokenCache;
+    const parsed = JSON.parse(await fs.readFile(CACHE_FILE, 'utf8')) as unknown;
+    if (!isTokenCache(parsed)) return null;
+    return parsed;
   } catch {
     return null;
   }
@@ -81,4 +83,15 @@ export async function getApprovalKey(): Promise<string> {
   const json = (await res.json()) as { approval_key: string };
   approvalKey = json.approval_key;
   return approvalKey;
+}
+
+function isTokenCache(value: unknown): value is TokenCache {
+  if (!value || typeof value !== 'object') return false;
+  const cache = value as Record<string, unknown>;
+  return (
+    typeof cache.accessToken === 'string' &&
+    cache.accessToken.length > 0 &&
+    typeof cache.expiresAt === 'number' &&
+    Number.isFinite(cache.expiresAt)
+  );
 }

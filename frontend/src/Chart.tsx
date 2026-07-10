@@ -26,10 +26,18 @@ function toCandlestickData(c: Candle): CandlestickData {
   };
 }
 
+function yyyymmddToTimestamp(date: string): UTCTimestamp | null {
+  if (!/^\d{8}$/.test(date)) return null;
+  const y = Number(date.slice(0, 4));
+  const m = Number(date.slice(4, 6));
+  const d = Number(date.slice(6, 8));
+  return Math.floor(Date.UTC(y, m - 1, d) / 1000) as UTCTimestamp;
+}
+
 /**
  * lightweight-charts 캔들 차트.
  * 일봉 배열로 초기 렌더 후, 실시간 체결이 오면 "오늘 캔들"을 업데이트한다.
- * KIS 실시간 체결에는 당일 시/고/저/현재가가 모두 담겨 있어 그대로 갱신하면 된다.
+ * 실시간 체결에는 당일 시/고/저/현재가가 모두 담겨 있어 그대로 갱신하면 된다.
  */
 export function Chart({ candles, liveTrade }: ChartProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -89,15 +97,18 @@ export function Chart({ candles, liveTrade }: ChartProps): JSX.Element {
   // 실시간 체결 반영: 마지막 캔들(오늘)의 OHLC 갱신
   useEffect(() => {
     const series = seriesRef.current;
-    const time = lastTimeRef.current;
-    if (!series || !liveTrade || time === null) return;
+    const tradeTime = liveTrade ? yyyymmddToTimestamp(liveTrade.date) : null;
+    const lastTime = lastTimeRef.current;
+    if (!series || !liveTrade || tradeTime === null) return;
+    if (lastTime !== null && tradeTime < lastTime) return;
     series.update({
-      time,
+      time: tradeTime,
       open: liveTrade.open,
       high: liveTrade.high,
       low: liveTrade.low,
       close: liveTrade.price,
     });
+    lastTimeRef.current = tradeTime;
   }, [liveTrade]);
 
   return <div ref={containerRef} className="chart" />;

@@ -4,8 +4,12 @@ import type { ServerMessage, Trade } from '@invest/shared';
 
 const RECONNECT_MS = 3_000;
 
+function assertNever(value: never): never {
+  throw new Error(`처리하지 않은 스트림 메시지입니다: ${JSON.stringify(value)}`);
+}
+
 export interface StreamState {
-  /** KIS 실시간 연결 상태 (백엔드가 중계) */
+  /** 실시간 시세 연결 상태 (백엔드가 중계) */
   kisConnected: boolean;
   /** 프론트 ↔ 백엔드 WebSocket 연결 상태 */
   socketOpen: boolean;
@@ -49,15 +53,21 @@ export function useStream(): StreamState {
         } catch {
           return;
         }
-        if (msg.type === 'trade') {
-          const t = msg.data;
-          setState((s) => ({ ...s, trades: { ...s.trades, [t.code]: t } }));
-        } else if (msg.type === 'status') {
-          setState((s) => ({
-            ...s,
-            kisConnected: msg.data.kisConnected,
-            message: msg.data.message,
-          }));
+        switch (msg.type) {
+          case 'trade': {
+            const t = msg.data;
+            setState((s) => ({ ...s, trades: { ...s.trades, [t.code]: t } }));
+            break;
+          }
+          case 'status':
+            setState((s) => ({
+              ...s,
+              kisConnected: msg.data.kisConnected,
+              message: msg.data.message,
+            }));
+            break;
+          default:
+            assertNever(msg);
         }
       };
 
