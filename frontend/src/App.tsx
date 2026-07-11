@@ -12,6 +12,7 @@ import {
   fetchInstrumentNews,
   fetchInstrumentQuote,
   fetchInstrumentQuotes,
+  fetchTerminalInstruments,
   fetchTradingOverview,
   fetchWatchlistItems,
   fetchWatchlists,
@@ -642,24 +643,18 @@ function tradingViewSymbolUrl(symbol: string): string {
   return `https://www.tradingview.com/symbols/${symbol.replace(':', '-')}/`;
 }
 
-function yasunReferenceUrl(instrument: Instrument): string {
-  if (instrument.id === 'KR:NIGHT_PROXY:005930') return 'https://yasun.gg/samsung-night';
-  if (instrument.id === 'GLOBAL:TV_COMMODITY:GOLD') return 'https://yasun.gg/gold';
-  if (instrument.id === 'GLOBAL:TV_COMMODITY:SILVER') return 'https://yasun.gg/silver';
-  if (instrument.id === 'GLOBAL:TV_COMMODITY:WTI') return 'https://yasun.gg/wti';
-  if (instrument.id === 'GLOBAL:TV_COMMODITY:NATGAS') return 'https://yasun.gg/natural-gas';
-  if (instrument.market === 'KRX_NIGHT' && instrument.name.includes('KOSPI200')) return 'https://yasun.gg/kospi200';
-  if (instrument.market === 'KRX_NIGHT' && instrument.name.includes('KOSDAQ150')) return 'https://yasun.gg/kosdaq150';
-  return 'https://yasun.gg/chart';
-}
-
 function dataSourceLinksForInstrument(instrument: Instrument | null): DataSourceLink[] {
   if (!instrument) {
     return [
       {
-        label: '참고 UX',
-        detail: '야간 지표 터미널 구성',
-        url: 'https://yasun.gg/',
+        label: 'KIS API',
+        detail: '국내 주식·선물 현재가',
+        url: 'https://apiportal.koreainvestment.com/apiservice',
+      },
+      {
+        label: '뉴스 검색',
+        detail: '야간선물·원자재 뉴스',
+        url: topicNewsUrl('야간선물 원자재 뉴스'),
       },
     ];
   }
@@ -669,14 +664,13 @@ function dataSourceLinksForInstrument(instrument: Instrument | null): DataSource
       { label: 'GDR 원본', detail: instrument.providerSymbol, url: tradingViewSymbolUrl(instrument.providerSymbol) },
       { label: '환율 원본', detail: 'FX_IDC:USDKRW', url: tradingViewSymbolUrl('FX_IDC:USDKRW') },
       { label: '국내 기준가', detail: 'KIS 삼성전자 현재가', url: 'https://apiportal.koreainvestment.com/apiservice' },
-      { label: '참고 화면', detail: 'YASUN 삼성전자 야간', url: yasunReferenceUrl(instrument) },
+      { label: '뉴스 검색', detail: `${instrument.name} 뉴스`, url: topicNewsUrl(`${instrument.name} 뉴스`) },
     ];
   }
 
   if (instrument.assetType === 'commodity') {
     return [
       { label: '원본 시세', detail: instrument.providerSymbol, url: tradingViewSymbolUrl(instrument.providerSymbol) },
-      { label: '참고 화면', detail: `YASUN ${instrument.name}`, url: yasunReferenceUrl(instrument) },
       { label: '뉴스 검색', detail: `${instrument.name} 원자재 뉴스`, url: topicNewsUrl(`${instrument.name} 원자재`) },
     ];
   }
@@ -684,7 +678,6 @@ function dataSourceLinksForInstrument(instrument: Instrument | null): DataSource
   if (instrument.market === 'KRX_NIGHT') {
     return [
       { label: 'KIS 시세', detail: '국내 선물옵션 API', url: 'https://apiportal.koreainvestment.com/apiservice' },
-      { label: '참고 화면', detail: 'YASUN 야간선물', url: yasunReferenceUrl(instrument) },
       { label: '뉴스 검색', detail: `${instrument.name} 야간선물`, url: topicNewsUrl(`${instrument.name} 야간선물`) },
     ];
   }
@@ -791,6 +784,7 @@ export function App(): JSX.Element {
   const [categories, setCategories] = useState<InstrumentCategory[]>([]);
   const [activeCategory, setActiveCategory] = useState<string>('kr-night-proxies');
   const [categoryItems, setCategoryItems] = useState<Instrument[]>([]);
+  const [terminalItems, setTerminalItems] = useState<Instrument[]>([]);
   const [discoverQuery, setDiscoverQuery] = useState('');
   const [selectedInstrument, setSelectedInstrument] = useState<Instrument | null>(null);
   const [visibleCategoryQuoteIds, setVisibleCategoryQuoteIds] = useState<string[]>([]);
@@ -974,6 +968,15 @@ export function App(): JSX.Element {
   }, [activeSavedWatchlistId]);
 
   useEffect(() => {
+    fetchTerminalInstruments()
+      .then((items) => {
+        setTerminalItems(items);
+        if (items.length) setSelectedInstrument((current) => current ?? items[0]);
+      })
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  useEffect(() => {
     fetchInstrumentCategories()
       .then(setCategories)
       .catch((e) => setError(String(e)));
@@ -1153,6 +1156,9 @@ export function App(): JSX.Element {
     }
 
     if (selectedInstrument?.country === 'KR') add(selectedInstrument);
+    if (activePage === 'terminal') {
+      for (const instrument of terminalItems) add(instrument);
+    }
     for (const instrument of recentInstruments) add(instrument);
     for (const instrument of watchlist) add(instrument);
     if (sidePanelTab === 'discover') {
@@ -1165,10 +1171,12 @@ export function App(): JSX.Element {
     return [...ids];
   }, [
     discoverFilteredCategoryItems,
+    activePage,
     recentInstruments,
     selectedInstrument,
     sidePanelTab,
     symbolResults,
+    terminalItems,
     visibleCategoryQuoteIds,
     watchlist,
   ]);
@@ -1512,6 +1520,9 @@ export function App(): JSX.Element {
     }
 
     add(selectedInstrument);
+    if (activePage === 'terminal') {
+      for (const instrument of terminalItems) add(instrument);
+    }
     for (const instrument of recentInstruments) add(instrument);
     for (const instrument of watchlist) add(instrument);
     if (sidePanelTab === 'discover') {
@@ -1524,9 +1535,11 @@ export function App(): JSX.Element {
     return [...instruments.values()];
   }, [
     discoverFilteredCategoryItems,
+    activePage,
     recentInstruments,
     selectedInstrument,
     sidePanelTab,
+    terminalItems,
     visibleCategoryItems,
     visibleCategoryQuoteIds,
     watchlist,
@@ -2158,7 +2171,7 @@ export function App(): JSX.Element {
             <section className="terminal-board" aria-label="야간 지표 터미널">
               <div className="terminal-board__hero">
                 <div>
-                  <span>YASUN 스타일 참고 · 조회 전용</span>
+                  <span>야간 지표 · 조회 전용</span>
                   <h2>야간 지표 터미널</h2>
                   <p>국내 야간선물, GDR 환산가, 원자재와 관련 뉴스를 한 화면에서 확인합니다.</p>
                 </div>
@@ -2168,6 +2181,36 @@ export function App(): JSX.Element {
                   <em>{snapshot ? `${formatSignedPrice(snapshot.change)} · ${formatRate(snapshot.changeRate)}` : '탐색에서 지표를 선택하세요'}</em>
                 </div>
               </div>
+
+              <section className="terminal-market-strip" aria-label="지금 시장">
+                <div className="terminal-panel__header">
+                  <strong>지금 시장</strong>
+                  <span>{terminalItems.length > 0 ? `${terminalItems.length}개 지표` : '로딩 중'}</span>
+                </div>
+                <div className="terminal-market-strip__rows">
+                  {terminalItems.map((instrument) => {
+                    const itemTrade = instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined;
+                    const itemSnapshot = toSnapshot(itemTrade, quotesByCode[instrument.id]);
+                    const itemTone = moveTone(itemSnapshot?.sign);
+                    return (
+                      <button
+                        data-tone={itemTone}
+                        key={instrument.id}
+                        onClick={() => selectInstrument(instrument)}
+                        type="button"
+                      >
+                        <span>{assetTypeLabel(instrument.assetType)}</span>
+                        <strong>{instrument.name}</strong>
+                        <em>{itemSnapshot ? formatPrice(itemSnapshot.price) : '-'}</em>
+                        <small>{itemSnapshot ? formatRate(itemSnapshot.changeRate) : '조회 대기'}</small>
+                      </button>
+                    );
+                  })}
+                  {terminalItems.length === 0 && (
+                    <p>터미널 지표를 불러오는 중입니다</p>
+                  )}
+                </div>
+              </section>
 
               <div className="terminal-board__grid">
                 <section className="terminal-panel terminal-panel--shortcuts" aria-label="빠른 지표 탐색">
@@ -2228,10 +2271,10 @@ export function App(): JSX.Element {
                           <strong>{selectedInstrument ? `${selectedInstrument.name} 관련 뉴스` : '야간선물·원자재 뉴스'}</strong>
                           <em>Google News</em>
                         </a>
-                        <a href="https://yasun.gg/news" rel="noreferrer" target="_blank">
-                          <span>참고</span>
-                          <strong>YASUN 뉴스룸 구조 보기</strong>
-                          <em>yasun.gg</em>
+                        <a href={topicNewsUrl('국내 야간선물 원자재 시장')} rel="noreferrer" target="_blank">
+                          <span>검색</span>
+                          <strong>국내 야간선물·원자재 시장 뉴스</strong>
+                          <em>Google News</em>
                         </a>
                       </>
                     )}

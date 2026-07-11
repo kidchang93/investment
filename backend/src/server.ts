@@ -13,6 +13,7 @@ import {
   getDefaultWatchlist,
   getInstrument,
   getInstrumentCategories,
+  getTerminalInstruments,
   getWatchlistItems,
   getWatchlists,
   removeDefaultWatchlistItem,
@@ -240,6 +241,10 @@ async function main(): Promise<void> {
     }
 
     return quotes;
+  });
+
+  app.get('/api/instruments/terminal', async () => {
+    return getTerminalInstruments();
   });
 
   app.get<{ Params: { id: string } }>('/api/instruments/:id/candles', async (req, reply) => {

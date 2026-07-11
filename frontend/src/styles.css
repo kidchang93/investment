@@ -897,6 +897,79 @@ button {
   align-items: stretch;
 }
 
+.terminal-market-strip {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.terminal-market-strip__rows {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.terminal-market-strip__rows button,
+.terminal-market-strip__rows p {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  min-height: 86px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: rgba(8, 11, 17, 0.5);
+  color: inherit;
+  text-align: left;
+}
+
+.terminal-market-strip__rows button {
+  cursor: pointer;
+}
+
+.terminal-market-strip__rows button:hover {
+  border-color: rgba(245, 196, 81, 0.34);
+  background: rgba(245, 196, 81, 0.08);
+}
+
+.terminal-market-strip__rows button[data-tone='up'] {
+  border-color: rgba(229, 72, 77, 0.26);
+}
+
+.terminal-market-strip__rows button[data-tone='down'] {
+  border-color: rgba(59, 130, 246, 0.26);
+}
+
+.terminal-market-strip__rows span,
+.terminal-market-strip__rows small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.terminal-market-strip__rows strong,
+.terminal-market-strip__rows em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-market-strip__rows strong {
+  font-size: 13px;
+}
+
+.terminal-market-strip__rows em {
+  font-size: 17px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
 .terminal-panel {
   min-width: 0;
   padding: 12px;
@@ -3340,6 +3413,10 @@ button {
     grid-template-columns: 1fr 1fr;
   }
 
+  .terminal-market-strip__rows {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .quote-stats {
     grid-column: 1 / -1;
   }
@@ -3415,6 +3492,10 @@ button {
 
   .terminal-board__hero,
   .terminal-board__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .terminal-market-strip__rows {
     grid-template-columns: 1fr;
   }
 

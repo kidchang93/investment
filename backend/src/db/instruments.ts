@@ -36,6 +36,14 @@ interface DomesticAssetTypeRow {
 }
 
 const DEFAULT_WATCHLIST_ID = 'default';
+const TERMINAL_INSTRUMENT_IDS = [
+  'KR:NIGHT_PROXY:005930',
+  'KR:KRX_NIGHT:A01609',
+  'GLOBAL:TV_COMMODITY:GOLD',
+  'GLOBAL:TV_COMMODITY:SILVER',
+  'GLOBAL:TV_COMMODITY:WTI',
+  'GLOBAL:TV_COMMODITY:NATGAS',
+] as const;
 
 export const INSTRUMENT_CATEGORIES: InstrumentCategory[] = [
   {
@@ -280,6 +288,10 @@ export async function getInstrument(id: string): Promise<Instrument | null> {
   return result.rows[0] ? rowToInstrument(result.rows[0]) : null;
 }
 
+export async function getTerminalInstruments(): Promise<Instrument[]> {
+  return getByIds([...TERMINAL_INSTRUMENT_IDS]);
+}
+
 export function getInstrumentCategories(): InstrumentCategory[] {
   return INSTRUMENT_CATEGORIES;
 }
@@ -510,6 +522,20 @@ async function getBySymbols(symbols: string[], markets: string[]): Promise<Instr
   return result.rows
     .map(rowToInstrument)
     .sort((a, b) => symbols.indexOf(a.symbol) - symbols.indexOf(b.symbol));
+}
+
+async function getByIds(ids: string[]): Promise<Instrument[]> {
+  const result = await pool.query<InstrumentRow>(
+    `
+      SELECT id, symbol, name, english_name, market, country, currency, asset_type,
+             provider, provider_symbol, exchange_code, timezone
+      FROM instruments
+      WHERE is_active = true AND id = ANY($1)
+      ORDER BY array_position($1, id)
+    `,
+    [ids],
+  );
+  return result.rows.map(rowToInstrument);
 }
 
 async function getByFilter(whereSql: string, limit: number, query = ''): Promise<Instrument[]> {

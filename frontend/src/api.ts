@@ -109,6 +109,12 @@ export async function fetchCategoryInstruments(id: string, query = ''): Promise<
   return res.json();
 }
 
+export async function fetchTerminalInstruments(): Promise<Instrument[]> {
+  const res = await fetch(`${API_BASE}/api/instruments/terminal`);
+  if (!res.ok) throw new Error(`터미널 종목 조회 실패: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchDefaultWatchlist(): Promise<Instrument[]> {
   const res = await fetch(`${API_BASE}/api/watchlists/default`);
   if (!res.ok) throw new Error(`관심종목 조회 실패: ${res.status}`);
