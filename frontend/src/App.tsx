@@ -1093,6 +1093,13 @@ export function App(): JSX.Element {
     return names;
   }, [categoryItems, selectedInstrument, watchlist]);
   const selectedNews = selectedInstrument ? (newsByCode[selectedInstrument.id] ?? []) : [];
+  const trimmedSymbolQuery = symbolQuery.trim();
+  const isSymbolSearchPanelOpen =
+    trimmedSymbolQuery.length >= 2 && (symbolResults.length > 0 || isSymbolSearching || hasSymbolSearchCompleted);
+  const activeSymbolResultId =
+    isSymbolSearchPanelOpen && symbolResults[activeSymbolResultIndex]
+      ? `symbol-search-result-${activeSymbolResultIndex}`
+      : undefined;
 
   function selectInstrument(instrument: Instrument): void {
     setSelectedInstrument(instrument);
@@ -1252,12 +1259,17 @@ export function App(): JSX.Element {
             </div>
             <div className="symbol-search">
               <input
+                aria-activedescendant={activeSymbolResultId}
+                aria-autocomplete="list"
+                aria-controls={isSymbolSearchPanelOpen ? 'symbol-search-results' : undefined}
+                aria-expanded={isSymbolSearchPanelOpen}
                 aria-label="국내/해외 종목 검색"
                 onChange={(event) => setSymbolQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Escape') {
                     setSymbolResults([]);
                     setActiveSymbolResultIndex(0);
+                    setHasSymbolSearchCompleted(false);
                     return;
                   }
                   if (symbolResults.length === 0) return;
@@ -1281,15 +1293,15 @@ export function App(): JSX.Element {
                   }
                 }}
                 placeholder="종목 검색: 삼성전자, AAPL, TSLA"
+                role="combobox"
                 type="search"
                 value={symbolQuery}
               />
-              {symbolQuery.trim().length >= 2 &&
-                (symbolResults.length > 0 || isSymbolSearching || hasSymbolSearchCompleted) && (
-                <div className="symbol-search__results">
+              {isSymbolSearchPanelOpen && (
+                <div className="symbol-search__results" id="symbol-search-results" role="listbox">
                   <div className="symbol-search__summary">
                     <strong>{isSymbolSearching ? '검색중' : `${symbolResults.length}개 결과`}</strong>
-                    <span>{symbolQuery.trim()}</span>
+                    <span>{trimmedSymbolQuery}</span>
                   </div>
                   {symbolResults.map((instrument, index) => {
                     const resultSnapshot = toSnapshot(undefined, quotesByCode[instrument.id]);
@@ -1297,8 +1309,11 @@ export function App(): JSX.Element {
                       <div
                         className="symbol-search__result"
                         data-active={index === activeSymbolResultIndex}
+                        id={`symbol-search-result-${index}`}
                         key={instrument.id}
                         onMouseEnter={() => setActiveSymbolResultIndex(index)}
+                        role="option"
+                        aria-selected={index === activeSymbolResultIndex}
                       >
                         <button
                           className="symbol-search__select"
