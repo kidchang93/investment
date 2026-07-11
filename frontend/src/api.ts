@@ -1,5 +1,5 @@
 import { API_BASE } from './config';
-import type { CandlesResponse, Instrument, InstrumentCategory, Quote, WatchItem } from '@invest/shared';
+import type { CandlesResponse, Instrument, InstrumentCategory, NewsItem, Quote, WatchItem } from '@invest/shared';
 
 export async function fetchWatchlist(): Promise<WatchItem[]> {
   const res = await fetch(`${API_BASE}/api/watchlist`);
@@ -41,6 +41,12 @@ export async function fetchInstrumentQuote(id: string): Promise<Quote> {
 export async function fetchInstrumentIntradayCandles(id: string): Promise<CandlesResponse> {
   const res = await fetch(`${API_BASE}/api/instruments/${encodeURIComponent(id)}/intraday-candles`);
   if (!res.ok) throw new Error(`종목 분봉 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchInstrumentNews(id: string): Promise<NewsItem[]> {
+  const res = await fetch(`${API_BASE}/api/instruments/${encodeURIComponent(id)}/news`);
+  if (!res.ok) throw new Error(`종목 뉴스 조회 실패: ${res.status}`);
   return res.json();
 }
 

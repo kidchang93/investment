@@ -55,6 +55,15 @@ export interface InstrumentCategory {
   description: string;
 }
 
+/** 종목 관련 뉴스 제목 */
+export interface NewsItem {
+  id: string;
+  title: string;
+  source: string;
+  publishedAt?: number;
+  symbol?: string;
+}
+
 /** 전일대비 부호: 1(상한) 2(상승) 3(보합) 4(하한) 5(하락) */
 export type PriceSign = '1' | '2' | '3' | '4' | '5';
 

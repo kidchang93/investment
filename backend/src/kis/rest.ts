@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 import { getAccessToken } from './auth.js';
-import type { Candle, CandlesResponse, Instrument, PriceSign, Quote } from '@invest/shared';
+import type { Candle, CandlesResponse, Instrument, NewsItem, PriceSign, Quote } from '@invest/shared';
 
 /** KIS REST GET 공통 헬퍼. tr_id별로 헤더/인증을 채워 호출한다. */
 async function kisGet(
@@ -142,6 +142,12 @@ function kstDateTimeToTimestamp(date: string, time: string): number {
   return Math.floor(Date.UTC(y, m - 1, d, hh - 9, mm, 0) / 1000);
 }
 
+function optionalKstDateTimeToTimestamp(date: string | undefined, time: string | undefined): number | undefined {
+  if (!/^\d{8}$/.test(date ?? '') || !/^\d{6}$/.test(time ?? '')) return undefined;
+  const timestamp = kstDateTimeToTimestamp(date as string, time as string);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
 /** 국내주식 1분봉 시세 (주식일별분봉조회, tr_id: FHKST03010230). */
 async function getDomesticIntradayCandles(instrument: Instrument): Promise<CandlesResponse> {
   const json = await kisGet(
@@ -263,6 +269,60 @@ export async function getInstrumentQuote(instrument: Instrument): Promise<Quote>
 export async function getInstrumentIntradayCandles(instrument: Instrument): Promise<CandlesResponse> {
   if (instrument.country === 'KR') return getDomesticIntradayCandles(instrument);
   return getOverseasIntradayCandles(instrument);
+}
+
+export async function getInstrumentNews(instrument: Instrument): Promise<NewsItem[]> {
+  if (instrument.country === 'KR') return getDomesticNews(instrument);
+  return getOverseasNews(instrument);
+}
+
+async function getDomesticNews(instrument: Instrument): Promise<NewsItem[]> {
+  const json = await kisGet('/uapi/domestic-stock/v1/quotations/news-title', 'FHKST01011800', {
+    FID_NEWS_OFER_ENTP_CODE: '',
+    FID_COND_MRKT_CLS_CODE: '00',
+    FID_INPUT_ISCD: instrument.providerSymbol,
+    FID_TITL_CNTT: '',
+    FID_INPUT_DATE_1: '',
+    FID_INPUT_HOUR_1: '',
+    FID_RANK_SORT_CLS_CODE: '01',
+    FID_INPUT_SRNO: '',
+  });
+  const rows = (json.output ?? []) as Array<Record<string, string>>;
+  return rows
+    .map((row, index) => ({
+      id: row.cntt_usiq_srno ?? `${instrument.id}-${row.data_dt ?? ''}-${row.data_tm ?? ''}-${index}`,
+      title: row.hts_pbnt_titl_cntt ?? '',
+      source: row.dorg || row.news_ofer_entp_code || 'KIS',
+      publishedAt: optionalKstDateTimeToTimestamp(row.data_dt, row.data_tm),
+      symbol: instrument.symbol,
+    }))
+    .filter((item) => item.title.length > 0)
+    .slice(0, 20);
+}
+
+async function getOverseasNews(instrument: Instrument): Promise<NewsItem[]> {
+  const nationCode = instrument.country === 'US' ? 'US' : instrument.country;
+  const json = await kisGet('/uapi/overseas-price/v1/quotations/news-title', 'HHPSTH60100C1', {
+    INFO_GB: '',
+    CLASS_CD: '',
+    NATION_CD: nationCode,
+    EXCHANGE_CD: instrument.exchangeCode,
+    SYMB: instrument.providerSymbol,
+    DATA_DT: '',
+    DATA_TM: '',
+    CTS: '',
+  });
+  const rows = (json.outblock1 ?? []) as Array<Record<string, string>>;
+  return rows
+    .map((row, index) => ({
+      id: row.news_key ?? `${instrument.id}-${row.data_dt ?? ''}-${row.data_tm ?? ''}-${index}`,
+      title: row.title ?? '',
+      source: row.source || row.class_name || 'KIS',
+      publishedAt: optionalKstDateTimeToTimestamp(row.data_dt, row.data_tm),
+      symbol: row.symb || instrument.symbol,
+    }))
+    .filter((item) => item.title.length > 0)
+    .slice(0, 20);
 }
 
 async function getOverseasDailyCandles(

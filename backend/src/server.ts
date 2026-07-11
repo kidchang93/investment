@@ -17,6 +17,7 @@ import {
   getDailyCandles,
   getInstrumentCandles,
   getInstrumentIntradayCandles,
+  getInstrumentNews,
   getInstrumentQuote,
   getQuote,
 } from './kis/rest.js';
@@ -123,6 +124,17 @@ async function main(): Promise<void> {
     const instrument = await getInstrument(req.params.id);
     if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
     return getInstrumentIntradayCandles(instrument);
+  });
+
+  app.get<{ Params: { id: string } }>('/api/instruments/:id/news', async (req, reply) => {
+    const instrument = await getInstrument(req.params.id);
+    if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
+    try {
+      return await getInstrumentNews(instrument);
+    } catch (err) {
+      req.log.warn({ err, instrumentId: instrument.id }, '종목 뉴스 조회 실패');
+      return [];
+    }
   });
 
   app.get<{ Params: { id: string } }>('/api/instruments/:id/quote', async (req, reply) => {

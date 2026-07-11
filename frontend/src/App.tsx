@@ -6,6 +6,7 @@ import {
   fetchInstrumentCandles,
   fetchInstrumentCategories,
   fetchInstrumentIntradayCandles,
+  fetchInstrumentNews,
   fetchInstrumentQuote,
   fetchInstrumentQuotes,
   removeDefaultWatchlistItem,
@@ -18,6 +19,7 @@ import type {
   CandlesResponse,
   Instrument,
   InstrumentCategory,
+  NewsItem,
   PriceSign,
   Quote,
   Trade,
@@ -155,6 +157,18 @@ function formatCandleDate(seconds: number, withTime: boolean): string {
     month: '2-digit',
     day: '2-digit',
     ...(withTime ? { hour: '2-digit', minute: '2-digit', hour12: false } : {}),
+    timeZone: 'Asia/Seoul',
+  }).format(new Date(seconds * 1000));
+}
+
+function formatNewsTime(seconds: number | undefined): string {
+  if (!seconds) return '-';
+  return new Intl.DateTimeFormat('ko-KR', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
     timeZone: 'Asia/Seoul',
   }).format(new Date(seconds * 1000));
 }
@@ -437,6 +451,7 @@ export function App(): JSX.Element {
   const [selectedInstrument, setSelectedInstrument] = useState<Instrument | null>(null);
   const [candlesByCode, setCandlesByCode] = useState<Record<string, CandlesResponse>>({});
   const [quotesByCode, setQuotesByCode] = useState<Record<string, Quote>>({});
+  const [newsByCode, setNewsByCode] = useState<Record<string, NewsItem[]>>({});
   const [query, setQuery] = useState('');
   const [symbolQuery, setSymbolQuery] = useState('');
   const [symbolResults, setSymbolResults] = useState<Instrument[]>([]);
@@ -556,6 +571,13 @@ export function App(): JSX.Element {
       window.clearInterval(timer);
     };
   }, [selectedInstrument, timeframe]);
+
+  useEffect(() => {
+    if (!selectedInstrument || bottomDockTab !== 'news' || newsByCode[selectedInstrument.id]) return;
+    fetchInstrumentNews(selectedInstrument.id)
+      .then((items) => setNewsByCode((current) => ({ ...current, [selectedInstrument.id]: items })))
+      .catch((e) => setError(String(e)));
+  }, [bottomDockTab, newsByCode, selectedInstrument]);
 
   const quoteTargetIds = useMemo(() => {
     const ids = new Set<string>();
@@ -694,6 +716,7 @@ export function App(): JSX.Element {
     if (selectedInstrument) names.set(selectedInstrument.providerSymbol, selectedInstrument.name);
     return names;
   }, [categoryItems, selectedInstrument, watchlist]);
+  const selectedNews = selectedInstrument ? (newsByCode[selectedInstrument.id] ?? []) : [];
 
   function selectInstrument(instrument: Instrument): void {
     setSelectedInstrument(instrument);
@@ -1012,6 +1035,28 @@ export function App(): JSX.Element {
                 {tapeTrades.length === 0 && (
                   <div className="trade-tape__empty">체결 수신 대기</div>
                 )}
+              </div>
+            </section>
+          )}
+
+          {bottomDockTab === 'news' && (
+            <section className="news-panel" aria-label="종목 뉴스">
+              <div className="news-panel__header">
+                <strong>뉴스</strong>
+                <span>{selectedInstrument ? selectedInstrument.name : '종목 미선택'}</span>
+              </div>
+              <div className="news-panel__rows">
+                {selectedNews.map((item) => (
+                  <div className="news-panel__row" key={item.id}>
+                    <span>{formatNewsTime(item.publishedAt)}</span>
+                    <strong>{item.title}</strong>
+                    <em>{item.source}</em>
+                  </div>
+                ))}
+                {selectedInstrument && selectedNews.length === 0 && (
+                  <div className="news-panel__empty">뉴스 조회 결과 없음</div>
+                )}
+                {!selectedInstrument && <div className="news-panel__empty">종목을 선택하세요</div>}
               </div>
             </section>
           )}
