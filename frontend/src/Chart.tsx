@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   createChart,
   CrosshairMode,
@@ -37,6 +37,12 @@ interface CrosshairReadout {
   color: string;
 }
 
+interface RsiPoint {
+  x: number;
+  y: number;
+  value: number;
+}
+
 export type ChartCommandType = 'fit' | 'zoomIn' | 'zoomOut';
 
 export interface ChartCommand {
@@ -59,6 +65,8 @@ interface ChartProps {
   command?: ChartCommand;
   /** 이동평균선 표시 여부 */
   showMovingAverage?: boolean;
+  /** RSI 보조지표 표시 여부 */
+  showRsi?: boolean;
 }
 
 function toCandlestickData(c: Candle): CandlestickData {
@@ -98,6 +106,37 @@ function toMovingAverageData(candles: Candle[], period: number): LineData[] {
   }
 
   return data;
+}
+
+function calculateRsiPoints(candles: Candle[], period = 14): RsiPoint[] {
+  if (candles.length <= period) return [];
+
+  const values: number[] = [];
+  let gains = 0;
+  let losses = 0;
+
+  for (let i = 1; i <= period; i += 1) {
+    const diff = candles[i].close - candles[i - 1].close;
+    if (diff >= 0) gains += diff;
+    else losses += Math.abs(diff);
+  }
+
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  values.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss));
+
+  for (let i = period + 1; i < candles.length; i += 1) {
+    const diff = candles[i].close - candles[i - 1].close;
+    avgGain = (avgGain * (period - 1) + Math.max(diff, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-diff, 0)) / period;
+    values.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss));
+  }
+
+  return values.map((value, index) => ({
+    x: values.length === 1 ? 100 : (index / (values.length - 1)) * 100,
+    y: 100 - value,
+    value,
+  }));
 }
 
 function yyyymmddToTimestamp(date: string): UTCTimestamp | null {
@@ -177,6 +216,7 @@ export function Chart({
   timeVisible = false,
   command,
   showMovingAverage = false,
+  showRsi = false,
 }: ChartProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -189,6 +229,9 @@ export function Chart({
   const lastTimeRef = useRef<UTCTimestamp | null>(null);
   const [crosshair, setCrosshair] = useState<CrosshairReadout | null>(null);
   const [lastPriceY, setLastPriceY] = useState<number | null>(null);
+  const rsiPoints = useMemo(() => calculateRsiPoints(candles), [candles]);
+  const rsiPath = rsiPoints.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ');
+  const latestRsi = rsiPoints.at(-1)?.value;
 
   // 차트 생성 (마운트 시 1회) + 리사이즈 대응
   useEffect(() => {
@@ -425,6 +468,19 @@ export function Chart({
           <span>저가 <b>{formatChartPrice(crosshair.low)}</b></span>
           <span style={{ color: crosshair.color }}>종가 <b>{formatChartPrice(crosshair.close)}</b></span>
           <span>거래량 <b>{formatChartVolume(crosshair.volume)}</b></span>
+        </div>
+      )}
+      {showRsi && rsiPoints.length > 0 && (
+        <div className="chart__rsi">
+          <div className="chart__rsi-header">
+            <strong>RSI 14</strong>
+            <span>{latestRsi?.toFixed(1)}</span>
+          </div>
+          <svg aria-hidden="true" preserveAspectRatio="none" viewBox="0 0 100 100">
+            <line className="chart__rsi-band" x1="0" x2="100" y1="30" y2="30" />
+            <line className="chart__rsi-band" x1="0" x2="100" y1="70" y2="70" />
+            <polyline className="chart__rsi-line" points={rsiPath} />
+          </svg>
         </div>
       )}
     </div>

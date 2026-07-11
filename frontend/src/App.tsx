@@ -463,6 +463,7 @@ export function App(): JSX.Element {
   const [activeTool, setActiveTool] = useState<ChartTool>('crosshair');
   const [chartCommand, setChartCommand] = useState<ChartCommand | undefined>(undefined);
   const [showMovingAverage, setShowMovingAverage] = useState(false);
+  const [showRsi, setShowRsi] = useState(false);
   const [bottomDockTab, setBottomDockTab] = useState<BottomDockTab>('volume');
   const [error, setError] = useState<string | null>(null);
   const [quoteRefreshAt, setQuoteRefreshAt] = useState<number | null>(null);
@@ -846,6 +847,14 @@ export function App(): JSX.Element {
               >
                 MA
               </button>
+              <button
+                aria-pressed={showRsi}
+                onClick={() => setShowRsi((value) => !value)}
+                title="RSI 보조지표 표시"
+                type="button"
+              >
+                RSI
+              </button>
               <button type="button">비교</button>
             </div>
           </div>
@@ -979,6 +988,7 @@ export function App(): JSX.Element {
                 updateLastCandle={timeframe === '1D'}
                 command={chartCommand}
                 showMovingAverage={showMovingAverage}
+                showRsi={showRsi}
               />
             ) : (
               <div className="chart-panel__empty">
