@@ -664,7 +664,7 @@ export function App(): JSX.Element {
     () => window.localStorage.getItem(`${STORAGE_PREFIX}activeSavedWatchlistId`) ?? 'default',
   );
   const [categories, setCategories] = useState<InstrumentCategory[]>([]);
-  const [activeCategory, setActiveCategory] = useState<string>('kr-major');
+  const [activeCategory, setActiveCategory] = useState<string>('kr-all');
   const [categoryItems, setCategoryItems] = useState<Instrument[]>([]);
   const [selectedInstrument, setSelectedInstrument] = useState<Instrument | null>(null);
   const [recentInstruments, setRecentInstruments] = useState<Instrument[]>(() =>
@@ -2721,10 +2721,7 @@ export function App(): JSX.Element {
           </div>}
           {sidePanelTab === 'discover' && <div className="discover">
             <div className="discover__header">
-              <div>
-                <strong>추천 리스트</strong>
-                <span>{visibleCategoryItems.length}개 · 탐색 후 + 추가</span>
-              </div>
+              <strong>추천 리스트</strong>
               <div className="discover__meta">
                 <div className="discover__breadth" aria-label="추천 리스트 등락 요약">
                   <em data-tone="up">상승 {categorySummary.up}</em>
@@ -2741,30 +2738,27 @@ export function App(): JSX.Element {
                 </span>
               </div>
             </div>
-            <div className="discover__section-label">
-              <strong>카테고리</strong>
-              <span>{categories.find((category) => category.id === activeCategory)?.description ?? '추천 카테고리'}</span>
-            </div>
-            <div className="category-tabs" role="tablist" aria-label="추천 카테고리">
-              {categories.map((category) => (
-                <button
-                  aria-selected={category.id === activeCategory}
-                  key={category.id}
-                  onClick={() => setActiveCategory(category.id)}
-                  role="tab"
-                  title={category.description}
-                  type="button"
+            <div className="category-picker">
+              <label>
+                <span>카테고리</span>
+                <select
+                  aria-label="추천 카테고리"
+                  onChange={(event) => setActiveCategory(event.target.value)}
+                  value={activeCategory}
                 >
-                  <strong>{category.label}</strong>
-                  <span>{category.description}</span>
-                </button>
-              ))}
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
             <div className="discover__section-label discover__section-label--results">
-              <strong>결과</strong>
+              <strong>{categories.find((category) => category.id === activeCategory)?.label ?? '결과'}</strong>
               <span>{visibleCategoryItems.length}개 · {categorySummary.waiting > 0 ? `시세 대기 ${categorySummary.waiting}` : '시세 반영'}</span>
             </div>
-            <div className="watchlist__rows">
+            <div className="watchlist__rows discover__rows">
               {visibleCategoryItems.map((instrument) => (
                 <InstrumentRow
                   key={instrument.id}

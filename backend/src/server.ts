@@ -7,6 +7,7 @@ import {
   addWatchlistItem,
   createWatchlist,
   deleteWatchlist,
+  ensureDomesticAssetTypes,
   ensureInstrumentSchema,
   getCategoryInstruments,
   getDefaultWatchlist,
@@ -58,6 +59,7 @@ async function main(): Promise<void> {
   const app = Fastify({ logger: true });
   await app.register(cors, { origin: true });
   await ensureInstrumentSchema();
+  await ensureDomesticAssetTypes();
   await ensureTradingSchema();
   await seedDefaultWatchlist(WATCHLIST);
 

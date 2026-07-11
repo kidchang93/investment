@@ -1,7 +1,8 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { inferDomesticAssetType } from '../db/assetTypes.js';
 import { closeDb, pool } from '../db/client.js';
-import { ensureInstrumentSchema } from '../db/instruments.js';
+import { ensureDomesticAssetTypes, ensureInstrumentSchema } from '../db/instruments.js';
 import type { Instrument } from '@invest/shared';
 
 /**
@@ -51,6 +52,7 @@ async function main(): Promise<void> {
   ];
 
   await upsertInstruments(dedupe(instruments));
+  await ensureDomesticAssetTypes();
   console.log(`종목 마스터 동기화 완료: ${instruments.length.toLocaleString('ko-KR')}건`);
 }
 
@@ -187,13 +189,6 @@ async function upsertInstruments(instruments: NormalizedInstrument[]): Promise<v
 
 function dedupe(instruments: NormalizedInstrument[]): NormalizedInstrument[] {
   return [...new Map(instruments.map((item) => [item.id, item])).values()];
-}
-
-function inferDomesticAssetType(name: string): Instrument['assetType'] {
-  const upper = name.toUpperCase();
-  if (upper.includes('ETF')) return 'etf';
-  if (upper.includes('ETN')) return 'etn';
-  return 'stock';
 }
 
 function mapOverseasAssetType(value: string | undefined): Instrument['assetType'] {

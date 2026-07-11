@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { inferDomesticAssetType } from './assetTypes.js';
 import { pool } from './client.js';
 import type { Instrument, InstrumentCategory, WatchItem, WatchlistGroup } from '@invest/shared';
 
@@ -28,6 +29,12 @@ interface WatchlistRow {
   item_count: string;
 }
 
+interface DomesticAssetTypeRow {
+  id: string;
+  name: string;
+  asset_type: Instrument['assetType'];
+}
+
 const DEFAULT_WATCHLIST_ID = 'default';
 
 export const INSTRUMENT_CATEGORIES: InstrumentCategory[] = [
@@ -37,9 +44,19 @@ export const INSTRUMENT_CATEGORIES: InstrumentCategory[] = [
     description: '국내 대형주와 플랫폼/자동차 대표 종목',
   },
   {
+    id: 'kr-all',
+    label: '국내 전체',
+    description: '국내 주식 전체 종목',
+  },
+  {
     id: 'us-megacap',
     label: '미국 대표주',
     description: '미국 빅테크와 시장 대표 종목',
+  },
+  {
+    id: 'us-all',
+    label: '미국 전체',
+    description: '미국 주요 거래소 전체 종목',
   },
   {
     id: 'kr-etf',
@@ -47,9 +64,49 @@ export const INSTRUMENT_CATEGORIES: InstrumentCategory[] = [
     description: '국내 상장 ETF와 ETN',
   },
   {
+    id: 'kr-etf-us',
+    label: '미국·나스닥 ETF',
+    description: '국내 상장 미국 지수/나스닥 ETF',
+  },
+  {
+    id: 'kr-etf-income',
+    label: '배당/커버드콜 ETF',
+    description: '월배당, 배당성장, 커버드콜 ETF',
+  },
+  {
+    id: 'kr-etf-bond',
+    label: '채권/머니마켓 ETF',
+    description: '국채, 회사채, CD금리, 머니마켓 ETF',
+  },
+  {
+    id: 'kr-etf-leverage',
+    label: '레버리지/인버스 ETF',
+    description: '레버리지와 인버스 ETF',
+  },
+  {
+    id: 'kr-etf-kodex',
+    label: 'KODEX ETF',
+    description: '삼성자산운용 KODEX ETF',
+  },
+  {
+    id: 'kr-etf-tiger',
+    label: 'TIGER ETF',
+    description: '미래에셋 TIGER ETF',
+  },
+  {
+    id: 'kr-etf-ace',
+    label: 'ACE ETF',
+    description: '한국투자 ACE ETF',
+  },
+  {
+    id: 'kr-etf-kiwoom',
+    label: 'KIWOOM ETF',
+    description: '키움자산운용 ETF',
+  },
+  {
     id: 'us-etf',
-    label: '미국 ETF',
-    description: '미국 주요 지수/섹터 ETF',
+    label: '해외 ETF',
+    description: '미국 주요 지수/섹터 ETF와 해외 ETF',
   },
   {
     id: 'kospi',
@@ -121,6 +178,41 @@ export async function ensureInstrumentSchema(): Promise<void> {
   );
 }
 
+export async function ensureDomesticAssetTypes(): Promise<void> {
+  const result = await pool.query<DomesticAssetTypeRow>(`
+    SELECT id, name, asset_type
+    FROM instruments
+    WHERE country = 'KR' AND is_active = true
+  `);
+
+  const updates = result.rows
+    .map((row) => ({ id: row.id, assetType: inferDomesticAssetType(row.name) }))
+    .filter((row, index) => row.assetType !== result.rows[index].asset_type);
+
+  if (updates.length === 0) return;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const update of updates) {
+      await client.query(
+        `
+          UPDATE instruments
+          SET asset_type = $2, updated_at = now()
+          WHERE id = $1
+        `,
+        [update.id, update.assetType],
+      );
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function searchInstruments(query: string, limit = 30): Promise<Instrument[]> {
   const q = query.trim();
   if (!q) return [];
@@ -167,7 +259,7 @@ export function getInstrumentCategories(): InstrumentCategory[] {
   return INSTRUMENT_CATEGORIES;
 }
 
-export async function getCategoryInstruments(categoryId: string, limit = 80): Promise<Instrument[]> {
+export async function getCategoryInstruments(categoryId: string, limit = 300): Promise<Instrument[]> {
   switch (categoryId) {
     case 'kr-major':
       return getBySymbols(['005930', '000660', '035420', '035720', '005380', '012450', '068270'], [
@@ -180,14 +272,42 @@ export async function getCategoryInstruments(categoryId: string, limit = 80): Pr
         'NYS',
         'AMS',
       ]);
+    case 'kr-all':
+      return getByFilter("country = 'KR' AND asset_type = 'stock'", limit);
+    case 'us-all':
+      return getByFilter("country = 'US' AND asset_type = 'stock'", limit);
     case 'us-etf':
-      return getBySymbols(['SPY', 'QQQ', 'VOO', 'VTI', 'DIA', 'IWM', 'SOXX', 'SMH', 'TLT', 'GLD'], [
-        'NAS',
-        'NYS',
-        'AMS',
-      ]);
+      return getByFilter("country = 'US' AND asset_type = 'etf'", limit);
     case 'kr-etf':
       return getByFilter("country = 'KR' AND asset_type IN ('etf', 'etn')", limit);
+    case 'kr-etf-us':
+      return getByFilter(
+        "country = 'KR' AND asset_type = 'etf' AND (name ILIKE '%미국%' OR name ILIKE '%나스닥%' OR name ILIKE '%S&P%' OR name ILIKE '%NASDAQ%')",
+        limit,
+      );
+    case 'kr-etf-income':
+      return getByFilter(
+        "country = 'KR' AND asset_type = 'etf' AND (name ILIKE '%배당%' OR name ILIKE '%커버드콜%' OR name ILIKE '%월배당%')",
+        limit,
+      );
+    case 'kr-etf-bond':
+      return getByFilter(
+        "country = 'KR' AND asset_type = 'etf' AND (name ILIKE '%채권%' OR name ILIKE '%국채%' OR name ILIKE '%회사채%' OR name ILIKE '%CD금리%' OR name ILIKE '%머니마켓%')",
+        limit,
+      );
+    case 'kr-etf-leverage':
+      return getByFilter(
+        "country = 'KR' AND asset_type = 'etf' AND (name ILIKE '%레버리지%' OR name ILIKE '%인버스%')",
+        limit,
+      );
+    case 'kr-etf-kodex':
+      return getByFilter("country = 'KR' AND asset_type = 'etf' AND name ILIKE 'KODEX%'", limit);
+    case 'kr-etf-tiger':
+      return getByFilter("country = 'KR' AND asset_type = 'etf' AND name ILIKE 'TIGER%'", limit);
+    case 'kr-etf-ace':
+      return getByFilter("country = 'KR' AND asset_type = 'etf' AND name ILIKE 'ACE%'", limit);
+    case 'kr-etf-kiwoom':
+      return getByFilter("country = 'KR' AND asset_type = 'etf' AND name ILIKE 'KIWOOM%'", limit);
     case 'kospi':
       return getByFilter("market = 'KOSPI' AND asset_type = 'stock'", limit);
     case 'kosdaq':
