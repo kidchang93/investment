@@ -1037,10 +1037,10 @@ export function App(): JSX.Element {
   }, [selectedInstrument?.id, snapshot?.price]);
   const marketSession = useMemo(() => getMarketSession(selectedInstrument), [quoteRefreshAt, selectedInstrument]);
   const previousClose = snapshot ? snapshot.price - snapshot.change : undefined;
-  const dayRangePosition =
-    snapshot && snapshot.high > snapshot.low
-      ? Math.min(100, Math.max(0, ((snapshot.price - snapshot.low) / (snapshot.high - snapshot.low)) * 100))
-      : 50;
+  const dayRangePosition = snapshot ? getRangePosition(snapshot.price, snapshot.low, snapshot.high) : null;
+  const openChange = snapshot ? snapshot.price - snapshot.open : undefined;
+  const openChangeRate =
+    snapshot && snapshot.open !== 0 && openChange !== undefined ? (openChange / snapshot.open) * 100 : undefined;
   const watchedIds = useMemo(() => new Set(watchlist.map((item) => item.id)), [watchlist]);
   const bottomPanelClass = `bottom-panel bottom-panel--${bottomDockMode}`;
   const comparisonItems = useMemo(() => {
@@ -1552,6 +1552,15 @@ export function App(): JSX.Element {
                   {formatSignedPrice(snapshot.change)} ({formatRate(snapshot.changeRate)})
                 </span>
               )}
+              {snapshot && (
+                <div className="quote-header__price-context">
+                  <em data-tone={snapshot.price >= snapshot.open ? 'up' : 'down'}>
+                    시가대비 {openChange !== undefined ? formatSignedPrice(openChange) : '-'}
+                    {openChangeRate !== undefined ? ` (${formatRate(openChangeRate)})` : ''}
+                  </em>
+                  {dayRangePosition !== null && <em>범위 {Math.round(dayRangePosition)}%</em>}
+                </div>
+              )}
             </div>
             <div className="quote-stats">
               <div>
@@ -1602,7 +1611,7 @@ export function App(): JSX.Element {
                 </strong>
               </div>
               <div className="market-strip__range-track">
-                <span style={{ left: `${dayRangePosition}%` }} />
+                {dayRangePosition !== null && <span style={{ left: `${dayRangePosition}%` }} />}
               </div>
             </div>
             <div className="market-strip__item">

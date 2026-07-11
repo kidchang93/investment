@@ -744,6 +744,37 @@ button {
   font-size: 13px;
 }
 
+.quote-header__price-context {
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.quote-header__price-context em {
+  padding: 2px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.quote-header__price-context em[data-tone='up'] {
+  border-color: rgba(229, 72, 77, 0.26);
+  background: rgba(229, 72, 77, 0.1);
+  color: #ff9b9f;
+}
+
+.quote-header__price-context em[data-tone='down'] {
+  border-color: rgba(59, 130, 246, 0.26);
+  background: rgba(59, 130, 246, 0.1);
+  color: #93c5fd;
+}
+
 .quote-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(72px, 1fr));
