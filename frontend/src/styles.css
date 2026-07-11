@@ -1573,6 +1573,31 @@ button {
   color: #8dbbff;
 }
 
+.watchlist__breadth {
+  display: flex;
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.watchlist__breadth span {
+  min-width: 3px;
+}
+
+.watchlist__breadth span[data-tone='up'] {
+  background: rgba(229, 72, 77, 0.72);
+}
+
+.watchlist__breadth span[data-tone='flat'] {
+  background: rgba(148, 163, 184, 0.32);
+}
+
+.watchlist__breadth span[data-tone='down'] {
+  background: rgba(59, 130, 246, 0.72);
+}
+
 .watchlist__summary-top {
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr);
@@ -1863,6 +1888,15 @@ button {
 .discover__breadth em[data-tone='down'] {
   border-color: rgba(59, 130, 246, 0.24);
   color: #93c5fd;
+}
+
+.discover__top {
+  display: block;
+  overflow: hidden;
+  max-width: 210px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .category-tabs {

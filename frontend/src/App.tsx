@@ -1073,6 +1073,7 @@ export function App(): JSX.Element {
     () => summarizeInstrumentMoves(watchlist, getSnapshotForInstrument),
     [quotesByCode, stream.trades, watchlist],
   );
+  const watchlistBreadthTotal = watchlistSummary.up + watchlistSummary.down + watchlistSummary.flat;
   const filteredWatchlist = useMemo(() => {
     const q = query.trim().toLowerCase();
     const grouped = watchlist.filter((item) => matchesWatchGroup(item, watchGroup));
@@ -1854,6 +1855,25 @@ export function App(): JSX.Element {
               <span>보합 {watchlistSummary.flat}</span>
               <span>대기 {watchlistSummary.waiting}</span>
             </div>
+            {watchlistBreadthTotal > 0 && (
+              <div
+                aria-label={`관심종목 상승 ${watchlistSummary.up}, 하락 ${watchlistSummary.down}, 보합 ${watchlistSummary.flat}`}
+                className="watchlist__breadth"
+              >
+                <span
+                  data-tone="up"
+                  style={{ flexBasis: `${(watchlistSummary.up / watchlistBreadthTotal) * 100}%` }}
+                />
+                <span
+                  data-tone="flat"
+                  style={{ flexBasis: `${(watchlistSummary.flat / watchlistBreadthTotal) * 100}%` }}
+                />
+                <span
+                  data-tone="down"
+                  style={{ flexBasis: `${(watchlistSummary.down / watchlistBreadthTotal) * 100}%` }}
+                />
+              </div>
+            )}
             <div className="watchlist__summary-top">
               <span>최대 변동</span>
               {watchlistSummary.topMover ? (
@@ -1989,6 +2009,13 @@ export function App(): JSX.Element {
                   <em>보합 {categorySummary.flat}</em>
                   <em>대기 {categorySummary.waiting}</em>
                 </div>
+                <span className="discover__top">
+                  {categorySummary.topMover
+                    ? `최대 변동 ${categorySummary.topMover.instrument.name} ${formatRate(
+                        categorySummary.topMover.snapshot.changeRate,
+                      )}`
+                    : '최대 변동 -'}
+                </span>
               </div>
             </div>
             <div className="category-tabs">
