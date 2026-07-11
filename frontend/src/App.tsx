@@ -16,7 +16,7 @@ import {
   searchInstruments,
 } from './api';
 import { useStream } from './useStream';
-import { Chart, type ChartCommand, type ChartCommandType } from './Chart';
+import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } from './Chart';
 import type {
   Candle,
   CandlesResponse,
@@ -502,6 +502,7 @@ export function App(): JSX.Element {
   const [isWatchlistCollapsed, setIsWatchlistCollapsed] = useState(() =>
     readStoredBoolean('watchlistCollapsed', false),
   );
+  const [hoveredChartReadout, setHoveredChartReadout] = useState<ChartReadout | null>(null);
   const [bottomDockTab, setBottomDockTab] = useState<BottomDockTab>(() =>
     readStoredValue('bottomDockTab', 'volume', ['volume', 'trades', 'news']),
   );
@@ -522,6 +523,7 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('watchlistCollapsed', isWatchlistCollapsed), [isWatchlistCollapsed]);
   useEffect(() => writeStoredValue('bottomDockTab', bottomDockTab), [bottomDockTab]);
   useEffect(() => writeStoredValue('activeSavedWatchlistId', activeSavedWatchlistId), [activeSavedWatchlistId]);
+  useEffect(() => setHoveredChartReadout(null), [range, selectedInstrument?.id, timeframe]);
 
   useEffect(() => {
     fetchWatchlists()
@@ -725,6 +727,19 @@ export function App(): JSX.Element {
   const selectedQuote = selectedInstrument ? quotesByCode[selectedInstrument.id] : undefined;
   const snapshot = toSnapshot(selectedTrade, selectedQuote);
   const selectedColor = signColor(snapshot?.sign);
+  const activeChartReadout = hoveredChartReadout ?? (
+    snapshot
+      ? {
+          date: formatTradeTime(snapshot.time),
+          open: snapshot.open,
+          high: snapshot.high,
+          low: snapshot.low,
+          close: snapshot.price,
+          volume: snapshot.accVolume,
+          color: selectedColor,
+        }
+      : null
+  );
   const marketSession = useMemo(() => getMarketSession(selectedInstrument), [quoteRefreshAt, selectedInstrument]);
   const previousClose = snapshot ? snapshot.price - snapshot.change : undefined;
   const dayRangePosition =
@@ -1074,10 +1089,14 @@ export function App(): JSX.Element {
           <div className="chart-frame">
             <div className="chart-readout">
               <strong>{selectedName || '-'}</strong>
-              <span>O {snapshot ? formatPrice(snapshot.open) : '-'}</span>
-              <span>H {snapshot ? formatPrice(snapshot.high) : '-'}</span>
-              <span>L {snapshot ? formatPrice(snapshot.low) : '-'}</span>
-              <span>C {snapshot ? formatPrice(snapshot.price) : '-'}</span>
+              <span>{activeChartReadout ? activeChartReadout.date : '-'}</span>
+              <span>O {activeChartReadout ? formatPrice(activeChartReadout.open) : '-'}</span>
+              <span>H {activeChartReadout ? formatPrice(activeChartReadout.high) : '-'}</span>
+              <span>L {activeChartReadout ? formatPrice(activeChartReadout.low) : '-'}</span>
+              <span style={{ color: activeChartReadout?.color }}>
+                C {activeChartReadout ? formatPrice(activeChartReadout.close) : '-'}
+              </span>
+              <span>V {activeChartReadout ? formatVolume(activeChartReadout.volume) : '-'}</span>
               <span>{TOOL_OPTIONS.find((tool) => tool.key === activeTool)?.title}</span>
             </div>
             {selectedInstrument && chartCandles.length > 0 ? (
@@ -1090,6 +1109,7 @@ export function App(): JSX.Element {
                 command={chartCommand}
                 showMovingAverage={showMovingAverage}
                 showRsi={showRsi}
+                onReadoutChange={setHoveredChartReadout}
               />
             ) : (
               <div className="chart-panel__empty">

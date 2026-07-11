@@ -25,9 +25,7 @@ interface LatestPrice {
   accVolume: number;
 }
 
-interface CrosshairReadout {
-  x: number;
-  y: number;
+export interface ChartReadout {
   date: string;
   open: number;
   high: number;
@@ -35,6 +33,11 @@ interface CrosshairReadout {
   close: number;
   volume: number;
   color: string;
+}
+
+interface CrosshairReadout extends ChartReadout {
+  x: number;
+  y: number;
 }
 
 interface RsiPoint {
@@ -67,6 +70,8 @@ interface ChartProps {
   showMovingAverage?: boolean;
   /** RSI 보조지표 표시 여부 */
   showRsi?: boolean;
+  /** crosshair가 가리키는 캔들의 readout 값 */
+  onReadoutChange?: (readout: ChartReadout | null) => void;
 }
 
 function toCandlestickData(c: Candle): CandlestickData {
@@ -217,6 +222,7 @@ export function Chart({
   command,
   showMovingAverage = false,
   showRsi = false,
+  onReadoutChange,
 }: ChartProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -225,6 +231,7 @@ export function Chart({
   const ma5Ref = useRef<ISeriesApi<'Line'> | null>(null);
   const ma20Ref = useRef<ISeriesApi<'Line'> | null>(null);
   const priceLineRef = useRef<IPriceLine | null>(null);
+  const onReadoutChangeRef = useRef(onReadoutChange);
   // 실시간 갱신 시 "오늘 캔들"의 time을 알아야 한다. 마지막 일봉 time을 기준으로 잡는다.
   const lastTimeRef = useRef<UTCTimestamp | null>(null);
   const [crosshair, setCrosshair] = useState<CrosshairReadout | null>(null);
@@ -232,6 +239,10 @@ export function Chart({
   const rsiPoints = useMemo(() => calculateRsiPoints(candles), [candles]);
   const rsiPath = rsiPoints.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ');
   const latestRsi = rsiPoints.at(-1)?.value;
+
+  useEffect(() => {
+    onReadoutChangeRef.current = onReadoutChange;
+  }, [onReadoutChange]);
 
   // 차트 생성 (마운트 시 1회) + 리사이즈 대응
   useEffect(() => {
@@ -322,16 +333,19 @@ export function Chart({
     chart.subscribeCrosshairMove((param) => {
       if (!param.point || !param.time || param.point.x < 0 || param.point.y < 0) {
         setCrosshair(null);
+        onReadoutChangeRef.current?.(null);
         return;
       }
       if (param.point.x > container.clientWidth || param.point.y > container.clientHeight) {
         setCrosshair(null);
+        onReadoutChangeRef.current?.(null);
         return;
       }
 
       const candle = param.seriesData.get(series) as CandlestickData | undefined;
       if (!candle) {
         setCrosshair(null);
+        onReadoutChangeRef.current?.(null);
         return;
       }
 
@@ -340,9 +354,7 @@ export function Chart({
       const tooltipHeight = 156;
       const x = Math.min(param.point.x + 16, Math.max(12, container.clientWidth - tooltipWidth - 12));
       const y = Math.min(param.point.y + 16, Math.max(12, container.clientHeight - tooltipHeight - 12));
-      setCrosshair({
-        x,
-        y,
+      const readout = {
         date: formatChartTime(param.time),
         open: candle.open,
         high: candle.high,
@@ -350,10 +362,17 @@ export function Chart({
         close: candle.close,
         volume: Number(volumeData?.value ?? 0),
         color: candle.close >= candle.open ? '#e5484d' : '#3b82f6',
+      };
+      setCrosshair({
+        x,
+        y,
+        ...readout,
       });
+      onReadoutChangeRef.current?.(readout);
     });
 
     return () => {
+      onReadoutChangeRef.current?.(null);
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
