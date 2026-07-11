@@ -1227,12 +1227,19 @@ export function App(): JSX.Element {
               </div>
               <div className="trade-tape__rows">
                 {tapeTrades.map((trade, index) => (
-                  <div className="trade-tape__row" key={`${trade.code}-${trade.date}-${trade.time}-${index}`}>
-                    <span>{formatTradeTime(trade.time)}</span>
+                  <div
+                    className="trade-tape__row"
+                    data-move={moveTone(trade.sign)}
+                    key={`${trade.code}-${trade.date}-${trade.time}-${index}`}
+                  >
+                    <span className="trade-tape__time">{formatTradeTime(trade.time)}</span>
+                    <span className="trade-tape__move">{moveTone(trade.sign) === 'up' ? '상승' : moveTone(trade.sign) === 'down' ? '하락' : '보합'}</span>
                     <strong>{instrumentNameByProviderSymbol.get(trade.code) ?? trade.code}</strong>
                     <em style={{ color: signColor(trade.sign) }}>{formatPrice(trade.price)}</em>
                     <span>{formatSignedPrice(trade.change)}</span>
+                    <span>{formatRate(trade.changeRate)}</span>
                     <span>{formatVolume(trade.volume)}</span>
+                    <span>{formatVolume(trade.accVolume)}</span>
                   </div>
                 ))}
                 {tapeTrades.length === 0 && (
