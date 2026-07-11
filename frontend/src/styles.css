@@ -1223,7 +1223,7 @@ button {
 
 .volume-panel {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   min-height: 76px;
   padding: 9px 12px;
@@ -1231,7 +1231,7 @@ button {
   background: #0b0f17;
 }
 
-.volume-panel div {
+.volume-panel > div {
   display: grid;
   align-content: center;
   min-width: 0;
@@ -1254,6 +1254,38 @@ button {
   color: var(--text);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
+}
+
+.volume-panel__split {
+  gap: 4px;
+}
+
+.volume-panel__split-track {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  margin-top: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.volume-panel__split-track span {
+  min-width: 3px;
+}
+
+.volume-panel__split-track span[data-tone='up'] {
+  background: rgba(229, 72, 77, 0.7);
+}
+
+.volume-panel__split-track span[data-tone='flat'] {
+  background: rgba(148, 163, 184, 0.28);
+}
+
+.volume-panel__split-track span[data-tone='down'] {
+  background: rgba(59, 130, 246, 0.72);
 }
 
 .trade-tape {

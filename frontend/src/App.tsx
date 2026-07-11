@@ -957,6 +957,15 @@ export function App(): JSX.Element {
   const volumeSummary = useMemo(() => {
     const candlesWithVolume = chartCandles.filter((candle) => Number.isFinite(candle.volume ?? NaN));
     const total = candlesWithVolume.reduce((sum, candle) => sum + (candle.volume ?? 0), 0);
+    const upVolume = candlesWithVolume.reduce(
+      (sum, candle) => sum + (candle.close > candle.open ? candle.volume ?? 0 : 0),
+      0,
+    );
+    const downVolume = candlesWithVolume.reduce(
+      (sum, candle) => sum + (candle.close < candle.open ? candle.volume ?? 0 : 0),
+      0,
+    );
+    const flatVolume = Math.max(0, total - upVolume - downVolume);
     const max = candlesWithVolume.reduce<Candle | undefined>(
       (winner, candle) => (!winner || (candle.volume ?? 0) > (winner.volume ?? 0) ? candle : winner),
       undefined,
@@ -965,9 +974,14 @@ export function App(): JSX.Element {
       count: candlesWithVolume.length,
       total,
       average: candlesWithVolume.length ? total / candlesWithVolume.length : undefined,
+      upVolume,
+      downVolume,
+      flatVolume,
       max,
     };
   }, [chartCandles]);
+  const volumeUpRatio = volumeSummary.total > 0 ? (volumeSummary.upVolume / volumeSummary.total) * 100 : 0;
+  const volumeDownRatio = volumeSummary.total > 0 ? (volumeSummary.downVolume / volumeSummary.total) * 100 : 0;
   const selectedName = selectedInstrument?.name ?? '';
   const selectedQuote = selectedInstrument ? quotesByCode[selectedInstrument.id] : undefined;
   const snapshot = toSnapshot(selectedTrade, selectedQuote);
@@ -1755,6 +1769,27 @@ export function App(): JSX.Element {
               <div>
                 <span>최대 거래량 시점</span>
                 <strong>{volumeSummary.max ? formatCandleDate(volumeSummary.max.time, timeframe !== '1D') : '-'}</strong>
+              </div>
+              <div className="volume-panel__split">
+                <span>상승/하락 거래량</span>
+                <strong>
+                  {volumeSummary.count ? `${Math.round(volumeUpRatio)}% / ${Math.round(volumeDownRatio)}%` : '-'}
+                </strong>
+                {volumeSummary.total > 0 && (
+                  <div
+                    className="volume-panel__split-track"
+                    aria-label={`상승 거래량 ${formatVolume(volumeSummary.upVolume)}, 하락 거래량 ${formatVolume(
+                      volumeSummary.downVolume,
+                    )}, 보합 거래량 ${formatVolume(volumeSummary.flatVolume)}`}
+                  >
+                    <span data-tone="up" style={{ flexBasis: `${volumeUpRatio}%` }} />
+                    <span
+                      data-tone="flat"
+                      style={{ flexBasis: `${(volumeSummary.flatVolume / volumeSummary.total) * 100}%` }}
+                    />
+                    <span data-tone="down" style={{ flexBasis: `${volumeDownRatio}%` }} />
+                  </div>
+                )}
               </div>
             </section>
           )}
