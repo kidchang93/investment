@@ -1004,6 +1004,66 @@ button {
   order: -1;
 }
 
+.watchlist__summary {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px 0;
+}
+
+.watchlist__summary-counts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.watchlist__summary-counts span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 26px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: #090d14;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.watchlist__summary-counts span[data-tone='up'] {
+  color: #ff9b9f;
+}
+
+.watchlist__summary-counts span[data-tone='down'] {
+  color: #8dbbff;
+}
+
+.watchlist__summary-top {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  border-radius: 5px;
+  background: rgba(9, 13, 20, 0.72);
+  gap: 8px;
+}
+
+.watchlist__summary-top span {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.watchlist__summary-top strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .watchlist__saved-groups {
   display: flex;
   gap: 5px;

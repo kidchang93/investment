@@ -749,6 +749,46 @@ export function App(): JSX.Element {
       ? Math.min(100, Math.max(0, ((snapshot.price - snapshot.low) / (snapshot.high - snapshot.low)) * 100))
       : 50;
   const watchedIds = useMemo(() => new Set(watchlist.map((item) => item.id)), [watchlist]);
+  const watchlistSummary = useMemo(() => {
+    const summary: {
+      up: number;
+      down: number;
+      flat: number;
+      waiting: number;
+      topMover?: { instrument: Instrument; snapshot: PriceSnapshot };
+    } = {
+      up: 0,
+      down: 0,
+      flat: 0,
+      waiting: 0,
+    };
+    let topMoveRate = -1;
+
+    for (const instrument of watchlist) {
+      const itemSnapshot = toSnapshot(
+        instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined,
+        quotesByCode[instrument.id],
+      );
+
+      if (!itemSnapshot) {
+        summary.waiting += 1;
+        continue;
+      }
+
+      const tone = moveTone(itemSnapshot.sign);
+      if (tone === 'up') summary.up += 1;
+      else if (tone === 'down') summary.down += 1;
+      else summary.flat += 1;
+
+      const moveRate = Math.abs(itemSnapshot.changeRate);
+      if (moveRate > topMoveRate) {
+        topMoveRate = moveRate;
+        summary.topMover = { instrument, snapshot: itemSnapshot };
+      }
+    }
+
+    return summary;
+  }, [quotesByCode, stream.trades, watchlist]);
   const getSnapshotForInstrument = (instrument: Instrument): PriceSnapshot | undefined =>
     toSnapshot(
       instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined,
@@ -1223,6 +1263,24 @@ export function App(): JSX.Element {
             >
               {isWatchlistCollapsed ? '‹' : '›'}
             </button>
+          </div>
+          <div className="watchlist__summary" aria-label="관심종목 요약">
+            <div className="watchlist__summary-counts">
+              <span data-tone="up">상승 {watchlistSummary.up}</span>
+              <span data-tone="down">하락 {watchlistSummary.down}</span>
+              <span>보합 {watchlistSummary.flat}</span>
+              <span>대기 {watchlistSummary.waiting}</span>
+            </div>
+            <div className="watchlist__summary-top">
+              <span>최대 변동</span>
+              {watchlistSummary.topMover ? (
+                <strong style={{ color: signColor(watchlistSummary.topMover.snapshot.sign) }}>
+                  {watchlistSummary.topMover.instrument.name} {formatRate(watchlistSummary.topMover.snapshot.changeRate)}
+                </strong>
+              ) : (
+                <strong>-</strong>
+              )}
+            </div>
           </div>
           <div className="watchlist__saved-groups" role="tablist" aria-label="저장 관심그룹">
             {savedWatchlists.map((group) => (
