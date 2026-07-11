@@ -548,6 +548,7 @@ export function App(): JSX.Element {
   const [query, setQuery] = useState('');
   const [symbolQuery, setSymbolQuery] = useState('');
   const [symbolResults, setSymbolResults] = useState<Instrument[]>([]);
+  const [activeSymbolResultIndex, setActiveSymbolResultIndex] = useState(0);
   const [range, setRange] = useState<RangeKey>(() =>
     readStoredValue('range', '3M', RANGE_OPTIONS.map((option) => option.key)),
   );
@@ -743,11 +744,15 @@ export function App(): JSX.Element {
     const q = symbolQuery.trim();
     if (q.length < 2) {
       setSymbolResults([]);
+      setActiveSymbolResultIndex(0);
       return;
     }
     const timer = window.setTimeout(() => {
       searchInstruments(q)
-        .then(setSymbolResults)
+        .then((items) => {
+          setSymbolResults(items);
+          setActiveSymbolResultIndex(0);
+        })
         .catch((e) => setError(String(e)));
     }, 200);
     return () => window.clearTimeout(timer);
@@ -1210,22 +1215,53 @@ export function App(): JSX.Element {
               <input
                 aria-label="국내/해외 종목 검색"
                 onChange={(event) => setSymbolQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    setSymbolResults([]);
+                    setActiveSymbolResultIndex(0);
+                    return;
+                  }
+                  if (symbolResults.length === 0) return;
+                  if (event.key === 'ArrowDown') {
+                    event.preventDefault();
+                    setActiveSymbolResultIndex((index) => (index + 1) % symbolResults.length);
+                    return;
+                  }
+                  if (event.key === 'ArrowUp') {
+                    event.preventDefault();
+                    setActiveSymbolResultIndex((index) => (index - 1 + symbolResults.length) % symbolResults.length);
+                    return;
+                  }
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    const instrument = symbolResults[activeSymbolResultIndex] ?? symbolResults[0];
+                    selectInstrument(instrument);
+                    setSymbolQuery('');
+                    setSymbolResults([]);
+                    setActiveSymbolResultIndex(0);
+                  }
+                }}
                 placeholder="종목 검색: 삼성전자, AAPL, TSLA"
                 type="search"
                 value={symbolQuery}
               />
               {symbolResults.length > 0 && (
                 <div className="symbol-search__results">
-                  {symbolResults.map((instrument) => {
+                  {symbolResults.map((instrument, index) => {
                     const resultSnapshot = toSnapshot(undefined, quotesByCode[instrument.id]);
                     return (
-                      <div className="symbol-search__result" key={instrument.id}>
+                      <div
+                        className="symbol-search__result"
+                        data-active={index === activeSymbolResultIndex}
+                        key={instrument.id}
+                      >
                         <button
                           className="symbol-search__select"
                           onClick={() => {
                             selectInstrument(instrument);
                             setSymbolQuery('');
                             setSymbolResults([]);
+                            setActiveSymbolResultIndex(0);
                           }}
                           type="button"
                         >

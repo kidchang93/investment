@@ -343,8 +343,13 @@ button {
 }
 
 .symbol-search__result:hover,
+.symbol-search__result[data-active='true'],
 .symbol-search__select:hover {
   background: var(--panel-2);
+}
+
+.symbol-search__result[data-active='true'] {
+  box-shadow: inset 2px 0 0 var(--focus);
 }
 
 .symbol-search__select strong,
