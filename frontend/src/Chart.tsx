@@ -60,6 +60,8 @@ interface ChartProps {
   liveTrade?: Trade;
   /** 현재가 라인과 가격 배지를 그릴 최신 가격 */
   latestPrice?: LatestPrice;
+  /** 전일종가 기준선 */
+  previousClose?: number;
   /** 일봉 차트일 때 최신 가격으로 마지막 캔들을 갱신한다. */
   updateLastCandle?: boolean;
   /** 분봉 차트는 시간까지 표시한다. */
@@ -219,6 +221,7 @@ export function Chart({
   candles,
   liveTrade,
   latestPrice,
+  previousClose,
   updateLastCandle = true,
   timeVisible = false,
   command,
@@ -458,6 +461,18 @@ export function Chart({
     if (!latestPrice || !showPriceLevels) return;
 
     priceLevelLinesRef.current = [
+      ...(Number.isFinite(previousClose)
+        ? [
+            series.createPriceLine({
+              price: previousClose as number,
+              color: 'rgba(148, 163, 184, 0.68)',
+              lineWidth: 1,
+              lineStyle: LineStyle.Dashed,
+              axisLabelVisible: true,
+              title: '전일',
+            }),
+          ]
+        : []),
       series.createPriceLine({
         price: latestPrice.high,
         color: 'rgba(229, 72, 77, 0.72)',
@@ -483,7 +498,7 @@ export function Chart({
         title: '저가',
       }),
     ];
-  }, [latestPrice, showPriceLevels]);
+  }, [latestPrice, previousClose, showPriceLevels]);
 
   // 실시간 체결 반영: 마지막 캔들(오늘)의 OHLC 갱신
   useEffect(() => {

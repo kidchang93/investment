@@ -1105,7 +1105,7 @@ export function App(): JSX.Element {
               <button
                 aria-pressed={showPriceLevels}
                 onClick={() => setShowPriceLevels((value) => !value)}
-                title="시가/고가/저가 기준선 표시"
+                title="전일종가/시가/고가/저가 기준선 표시"
                 type="button"
               >
                 레벨
@@ -1331,6 +1331,7 @@ export function App(): JSX.Element {
               <Chart
                 candles={chartCandles}
                 latestPrice={snapshot}
+                previousClose={previousClose}
                 liveTrade={timeframe === '1D' ? selectedTrade : undefined}
                 timeVisible={timeframe !== '1D'}
                 updateLastCandle={timeframe === '1D'}
