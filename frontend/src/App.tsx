@@ -127,6 +127,7 @@ const TOOL_OPTIONS: Array<{ key: ChartTool; label: string; title: string }> = [
 const OVERSEAS_REFRESH_MS = 5_000;
 const LIST_QUOTE_REFRESH_MS = 15_000;
 const QUOTE_STALE_MS = LIST_QUOTE_REFRESH_MS * 2;
+const TRADE_STALE_MS = 10_000;
 const MAX_LIST_QUOTE_TARGETS = 30;
 const CATEGORY_QUOTE_TARGETS = 20;
 const SEARCH_QUOTE_TARGETS = 10;
@@ -274,6 +275,17 @@ function formatClock(ms: number | null): string {
     second: '2-digit',
     hour12: false,
   }).format(new Date(ms));
+}
+
+function tradeTimestampMs(trade: Trade | undefined): number | null {
+  if (!trade || !/^\d{8}$/.test(trade.date) || !/^\d{6}$/.test(trade.time)) return null;
+  const y = Number(trade.date.slice(0, 4));
+  const m = Number(trade.date.slice(4, 6));
+  const d = Number(trade.date.slice(6, 8));
+  const hh = Number(trade.time.slice(0, 2));
+  const mm = Number(trade.time.slice(2, 4));
+  const ss = Number(trade.time.slice(4, 6));
+  return new Date(y, m - 1, d, hh, mm, ss).getTime();
 }
 
 function formatCandleDate(seconds: number, withTime: boolean): string {
@@ -992,6 +1004,12 @@ export function App(): JSX.Element {
   const quoteFreshnessTone = quoteLagMs === null ? 'waiting' : quoteLagMs > QUOTE_STALE_MS ? 'stale' : 'fresh';
   const quoteFreshnessLabel =
     quoteLagMs === null ? 'REST 대기' : `REST ${Math.floor(quoteLagMs / 1000)}초 전`;
+  const latestTradeMs = tradeTimestampMs(stream.recentTrades[0]);
+  const tradeLagMs = latestTradeMs ? Math.max(0, nowMs - latestTradeMs) : null;
+  const tradeFreshnessTone =
+    tradeLagMs === null ? 'waiting' : tradeLagMs > TRADE_STALE_MS ? 'stale' : 'fresh';
+  const tradeFreshnessLabel =
+    tradeLagMs === null ? '체결 대기' : `체결 ${Math.floor(tradeLagMs / 1000)}초 전`;
   const activeChartReadout = hoveredChartReadout ?? (
     snapshot
       ? {
@@ -1292,6 +1310,7 @@ export function App(): JSX.Element {
         <div className="app__status">
           <span className="mode-chip">실전</span>
           <span className="freshness-chip" data-tone={quoteFreshnessTone}>{quoteFreshnessLabel}</span>
+          <span className="freshness-chip" data-tone={tradeFreshnessTone}>{tradeFreshnessLabel}</span>
           <button
             className="status-refresh"
             disabled={quoteTargetIds.length === 0 || isQuoteRefreshing}
