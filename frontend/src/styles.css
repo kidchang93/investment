@@ -133,6 +133,16 @@ button {
   min-width: 0;
 }
 
+.app.is-focus-mode .app__header,
+.app.is-focus-mode .tool-rail,
+.app.is-focus-mode .watchlist {
+  display: none;
+}
+
+.app.is-focus-mode .app__body {
+  height: 100%;
+}
+
 .tool-rail {
   display: flex;
   flex-direction: column;

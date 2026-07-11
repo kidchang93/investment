@@ -499,6 +499,7 @@ export function App(): JSX.Element {
   const [chartCommand, setChartCommand] = useState<ChartCommand | undefined>(undefined);
   const [showMovingAverage, setShowMovingAverage] = useState(() => readStoredBoolean('showMovingAverage', false));
   const [showRsi, setShowRsi] = useState(() => readStoredBoolean('showRsi', false));
+  const [isFocusMode, setIsFocusMode] = useState(() => readStoredBoolean('focusMode', false));
   const [isWatchlistCollapsed, setIsWatchlistCollapsed] = useState(() =>
     readStoredBoolean('watchlistCollapsed', false),
   );
@@ -520,6 +521,7 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('watchSort', watchSort), [watchSort]);
   useEffect(() => writeStoredValue('showMovingAverage', showMovingAverage), [showMovingAverage]);
   useEffect(() => writeStoredValue('showRsi', showRsi), [showRsi]);
+  useEffect(() => writeStoredValue('focusMode', isFocusMode), [isFocusMode]);
   useEffect(() => writeStoredValue('watchlistCollapsed', isWatchlistCollapsed), [isWatchlistCollapsed]);
   useEffect(() => writeStoredValue('bottomDockTab', bottomDockTab), [bottomDockTab]);
   useEffect(() => writeStoredValue('activeSavedWatchlistId', activeSavedWatchlistId), [activeSavedWatchlistId]);
@@ -856,7 +858,7 @@ export function App(): JSX.Element {
   }
 
   return (
-    <div className="app">
+    <div className={`app${isFocusMode ? ' is-focus-mode' : ''}`}>
       <header className="app__header">
         <div>
           <span className="app__eyebrow">조회 전용</span>
@@ -970,6 +972,14 @@ export function App(): JSX.Element {
                 type="button"
               >
                 RSI
+              </button>
+              <button
+                aria-pressed={isFocusMode}
+                onClick={() => setIsFocusMode((value) => !value)}
+                title={isFocusMode ? '집중 모드 해제' : '집중 모드'}
+                type="button"
+              >
+                집중
               </button>
               <button type="button">비교</button>
             </div>
