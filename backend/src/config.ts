@@ -15,6 +15,23 @@ function parsePort(raw: string | undefined): number {
   return port;
 }
 
+function normalizeAccountValue(raw: string): string {
+  return raw.replace(/[^0-9]/g, '');
+}
+
+function parseKisAccount(rawAccount: string | undefined, rawProductCode: string | undefined): {
+  cano: string;
+  productCode: string;
+} | null {
+  const account = normalizeAccountValue(rawAccount ?? '');
+  const productCode = normalizeAccountValue(rawProductCode ?? '');
+  if (account.length === 8 && productCode.length === 2) return { cano: account, productCode };
+  if (account.length >= 10) return { cano: account.slice(0, 8), productCode: account.slice(8, 10) };
+  return null;
+}
+
+const kisAccount = parseKisAccount(process.env.KIS_ACCOUNT_NO, process.env.KIS_ACCOUNT_PRODUCT_CODE);
+
 export const config = {
   /** 'vts'(모의) | 'prod'(실전) */
   env: (isProd ? 'prod' : 'vts') as 'prod' | 'vts',
@@ -30,6 +47,7 @@ export const config = {
     : 'ws://ops.koreainvestment.com:31000',
   port: parsePort(process.env.PORT),
   databaseUrl: process.env.DATABASE_URL ?? 'postgresql://kis:kis_local@localhost:55432/kis',
+  kisAccount,
   /** 개인(P) / 법인(B). 개인 계정은 'P' */
   custType: 'P' as const,
 } as const;

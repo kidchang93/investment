@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 import { getAccessToken } from './auth.js';
-import type { Candle, CandlesResponse, Instrument, NewsItem, PriceSign, Quote } from '@invest/shared';
+import type { BrokerAccountSnapshot, BrokerPosition, Candle, CandlesResponse, Instrument, NewsItem, PriceSign, Quote } from '@invest/shared';
 
 /** KIS REST GET 공통 헬퍼. tr_id별로 헤더/인증을 채워 호출한다. */
 async function kisGet(
@@ -8,23 +8,37 @@ async function kisGet(
   trId: string,
   params: Record<string, string>,
 ): Promise<Record<string, unknown>> {
+  return (await kisGetWithHeaders(path, trId, params)).body;
+}
+
+async function kisGetWithHeaders(
+  path: string,
+  trId: string,
+  params: Record<string, string>,
+  trCont = '',
+): Promise<{ body: Record<string, unknown>; headers: Headers }> {
   const token = await getAccessToken();
   const url = new URL(config.restBase + path);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 
+  const headers: Record<string, string> = {
+    authorization: `Bearer ${token}`,
+    appkey: config.appKey,
+    appsecret: config.appSecret,
+    tr_id: trId,
+    custtype: config.custType,
+  };
+  if (trCont) headers.tr_cont = trCont;
+
   const res = await fetch(url, {
     headers: {
-      authorization: `Bearer ${token}`,
-      appkey: config.appKey,
-      appsecret: config.appSecret,
-      tr_id: trId,
-      custtype: config.custType,
+      ...headers,
     },
   });
   if (!res.ok) {
     throw new Error(`KIS GET ${path} 실패 (${res.status}): ${await res.text()}`);
   }
-  return (await res.json()) as Record<string, unknown>;
+  return { body: (await res.json()) as Record<string, unknown>, headers: res.headers };
 }
 
 function yyyymmdd(d: Date): string {
@@ -35,7 +49,7 @@ function yyyymmdd(d: Date): string {
 }
 
 function toNumber(value: string | undefined): number {
-  return Number(value);
+  return Number(value?.replace(/,/g, ''));
 }
 
 function isPositiveFinite(value: number): boolean {
@@ -64,6 +78,10 @@ function requireNumber(value: string | undefined, field: string): number {
 function optionalNumber(value: string | undefined): number | null {
   const n = toNumber(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function maskKisAccount(cano: string, productCode: string): string {
+  return `****${cano.slice(-4)}-${productCode}`;
 }
 
 /**
@@ -266,6 +284,82 @@ export async function getInstrumentQuote(instrument: Instrument): Promise<Quote>
   return getOverseasQuote(instrument);
 }
 
+export async function getKisDomesticAccountSnapshot(): Promise<BrokerAccountSnapshot> {
+  const account = config.kisAccount;
+  if (!account) {
+    return {
+      broker: 'kis',
+      configured: false,
+      accountLabel: 'KIS 계좌 미설정',
+      baseCurrency: 'KRW',
+      positions: [],
+      message: 'KIS_ACCOUNT_NO 또는 KIS_ACCOUNT_NO/KIS_ACCOUNT_PRODUCT_CODE 환경 변수가 필요합니다.',
+    };
+  }
+
+  const trId = config.env === 'prod' ? 'TTTC8434R' : 'VTTC8434R';
+  const positions: BrokerPosition[] = [];
+  let summary: Record<string, string> = {};
+  let fk100 = '';
+  let nk100 = '';
+  let trCont = '';
+
+  for (let depth = 0; depth < 10; depth += 1) {
+    const { body, headers } = await kisGetWithHeaders(
+      '/uapi/domestic-stock/v1/trading/inquire-balance',
+      trId,
+      {
+        CANO: account.cano,
+        ACNT_PRDT_CD: account.productCode,
+        AFHR_FLPR_YN: 'N',
+        OFL_YN: '',
+        INQR_DVSN: '01',
+        UNPR_DVSN: '01',
+        FUND_STTL_ICLD_YN: 'N',
+        FNCG_AMT_AUTO_RDPT_YN: 'N',
+        PRCS_DVSN: '00',
+        CTX_AREA_FK100: fk100,
+        CTX_AREA_NK100: nk100,
+      },
+      trCont,
+    );
+
+    if (body.rt_cd && body.rt_cd !== '0') {
+      throw new Error(`KIS 주식잔고조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
+    }
+
+    const output1 = Array.isArray(body.output1) ? (body.output1 as Array<Record<string, string>>) : [];
+    const output2 = Array.isArray(body.output2)
+      ? (body.output2 as Array<Record<string, string>>)
+      : body.output2 && typeof body.output2 === 'object'
+        ? [body.output2 as Record<string, string>]
+        : [];
+
+    positions.push(...output1.map(rowToBrokerPosition).filter((position) => position.quantity > 0));
+    summary = output2[0] ?? summary;
+
+    trCont = headers.get('tr_cont') ?? '';
+    fk100 = String(body.ctx_area_fk100 ?? '');
+    nk100 = String(body.ctx_area_nk100 ?? '');
+    if (trCont !== 'M' && trCont !== 'F') break;
+  }
+
+  return {
+    broker: 'kis',
+    configured: true,
+    accountLabel: maskKisAccount(account.cano, account.productCode),
+    baseCurrency: 'KRW',
+    cashBalance: firstNumber(summary, ['dnca_tot_amt', 'nxdy_excc_amt']) ?? 0,
+    totalEvaluation: firstNumber(summary, ['tot_evlu_amt']),
+    stockEvaluation: firstNumber(summary, ['scts_evlu_amt']),
+    purchaseAmount: firstNumber(summary, ['pchs_amt_smtl_amt']),
+    unrealizedPnl: firstNumber(summary, ['evlu_pfls_smtl_amt']),
+    unrealizedPnlRate: firstNumber(summary, ['asst_icdc_erng_rt', 'evlu_erng_rt']),
+    positions,
+    updatedAt: Date.now(),
+  };
+}
+
 export async function getInstrumentIntradayCandles(instrument: Instrument): Promise<CandlesResponse> {
   if (instrument.country === 'KR') return getDomesticIntradayCandles(instrument);
   return getOverseasIntradayCandles(instrument);
@@ -274,6 +368,29 @@ export async function getInstrumentIntradayCandles(instrument: Instrument): Prom
 export async function getInstrumentNews(instrument: Instrument): Promise<NewsItem[]> {
   if (instrument.country === 'KR') return getDomesticNews(instrument);
   return getOverseasNews(instrument);
+}
+
+function firstNumber(row: Record<string, string>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = optionalNumber(row[key]);
+    if (value !== null) return value;
+  }
+  return undefined;
+}
+
+function rowToBrokerPosition(row: Record<string, string>): BrokerPosition {
+  return {
+    symbol: row.pdno ?? '',
+    name: row.prdt_name ?? row.prdt_name_abrv ?? row.pdno ?? '',
+    quantity: optionalNumber(row.hldg_qty) ?? 0,
+    averagePrice: optionalNumber(row.pchs_avg_pric) ?? 0,
+    currentPrice: optionalNumber(row.prpr) ?? undefined,
+    purchaseAmount: optionalNumber(row.pchs_amt) ?? undefined,
+    marketValue: optionalNumber(row.evlu_amt) ?? undefined,
+    unrealizedPnl: optionalNumber(row.evlu_pfls_amt) ?? undefined,
+    unrealizedPnlRate: optionalNumber(row.evlu_pfls_rt) ?? undefined,
+    currency: 'KRW',
+  };
 }
 
 async function getDomesticNews(instrument: Instrument): Promise<NewsItem[]> {

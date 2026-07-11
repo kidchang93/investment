@@ -1,5 +1,6 @@
 import { API_BASE } from './config';
 import type {
+  BrokerAccountSnapshot,
   CandlesResponse,
   CreateOrderRequest,
   CreateOrderResponse,
@@ -33,6 +34,12 @@ export async function fetchQuote(code: string): Promise<Quote> {
 export async function fetchTradingOverview(): Promise<TradingOverview> {
   const res = await fetch(`${API_BASE}/api/trading/overview`);
   if (!res.ok) throw new Error(`매매 개요 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchKisAccountSnapshot(): Promise<BrokerAccountSnapshot> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/account`);
+  if (!res.ok) throw new Error(`KIS 계좌 조회 실패: ${res.status}`);
   return res.json();
 }
 

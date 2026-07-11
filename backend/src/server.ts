@@ -27,6 +27,7 @@ import {
   getInstrumentIntradayCandles,
   getInstrumentNews,
   getInstrumentQuote,
+  getKisDomesticAccountSnapshot,
   getQuote,
 } from './kis/rest.js';
 import { KisRealtime } from './kis/realtime.js';
@@ -61,6 +62,10 @@ async function main(): Promise<void> {
 
   app.get('/api/trading/overview', async () => {
     return getTradingOverview();
+  });
+
+  app.get('/api/broker/kis/account', async () => {
+    return getKisDomesticAccountSnapshot();
   });
 
   app.post<{ Body: Partial<CreateOrderRequest> }>('/api/trading/orders', async (req, reply) => {

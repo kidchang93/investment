@@ -209,6 +209,37 @@ export interface TradingOverview {
   recentFills: TradingFill[];
 }
 
+/** KIS 실계좌 조회 상태. 계좌번호 원문은 서버 밖으로 내보내지 않는다. */
+export interface BrokerAccountSnapshot {
+  broker: 'kis';
+  configured: boolean;
+  accountLabel: string;
+  baseCurrency: string;
+  cashBalance?: number;
+  totalEvaluation?: number;
+  stockEvaluation?: number;
+  purchaseAmount?: number;
+  unrealizedPnl?: number;
+  unrealizedPnlRate?: number;
+  positions: BrokerPosition[];
+  updatedAt?: number;
+  message?: string;
+}
+
+/** KIS 실계좌 보유 종목. 원본 KIS 필드는 backend/src/kis에서만 해석한다. */
+export interface BrokerPosition {
+  symbol: string;
+  name: string;
+  quantity: number;
+  averagePrice: number;
+  currentPrice?: number;
+  purchaseAmount?: number;
+  marketValue?: number;
+  unrealizedPnl?: number;
+  unrealizedPnlRate?: number;
+  currency: string;
+}
+
 export interface CreateOrderRequest {
   accountId: string;
   instrumentId: string;

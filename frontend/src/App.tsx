@@ -4,6 +4,7 @@ import {
   createOrder,
   createWatchlist,
   deleteWatchlist,
+  fetchKisAccountSnapshot,
   fetchCategoryInstruments,
   fetchInstrumentCandles,
   fetchInstrumentCategories,
@@ -20,6 +21,7 @@ import {
 import { useStream } from './useStream';
 import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } from './Chart';
 import type {
+  BrokerAccountSnapshot,
   Candle,
   CandlesResponse,
   Instrument,
@@ -729,6 +731,8 @@ export function App(): JSX.Element {
     readStoredValue('sidePanelTab', 'watch', SIDE_PANEL_OPTIONS.map((option) => option.key)),
   );
   const [tradingOverview, setTradingOverview] = useState<TradingOverview | null>(null);
+  const [kisAccountSnapshot, setKisAccountSnapshot] = useState<BrokerAccountSnapshot | null>(null);
+  const [isKisAccountRefreshing, setIsKisAccountRefreshing] = useState(false);
   const [orderSide, setOrderSide] = useState<OrderSide>('buy');
   const [orderType, setOrderType] = useState<OrderType>('market');
   const [orderTimeInForce, setOrderTimeInForce] = useState<OrderTimeInForce>('day');
@@ -862,6 +866,18 @@ export function App(): JSX.Element {
       .then(setTradingOverview)
       .catch((e) => setError(String(e)));
   }, []);
+
+  const refreshKisAccountSnapshot = useCallback((): void => {
+    setIsKisAccountRefreshing(true);
+    fetchKisAccountSnapshot()
+      .then(setKisAccountSnapshot)
+      .catch((e) => setError(String(e)))
+      .finally(() => setIsKisAccountRefreshing(false));
+  }, []);
+
+  useEffect(() => {
+    refreshKisAccountSnapshot();
+  }, [refreshKisAccountSnapshot]);
 
   useEffect(() => {
     fetchCategoryInstruments(activeCategory)
@@ -1467,6 +1483,15 @@ export function App(): JSX.Element {
     Boolean(selectedInstrument && activeTradingAccount && orderRiskMessages.length === 0 && orderEstimatedPrice) &&
     !isOrderSubmitting;
   const portfolioPositionCount = tradingOverview?.positions.length ?? 0;
+  const kisAccountPositionCount = kisAccountSnapshot?.positions.length ?? 0;
+  const kisAccountPnlTone =
+    kisAccountSnapshot?.unrealizedPnl === undefined
+      ? 'flat'
+      : kisAccountSnapshot.unrealizedPnl > 0
+        ? 'up'
+        : kisAccountSnapshot.unrealizedPnl < 0
+          ? 'down'
+          : 'flat';
   const portfolioMarketValue = useMemo(
     () =>
       tradingOverview?.positions.reduce((total, position) => {
@@ -2495,6 +2520,77 @@ export function App(): JSX.Element {
 
           {activePage === 'portfolio' && (
             <section className="portfolio-page" aria-label="포트폴리오">
+              <section className="portfolio-card portfolio-card--wide" aria-label="KIS 실계좌 조회">
+                <div className="portfolio-card__header">
+                  <div>
+                    <strong>KIS 실계좌</strong>
+                    <span>
+                      {kisAccountSnapshot?.accountLabel ?? '조회 대기'} ·{' '}
+                      {kisAccountSnapshot?.updatedAt ? `갱신 ${formatClock(kisAccountSnapshot.updatedAt)}` : '미갱신'}
+                    </span>
+                  </div>
+                  <button
+                    className="portfolio-card__refresh"
+                    disabled={isKisAccountRefreshing}
+                    onClick={refreshKisAccountSnapshot}
+                    type="button"
+                  >
+                    {isKisAccountRefreshing ? '조회 중' : '새로고침'}
+                  </button>
+                </div>
+                {kisAccountSnapshot?.configured ? (
+                  <>
+                    <div className="portfolio-page__metrics portfolio-page__metrics--broker">
+                      <div>
+                        <span>예수금</span>
+                        <strong>{formatMoney(kisAccountSnapshot.cashBalance, kisAccountSnapshot.baseCurrency)}</strong>
+                      </div>
+                      <div>
+                        <span>총 평가</span>
+                        <strong>{formatMoney(kisAccountSnapshot.totalEvaluation, kisAccountSnapshot.baseCurrency)}</strong>
+                      </div>
+                      <div>
+                        <span>주식 평가</span>
+                        <strong>{formatMoney(kisAccountSnapshot.stockEvaluation, kisAccountSnapshot.baseCurrency)}</strong>
+                      </div>
+                      <div>
+                        <span>평가 손익</span>
+                        <strong data-tone={kisAccountPnlTone}>
+                          {formatMoney(kisAccountSnapshot.unrealizedPnl, kisAccountSnapshot.baseCurrency)}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>보유 종목</span>
+                        <strong>{kisAccountPositionCount}개</strong>
+                      </div>
+                    </div>
+                    <div className="portfolio-table portfolio-table--positions">
+                      <div className="portfolio-table__head">
+                        <span>종목</span>
+                        <span>수량</span>
+                        <span>평균단가</span>
+                        <span>현재가</span>
+                        <span>평가손익</span>
+                      </div>
+                      {kisAccountSnapshot.positions.slice(0, 16).map((position) => (
+                        <div className="portfolio-table__row" key={position.symbol}>
+                          <strong>{position.symbol}</strong>
+                          <span>{formatNumber(position.quantity)}</span>
+                          <span>{formatMoney(position.averagePrice, position.currency)}</span>
+                          <span>{formatMoney(position.currentPrice, position.currency)}</span>
+                          <span>{formatMoney(position.unrealizedPnl, position.currency)}</span>
+                        </div>
+                      ))}
+                      {kisAccountPositionCount === 0 && <div className="portfolio-table__empty">실계좌 보유 종목 없음</div>}
+                    </div>
+                  </>
+                ) : (
+                  <div className="portfolio-table__empty">
+                    {kisAccountSnapshot?.message ?? 'KIS 계좌 조회 설정을 확인하는 중입니다'}
+                  </div>
+                )}
+              </section>
+
               <div className="portfolio-page__metrics">
                 <div>
                   <span>현금</span>
