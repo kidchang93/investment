@@ -1201,9 +1201,9 @@ export function App(): JSX.Element {
                   </button>
                 ))}
               </div>
-              <button onClick={() => runChartCommand('fit')} title="전체 차트 맞춤" type="button">맞춤</button>
-              <button onClick={() => runChartCommand('zoomIn')} title="차트 확대" type="button">+</button>
-              <button onClick={() => runChartCommand('zoomOut')} title="차트 축소" type="button">−</button>
+              <button onClick={() => runChartCommand('fit')} title="전체 차트 맞춤 (F)" type="button">맞춤</button>
+              <button onClick={() => runChartCommand('zoomIn')} title="차트 확대 (+)" type="button">+</button>
+              <button onClick={() => runChartCommand('zoomOut')} title="차트 축소 (-)" type="button">−</button>
               <button
                 aria-pressed={showMovingAverage}
                 onClick={() => setShowMovingAverage((value) => !value)}
@@ -1231,7 +1231,7 @@ export function App(): JSX.Element {
               <button
                 aria-pressed={isFocusMode}
                 onClick={() => setIsFocusMode((value) => !value)}
-                title={isFocusMode ? '집중 모드 해제' : '집중 모드'}
+                title={isFocusMode ? '집중 모드 해제 (Esc)' : '집중 모드'}
                 type="button"
               >
                 집중
@@ -1239,7 +1239,7 @@ export function App(): JSX.Element {
               <button
                 aria-pressed={showComparePanel}
                 onClick={() => setShowComparePanel((value) => !value)}
-                title="최근/관심 종목 비교"
+                title="최근/관심 종목 비교 (C)"
                 type="button"
               >
                 비교
@@ -1594,6 +1594,7 @@ export function App(): JSX.Element {
                   key={option.key}
                   onClick={() => setBottomDockMode(option.key)}
                   role="tab"
+                  title={option.key === 'hidden' ? `${option.label} (B)` : option.label}
                   type="button"
                 >
                   {option.label}
@@ -1612,7 +1613,7 @@ export function App(): JSX.Element {
               aria-label={isWatchlistCollapsed ? '관심종목 펼치기' : '관심종목 접기'}
               className="watchlist__collapse"
               onClick={() => setIsWatchlistCollapsed((value) => !value)}
-              title={isWatchlistCollapsed ? '관심종목 펼치기' : '관심종목 접기'}
+              title={isWatchlistCollapsed ? '관심종목 펼치기 (W)' : '관심종목 접기 (W)'}
               type="button"
             >
               {isWatchlistCollapsed ? '‹' : '›'}
