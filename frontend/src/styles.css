@@ -387,6 +387,70 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+.comparison-strip {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  background: #0b1018;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.comparison-strip__label {
+  flex-shrink: 0;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.comparison-strip button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 190px;
+  max-width: 260px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: rgba(9, 13, 20, 0.78);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.comparison-strip button:hover {
+  border-color: rgba(245, 196, 81, 0.34);
+  background: var(--panel-2);
+}
+
+.comparison-strip strong,
+.comparison-strip span,
+.comparison-strip em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comparison-strip strong {
+  color: var(--text);
+}
+
+.comparison-strip em {
+  justify-self: end;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.comparison-strip p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .chart-commandbar__actions button,
 .bottom-dock button {
   display: inline-flex;

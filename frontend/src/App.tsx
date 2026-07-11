@@ -549,6 +549,7 @@ export function App(): JSX.Element {
   const [showMovingAverage, setShowMovingAverage] = useState(() => readStoredBoolean('showMovingAverage', false));
   const [showRsi, setShowRsi] = useState(() => readStoredBoolean('showRsi', false));
   const [showPriceLevels, setShowPriceLevels] = useState(() => readStoredBoolean('showPriceLevels', false));
+  const [showComparePanel, setShowComparePanel] = useState(() => readStoredBoolean('showComparePanel', false));
   const [isFocusMode, setIsFocusMode] = useState(() => readStoredBoolean('focusMode', false));
   const [isWatchlistCollapsed, setIsWatchlistCollapsed] = useState(() =>
     readStoredBoolean('watchlistCollapsed', false),
@@ -575,6 +576,7 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('showMovingAverage', showMovingAverage), [showMovingAverage]);
   useEffect(() => writeStoredValue('showRsi', showRsi), [showRsi]);
   useEffect(() => writeStoredValue('showPriceLevels', showPriceLevels), [showPriceLevels]);
+  useEffect(() => writeStoredValue('showComparePanel', showComparePanel), [showComparePanel]);
   useEffect(() => writeStoredValue('focusMode', isFocusMode), [isFocusMode]);
   useEffect(() => writeStoredValue('watchlistCollapsed', isWatchlistCollapsed), [isWatchlistCollapsed]);
   useEffect(() => writeStoredValue('bottomDockTab', bottomDockTab), [bottomDockTab]);
@@ -819,6 +821,18 @@ export function App(): JSX.Element {
       : 50;
   const watchedIds = useMemo(() => new Set(watchlist.map((item) => item.id)), [watchlist]);
   const bottomPanelClass = `bottom-panel bottom-panel--${bottomDockMode}`;
+  const comparisonItems = useMemo(() => {
+    const seen = new Set<string>();
+    const candidates: Instrument[] = [];
+
+    for (const instrument of [...recentInstruments, ...watchlist]) {
+      if (instrument.id === selectedInstrument?.id || seen.has(instrument.id)) continue;
+      seen.add(instrument.id);
+      candidates.push(instrument);
+    }
+
+    return candidates.slice(0, 6);
+  }, [recentInstruments, selectedInstrument?.id, watchlist]);
   const watchlistSummary = useMemo(() => {
     const summary: {
       up: number;
@@ -1104,7 +1118,14 @@ export function App(): JSX.Element {
               >
                 집중
               </button>
-              <button type="button">비교</button>
+              <button
+                aria-pressed={showComparePanel}
+                onClick={() => setShowComparePanel((value) => !value)}
+                title="최근/관심 종목 비교"
+                type="button"
+              >
+                비교
+              </button>
             </div>
           </div>
 
@@ -1134,6 +1155,37 @@ export function App(): JSX.Element {
                   </button>
                 );
               })}
+            </div>
+          )}
+
+          {showComparePanel && (
+            <div className="comparison-strip" aria-label="종목 비교">
+              <span className="comparison-strip__label">비교</span>
+              {comparisonItems.map((instrument) => {
+                const comparisonSnapshot = toSnapshot(
+                  instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined,
+                  quotesByCode[instrument.id],
+                );
+                return (
+                  <button
+                    key={instrument.id}
+                    onClick={() => selectInstrument(instrument)}
+                    title={`${instrument.name} ${marketLabel(instrument)}`}
+                    type="button"
+                  >
+                    <strong>{instrument.symbol}</strong>
+                    <span>{instrument.name}</span>
+                    <em style={{ color: signColor(comparisonSnapshot?.sign) }}>
+                      {comparisonSnapshot
+                        ? `${formatPrice(comparisonSnapshot.price)} · ${formatRate(comparisonSnapshot.changeRate)}`
+                        : '-'}
+                    </em>
+                  </button>
+                );
+              })}
+              {comparisonItems.length === 0 && (
+                <p>최근 종목이나 관심종목을 선택하면 비교할 수 있습니다</p>
+              )}
             </div>
           )}
 
