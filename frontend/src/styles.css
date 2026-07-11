@@ -927,9 +927,32 @@ button {
 }
 
 .chart-toolbar__meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  min-width: 0;
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
+}
+
+.chart-toolbar__meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chart-toolbar__meta em {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border: 1px solid rgba(245, 196, 81, 0.28);
+  border-radius: 999px;
+  background: rgba(245, 196, 81, 0.1);
+  color: var(--focus);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.3;
 }
 
 .chart-frame {

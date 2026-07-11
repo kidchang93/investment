@@ -1064,6 +1064,13 @@ export function App(): JSX.Element {
     if (showComparePanel) badges.push('비교');
     return badges;
   }, [bottomDockMode, isFocusMode, isWatchlistCollapsed, showComparePanel]);
+  const chartOverlayBadges = useMemo(() => {
+    const badges: string[] = [];
+    if (showMovingAverage) badges.push('MA');
+    if (showRsi) badges.push('RSI');
+    if (showPriceLevels) badges.push('레벨');
+    return badges;
+  }, [showMovingAverage, showPriceLevels, showRsi]);
   const getSnapshotForInstrument = (instrument: Instrument): PriceSnapshot | undefined =>
     toSnapshot(
       instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined,
@@ -1634,13 +1641,18 @@ export function App(): JSX.Element {
                 </button>
               ))}
             </div>
-            <span className="chart-toolbar__meta">
-              {chartCandles.length
-                ? `${chartCandles.length}개 ${activeTimeframe.label}`
-                : timeframe === '1D'
-                  ? '데이터 대기'
-                  : '실시간 분봉 대기'}
-            </span>
+            <div className="chart-toolbar__meta">
+              <span>
+                {chartCandles.length
+                  ? `${chartCandles.length}개 ${activeTimeframe.label}`
+                  : timeframe === '1D'
+                    ? '데이터 대기'
+                    : '실시간 분봉 대기'}
+              </span>
+              {chartOverlayBadges.map((badge) => (
+                <em key={badge}>{badge}</em>
+              ))}
+            </div>
           </div>
 
           <div className="chart-frame" data-tool={activeTool}>
