@@ -1788,6 +1788,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   padding: 12px 14px 8px;
 }
 
@@ -1798,6 +1799,42 @@ button {
 .discover__header span {
   color: var(--muted);
   font-size: 11px;
+}
+
+.discover__meta {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  min-width: 0;
+}
+
+.discover__breadth {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.discover__breadth em {
+  padding: 1px 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.discover__breadth em[data-tone='up'] {
+  border-color: rgba(229, 72, 77, 0.24);
+  color: #ff9b9f;
+}
+
+.discover__breadth em[data-tone='down'] {
+  border-color: rgba(59, 130, 246, 0.24);
+  color: #93c5fd;
 }
 
 .category-tabs {

@@ -60,6 +60,14 @@ interface MarketSession {
   localTime: string;
 }
 
+interface MoveSummary {
+  up: number;
+  down: number;
+  flat: number;
+  waiting: number;
+  topMover?: { instrument: Instrument; snapshot: PriceSnapshot };
+}
+
 const RANGE_OPTIONS: Array<{ key: RangeKey; label: string; days?: number }> = [
   { key: '1M', label: '1개월', days: 31 },
   { key: '3M', label: '3개월', days: 93 },
@@ -190,6 +198,41 @@ function moveTone(sign?: PriceSign): 'up' | 'down' | 'flat' {
   if (sign === '1' || sign === '2') return 'up';
   if (sign === '4' || sign === '5') return 'down';
   return 'flat';
+}
+
+function summarizeInstrumentMoves(
+  instruments: Instrument[],
+  getSnapshot: (instrument: Instrument) => PriceSnapshot | undefined,
+): MoveSummary {
+  const summary: MoveSummary = {
+    up: 0,
+    down: 0,
+    flat: 0,
+    waiting: 0,
+  };
+  let topMoveRate = -1;
+
+  for (const instrument of instruments) {
+    const itemSnapshot = getSnapshot(instrument);
+
+    if (!itemSnapshot) {
+      summary.waiting += 1;
+      continue;
+    }
+
+    const tone = moveTone(itemSnapshot.sign);
+    if (tone === 'up') summary.up += 1;
+    else if (tone === 'down') summary.down += 1;
+    else summary.flat += 1;
+
+    const moveRate = Math.abs(itemSnapshot.changeRate);
+    if (moveRate > topMoveRate) {
+      topMoveRate = moveRate;
+      summary.topMover = { instrument, snapshot: itemSnapshot };
+    }
+  }
+
+  return summary;
 }
 
 function formatPrice(n: number): string {
@@ -1019,51 +1062,15 @@ export function App(): JSX.Element {
     if (showComparePanel) badges.push('비교');
     return badges;
   }, [bottomDockMode, isFocusMode, isWatchlistCollapsed, showComparePanel]);
-  const watchlistSummary = useMemo(() => {
-    const summary: {
-      up: number;
-      down: number;
-      flat: number;
-      waiting: number;
-      topMover?: { instrument: Instrument; snapshot: PriceSnapshot };
-    } = {
-      up: 0,
-      down: 0,
-      flat: 0,
-      waiting: 0,
-    };
-    let topMoveRate = -1;
-
-    for (const instrument of watchlist) {
-      const itemSnapshot = toSnapshot(
-        instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined,
-        quotesByCode[instrument.id],
-      );
-
-      if (!itemSnapshot) {
-        summary.waiting += 1;
-        continue;
-      }
-
-      const tone = moveTone(itemSnapshot.sign);
-      if (tone === 'up') summary.up += 1;
-      else if (tone === 'down') summary.down += 1;
-      else summary.flat += 1;
-
-      const moveRate = Math.abs(itemSnapshot.changeRate);
-      if (moveRate > topMoveRate) {
-        topMoveRate = moveRate;
-        summary.topMover = { instrument, snapshot: itemSnapshot };
-      }
-    }
-
-    return summary;
-  }, [quotesByCode, stream.trades, watchlist]);
   const getSnapshotForInstrument = (instrument: Instrument): PriceSnapshot | undefined =>
     toSnapshot(
       instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined,
       quotesByCode[instrument.id],
     );
+  const watchlistSummary = useMemo(
+    () => summarizeInstrumentMoves(watchlist, getSnapshotForInstrument),
+    [quotesByCode, stream.trades, watchlist],
+  );
   const filteredWatchlist = useMemo(() => {
     const q = query.trim().toLowerCase();
     const grouped = watchlist.filter((item) => matchesWatchGroup(item, watchGroup));
@@ -1089,6 +1096,10 @@ export function App(): JSX.Element {
         getSnapshotForInstrument,
       ),
     [categoryItems, moveFilter, quotesByCode, stream.trades, watchSort],
+  );
+  const categorySummary = useMemo(
+    () => summarizeInstrumentMoves(visibleCategoryItems, getSnapshotForInstrument),
+    [quotesByCode, stream.trades, visibleCategoryItems],
   );
   const tapeTrades = useMemo(
     () =>
@@ -1954,7 +1965,15 @@ export function App(): JSX.Element {
           <div className="discover">
             <div className="discover__header">
               <strong>추천 리스트</strong>
-              <span>{visibleCategoryItems.length}개 · 탐색 후 + 추가</span>
+              <div className="discover__meta">
+                <span>{visibleCategoryItems.length}개 · 탐색 후 + 추가</span>
+                <div className="discover__breadth" aria-label="추천 리스트 등락 요약">
+                  <em data-tone="up">상승 {categorySummary.up}</em>
+                  <em data-tone="down">하락 {categorySummary.down}</em>
+                  <em>보합 {categorySummary.flat}</em>
+                  <em>대기 {categorySummary.waiting}</em>
+                </div>
+              </div>
             </div>
             <div className="category-tabs">
               {categories.map((category) => (
