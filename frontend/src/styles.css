@@ -214,6 +214,27 @@ button {
   font-size: 14px;
 }
 
+.layout-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.layout-state em {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--faint);
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
 .symbol-search {
   position: relative;
   flex: 0 1 360px;

@@ -844,6 +844,15 @@ export function App(): JSX.Element {
 
     return candidates.slice(0, 6);
   }, [recentInstruments, selectedInstrument?.id, watchlist]);
+  const layoutStateBadges = useMemo(() => {
+    const badges: string[] = [];
+    if (isFocusMode) badges.push('집중');
+    if (isWatchlistCollapsed && !isFocusMode) badges.push('관심 접힘');
+    if (bottomDockMode === 'hidden') badges.push('하단 숨김');
+    if (bottomDockMode === 'expanded') badges.push('하단 확장');
+    if (showComparePanel) badges.push('비교');
+    return badges;
+  }, [bottomDockMode, isFocusMode, isWatchlistCollapsed, showComparePanel]);
   const watchlistSummary = useMemo(() => {
     const summary: {
       up: number;
@@ -1070,6 +1079,13 @@ export function App(): JSX.Element {
               <span>{selectedInstrument?.country ?? '-'}</span>
               <strong>{selectedName || '-'}</strong>
               <small>{selectedInstrument ? marketLabel(selectedInstrument) : '-'}</small>
+              {layoutStateBadges.length > 0 && (
+                <div className="layout-state" aria-label="화면 상태">
+                  {layoutStateBadges.map((badge) => (
+                    <em key={badge}>{badge}</em>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="symbol-search">
               <input
