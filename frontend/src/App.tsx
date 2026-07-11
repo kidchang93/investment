@@ -1278,21 +1278,21 @@ export function App(): JSX.Element {
               onClick={() => selectBottomDockTab('volume')}
               type="button"
             >
-              거래량
+              거래량 <small>{volumeSummary.count || '-'}</small>
             </button>
             <button
               aria-selected={bottomDockTab === 'trades' && bottomDockMode !== 'hidden'}
               onClick={() => selectBottomDockTab('trades')}
               type="button"
             >
-              체결
+              체결 <small>{tapeTrades.length}</small>
             </button>
             <button
               aria-selected={bottomDockTab === 'news' && bottomDockMode !== 'hidden'}
               onClick={() => selectBottomDockTab('news')}
               type="button"
             >
-              뉴스
+              뉴스 <small>{selectedNews.length}</small>
             </button>
             <div className="bottom-dock__modes" role="tablist" aria-label="하단 패널 높이">
               {BOTTOM_DOCK_MODE_OPTIONS.map((option) => (
@@ -1307,7 +1307,7 @@ export function App(): JSX.Element {
                 </button>
               ))}
             </div>
-            <span>조회 전용 세션 · 시세 갱신 {formatClock(quoteRefreshAt)}</span>
+            <span className="bottom-dock__status">조회 전용 세션 · 시세 갱신 {formatClock(quoteRefreshAt)}</span>
           </div>
         </main>
 
