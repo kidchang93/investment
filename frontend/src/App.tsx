@@ -38,6 +38,7 @@ type SessionTone = 'open' | 'pre' | 'closed';
 type WatchGroup = 'all' | 'kr' | 'global' | 'fund';
 type BottomDockTab = 'volume' | 'trades' | 'news';
 type BottomDockMode = 'hidden' | 'normal' | 'expanded';
+type LayoutPreset = 'balanced' | 'chart' | 'reading';
 
 interface PriceSnapshot {
   price: number;
@@ -98,6 +99,12 @@ const BOTTOM_DOCK_MODE_OPTIONS: Array<{ key: BottomDockMode; label: string }> = 
   { key: 'hidden', label: '숨김' },
   { key: 'normal', label: '기본' },
   { key: 'expanded', label: '확장' },
+];
+
+const LAYOUT_PRESET_OPTIONS: Array<{ key: LayoutPreset; label: string; title: string }> = [
+  { key: 'balanced', label: '균형', title: '기본 균형 레이아웃' },
+  { key: 'chart', label: '차트', title: '차트 중심 레이아웃' },
+  { key: 'reading', label: '리딩', title: '뉴스/체결 리딩 레이아웃' },
 ];
 
 const TOOL_OPTIONS: Array<{ key: ChartTool; label: string; title: string }> = [
@@ -551,6 +558,9 @@ export function App(): JSX.Element {
   const [showPriceLevels, setShowPriceLevels] = useState(() => readStoredBoolean('showPriceLevels', false));
   const [showComparePanel, setShowComparePanel] = useState(() => readStoredBoolean('showComparePanel', false));
   const [isFocusMode, setIsFocusMode] = useState(() => readStoredBoolean('focusMode', false));
+  const [layoutPreset, setLayoutPreset] = useState<LayoutPreset>(() =>
+    readStoredValue('layoutPreset', 'balanced', LAYOUT_PRESET_OPTIONS.map((option) => option.key)),
+  );
   const [isWatchlistCollapsed, setIsWatchlistCollapsed] = useState(() =>
     readStoredBoolean('watchlistCollapsed', false),
   );
@@ -578,6 +588,7 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('showPriceLevels', showPriceLevels), [showPriceLevels]);
   useEffect(() => writeStoredValue('showComparePanel', showComparePanel), [showComparePanel]);
   useEffect(() => writeStoredValue('focusMode', isFocusMode), [isFocusMode]);
+  useEffect(() => writeStoredValue('layoutPreset', layoutPreset), [layoutPreset]);
   useEffect(() => writeStoredValue('watchlistCollapsed', isWatchlistCollapsed), [isWatchlistCollapsed]);
   useEffect(() => writeStoredValue('bottomDockTab', bottomDockTab), [bottomDockTab]);
   useEffect(() => writeStoredValue('bottomDockMode', bottomDockMode), [bottomDockMode]);
@@ -986,6 +997,31 @@ export function App(): JSX.Element {
     if (bottomDockMode === 'hidden') setBottomDockMode('normal');
   }
 
+  function applyLayoutPreset(preset: LayoutPreset): void {
+    setLayoutPreset(preset);
+
+    if (preset === 'chart') {
+      setIsFocusMode(true);
+      setIsWatchlistCollapsed(true);
+      setBottomDockMode('hidden');
+      setShowComparePanel(false);
+      return;
+    }
+
+    if (preset === 'reading') {
+      setIsFocusMode(false);
+      setIsWatchlistCollapsed(false);
+      setBottomDockMode('expanded');
+      setShowComparePanel(true);
+      return;
+    }
+
+    setIsFocusMode(false);
+    setIsWatchlistCollapsed(false);
+    setBottomDockMode('normal');
+    setShowComparePanel(false);
+  }
+
   return (
     <div className={`app${isFocusMode ? ' is-focus-mode' : ''}`}>
       <header className="app__header">
@@ -1083,6 +1119,20 @@ export function App(): JSX.Element {
               )}
             </div>
             <div className="chart-commandbar__actions">
+              <div className="layout-presets" role="tablist" aria-label="레이아웃 프리셋">
+                {LAYOUT_PRESET_OPTIONS.map((option) => (
+                  <button
+                    aria-selected={layoutPreset === option.key}
+                    key={option.key}
+                    onClick={() => applyLayoutPreset(option.key)}
+                    role="tab"
+                    title={option.title}
+                    type="button"
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
               <button onClick={() => runChartCommand('fit')} title="전체 차트 맞춤" type="button">맞춤</button>
               <button onClick={() => runChartCommand('zoomIn')} title="차트 확대" type="button">+</button>
               <button onClick={() => runChartCommand('zoomOut')} title="차트 축소" type="button">−</button>

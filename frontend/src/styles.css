@@ -323,6 +323,19 @@ button {
   overflow-x: auto;
 }
 
+.layout-presets {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 3px;
+  padding-right: 6px;
+  border-right: 1px solid var(--border);
+}
+
+.layout-presets button {
+  padding: 0 8px;
+}
+
 .recent-symbols {
   display: flex;
   align-items: center;
@@ -487,6 +500,7 @@ button {
 
 .chart-commandbar__actions button:hover,
 .chart-commandbar__actions button[aria-pressed='true'],
+.layout-presets button[aria-selected='true'],
 .bottom-dock button:hover,
 .bottom-dock button[aria-selected='true'] {
   background: var(--panel-2);
@@ -494,7 +508,8 @@ button {
   color: var(--text);
 }
 
-.chart-commandbar__actions button[aria-pressed='true'] {
+.chart-commandbar__actions button[aria-pressed='true'],
+.layout-presets button[aria-selected='true'] {
   color: var(--focus);
 }
 
