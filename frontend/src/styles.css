@@ -33,7 +33,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -604,6 +605,50 @@ button {
   border-color: rgba(245, 196, 81, 0.75);
 }
 
+.watchlist__tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: 7px;
+  padding: 0 12px 10px;
+}
+
+.watchlist__segments {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  min-width: 0;
+}
+
+.watchlist__segments button,
+.watchlist__tools select {
+  height: 28px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: #090d14;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.watchlist__segments button {
+  cursor: pointer;
+}
+
+.watchlist__segments button:hover,
+.watchlist__segments button[aria-selected='true'] {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.watchlist__tools select {
+  min-width: 0;
+  padding: 0 7px;
+  outline: none;
+}
+
+.watchlist__tools select:focus {
+  border-color: rgba(245, 196, 81, 0.75);
+}
+
 .watchlist__rows {
   overflow-y: auto;
   min-height: 0;
@@ -692,6 +737,49 @@ button {
 .instrument-row.active {
   background: rgba(229, 72, 77, 0.09);
   box-shadow: inset 3px 0 0 var(--up);
+}
+
+.instrument-row[data-move='up'] {
+  box-shadow: inset 2px 0 0 rgba(229, 72, 77, 0.52);
+}
+
+.instrument-row[data-move='down'] {
+  box-shadow: inset 2px 0 0 rgba(59, 130, 246, 0.52);
+}
+
+.instrument-row.active[data-move='up'],
+.instrument-row.active[data-move='down'] {
+  box-shadow: inset 3px 0 0 var(--up);
+}
+
+.instrument-row.active[data-move='down'] {
+  box-shadow: inset 3px 0 0 var(--down);
+}
+
+.instrument-row.is-flashing[data-move='up'] {
+  animation: row-flash-up 520ms ease-out;
+}
+
+.instrument-row.is-flashing[data-move='down'] {
+  animation: row-flash-down 520ms ease-out;
+}
+
+@keyframes row-flash-up {
+  0% {
+    background: rgba(229, 72, 77, 0.2);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+@keyframes row-flash-down {
+  0% {
+    background: rgba(59, 130, 246, 0.2);
+  }
+  100% {
+    background: transparent;
+  }
 }
 
 .instrument-row__name {

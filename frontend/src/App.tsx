@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   addDefaultWatchlistItem,
   fetchCategoryInstruments,
@@ -25,6 +25,8 @@ import type {
 type RangeKey = '1M' | '3M' | '6M' | '1Y' | 'ALL';
 type TimeframeKey = '1' | '5' | '15' | '1D';
 type ChartTool = 'cursor' | 'crosshair' | 'trend' | 'measure' | 'text' | 'lock';
+type MoveFilter = 'all' | 'up' | 'down';
+type WatchSortKey = 'custom' | 'rate' | 'volume' | 'name';
 
 interface PriceSnapshot {
   price: number;
@@ -53,6 +55,19 @@ const TIMEFRAME_OPTIONS: Array<{ key: TimeframeKey; label: string; minutes?: num
   { key: '1D', label: '일봉' },
 ];
 
+const MOVE_FILTER_OPTIONS: Array<{ key: MoveFilter; label: string }> = [
+  { key: 'all', label: '전체' },
+  { key: 'up', label: '상승' },
+  { key: 'down', label: '하락' },
+];
+
+const WATCH_SORT_OPTIONS: Array<{ key: WatchSortKey; label: string }> = [
+  { key: 'custom', label: '기본순' },
+  { key: 'rate', label: '등락률순' },
+  { key: 'volume', label: '거래량순' },
+  { key: 'name', label: '이름순' },
+];
+
 const TOOL_OPTIONS: Array<{ key: ChartTool; label: string; title: string }> = [
   { key: 'cursor', label: '+', title: '커서' },
   { key: 'crosshair', label: 'X', title: '십자선' },
@@ -72,6 +87,12 @@ function signColor(sign?: PriceSign): string {
   if (sign === '1' || sign === '2') return '#e5484d';
   if (sign === '4' || sign === '5') return '#3b82f6';
   return '#c7ccd6';
+}
+
+function moveTone(sign?: PriceSign): 'up' | 'down' | 'flat' {
+  if (sign === '1' || sign === '2') return 'up';
+  if (sign === '4' || sign === '5') return 'down';
+  return 'flat';
 }
 
 function formatPrice(n: number): string {
@@ -114,6 +135,30 @@ function toSnapshot(trade: Trade | undefined, quote: Quote | undefined): PriceSn
   if (trade) return trade;
   if (quote) return quote;
   return undefined;
+}
+
+function sortBySnapshot(
+  items: Instrument[],
+  sortKey: WatchSortKey,
+  getSnapshot: (instrument: Instrument) => PriceSnapshot | undefined,
+): Instrument[] {
+  if (sortKey === 'custom') return items;
+  return [...items].sort((a, b) => {
+    const aSnapshot = getSnapshot(a);
+    const bSnapshot = getSnapshot(b);
+    if (sortKey === 'name') return a.name.localeCompare(b.name, 'ko-KR');
+    if (sortKey === 'rate') return (bSnapshot?.changeRate ?? -Infinity) - (aSnapshot?.changeRate ?? -Infinity);
+    return (bSnapshot?.accVolume ?? -Infinity) - (aSnapshot?.accVolume ?? -Infinity);
+  });
+}
+
+function filterByMove(
+  items: Instrument[],
+  filter: MoveFilter,
+  getSnapshot: (instrument: Instrument) => PriceSnapshot | undefined,
+): Instrument[] {
+  if (filter === 'all') return items;
+  return items.filter((item) => moveTone(getSnapshot(item)?.sign) === filter);
 }
 
 function filterCandles(candles: Candle[], range: RangeKey): Candle[] {
@@ -206,10 +251,28 @@ function InstrumentRow({
 }): JSX.Element {
   const snapshot = toSnapshot(trade, quote);
   const color = signColor(snapshot?.sign);
+  const tone = moveTone(snapshot?.sign);
+  const prevPriceRef = useRef<number | undefined>(snapshot?.price);
+  const [flashing, setFlashing] = useState(false);
+
+  useEffect(() => {
+    const price = snapshot?.price;
+    if (price === undefined) return;
+    if (prevPriceRef.current !== undefined && prevPriceRef.current !== price) {
+      setFlashing(true);
+      const timer = window.setTimeout(() => setFlashing(false), 520);
+      prevPriceRef.current = price;
+      return () => window.clearTimeout(timer);
+    }
+    prevPriceRef.current = price;
+    return undefined;
+  }, [snapshot?.price]);
+
   return (
     <button
-      className={`instrument-row${active ? ' active' : ''}`}
+      className={`instrument-row${active ? ' active' : ''}${flashing ? ' is-flashing' : ''}`}
       onClick={() => onSelect(instrument)}
+      data-move={tone}
       type="button"
     >
       <div className="instrument-row__name">
@@ -255,6 +318,8 @@ export function App(): JSX.Element {
   const [symbolResults, setSymbolResults] = useState<Instrument[]>([]);
   const [range, setRange] = useState<RangeKey>('3M');
   const [timeframe, setTimeframe] = useState<TimeframeKey>('1D');
+  const [moveFilter, setMoveFilter] = useState<MoveFilter>('all');
+  const [watchSort, setWatchSort] = useState<WatchSortKey>('custom');
   const [activeTool, setActiveTool] = useState<ChartTool>('crosshair');
   const [error, setError] = useState<string | null>(null);
   const [quoteRefreshAt, setQuoteRefreshAt] = useState<number | null>(null);
@@ -405,20 +470,40 @@ export function App(): JSX.Element {
     [activeTimeframe.minutes, timeframe, selectedIntradayCandles, visibleCandles],
   );
   const selectedName = selectedInstrument?.name ?? '';
-  const filteredWatchlist = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return watchlist;
-    return watchlist.filter(
-      (item) =>
-        item.name.toLowerCase().includes(q) ||
-        item.symbol.toLowerCase().includes(q) ||
-        (item.englishName?.toLowerCase().includes(q) ?? false),
-    );
-  }, [query, watchlist]);
   const selectedQuote = selectedInstrument ? quotesByCode[selectedInstrument.id] : undefined;
   const snapshot = toSnapshot(selectedTrade, selectedQuote);
   const selectedColor = signColor(snapshot?.sign);
   const watchedIds = useMemo(() => new Set(watchlist.map((item) => item.id)), [watchlist]);
+  const getSnapshotForInstrument = (instrument: Instrument): PriceSnapshot | undefined =>
+    toSnapshot(
+      instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined,
+      quotesByCode[instrument.id],
+    );
+  const filteredWatchlist = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const matched = q
+      ? watchlist.filter(
+          (item) =>
+            item.name.toLowerCase().includes(q) ||
+            item.symbol.toLowerCase().includes(q) ||
+            (item.englishName?.toLowerCase().includes(q) ?? false),
+        )
+      : watchlist;
+    return sortBySnapshot(
+      filterByMove(matched, moveFilter, getSnapshotForInstrument),
+      watchSort,
+      getSnapshotForInstrument,
+    );
+  }, [moveFilter, query, quotesByCode, stream.trades, watchSort, watchlist]);
+  const visibleCategoryItems = useMemo(
+    () =>
+      sortBySnapshot(
+        filterByMove(categoryItems, moveFilter, getSnapshotForInstrument),
+        watchSort === 'custom' ? 'rate' : watchSort,
+        getSnapshotForInstrument,
+      ),
+    [categoryItems, moveFilter, quotesByCode, stream.trades, watchSort],
+  );
 
   function selectInstrument(instrument: Instrument): void {
     setSelectedInstrument(instrument);
@@ -642,6 +727,32 @@ export function App(): JSX.Element {
             type="search"
             value={query}
           />
+          <div className="watchlist__tools">
+            <div className="watchlist__segments" role="tablist" aria-label="등락 필터">
+              {MOVE_FILTER_OPTIONS.map((option) => (
+                <button
+                  aria-selected={option.key === moveFilter}
+                  key={option.key}
+                  onClick={() => setMoveFilter(option.key)}
+                  role="tab"
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <select
+              aria-label="종목 정렬"
+              onChange={(event) => setWatchSort(event.target.value as WatchSortKey)}
+              value={watchSort}
+            >
+              {WATCH_SORT_OPTIONS.map((option) => (
+                <option key={option.key} value={option.key}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="watchlist__rows watchlist__rows--saved">
             {filteredWatchlist.map((instrument) => (
               <InstrumentRow
@@ -678,7 +789,7 @@ export function App(): JSX.Element {
               ))}
             </div>
             <div className="watchlist__rows">
-              {categoryItems.map((instrument) => (
+              {visibleCategoryItems.map((instrument) => (
                 <InstrumentRow
                   key={instrument.id}
                   instrument={instrument}
