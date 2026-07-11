@@ -33,24 +33,16 @@ import { KisRealtime } from './kis/realtime.js';
 import { WATCHLIST } from './watchlist.js';
 import type { CreateOrderRequest, ServerMessage, Trade, ConnectionStatus, Quote } from '@invest/shared';
 
-async function mapLimit<T, R>(
-  items: T[],
-  limit: number,
-  worker: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = [];
-  let nextIndex = 0;
+const BATCH_QUOTE_LIMIT = 360;
+const BATCH_QUOTE_DELAY_MS = 120;
+const QUOTE_CACHE_TTL_MS = 45_000;
 
-  async function run(): Promise<void> {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await worker(items[index]);
-    }
-  }
+const quoteCache = new Map<string, { quote: Quote; fetchedAt: number }>();
 
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run));
-  return results;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 async function main(): Promise<void> {
@@ -187,22 +179,36 @@ async function main(): Promise<void> {
   app.post<{ Body: { ids?: string[] } }>('/api/instruments/quotes', async (req, reply) => {
     if (!Array.isArray(req.body.ids)) return reply.code(400).send({ message: 'ids 배열이 필요합니다.' });
 
-    const ids = [...new Set(req.body.ids.filter((id) => typeof id === 'string' && id.length > 0))].slice(0, 30);
+    const ids = [...new Set(req.body.ids.filter((id) => typeof id === 'string' && id.length > 0))].slice(
+      0,
+      BATCH_QUOTE_LIMIT,
+    );
     if (ids.length === 0) return [];
 
-    const quotes = await mapLimit(ids, 4, async (id): Promise<Quote | null> => {
+    const quotes: Quote[] = [];
+    let remoteCallCount = 0;
+    for (const id of ids) {
+      const cached = quoteCache.get(id);
+      if (cached && Date.now() - cached.fetchedAt < QUOTE_CACHE_TTL_MS) {
+        quotes.push(cached.quote);
+        continue;
+      }
+
+      if (remoteCallCount > 0) await sleep(BATCH_QUOTE_DELAY_MS);
       const instrument = await getInstrument(id);
-      if (!instrument) return null;
+      if (!instrument) continue;
 
       try {
-        return await getInstrumentQuote(instrument);
+        const quote = await getInstrumentQuote(instrument);
+        quoteCache.set(id, { quote, fetchedAt: Date.now() });
+        quotes.push(quote);
+        remoteCallCount += 1;
       } catch (err) {
         req.log.warn({ err, instrumentId: id }, '종목 현재가 배치 조회 실패');
-        return null;
       }
-    });
+    }
 
-    return quotes.filter((quote): quote is Quote => quote !== null);
+    return quotes;
   });
 
   app.get<{ Params: { id: string } }>('/api/instruments/:id/candles', async (req, reply) => {

@@ -144,11 +144,12 @@ const SIDE_PANEL_OPTIONS: Array<{ key: SidePanelTab; label: string }> = [
 ];
 
 const OVERSEAS_REFRESH_MS = 5_000;
-const LIST_QUOTE_REFRESH_MS = 15_000;
+const LIST_QUOTE_REFRESH_MS = 60_000;
 const QUOTE_STALE_MS = LIST_QUOTE_REFRESH_MS * 2;
 const TRADE_STALE_MS = 10_000;
-const MAX_LIST_QUOTE_TARGETS = 30;
-const CATEGORY_QUOTE_TARGETS = 20;
+// 탐색 리스트는 전체 현재가를 선조회하지 않는다. 첫 화면과 스크롤로 보인 종목만 점진적으로 채운다.
+const LIST_QUOTE_REQUEST_CHUNK_SIZE = 8;
+const DISCOVER_INITIAL_QUOTE_TARGETS = 24;
 const SEARCH_QUOTE_TARGETS = 10;
 const RECENT_INSTRUMENT_LIMIT = 8;
 const STORAGE_PREFIX = 'investment-monitor:';
@@ -200,6 +201,10 @@ function readStoredInstruments(key: string): Instrument[] {
 
 function writeStoredJson(key: string, value: unknown): void {
   window.localStorage.setItem(`${STORAGE_PREFIX}${key}`, JSON.stringify(value));
+}
+
+function areStringArraysEqual(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((item, index) => item === b[index]);
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -667,6 +672,7 @@ export function App(): JSX.Element {
   const [activeCategory, setActiveCategory] = useState<string>('kr-all');
   const [categoryItems, setCategoryItems] = useState<Instrument[]>([]);
   const [selectedInstrument, setSelectedInstrument] = useState<Instrument | null>(null);
+  const [visibleCategoryQuoteIds, setVisibleCategoryQuoteIds] = useState<string[]>([]);
   const [recentInstruments, setRecentInstruments] = useState<Instrument[]>(() =>
     readStoredInstruments('recentInstruments'),
   );
@@ -734,6 +740,7 @@ export function App(): JSX.Element {
   const [isQuoteRefreshing, setIsQuoteRefreshing] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [intradayCandlesByCode, setIntradayCandlesByCode] = useState<Record<string, Candle[]>>({});
+  const discoverRowsRef = useRef<HTMLDivElement | null>(null);
   const selectedPriceRef = useRef<{ id?: string; price?: number }>({});
   const [isSelectedPriceFlashing, setIsSelectedPriceFlashing] = useState(false);
   const stream = useStream();
@@ -861,6 +868,10 @@ export function App(): JSX.Element {
       .catch((e) => setError(String(e)));
   }, [activeCategory]);
 
+  useEffect(() => {
+    setVisibleCategoryQuoteIds([]);
+  }, [activeCategory]);
+
   // 선택 종목의 일봉 로드 (한 번 받은 종목은 캐시)
   useEffect(() => {
     if (!selectedInstrument || candlesByCode[selectedInstrument.id]) return;
@@ -972,39 +983,50 @@ export function App(): JSX.Element {
     const ids = new Set<string>();
     const selectedOverseasId = selectedInstrument?.country !== 'KR' ? selectedInstrument?.id : undefined;
 
+    function addId(id: string): void {
+      if (id === selectedOverseasId) return;
+      ids.add(id);
+    }
+
     function add(instrument: Instrument): void {
-      if (instrument.id === selectedOverseasId) return;
-      ids.add(instrument.id);
+      addId(instrument.id);
     }
 
     if (selectedInstrument?.country === 'KR') add(selectedInstrument);
     for (const instrument of recentInstruments) add(instrument);
     for (const instrument of watchlist) add(instrument);
-    for (const instrument of categoryItems.slice(0, CATEGORY_QUOTE_TARGETS)) add(instrument);
+    if (sidePanelTab === 'discover') {
+      for (const instrument of categoryItems.slice(0, DISCOVER_INITIAL_QUOTE_TARGETS)) add(instrument);
+      for (const id of visibleCategoryQuoteIds) addId(id);
+    }
     for (const instrument of symbolResults.slice(0, SEARCH_QUOTE_TARGETS)) add(instrument);
-    return [...ids].slice(0, MAX_LIST_QUOTE_TARGETS);
-  }, [categoryItems, recentInstruments, selectedInstrument, symbolResults, watchlist]);
+    return [...ids];
+  }, [categoryItems, recentInstruments, selectedInstrument, sidePanelTab, symbolResults, visibleCategoryQuoteIds, watchlist]);
   const quoteTargetKey = quoteTargetIds.join('|');
   const refreshVisibleQuotes = useCallback(
     (respectVisibility = true, shouldApply: () => boolean = () => true): void => {
       if (quoteTargetIds.length === 0 || (respectVisibility && document.hidden)) return;
       setIsQuoteRefreshing(true);
-      void fetchInstrumentQuotes(quoteTargetIds)
-        .then((quotes) => {
-          if (!shouldApply()) return;
-          setQuotesByCode((items) => {
-            const next = { ...items };
-            for (const quote of quotes) next[quote.code] = quote;
-            return next;
-          });
-          setQuoteRefreshAt(Date.now());
-        })
-        .catch((e) => {
+      void (async () => {
+        try {
+          for (let index = 0; index < quoteTargetIds.length; index += LIST_QUOTE_REQUEST_CHUNK_SIZE) {
+            if (!shouldApply()) return;
+            const chunk = quoteTargetIds.slice(index, index + LIST_QUOTE_REQUEST_CHUNK_SIZE);
+            const quotes = await fetchInstrumentQuotes(chunk);
+            if (!shouldApply()) return;
+            setQuotesByCode((items) => {
+              const next = { ...items };
+              for (const quote of quotes) next[quote.code] = quote;
+              return next;
+            });
+            setQuoteRefreshAt(Date.now());
+          }
+        } catch (e) {
           if (shouldApply()) setError(String(e));
-        })
-        .finally(() => {
+        } finally {
           setIsQuoteRefreshing(false);
-        });
+        }
+      })();
     },
     [quoteTargetKey],
   );
@@ -1239,6 +1261,56 @@ export function App(): JSX.Element {
       ),
     [categoryItems, moveFilter, quotesByCode, stream.trades, watchSort],
   );
+
+  useEffect(() => {
+    if (sidePanelTab !== 'discover') {
+      setVisibleCategoryQuoteIds([]);
+      return undefined;
+    }
+
+    const root = discoverRowsRef.current;
+    if (!root) return undefined;
+
+    const visibleIds = new Set<string>();
+    let frame = 0;
+
+    const publish = (): void => {
+      frame = 0;
+      const orderedIds = visibleCategoryItems
+        .filter((instrument) => visibleIds.has(instrument.id))
+        .map((instrument) => instrument.id);
+      setVisibleCategoryQuoteIds((current) => (areStringArraysEqual(current, orderedIds) ? current : orderedIds));
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        let changed = false;
+        for (const entry of entries) {
+          const id = (entry.target as HTMLElement).dataset.discoverInstrumentId;
+          if (!id) continue;
+          if (entry.isIntersecting) {
+            if (!visibleIds.has(id)) {
+              visibleIds.add(id);
+              changed = true;
+            }
+            continue;
+          }
+          if (visibleIds.delete(id)) changed = true;
+        }
+        if (changed && frame === 0) frame = window.requestAnimationFrame(publish);
+      },
+      { root, rootMargin: '320px 0px', threshold: 0 },
+    );
+
+    const rows = root.querySelectorAll<HTMLElement>('[data-discover-instrument-id]');
+    rows.forEach((row) => observer.observe(row));
+
+    return () => {
+      if (frame !== 0) window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [sidePanelTab, visibleCategoryItems]);
+
   const categorySummary = useMemo(
     () => summarizeInstrumentMoves(visibleCategoryItems, getSnapshotForInstrument),
     [quotesByCode, stream.trades, visibleCategoryItems],
@@ -2758,18 +2830,19 @@ export function App(): JSX.Element {
               <strong>{categories.find((category) => category.id === activeCategory)?.label ?? '결과'}</strong>
               <span>{visibleCategoryItems.length}개 · {categorySummary.waiting > 0 ? `시세 대기 ${categorySummary.waiting}` : '시세 반영'}</span>
             </div>
-            <div className="watchlist__rows discover__rows">
+            <div className="watchlist__rows discover__rows" ref={discoverRowsRef}>
               {visibleCategoryItems.map((instrument) => (
-                <InstrumentRow
-                  key={instrument.id}
-                  instrument={instrument}
-                  trade={instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined}
-                  quote={quotesByCode[instrument.id]}
-                  active={instrument.id === selectedInstrument?.id}
-                  watched={watchedIds.has(instrument.id)}
-                  onSelect={selectInstrument}
-                  onToggleWatch={toggleWatch}
-                />
+                <div data-discover-instrument-id={instrument.id} key={instrument.id}>
+                  <InstrumentRow
+                    instrument={instrument}
+                    trade={instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined}
+                    quote={quotesByCode[instrument.id]}
+                    active={instrument.id === selectedInstrument?.id}
+                    watched={watchedIds.has(instrument.id)}
+                    onSelect={selectInstrument}
+                    onToggleWatch={toggleWatch}
+                  />
+                </div>
               ))}
               {visibleCategoryItems.length === 0 && (
                 <div className="watchlist__empty">추천 종목이 없습니다</div>
