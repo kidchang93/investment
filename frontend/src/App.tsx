@@ -5,6 +5,7 @@ import {
   fetchDefaultWatchlist,
   fetchInstrumentCandles,
   fetchInstrumentCategories,
+  fetchInstrumentIntradayCandles,
   fetchInstrumentQuote,
   fetchInstrumentQuotes,
   removeDefaultWatchlistItem,
@@ -227,6 +228,13 @@ function aggregateCandles(candles: Candle[], minutes: number): Candle[] {
   return aggregated;
 }
 
+function mergeCandles(base: Candle[], overlay: Candle[]): Candle[] {
+  const byTime = new Map<number, Candle>();
+  for (const candle of base) byTime.set(candle.time, candle);
+  for (const candle of overlay) byTime.set(candle.time, candle);
+  return [...byTime.values()].sort((a, b) => a.time - b.time).slice(-360);
+}
+
 function marketLabel(instrument: Instrument): string {
   return `${instrument.market} · ${instrument.currency}`;
 }
@@ -402,6 +410,32 @@ export function App(): JSX.Element {
       [selectedInstrument.id]: upsertMinuteCandle(items[selectedInstrument.id] ?? [], selectedTrade),
     }));
   }, [selectedInstrument, selectedTrade]);
+
+  useEffect(() => {
+    if (!selectedInstrument || selectedInstrument.country !== 'KR' || timeframe === '1D') return;
+    let disposed = false;
+
+    const refresh = (): void => {
+      void fetchInstrumentIntradayCandles(selectedInstrument.id)
+        .then((res) => {
+          if (disposed) return;
+          setIntradayCandlesByCode((items) => ({
+            ...items,
+            [selectedInstrument.id]: mergeCandles(res.candles, items[selectedInstrument.id] ?? []),
+          }));
+        })
+        .catch((e) => {
+          if (!disposed) setError(String(e));
+        });
+    };
+
+    refresh();
+    const timer = window.setInterval(refresh, LIST_QUOTE_REFRESH_MS);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedInstrument, timeframe]);
 
   const quoteTargetIds = useMemo(() => {
     const ids = new Set<string>();

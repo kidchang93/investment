@@ -13,7 +13,13 @@ import {
   searchInstruments,
   seedDefaultWatchlist,
 } from './db/instruments.js';
-import { getDailyCandles, getInstrumentCandles, getInstrumentQuote, getQuote } from './kis/rest.js';
+import {
+  getDailyCandles,
+  getInstrumentCandles,
+  getInstrumentIntradayCandles,
+  getInstrumentQuote,
+  getQuote,
+} from './kis/rest.js';
 import { KisRealtime } from './kis/realtime.js';
 import { WATCHLIST } from './watchlist.js';
 import type { ServerMessage, Trade, ConnectionStatus, Quote } from '@invest/shared';
@@ -111,6 +117,12 @@ async function main(): Promise<void> {
     const instrument = await getInstrument(req.params.id);
     if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
     return getInstrumentCandles(instrument);
+  });
+
+  app.get<{ Params: { id: string } }>('/api/instruments/:id/intraday-candles', async (req, reply) => {
+    const instrument = await getInstrument(req.params.id);
+    if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
+    return getInstrumentIntradayCandles(instrument);
   });
 
   app.get<{ Params: { id: string } }>('/api/instruments/:id/quote', async (req, reply) => {

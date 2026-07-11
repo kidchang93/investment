@@ -122,6 +122,66 @@ export async function getDailyCandles(code: string, days = 120): Promise<Candles
   return { code, name, candles };
 }
 
+function kstToday(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}${values.month}${values.day}`;
+}
+
+function kstDateTimeToTimestamp(date: string, time: string): number {
+  const y = Number(date.slice(0, 4));
+  const m = Number(date.slice(4, 6));
+  const d = Number(date.slice(6, 8));
+  const hh = Number(time.slice(0, 2));
+  const mm = Number(time.slice(2, 4));
+  return Math.floor(Date.UTC(y, m - 1, d, hh - 9, mm, 0) / 1000);
+}
+
+/** 국내주식 1분봉 시세 (주식일별분봉조회, tr_id: FHKST03010230). */
+async function getDomesticIntradayCandles(instrument: Instrument): Promise<CandlesResponse> {
+  const json = await kisGet(
+    '/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice',
+    'FHKST03010230',
+    {
+      FID_COND_MRKT_DIV_CODE: 'J',
+      FID_INPUT_ISCD: instrument.providerSymbol,
+      FID_INPUT_HOUR_1: '235959',
+      FID_INPUT_DATE_1: kstToday(),
+      FID_PW_DATA_INCU_YN: 'N',
+      FID_FAKE_TICK_INCU_YN: '',
+    },
+  );
+
+  const output2 = (json.output2 ?? []) as Array<Record<string, string>>;
+  const candles: Candle[] = output2
+    .filter((r) => /^\d{8}$/.test(r.stck_bsop_date ?? '') && /^\d{6}$/.test(r.stck_cntg_hour ?? ''))
+    .map((r) => ({
+      time: kstDateTimeToTimestamp(r.stck_bsop_date, r.stck_cntg_hour),
+      open: toNumber(r.stck_oprc),
+      high: toNumber(r.stck_hgpr),
+      low: toNumber(r.stck_lwpr),
+      close: toNumber(r.stck_prpr),
+      volume: toNumber(r.cntg_vol),
+    }))
+    .filter(
+      (c) =>
+        Number.isFinite(c.time) &&
+        isPositiveFinite(c.open) &&
+        isPositiveFinite(c.high) &&
+        isPositiveFinite(c.low) &&
+        isPositiveFinite(c.close) &&
+        isNonNegativeFinite(c.volume ?? 0),
+    )
+    .sort((a, b) => a.time - b.time);
+
+  return { code: instrument.id, name: instrument.name, candles };
+}
+
 /** 현재가 스냅샷 (주식현재가 시세, tr_id: FHKST01010100). */
 export async function getQuote(code: string): Promise<Quote> {
   const json = await kisGet(
@@ -160,6 +220,13 @@ export async function getInstrumentQuote(instrument: Instrument): Promise<Quote>
     return { ...quote, code: instrument.id };
   }
   return getOverseasQuote(instrument);
+}
+
+export async function getInstrumentIntradayCandles(instrument: Instrument): Promise<CandlesResponse> {
+  if (instrument.country !== 'KR') {
+    return { code: instrument.id, name: instrument.name, candles: [] };
+  }
+  return getDomesticIntradayCandles(instrument);
 }
 
 async function getOverseasDailyCandles(

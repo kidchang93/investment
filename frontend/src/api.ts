@@ -38,6 +38,12 @@ export async function fetchInstrumentQuote(id: string): Promise<Quote> {
   return res.json();
 }
 
+export async function fetchInstrumentIntradayCandles(id: string): Promise<CandlesResponse> {
+  const res = await fetch(`${API_BASE}/api/instruments/${encodeURIComponent(id)}/intraday-candles`);
+  if (!res.ok) throw new Error(`종목 분봉 조회 실패: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchInstrumentQuotes(ids: string[]): Promise<Quote[]> {
   const res = await fetch(`${API_BASE}/api/instruments/quotes`, {
     method: 'POST',
