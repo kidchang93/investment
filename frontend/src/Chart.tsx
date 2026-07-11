@@ -169,6 +169,16 @@ function formatChartPrice(value: number): string {
   }).format(value);
 }
 
+function formatSignedChartPrice(value: number): string {
+  if (!Number.isFinite(value)) return '-';
+  return `${value > 0 ? '+' : ''}${formatChartPrice(value)}`;
+}
+
+function formatChartRate(value: number): string {
+  if (!Number.isFinite(value)) return '-';
+  return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
+}
+
 function formatChartVolume(value: number): string {
   if (!Number.isFinite(value)) return '-';
   if (value >= 100_000_000) return `${(value / 100_000_000).toFixed(1)}억`;
@@ -375,7 +385,7 @@ export function Chart({
 
       const volumeData = param.seriesData.get(volume) as HistogramData | undefined;
       const tooltipWidth = 196;
-      const tooltipHeight = 156;
+      const tooltipHeight = 190;
       const x = Math.min(param.point.x + 16, Math.max(12, container.clientWidth - tooltipWidth - 12));
       const y = Math.min(param.point.y + 16, Math.max(12, container.clientHeight - tooltipHeight - 12));
       const readout = {
@@ -553,6 +563,15 @@ export function Chart({
     scheduleLastPriceYRefresh();
   }, [latestPrice, liveTrade, scheduleLastPriceYRefresh, updateLastCandle]);
 
+  const crosshairStats = crosshair
+    ? {
+        change: crosshair.close - crosshair.open,
+        changeRate: crosshair.open !== 0 ? ((crosshair.close - crosshair.open) / crosshair.open) * 100 : 0,
+        range: crosshair.high - crosshair.low,
+        rangeRate: crosshair.low !== 0 ? ((crosshair.high - crosshair.low) / crosshair.low) * 100 : 0,
+      }
+    : null;
+
   return (
     <div className="chart">
       <div ref={containerRef} className="chart__canvas" />
@@ -575,6 +594,19 @@ export function Chart({
           <span>저가 <b>{formatChartPrice(crosshair.low)}</b></span>
           <span style={{ color: crosshair.color }}>종가 <b>{formatChartPrice(crosshair.close)}</b></span>
           <span>거래량 <b>{formatChartVolume(crosshair.volume)}</b></span>
+          {crosshairStats && (
+            <>
+              <span style={{ color: crosshair.color }}>
+                변동{' '}
+                <b>
+                  {formatSignedChartPrice(crosshairStats.change)} ({formatChartRate(crosshairStats.changeRate)})
+                </b>
+              </span>
+              <span>
+                폭 <b>{formatChartPrice(crosshairStats.range)} ({formatChartRate(crosshairStats.rangeRate)})</b>
+              </span>
+            </>
+          )}
         </div>
       )}
       {showRsi && rsiPoints.length > 0 && (
