@@ -1187,6 +1187,10 @@ export function App(): JSX.Element {
     isSymbolSearchPanelOpen && symbolResults[activeSymbolResultIndex]
       ? `symbol-search-result-${activeSymbolResultIndex}`
       : undefined;
+  const bottomDockTabLabel =
+    bottomDockTab === 'volume' ? '거래량' : bottomDockTab === 'trades' ? '체결' : '뉴스';
+  const bottomDockModeLabel =
+    BOTTOM_DOCK_MODE_OPTIONS.find((option) => option.key === bottomDockMode)?.label ?? bottomDockMode;
 
   function selectInstrument(instrument: Instrument): void {
     setSelectedInstrument(instrument);
@@ -1949,6 +1953,10 @@ export function App(): JSX.Element {
                   {option.label}
                 </button>
               ))}
+            </div>
+            <div className="bottom-dock__state" aria-label="하단 패널 상태">
+              <em>{bottomDockMode === 'hidden' ? '하단 숨김' : bottomDockTabLabel}</em>
+              <em>{bottomDockModeLabel}</em>
             </div>
             <span className="bottom-dock__status">
               조회 전용 세션 · 시세 갱신 {formatClock(quoteRefreshAt)} · {quoteFreshnessLabel}

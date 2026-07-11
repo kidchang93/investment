@@ -1617,6 +1617,25 @@ button {
   padding: 0 8px;
 }
 
+.bottom-dock__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.bottom-dock__state em {
+  padding: 2px 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.07);
+  color: var(--focus);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
 .bottom-dock__status {
   margin-left: auto;
   color: var(--muted);
