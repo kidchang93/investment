@@ -412,7 +412,7 @@ export function App(): JSX.Element {
   }, [selectedInstrument, selectedTrade]);
 
   useEffect(() => {
-    if (!selectedInstrument || selectedInstrument.country !== 'KR' || timeframe === '1D') return;
+    if (!selectedInstrument || timeframe === '1D') return;
     let disposed = false;
 
     const refresh = (): void => {

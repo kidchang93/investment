@@ -182,6 +182,44 @@ async function getDomesticIntradayCandles(instrument: Instrument): Promise<Candl
   return { code: instrument.id, name: instrument.name, candles };
 }
 
+async function getOverseasIntradayCandles(instrument: Instrument): Promise<CandlesResponse> {
+  const json = await kisGet('/uapi/overseas-price/v1/quotations/inquire-time-itemchartprice', 'HHDFS76950200', {
+    AUTH: '',
+    EXCD: instrument.exchangeCode,
+    SYMB: instrument.providerSymbol,
+    NMIN: '1',
+    PINC: '1',
+    NEXT: '',
+    NREC: '120',
+    FILL: '',
+    KEYB: '',
+  });
+
+  const output2 = (json.output2 ?? []) as Array<Record<string, string>>;
+  const candles: Candle[] = output2
+    .filter((r) => /^\d{8}$/.test(r.kymd ?? '') && /^\d{6}$/.test(r.khms ?? ''))
+    .map((r) => ({
+      time: kstDateTimeToTimestamp(r.kymd, r.khms),
+      open: toNumber(r.open),
+      high: toNumber(r.high),
+      low: toNumber(r.low),
+      close: toNumber(r.last),
+      volume: toNumber(r.evol),
+    }))
+    .filter(
+      (c) =>
+        Number.isFinite(c.time) &&
+        isPositiveFinite(c.open) &&
+        isPositiveFinite(c.high) &&
+        isPositiveFinite(c.low) &&
+        isPositiveFinite(c.close) &&
+        isNonNegativeFinite(c.volume ?? 0),
+    )
+    .sort((a, b) => a.time - b.time);
+
+  return { code: instrument.id, name: instrument.name, candles };
+}
+
 /** 현재가 스냅샷 (주식현재가 시세, tr_id: FHKST01010100). */
 export async function getQuote(code: string): Promise<Quote> {
   const json = await kisGet(
@@ -223,10 +261,8 @@ export async function getInstrumentQuote(instrument: Instrument): Promise<Quote>
 }
 
 export async function getInstrumentIntradayCandles(instrument: Instrument): Promise<CandlesResponse> {
-  if (instrument.country !== 'KR') {
-    return { code: instrument.id, name: instrument.name, candles: [] };
-  }
-  return getDomesticIntradayCandles(instrument);
+  if (instrument.country === 'KR') return getDomesticIntradayCandles(instrument);
+  return getOverseasIntradayCandles(instrument);
 }
 
 async function getOverseasDailyCandles(
