@@ -471,6 +471,7 @@ function InstrumentRow({
   const snapshot = toSnapshot(trade, quote);
   const color = signColor(snapshot?.sign);
   const tone = moveTone(snapshot?.sign);
+  const quoteSource = trade ? '실시간' : quote ? 'REST' : '대기';
   const prevPriceRef = useRef<number | undefined>(snapshot?.price);
   const [flashing, setFlashing] = useState(false);
 
@@ -507,6 +508,7 @@ function InstrumentRow({
             {formatSignedPrice(snapshot.change)} ({formatRate(snapshot.changeRate)})
           </span>
         )}
+        <span className="instrument-row__source" data-source={quoteSource}>{quoteSource}</span>
       </div>
       <span
         className="instrument-row__watch"

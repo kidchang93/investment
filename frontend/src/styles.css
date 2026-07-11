@@ -1826,6 +1826,26 @@ button {
   white-space: nowrap;
 }
 
+.instrument-row__source {
+  justify-self: end;
+  padding: 1px 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.instrument-row__source[data-source='실시간'] {
+  border-color: rgba(34, 197, 94, 0.28);
+  color: #8ee59e;
+}
+
+.instrument-row__source[data-source='REST'] {
+  color: var(--muted);
+}
+
 .instrument-row__watch {
   display: inline-flex;
   align-items: center;
