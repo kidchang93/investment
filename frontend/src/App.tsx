@@ -69,6 +69,7 @@ type MacroFilter = 'all' | 'energy' | 'metals' | 'agriculture' | 'rates' | 'fx' 
 type CalendarRegionFilter = 'all' | 'domestic' | 'global';
 type CalendarImpactFilter = 'all' | '최고' | '높음' | '보통';
 type FeeMarket = 'kospi' | 'kosdaq' | 'konex' | 'us_stock' | 'kospi200_future' | 'kospi200_option';
+type ChatPanelMode = 'compact' | 'wide';
 
 interface PriceSnapshot {
   price: number;
@@ -314,6 +315,11 @@ const FEE_MARKET_OPTIONS: Array<{ key: FeeMarket; label: string; taxRate: number
   { key: 'kospi200_option', label: 'KOSPI200 옵션', taxRate: 0, unit: 'KRW' },
 ];
 
+const CHAT_PANEL_MODE_OPTIONS: Array<{ key: ChatPanelMode; label: string }> = [
+  { key: 'compact', label: '좁게' },
+  { key: 'wide', label: '넓게' },
+];
+
 const FALLBACK_TERMINAL_NEWS: TerminalNewsCard[] = [
   {
     id: 'fallback-policy',
@@ -385,6 +391,10 @@ const MACRO_BOARD_GROUPS: Array<{ label: string; items: MacroBoardItem[] }> = [
     label: '글로벌',
     items: [
       { key: 'nasdaq-future', label: '나스닥100F', detail: '해외선물 탐색 연동', filter: 'indices', fallback: '-' },
+      { key: 'kospi-index', label: '코스피 지수', detail: '국내 지수 API 예정', filter: 'indices', fallback: '-' },
+      { key: 'kosdaq-index', label: '코스닥 지수', detail: '국내 지수 API 예정', filter: 'indices', fallback: '-' },
+      { key: 'kosdaq150-night', label: '코스닥150 야간', detail: '야간선물 마스터 미수신', filter: 'indices', fallback: '-' },
+      { key: 'skhynix-night', label: 'SK하이닉스 야간', detail: 'GDR 환산 소스 확인 대기', filter: 'indices', fallback: '-' },
       { key: 'sp500', label: 'S&P500', detail: '지수 지표 예정', filter: 'indices', fallback: '-' },
       { key: 'ewy', label: 'MSCI Korea', detail: '한국 ETF 지표 예정', filter: 'indices', fallback: '-' },
       { key: 'btc', label: '비트코인', detail: '코인 지표 예정', filter: 'crypto', fallback: '-' },
@@ -1306,6 +1316,7 @@ export function App(): JSX.Element {
   const [calendarRegionFilter, setCalendarRegionFilter] = useState<CalendarRegionFilter>('all');
   const [calendarImpactFilter, setCalendarImpactFilter] = useState<CalendarImpactFilter>('all');
   const [feeMarket, setFeeMarket] = useState<FeeMarket>('kospi');
+  const [chatPanelMode, setChatPanelMode] = useState<ChatPanelMode>('compact');
   const [feeAmount, setFeeAmount] = useState('1000000');
   const [feeExpectedReturn, setFeeExpectedReturn] = useState('5');
   const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>(() =>
@@ -2859,6 +2870,18 @@ export function App(): JSX.Element {
                 </div>
               </section>
 
+              <section className="terminal-news-ticker" aria-label="뉴스 ticker">
+                <strong>뉴스 ticker</strong>
+                <div>
+                  {terminalNewsCards.slice(0, 4).map((item) => (
+                    <a href={item.url} key={item.id} rel="noreferrer" target="_blank">
+                      <span>{item.source}</span>
+                      <em>{item.title}</em>
+                    </a>
+                  ))}
+                </div>
+              </section>
+
               <nav className="terminal-tabs" aria-label="터미널 기능">
                 {TERMINAL_TAB_OPTIONS.map((option) => (
                   <button
@@ -3381,7 +3404,20 @@ export function App(): JSX.Element {
                     </div>
                     <small>인증·신고 도구 연동 전</small>
                   </div>
-                  <div className="terminal-chat-layout">
+                  <div className="terminal-filterbar" role="tablist" aria-label="채팅 폭 조절">
+                    {CHAT_PANEL_MODE_OPTIONS.map((option) => (
+                      <button
+                        aria-selected={chatPanelMode === option.key}
+                        key={option.key}
+                        onClick={() => setChatPanelMode(option.key)}
+                        role="tab"
+                        type="button"
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="terminal-chat-layout" data-mode={chatPanelMode}>
                     <section className="terminal-panel">
                       <div className="terminal-panel__header">
                         <strong>운영 상태</strong>
