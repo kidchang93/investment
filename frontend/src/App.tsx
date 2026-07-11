@@ -1129,7 +1129,21 @@ export function App(): JSX.Element {
 
           <section className="quote-header">
             <div className="quote-header__identity">
-              <span className="quote-header__code">{selectedInstrument?.symbol ?? '-'}</span>
+              <div className="quote-header__symbol-row">
+                <span className="quote-header__code">{selectedInstrument?.symbol ?? '-'}</span>
+                {selectedInstrument && (
+                  <button
+                    aria-label={watchedIds.has(selectedInstrument.id) ? '관심종목에서 제거' : '관심종목에 추가'}
+                    aria-pressed={watchedIds.has(selectedInstrument.id)}
+                    className="quote-header__watch"
+                    onClick={() => toggleWatch(selectedInstrument)}
+                    title={watchedIds.has(selectedInstrument.id) ? '관심종목에서 제거' : '관심종목에 추가'}
+                    type="button"
+                  >
+                    {watchedIds.has(selectedInstrument.id) ? '★' : '☆'}
+                  </button>
+                )}
+              </div>
               <h2>{selectedName || '종목을 선택하세요'}</h2>
               <span className="quote-header__time">{formatTradeTime(snapshot?.time)}</span>
             </div>
