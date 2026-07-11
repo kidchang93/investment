@@ -1148,6 +1148,7 @@ export function App(): JSX.Element {
       isCompactList ? '촘촘' : undefined,
     ].filter((item): item is string => Boolean(item));
   }, [isCompactList, moveFilter, query, watchGroup, watchSort]);
+  const activeSavedWatchlist = savedWatchlists.find((group) => group.id === activeSavedWatchlistId);
   const visibleCategoryItems = useMemo(
     () =>
       sortBySnapshot(
@@ -2001,7 +2002,7 @@ export function App(): JSX.Element {
         <aside className={`watchlist${isWatchlistCollapsed ? ' is-collapsed' : ''}${isCompactList ? ' is-compact-list' : ''}`}>
           <div className="watchlist__header">
             <strong>관심종목</strong>
-            <span>{watchlist.length}</span>
+            <span>{activeSavedWatchlist?.name ?? '기본'} · {watchlist.length}</span>
             <button
               aria-label={isWatchlistCollapsed ? '관심종목 펼치기' : '관심종목 접기'}
               className="watchlist__collapse"
@@ -2061,6 +2062,7 @@ export function App(): JSX.Element {
                 >
                   <span>{group.name}</span>
                   <em>{group.itemCount}</em>
+                  <small>{group.id === 'default' ? '기본' : '사용자'}</small>
                 </button>
                 {group.id !== 'default' && (
                   <button

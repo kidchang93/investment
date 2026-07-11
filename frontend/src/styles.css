@@ -1849,7 +1849,7 @@ button {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
-  max-width: 174px;
+  max-width: 210px;
 }
 
 .watchlist__saved-group > button,
@@ -1869,7 +1869,7 @@ button {
 
 .watchlist__saved-group > button:first-child {
   min-width: 0;
-  max-width: 150px;
+  max-width: 186px;
   border-radius: 5px 0 0 5px;
 }
 
@@ -1902,10 +1902,21 @@ button {
 }
 
 .watchlist__saved-groups em,
-.watchlist__saved-group em {
+.watchlist__saved-group em,
+.watchlist__saved-group small {
+  flex-shrink: 0;
   color: var(--faint);
+  font-size: 11px;
   font-style: normal;
   font-variant-numeric: tabular-nums;
+}
+
+.watchlist__saved-group small {
+  padding: 1px 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  font-size: 9px;
+  line-height: 1.25;
 }
 
 .watchlist__saved-groups .watchlist__group-add {
