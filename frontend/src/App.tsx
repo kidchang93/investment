@@ -1254,9 +1254,11 @@ export function App(): JSX.Element {
                         className="symbol-search__result"
                         data-active={index === activeSymbolResultIndex}
                         key={instrument.id}
+                        onMouseEnter={() => setActiveSymbolResultIndex(index)}
                       >
                         <button
                           className="symbol-search__select"
+                          onFocus={() => setActiveSymbolResultIndex(index)}
                           onClick={() => {
                             selectInstrument(instrument);
                             setSymbolQuery('');
@@ -1277,6 +1279,8 @@ export function App(): JSX.Element {
                         <button
                           aria-label={watchedIds.has(instrument.id) ? '관심종목에서 제거' : '관심종목에 추가'}
                           className="symbol-search__watch"
+                          data-watched={watchedIds.has(instrument.id)}
+                          onFocus={() => setActiveSymbolResultIndex(index)}
                           onClick={() => toggleWatch(instrument)}
                           title={watchedIds.has(instrument.id) ? '관심종목에서 제거' : '관심종목에 추가'}
                           type="button"
