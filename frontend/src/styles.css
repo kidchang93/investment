@@ -970,6 +970,345 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+.terminal-tabs,
+.terminal-filterbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.terminal-tabs::-webkit-scrollbar,
+.terminal-filterbar::-webkit-scrollbar {
+  display: none;
+}
+
+.terminal-tabs button,
+.terminal-filterbar button {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: rgba(8, 11, 17, 0.52);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.terminal-tabs button:hover,
+.terminal-filterbar button:hover,
+.terminal-tabs button[aria-selected='true'],
+.terminal-filterbar button[aria-selected='true'] {
+  border-color: rgba(245, 196, 81, 0.42);
+  background: rgba(245, 196, 81, 0.1);
+  color: var(--focus);
+}
+
+.terminal-page {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.terminal-page__header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.terminal-page__header div {
+  min-width: 0;
+}
+
+.terminal-page__header span,
+.terminal-page__header small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.terminal-page__header strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 20px;
+}
+
+.terminal-headlines,
+.terminal-kpi-row,
+.terminal-dominance,
+.terminal-fee-controls,
+.terminal-simulation-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.terminal-headlines a,
+.terminal-kpi-row button,
+.terminal-dominance div,
+.terminal-fee-controls label,
+.terminal-fee-controls > div {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  min-height: 92px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.42);
+  color: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+
+.terminal-headlines a:hover,
+.terminal-kpi-row button:hover {
+  border-color: rgba(245, 196, 81, 0.34);
+  background: rgba(245, 196, 81, 0.08);
+}
+
+.terminal-headlines span {
+  width: max-content;
+  min-width: 34px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(229, 72, 77, 0.14);
+  color: #ff9b9f;
+  font-size: 12px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.terminal-headlines strong,
+.terminal-news-list strong,
+.terminal-kpi-row strong,
+.terminal-dominance strong,
+.terminal-fee-controls strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-headlines em,
+.terminal-news-list em,
+.terminal-news-list span,
+.terminal-kpi-row span,
+.terminal-kpi-row em,
+.terminal-dominance span,
+.terminal-dominance em,
+.terminal-fee-controls span,
+.terminal-fee-controls em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.terminal-news-list,
+.terminal-macro-list,
+.terminal-leaderboard {
+  display: grid;
+  gap: 7px;
+}
+
+.terminal-news-list a,
+.terminal-news-list p,
+.terminal-macro-list button,
+.terminal-leaderboard div {
+  display: grid;
+  grid-template-columns: minmax(78px, 0.2fr) minmax(0, 1fr) minmax(120px, 0.25fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 42px;
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: rgba(8, 11, 17, 0.46);
+  color: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+
+.terminal-news-list a:hover,
+.terminal-macro-list button:hover:not(:disabled) {
+  border-color: rgba(245, 196, 81, 0.34);
+  background: rgba(245, 196, 81, 0.08);
+}
+
+.terminal-macro-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.terminal-macro-list button {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  cursor: pointer;
+}
+
+.terminal-macro-list button:disabled {
+  cursor: default;
+  opacity: 0.68;
+}
+
+.terminal-kpi-row button {
+  cursor: pointer;
+}
+
+.terminal-kpi-row button[data-tone='up'],
+.terminal-macro-list button[data-tone='up'] {
+  border-color: rgba(229, 72, 77, 0.26);
+}
+
+.terminal-kpi-row button[data-tone='down'],
+.terminal-macro-list button[data-tone='down'] {
+  border-color: rgba(59, 130, 246, 0.26);
+}
+
+.terminal-calendar-grid,
+.terminal-theme-list,
+.terminal-fee-table {
+  display: grid;
+  gap: 8px;
+}
+
+.terminal-calendar-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.terminal-calendar-grid article {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  min-height: 92px;
+  padding: 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.terminal-calendar-grid article[data-impact='최고'] {
+  border-color: rgba(229, 72, 77, 0.34);
+}
+
+.terminal-calendar-grid article[data-impact='높음'] {
+  border-color: rgba(245, 196, 81, 0.32);
+}
+
+.terminal-calendar-grid span,
+.terminal-calendar-grid em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.terminal-theme-list article,
+.terminal-fee-table__head,
+.terminal-fee-table__row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 90px 110px minmax(140px, 0.8fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: rgba(8, 11, 17, 0.46);
+}
+
+.terminal-theme-list article[data-tone='up'],
+.terminal-fee-table__row span[data-tone='up'] {
+  color: #ff9b9f;
+}
+
+.terminal-theme-list article[data-tone='down'],
+.terminal-fee-table__row span[data-tone='down'] {
+  color: #93c5fd;
+}
+
+.terminal-theme-list article strong,
+.terminal-theme-list article span,
+.terminal-theme-list article em,
+.terminal-theme-list article small,
+.terminal-fee-table span,
+.terminal-fee-table strong,
+.terminal-fee-table em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-theme-list article span,
+.terminal-theme-list article small,
+.terminal-fee-table__head,
+.terminal-fee-table em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.terminal-theme-list article em {
+  font-size: 18px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.terminal-fee-controls input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: #080b11;
+  color: var(--text);
+  padding: 0 10px;
+}
+
+.terminal-fee-table__head,
+.terminal-fee-table__row {
+  grid-template-columns: minmax(180px, 1fr) 120px 120px 130px;
+}
+
+.terminal-fee-table__head {
+  min-height: 34px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.terminal-simulation-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+}
+
+.terminal-simulation-grid .terminal-panel button {
+  width: max-content;
+  max-width: 100%;
+  height: 34px;
+  margin-top: 12px;
+  padding: 0 12px;
+  border: 1px solid rgba(245, 196, 81, 0.34);
+  border-radius: 6px;
+  background: rgba(245, 196, 81, 0.1);
+  color: var(--focus);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.terminal-leaderboard div {
+  grid-template-columns: 44px minmax(0, 1fr) 120px 120px;
+}
+
 .terminal-panel {
   min-width: 0;
   padding: 12px;
@@ -3417,6 +3756,19 @@ button {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .terminal-headlines,
+  .terminal-kpi-row,
+  .terminal-dominance,
+  .terminal-fee-controls,
+  .terminal-macro-grid,
+  .terminal-calendar-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .terminal-simulation-grid {
+    grid-template-columns: 1fr;
+  }
+
   .quote-stats {
     grid-column: 1 / -1;
   }
@@ -3496,6 +3848,30 @@ button {
   }
 
   .terminal-market-strip__rows {
+    grid-template-columns: 1fr;
+  }
+
+  .terminal-page__header,
+  .terminal-news-list a,
+  .terminal-news-list p,
+  .terminal-macro-list button,
+  .terminal-leaderboard div,
+  .terminal-theme-list article,
+  .terminal-fee-table__head,
+  .terminal-fee-table__row {
+    grid-template-columns: 1fr;
+  }
+
+  .terminal-page__header {
+    align-items: start;
+  }
+
+  .terminal-headlines,
+  .terminal-kpi-row,
+  .terminal-dominance,
+  .terminal-fee-controls,
+  .terminal-macro-grid,
+  .terminal-calendar-grid {
     grid-template-columns: 1fr;
   }
 

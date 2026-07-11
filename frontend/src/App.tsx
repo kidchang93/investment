@@ -51,6 +51,8 @@ type BottomDockMode = 'hidden' | 'normal' | 'expanded';
 type LayoutPreset = 'balanced' | 'chart' | 'reading';
 type AppPage = 'terminal' | 'market' | 'trade' | 'portfolio';
 type SidePanelTab = 'watch' | 'discover';
+type TerminalTab = 'overview' | 'news' | 'macro' | 'calendar' | 'themes' | 'fees' | 'simulation';
+type NewsFilter = 'all' | 'macro' | 'stocks' | 'commodities' | 'crypto' | 'policy';
 
 interface PriceSnapshot {
   price: number;
@@ -78,6 +80,47 @@ interface MoveSummary {
   flat: number;
   waiting: number;
   topMover?: { instrument: Instrument; snapshot: PriceSnapshot };
+}
+
+interface TerminalNewsCard {
+  id: string;
+  title: string;
+  source: string;
+  score: number;
+  publishedAt?: number;
+  filters: NewsFilter[];
+  url: string;
+}
+
+interface MacroBoardItem {
+  key: string;
+  label: string;
+  detail: string;
+  instrumentId?: string;
+  fallback?: string;
+}
+
+interface EconomicEvent {
+  date: string;
+  time: string;
+  region: string;
+  title: string;
+  impact: '최고' | '높음' | '보통';
+}
+
+interface ThemeFlowItem {
+  name: string;
+  leader: string;
+  score: number;
+  change: number;
+  tags: string[];
+}
+
+interface FeeBroker {
+  name: string;
+  product: string;
+  commissionRate: number;
+  institutionRate: number;
 }
 
 const RANGE_OPTIONS: Array<{ key: RangeKey; label: string; days?: number }> = [
@@ -153,6 +196,137 @@ const TERMINAL_CATEGORY_SHORTCUTS = [
   { id: 'global-commodities', label: '원자재', detail: '금·은·원유·가스' },
   { id: 'overseas-futures', label: '해외선물', detail: '글로벌 선물' },
 ] as const;
+
+const TERMINAL_TAB_OPTIONS: Array<{ key: TerminalTab; label: string; title: string }> = [
+  { key: 'overview', label: '대시보드', title: '핵심 지표와 출처' },
+  { key: 'news', label: '뉴스룸', title: '속보와 종목별 뉴스' },
+  { key: 'macro', label: '매크로', title: '원자재·환율·금리·지수' },
+  { key: 'calendar', label: '캘린더', title: '경제 지표 발표 일정' },
+  { key: 'themes', label: '테마', title: '도미넌스와 테마 흐름' },
+  { key: 'fees', label: '수수료', title: '증권사 비용 계산' },
+  { key: 'simulation', label: '시뮬', title: '테스트매매와 리더보드' },
+];
+
+const NEWS_FILTER_OPTIONS: Array<{ key: NewsFilter; label: string }> = [
+  { key: 'all', label: '전체' },
+  { key: 'macro', label: '거시' },
+  { key: 'stocks', label: '주식' },
+  { key: 'commodities', label: '원자재' },
+  { key: 'crypto', label: '코인' },
+  { key: 'policy', label: '정책' },
+];
+
+const FALLBACK_TERMINAL_NEWS: TerminalNewsCard[] = [
+  {
+    id: 'fallback-policy',
+    title: '반도체·AI 공급망 이슈 점검',
+    source: '검색',
+    score: 86,
+    filters: ['stocks', 'policy'],
+    url: topicNewsUrl('반도체 AI 공급망 증시 뉴스'),
+  },
+  {
+    id: 'fallback-macro',
+    title: '미국 금리·달러 흐름과 야간선물 영향',
+    source: '검색',
+    score: 79,
+    filters: ['macro', 'policy'],
+    url: topicNewsUrl('미국 금리 달러 야간선물 뉴스'),
+  },
+  {
+    id: 'fallback-commodity',
+    title: '원유·금 가격 변동과 원자재 섹터',
+    source: '검색',
+    score: 74,
+    filters: ['commodities', 'macro'],
+    url: topicNewsUrl('원유 금 원자재 시장 뉴스'),
+  },
+  {
+    id: 'fallback-crypto',
+    title: '비트코인과 위험자산 선호 변화',
+    source: '검색',
+    score: 68,
+    filters: ['crypto', 'macro'],
+    url: topicNewsUrl('비트코인 위험자산 선호 뉴스'),
+  },
+];
+
+const MACRO_BOARD_GROUPS: Array<{ label: string; items: MacroBoardItem[] }> = [
+  {
+    label: '핵심 지표',
+    items: [
+      { key: 'night-samsung', label: '삼성전자 야간', detail: 'GDR 환산가', instrumentId: 'KR:NIGHT_PROXY:005930' },
+      { key: 'kospi-night', label: 'KOSPI200 야간', detail: 'KRX 야간선물', instrumentId: 'KR:KRX_NIGHT:A01609' },
+      { key: 'gold', label: '금', detail: 'COMEX 연속선물', instrumentId: 'GLOBAL:TV_COMMODITY:GOLD' },
+      { key: 'wti', label: 'WTI', detail: 'NYMEX 연속선물', instrumentId: 'GLOBAL:TV_COMMODITY:WTI' },
+    ],
+  },
+  {
+    label: '원자재',
+    items: [
+      { key: 'silver', label: '은', detail: 'COMEX 연속선물', instrumentId: 'GLOBAL:TV_COMMODITY:SILVER' },
+      { key: 'natgas', label: '천연가스', detail: 'NYMEX 연속선물', instrumentId: 'GLOBAL:TV_COMMODITY:NATGAS' },
+      { key: 'brent', label: '브렌트유', detail: '권한 연동 대기', fallback: '-' },
+      { key: 'copper', label: '구리', detail: '권한 연동 대기', fallback: '-' },
+    ],
+  },
+  {
+    label: '환율·금리',
+    items: [
+      { key: 'usdkrw', label: 'USD/KRW', detail: '환율 원본 연동 예정', fallback: '-' },
+      { key: 'dxy', label: '달러인덱스', detail: '글로벌 지표 예정', fallback: '-' },
+      { key: 'us10y', label: '미10년금리', detail: '금리 지표 예정', fallback: '-' },
+      { key: 'vix', label: 'VIX', detail: '변동성 지수 예정', fallback: '-' },
+    ],
+  },
+  {
+    label: '글로벌',
+    items: [
+      { key: 'nasdaq-future', label: '나스닥100F', detail: '해외선물 탐색 연동', fallback: '-' },
+      { key: 'sp500', label: 'S&P500', detail: '지수 지표 예정', fallback: '-' },
+      { key: 'ewy', label: 'MSCI Korea', detail: '한국 ETF 지표 예정', fallback: '-' },
+      { key: 'btc', label: '비트코인', detail: '코인 지표 예정', fallback: '-' },
+    ],
+  },
+];
+
+const ECONOMIC_EVENTS: EconomicEvent[] = [
+  { date: '2026-07-13', time: '08:50', region: '일본', title: '생산자물가지수', impact: '보통' },
+  { date: '2026-07-14', time: '21:30', region: '미국', title: '소비자물가지수 CPI', impact: '최고' },
+  { date: '2026-07-15', time: '10:00', region: '한국', title: '수출입물가지수', impact: '보통' },
+  { date: '2026-07-15', time: '21:30', region: '미국', title: '생산자물가지수 PPI', impact: '높음' },
+  { date: '2026-07-16', time: '21:30', region: '미국', title: '소매판매', impact: '높음' },
+  { date: '2026-07-17', time: '23:00', region: '미국', title: '미시간대 소비심리', impact: '보통' },
+  { date: '2026-07-29', time: '03:00', region: '미국', title: 'FOMC 금리 결정', impact: '최고' },
+  { date: '2026-07-31', time: '21:30', region: '미국', title: 'PCE 물가지수', impact: '최고' },
+];
+
+const THEME_FLOW_ITEMS: ThemeFlowItem[] = [
+  { name: '반도체', leader: '삼성전자 · SK하이닉스', score: 92, change: 18.4, tags: ['HBM', 'AI'] },
+  { name: '방산', leader: '한화에어로스페이스', score: 81, change: 12.2, tags: ['수출', '정책'] },
+  { name: '전력기기', leader: 'HD현대일렉트릭', score: 76, change: 9.7, tags: ['전력망', 'AI데이터센터'] },
+  { name: '2차전지', leader: 'LG에너지솔루션', score: 64, change: -3.8, tags: ['IRA', '소재'] },
+  { name: '바이오', leader: '삼성바이오로직스', score: 58, change: 4.1, tags: ['CDMO', '실적'] },
+  { name: '조선', leader: 'HD한국조선해양', score: 55, change: 6.5, tags: ['LNG', '수주'] },
+];
+
+const FEE_BROKERS: FeeBroker[] = [
+  { name: '대신증권', product: '표준', commissionRate: 0.00008, institutionRate: 0.00003 },
+  { name: '미래에셋증권', product: '온라인', commissionRate: 0.00014, institutionRate: 0.00003 },
+  { name: '한국투자증권', product: '온라인', commissionRate: 0.00014, institutionRate: 0.00003 },
+  { name: 'NH투자증권', product: '나무', commissionRate: 0.00014, institutionRate: 0.00003 },
+  { name: '키움증권', product: '영웅문', commissionRate: 0.00015, institutionRate: 0.00003 },
+  { name: '삼성증권', product: 'mPOP', commissionRate: 0.00015, institutionRate: 0.00003 },
+  { name: 'KB증권', product: 'M-able', commissionRate: 0.00015, institutionRate: 0.00003 },
+  { name: '토스증권', product: '모바일', commissionRate: 0.00015, institutionRate: 0.00003 },
+];
+
+const SIMULATION_LEADERS = [
+  { rank: 1, name: 'night-alpha', pnl: 184200, trades: 32, winRate: 62 },
+  { rank: 2, name: 'macro-runner', pnl: 126500, trades: 21, winRate: 57 },
+  { rank: 3, name: 'oil-swing', pnl: 98400, trades: 18, winRate: 55 },
+  { rank: 4, name: 'risk-flat', pnl: 41200, trades: 11, winRate: 64 },
+];
 
 const OVERSEAS_REFRESH_MS = 5_000;
 const LIST_QUOTE_REFRESH_MS = 60_000;
@@ -374,6 +548,52 @@ function newsSearchUrl(item: NewsItem): string {
 
 function topicNewsUrl(query: string): string {
   return `https://www.google.com/search?tbm=nws&q=${encodeURIComponent(cleanNewsSearchText(query) || query)}`;
+}
+
+function newsFiltersForTitle(title: string): NewsFilter[] {
+  const filters = new Set<NewsFilter>();
+  const text = title.toLowerCase();
+  if (/금리|fed|fomc|cpi|ppi|물가|환율|달러|거시|경기/i.test(title)) filters.add('macro');
+  if (/삼성|하이닉스|현대|lg|주식|증시|코스피|코스닥|실적|공시/i.test(title)) filters.add('stocks');
+  if (/원유|wti|금|은|천연가스|원자재|유가/i.test(title)) filters.add('commodities');
+  if (/비트코인|이더|코인|crypto|bitcoin|ethereum/.test(text)) filters.add('crypto');
+  if (/정책|관세|규제|선거|정부|무역|중앙은행/i.test(title)) filters.add('policy');
+  if (filters.size === 0) filters.add('stocks');
+  return [...filters];
+}
+
+function terminalNewsCardFromItem(item: NewsItem, index: number): TerminalNewsCard {
+  const cleanTitle = cleanNewsSearchText(item.title) || item.title;
+  return {
+    id: item.id,
+    title: cleanTitle,
+    source: item.source,
+    score: Math.max(45, 92 - index * 6),
+    publishedAt: item.publishedAt,
+    filters: newsFiltersForTitle(cleanTitle),
+    url: newsSearchUrl(item),
+  };
+}
+
+function formatEventDay(date: string): string {
+  const parsed = new Date(`${date}T00:00:00+09:00`);
+  return new Intl.DateTimeFormat('ko-KR', {
+    month: '2-digit',
+    day: '2-digit',
+    weekday: 'short',
+    timeZone: 'Asia/Seoul',
+  }).format(parsed);
+}
+
+function parseAmountInput(value: string, fallback: number): number {
+  const parsed = Number(value.replaceAll(',', ''));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function feeImpactTone(value: number): 'up' | 'down' | 'flat' {
+  if (value > 0) return 'up';
+  if (value < 0) return 'down';
+  return 'flat';
 }
 
 function formatNumber(n: number | undefined): string {
@@ -839,6 +1059,12 @@ export function App(): JSX.Element {
   const [activePage, setActivePage] = useState<AppPage>(() =>
     readStoredValue('activePage', 'terminal', APP_PAGE_OPTIONS.map((option) => option.key)),
   );
+  const [terminalTab, setTerminalTab] = useState<TerminalTab>(() =>
+    readStoredValue('terminalTab', 'overview', TERMINAL_TAB_OPTIONS.map((option) => option.key)),
+  );
+  const [newsFilter, setNewsFilter] = useState<NewsFilter>('all');
+  const [feeAmount, setFeeAmount] = useState('1000000');
+  const [feeExpectedReturn, setFeeExpectedReturn] = useState('5');
   const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>(() =>
     readStoredValue('sidePanelTab', 'discover', SIDE_PANEL_OPTIONS.map((option) => option.key)),
   );
@@ -880,6 +1106,7 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('bottomDockTab', bottomDockTab), [bottomDockTab]);
   useEffect(() => writeStoredValue('bottomDockMode', bottomDockMode), [bottomDockMode]);
   useEffect(() => writeStoredValue('activePage', activePage), [activePage]);
+  useEffect(() => writeStoredValue('terminalTab', terminalTab), [terminalTab]);
   useEffect(() => writeStoredValue('sidePanelTab', sidePanelTab), [sidePanelTab]);
   useEffect(() => writeStoredValue('activeSavedWatchlistId', activeSavedWatchlistId), [activeSavedWatchlistId]);
   useEffect(() => writeStoredJson('recentInstruments', recentInstruments), [recentInstruments]);
@@ -1396,6 +1623,51 @@ export function App(): JSX.Element {
       instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined,
       quotesByCode[instrument.id],
     );
+  const terminalInstrumentById = useMemo(
+    () => new Map(terminalItems.map((instrument) => [instrument.id, instrument])),
+    [terminalItems],
+  );
+  const macroBoardGroups = useMemo(
+    () =>
+      MACRO_BOARD_GROUPS.map((group) => ({
+        ...group,
+        items: group.items.map((item) => {
+          const instrument = item.instrumentId ? terminalInstrumentById.get(item.instrumentId) : undefined;
+          const itemSnapshot = instrument ? getSnapshotForInstrument(instrument) : undefined;
+          return { ...item, instrument, snapshot: itemSnapshot };
+        }),
+      })),
+    [quotesByCode, stream.trades, terminalInstrumentById],
+  );
+  const macroCoreItems = macroBoardGroups[0]?.items ?? [];
+  const upcomingEvents = useMemo(
+    () =>
+      ECONOMIC_EVENTS.filter((event) => new Date(`${event.date}T23:59:59+09:00`).getTime() >= nowMs).slice(0, 6),
+    [nowMs],
+  );
+  const themeBreadth = useMemo(() => {
+    const up = THEME_FLOW_ITEMS.filter((item) => item.change > 0).length;
+    const down = THEME_FLOW_ITEMS.filter((item) => item.change < 0).length;
+    return { up, down, total: THEME_FLOW_ITEMS.length };
+  }, []);
+  const feeAmountNumber = parseAmountInput(feeAmount, 1_000_000);
+  const feeExpectedReturnNumber = Number(feeExpectedReturn);
+  const feeRows = useMemo(() => {
+    const returnRate = Number.isFinite(feeExpectedReturnNumber) ? feeExpectedReturnNumber / 100 : 0;
+    const grossSellAmount = feeAmountNumber * (1 + returnRate);
+    const taxRate = 0.002;
+    return FEE_BROKERS.map((broker) => {
+      const buyCommission = feeAmountNumber * broker.commissionRate;
+      const sellCommission = grossSellAmount * broker.commissionRate;
+      const institutionFee = (feeAmountNumber + grossSellAmount) * broker.institutionRate;
+      const transactionTax = grossSellAmount * taxRate;
+      const totalFee = buyCommission + sellCommission + institutionFee + transactionTax;
+      const netPnl = grossSellAmount - feeAmountNumber - totalFee;
+      return { broker, totalFee, netPnl };
+    }).sort((a, b) => a.totalFee - b.totalFee);
+  }, [feeAmountNumber, feeExpectedReturnNumber]);
+  const bestFeeRow = feeRows[0];
+  const worstFeeRow = feeRows[feeRows.length - 1];
   const watchlistSummary = useMemo(
     () => summarizeInstrumentMoves(watchlist, getSnapshotForInstrument),
     [quotesByCode, stream.trades, watchlist],
@@ -1578,6 +1850,17 @@ export function App(): JSX.Element {
     return names;
   }, [categoryItems, selectedInstrument, watchlist]);
   const selectedNews = selectedInstrument ? (newsByCode[selectedInstrument.id] ?? []) : [];
+  const terminalNewsCards = useMemo(() => {
+    const cards = selectedNews.slice(0, 12).map(terminalNewsCardFromItem);
+    return cards.length > 0 ? cards : FALLBACK_TERMINAL_NEWS;
+  }, [selectedNews]);
+  const filteredTerminalNews = useMemo(
+    () =>
+      newsFilter === 'all'
+        ? terminalNewsCards
+        : terminalNewsCards.filter((item) => item.filters.includes(newsFilter)),
+    [newsFilter, terminalNewsCards],
+  );
   const selectedSourceLinks = useMemo(() => dataSourceLinksForInstrument(selectedInstrument), [selectedInstrument]);
   const selectedTopicNewsUrl = selectedInstrument ? topicNewsUrl(selectedInstrument.name) : topicNewsUrl('코스피 야간선물 원자재');
   const newsSummary = useMemo(() => {
@@ -2212,7 +2495,21 @@ export function App(): JSX.Element {
                 </div>
               </section>
 
-              <div className="terminal-board__grid">
+              <nav className="terminal-tabs" aria-label="터미널 기능">
+                {TERMINAL_TAB_OPTIONS.map((option) => (
+                  <button
+                    aria-selected={terminalTab === option.key}
+                    key={option.key}
+                    onClick={() => setTerminalTab(option.key)}
+                    title={option.title}
+                    type="button"
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </nav>
+
+              {terminalTab === 'overview' && <div className="terminal-board__grid">
                 <section className="terminal-panel terminal-panel--shortcuts" aria-label="빠른 지표 탐색">
                   <div className="terminal-panel__header">
                     <strong>지표 묶음</strong>
@@ -2225,7 +2522,7 @@ export function App(): JSX.Element {
                         onClick={() => {
                           setSidePanelTab('discover');
                           setActiveCategory(shortcut.id);
-                          setActivePage('terminal');
+                          setActivePage('market');
                         }}
                         type="button"
                       >
@@ -2291,7 +2588,274 @@ export function App(): JSX.Element {
                     시세·뉴스·출처 검증 흐름을 먼저 강화합니다.
                   </p>
                 </section>
-              </div>
+              </div>}
+
+              {terminalTab === 'news' && (
+                <section className="terminal-page terminal-page--news" aria-label="뉴스룸">
+                  <div className="terminal-page__header">
+                    <div>
+                      <span>자동 큐레이션</span>
+                      <strong>뉴스룸</strong>
+                    </div>
+                    <small>{filteredTerminalNews.length}건 · {selectedInstrument?.name ?? '시장 전체'}</small>
+                  </div>
+                  <div className="terminal-filterbar" role="tablist" aria-label="뉴스 필터">
+                    {NEWS_FILTER_OPTIONS.map((option) => (
+                      <button
+                        aria-selected={newsFilter === option.key}
+                        key={option.key}
+                        onClick={() => setNewsFilter(option.key)}
+                        role="tab"
+                        type="button"
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="terminal-headlines">
+                    {filteredTerminalNews.slice(0, 3).map((item) => (
+                      <a href={item.url} key={item.id} rel="noreferrer" target="_blank">
+                        <span>{item.score}</span>
+                        <strong>{item.title}</strong>
+                        <em>{item.source} · {item.publishedAt ? formatNewsTime(item.publishedAt) : '검색 후보'}</em>
+                      </a>
+                    ))}
+                  </div>
+                  <div className="terminal-news-list">
+                    {filteredTerminalNews.map((item, index) => (
+                      <a href={item.url} key={`${item.id}-${index}`} rel="noreferrer" target="_blank">
+                        <span>{item.publishedAt ? formatNewsTime(item.publishedAt) : '검색'}</span>
+                        <strong>{item.title}</strong>
+                        <em>{item.filters.map((filter) => NEWS_FILTER_OPTIONS.find((option) => option.key === filter)?.label ?? filter).join(' · ')}</em>
+                      </a>
+                    ))}
+                    {filteredTerminalNews.length === 0 && <p>선택한 필터의 뉴스가 없습니다</p>}
+                  </div>
+                </section>
+              )}
+
+              {terminalTab === 'macro' && (
+                <section className="terminal-page terminal-page--macro" aria-label="매크로 대시보드">
+                  <div className="terminal-page__header">
+                    <div>
+                      <span>원자재 · 환율 · 금리 · 글로벌 지수</span>
+                      <strong>매크로 대시보드</strong>
+                    </div>
+                    <small>조회 가능 항목 우선 표시</small>
+                  </div>
+                  <div className="terminal-kpi-row">
+                    {macroCoreItems.map((item) => (
+                      <button
+                        data-tone={moveTone(item.snapshot?.sign)}
+                        key={item.key}
+                        onClick={() => item.instrument && selectInstrument(item.instrument)}
+                        type="button"
+                      >
+                        <span>{item.label}</span>
+                        <strong>{item.snapshot ? formatPrice(item.snapshot.price) : (item.fallback ?? '-')}</strong>
+                        <em>{item.snapshot ? formatRate(item.snapshot.changeRate) : item.detail}</em>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="terminal-macro-grid">
+                    {macroBoardGroups.map((group) => (
+                      <section className="terminal-panel" key={group.label}>
+                        <div className="terminal-panel__header">
+                          <strong>{group.label}</strong>
+                          <span>{group.items.filter((item) => item.snapshot).length}/{group.items.length}</span>
+                        </div>
+                        <div className="terminal-macro-list">
+                          {group.items.map((item) => (
+                            <button
+                              data-tone={moveTone(item.snapshot?.sign)}
+                              disabled={!item.instrument}
+                              key={item.key}
+                              onClick={() => item.instrument && selectInstrument(item.instrument)}
+                              type="button"
+                            >
+                              <span>{item.label}</span>
+                              <strong>{item.snapshot ? formatPrice(item.snapshot.price) : (item.fallback ?? '-')}</strong>
+                              <em>{item.snapshot ? formatRate(item.snapshot.changeRate) : item.detail}</em>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {terminalTab === 'calendar' && (
+                <section className="terminal-page terminal-page--calendar" aria-label="경제 캘린더">
+                  <div className="terminal-page__header">
+                    <div>
+                      <span>KST · 2026년 7월</span>
+                      <strong>경제 캘린더</strong>
+                    </div>
+                    <small>다가오는 일정 {upcomingEvents.length}건</small>
+                  </div>
+                  <div className="terminal-calendar-grid">
+                    {ECONOMIC_EVENTS.map((event) => (
+                      <article data-impact={event.impact} key={`${event.date}-${event.title}`}>
+                        <span>{formatEventDay(event.date)} · {event.time}</span>
+                        <strong>{event.title}</strong>
+                        <em>{event.region} · 중요도 {event.impact}</em>
+                      </article>
+                    ))}
+                  </div>
+                  <div className="terminal-panel terminal-panel--notice">
+                    <div className="terminal-panel__header">
+                      <strong>운영 기준</strong>
+                      <span>Asia/Seoul</span>
+                    </div>
+                    <p>이 캘린더는 화면 구성용 기본 일정입니다. 실제 발표치·컨센서스·이전치는 별도 경제지표 API 연동 단계에서 붙입니다.</p>
+                  </div>
+                </section>
+              )}
+
+              {terminalTab === 'themes' && (
+                <section className="terminal-page terminal-page--themes" aria-label="테마와 도미넌스">
+                  <div className="terminal-page__header">
+                    <div>
+                      <span>시장 도미넌스 · 테마 흐름</span>
+                      <strong>테마 보드</strong>
+                    </div>
+                    <small>상승 {themeBreadth.up} · 하락 {themeBreadth.down}</small>
+                  </div>
+                  <div className="terminal-dominance">
+                    <div>
+                      <span>삼닉 관심도</span>
+                      <strong>36%</strong>
+                      <em>반도체 테마 내 거래대금 비중 추정</em>
+                    </div>
+                    <div>
+                      <span>시장 폭</span>
+                      <strong>{themeBreadth.up}/{themeBreadth.total}</strong>
+                      <em>주요 테마 상승 우위</em>
+                    </div>
+                    <div>
+                      <span>상위 테마</span>
+                      <strong>{THEME_FLOW_ITEMS[0]?.name}</strong>
+                      <em>{THEME_FLOW_ITEMS[0]?.leader}</em>
+                    </div>
+                  </div>
+                  <div className="terminal-theme-list">
+                    {THEME_FLOW_ITEMS.map((item) => (
+                      <article data-tone={feeImpactTone(item.change)} key={item.name}>
+                        <div>
+                          <strong>{item.name}</strong>
+                          <span>{item.leader}</span>
+                        </div>
+                        <em>{item.score}</em>
+                        <small>{formatRate(item.change)}</small>
+                        <span>{item.tags.join(' · ')}</span>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {terminalTab === 'fees' && (
+                <section className="terminal-page terminal-page--fees" aria-label="수수료 계산기">
+                  <div className="terminal-page__header">
+                    <div>
+                      <span>국내주식 왕복 거래 기준</span>
+                      <strong>수수료 비교 계산기</strong>
+                    </div>
+                    <small>거래세 0.20% 포함</small>
+                  </div>
+                  <div className="terminal-fee-controls">
+                    <label>
+                      <span>매수금액</span>
+                      <input
+                        inputMode="numeric"
+                        onChange={(event) => setFeeAmount(event.target.value)}
+                        value={feeAmount}
+                      />
+                    </label>
+                    <label>
+                      <span>예상 수익률 %</span>
+                      <input
+                        inputMode="decimal"
+                        onChange={(event) => setFeeExpectedReturn(event.target.value)}
+                        value={feeExpectedReturn}
+                      />
+                    </label>
+                    <div>
+                      <span>최저 비용</span>
+                      <strong>{bestFeeRow ? bestFeeRow.broker.name : '-'}</strong>
+                      <em>{bestFeeRow ? `${formatPrice(Math.round(bestFeeRow.totalFee))}원` : '-'}</em>
+                    </div>
+                    <div>
+                      <span>최고 비용</span>
+                      <strong>{worstFeeRow ? worstFeeRow.broker.name : '-'}</strong>
+                      <em>{worstFeeRow && bestFeeRow ? `${formatPrice(Math.round(worstFeeRow.totalFee - bestFeeRow.totalFee))}원 차이` : '-'}</em>
+                    </div>
+                  </div>
+                  <div className="terminal-fee-table">
+                    <div className="terminal-fee-table__head">
+                      <span>증권사</span>
+                      <span>수수료율</span>
+                      <span>총 비용</span>
+                      <span>실손익</span>
+                    </div>
+                    {feeRows.map((row, index) => (
+                      <div className="terminal-fee-table__row" key={row.broker.name}>
+                        <strong>{index === 0 ? 'BEST ' : ''}{row.broker.name}<em>{row.broker.product}</em></strong>
+                        <span>{(row.broker.commissionRate * 100).toFixed(4)}%</span>
+                        <span>{formatPrice(Math.round(row.totalFee))}원</span>
+                        <span data-tone={feeImpactTone(row.netPnl)}>{formatSignedPrice(Math.round(row.netPnl))}원</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {terminalTab === 'simulation' && (
+                <section className="terminal-page terminal-page--simulation" aria-label="테스트매매">
+                  <div className="terminal-page__header">
+                    <div>
+                      <span>실매매 전 단계</span>
+                      <strong>테스트매매 시뮬레이션</strong>
+                    </div>
+                    <small>가상 포인트 · 주문 전송 없음</small>
+                  </div>
+                  <div className="terminal-simulation-grid">
+                    <section className="terminal-panel">
+                      <div className="terminal-panel__header">
+                        <strong>시뮬 시작 조건</strong>
+                        <span>1,000,000 pt</span>
+                      </div>
+                      <p>야간선물·원자재·코인을 대상으로 격리 마진과 레버리지 감각을 검증하는 화면입니다. 실제 주문 API와는 연결하지 않습니다.</p>
+                      <button
+                        onClick={() => {
+                          setActivePage('trade');
+                          setOrderAcknowledged(false);
+                        }}
+                        type="button"
+                      >
+                        주문 티켓 구조 확인
+                      </button>
+                    </section>
+                    <section className="terminal-panel">
+                      <div className="terminal-panel__header">
+                        <strong>리더보드</strong>
+                        <span>샘플 랭킹</span>
+                      </div>
+                      <div className="terminal-leaderboard">
+                        {SIMULATION_LEADERS.map((leader) => (
+                          <div key={leader.rank}>
+                            <span>#{leader.rank}</span>
+                            <strong>{leader.name}</strong>
+                            <em>{formatSignedPrice(leader.pnl)} pt</em>
+                            <small>{leader.trades}회 · 승률 {leader.winRate}%</small>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  </div>
+                </section>
+              )}
             </section>
           )}
 
@@ -3047,7 +3611,7 @@ export function App(): JSX.Element {
           )}
         </main>
 
-        {activePage !== 'portfolio' && <aside className={`watchlist${isWatchlistCollapsed ? ' is-collapsed' : ''}${isCompactList ? ' is-compact-list' : ''}`}>
+        {(activePage === 'market' || activePage === 'trade') && <aside className={`watchlist${isWatchlistCollapsed ? ' is-collapsed' : ''}${isCompactList ? ' is-compact-list' : ''}`}>
           <div className="watchlist__header">
             <div>
               <strong>{sidePanelTab === 'watch' ? '관심종목' : '종목 탐색'}</strong>
