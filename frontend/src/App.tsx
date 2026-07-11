@@ -1098,6 +1098,18 @@ export function App(): JSX.Element {
       getSnapshotForInstrument,
     );
   }, [moveFilter, query, quotesByCode, stream.trades, watchGroup, watchSort, watchlist]);
+  const watchFilterChips = useMemo(() => {
+    const groupLabel = WATCH_GROUP_OPTIONS.find((option) => option.key === watchGroup)?.label ?? '전체';
+    const moveLabel = MOVE_FILTER_OPTIONS.find((option) => option.key === moveFilter)?.label ?? '전체';
+    const sortLabel = WATCH_SORT_OPTIONS.find((option) => option.key === watchSort)?.label ?? '기본순';
+    return [
+      groupLabel,
+      moveFilter === 'all' ? undefined : moveLabel,
+      sortLabel,
+      query.trim() ? `검색 ${query.trim()}` : undefined,
+      isCompactList ? '촘촘' : undefined,
+    ].filter((item): item is string => Boolean(item));
+  }, [isCompactList, moveFilter, query, watchGroup, watchSort]);
   const visibleCategoryItems = useMemo(
     () =>
       sortBySnapshot(
@@ -2008,7 +2020,14 @@ export function App(): JSX.Element {
           </div>
           <div className="watchlist__section-title">
             <strong>현재 그룹</strong>
-            <span>{filteredWatchlist.length} / {watchlist.length}</span>
+            <div className="watchlist__section-meta">
+              <div className="watchlist__filter-chips" aria-label="현재 리스트 필터">
+                {watchFilterChips.map((chip) => (
+                  <em key={chip}>{chip}</em>
+                ))}
+              </div>
+              <span>{filteredWatchlist.length} / {watchlist.length}</span>
+            </div>
           </div>
           <div className="watchlist__rows watchlist__rows--saved">
             {filteredWatchlist.map((instrument) => (

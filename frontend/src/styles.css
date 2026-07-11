@@ -1888,6 +1888,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 0 14px 7px;
   color: var(--muted);
   font-size: 11px;
@@ -1900,6 +1901,36 @@ button {
 
 .watchlist__section-title span {
   font-variant-numeric: tabular-nums;
+}
+
+.watchlist__section-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.watchlist__filter-chips {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.watchlist__filter-chips em {
+  overflow: hidden;
+  max-width: 72px;
+  padding: 1px 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .watchlist__rows {
