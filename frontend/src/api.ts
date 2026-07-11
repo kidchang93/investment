@@ -1,5 +1,13 @@
 import { API_BASE } from './config';
-import type { CandlesResponse, Instrument, InstrumentCategory, NewsItem, Quote, WatchItem } from '@invest/shared';
+import type {
+  CandlesResponse,
+  Instrument,
+  InstrumentCategory,
+  NewsItem,
+  Quote,
+  WatchItem,
+  WatchlistGroup,
+} from '@invest/shared';
 
 export async function fetchWatchlist(): Promise<WatchItem[]> {
   const res = await fetch(`${API_BASE}/api/watchlist`);
@@ -78,6 +86,35 @@ export async function fetchDefaultWatchlist(): Promise<Instrument[]> {
   return res.json();
 }
 
+export async function fetchWatchlists(): Promise<WatchlistGroup[]> {
+  const res = await fetch(`${API_BASE}/api/watchlists`);
+  if (!res.ok) throw new Error(`관심그룹 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+export async function createWatchlist(name: string): Promise<WatchlistGroup> {
+  const res = await fetch(`${API_BASE}/api/watchlists`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`관심그룹 생성 실패: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteWatchlist(watchlistId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/watchlists/${encodeURIComponent(watchlistId)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(`관심그룹 삭제 실패: ${res.status}`);
+}
+
+export async function fetchWatchlistItems(watchlistId: string): Promise<Instrument[]> {
+  const res = await fetch(`${API_BASE}/api/watchlists/${encodeURIComponent(watchlistId)}/items`);
+  if (!res.ok) throw new Error(`관심그룹 종목 조회 실패: ${res.status}`);
+  return res.json();
+}
+
 export async function addDefaultWatchlistItem(instrumentId: string): Promise<Instrument> {
   const res = await fetch(`${API_BASE}/api/watchlists/default/items`, {
     method: 'POST',
@@ -88,9 +125,27 @@ export async function addDefaultWatchlistItem(instrumentId: string): Promise<Ins
   return res.json();
 }
 
+export async function addWatchlistItem(watchlistId: string, instrumentId: string): Promise<Instrument> {
+  const res = await fetch(`${API_BASE}/api/watchlists/${encodeURIComponent(watchlistId)}/items`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ instrumentId }),
+  });
+  if (!res.ok) throw new Error(`관심그룹 종목 추가 실패: ${res.status}`);
+  return res.json();
+}
+
 export async function removeDefaultWatchlistItem(instrumentId: string): Promise<void> {
   const res = await fetch(`${API_BASE}/api/watchlists/default/items/${encodeURIComponent(instrumentId)}`, {
     method: 'DELETE',
   });
   if (!res.ok) throw new Error(`관심종목 삭제 실패: ${res.status}`);
+}
+
+export async function removeWatchlistItem(watchlistId: string, instrumentId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/watchlists/${encodeURIComponent(watchlistId)}/items/${encodeURIComponent(instrumentId)}`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) throw new Error(`관심그룹 종목 삭제 실패: ${res.status}`);
 }

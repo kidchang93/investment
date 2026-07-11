@@ -4,12 +4,18 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { config, assertCredentials } from './config.js';
 import {
   addDefaultWatchlistItem,
+  addWatchlistItem,
+  createWatchlist,
+  deleteWatchlist,
   ensureInstrumentSchema,
   getCategoryInstruments,
   getDefaultWatchlist,
   getInstrument,
   getInstrumentCategories,
+  getWatchlistItems,
+  getWatchlists,
   removeDefaultWatchlistItem,
+  removeWatchlistItem,
   searchInstruments,
   seedDefaultWatchlist,
 } from './db/instruments.js';
@@ -73,6 +79,21 @@ async function main(): Promise<void> {
     return getDefaultWatchlist();
   });
 
+  app.get('/api/watchlists', async () => {
+    return getWatchlists();
+  });
+
+  app.post<{ Body: { name?: string } }>('/api/watchlists', async (req, reply) => {
+    if (!req.body.name?.trim()) return reply.code(400).send({ message: '관심그룹 이름이 필요합니다.' });
+    return createWatchlist(req.body.name);
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/watchlists/:id', async (req, reply) => {
+    const deleted = await deleteWatchlist(req.params.id);
+    if (!deleted) return reply.code(400).send({ message: '관심그룹을 삭제할 수 없습니다.' });
+    return { ok: true };
+  });
+
   app.post<{ Body: { instrumentId?: string } }>('/api/watchlists/default/items', async (req, reply) => {
     if (!req.body.instrumentId) return reply.code(400).send({ message: 'instrumentId가 필요합니다.' });
     const instrument = await addDefaultWatchlistItem(req.body.instrumentId);
@@ -82,6 +103,25 @@ async function main(): Promise<void> {
 
   app.delete<{ Params: { id: string } }>('/api/watchlists/default/items/:id', async (req) => {
     await removeDefaultWatchlistItem(req.params.id);
+    return { ok: true };
+  });
+
+  app.get<{ Params: { id: string } }>('/api/watchlists/:id/items', async (req) => {
+    return getWatchlistItems(req.params.id);
+  });
+
+  app.post<{ Params: { id: string }; Body: { instrumentId?: string } }>(
+    '/api/watchlists/:id/items',
+    async (req, reply) => {
+      if (!req.body.instrumentId) return reply.code(400).send({ message: 'instrumentId가 필요합니다.' });
+      const instrument = await addWatchlistItem(req.params.id, req.body.instrumentId);
+      if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
+      return instrument;
+    },
+  );
+
+  app.delete<{ Params: { id: string; instrumentId: string } }>('/api/watchlists/:id/items/:instrumentId', async (req) => {
+    await removeWatchlistItem(req.params.id, req.params.instrumentId);
     return { ok: true };
   });
 

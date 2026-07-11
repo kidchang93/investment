@@ -936,6 +936,84 @@ button {
   font-size: 12px;
 }
 
+.watchlist__saved-groups {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  padding: 10px 12px 0;
+}
+
+.watchlist__saved-group {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  max-width: 174px;
+}
+
+.watchlist__saved-group > button,
+.watchlist__saved-groups > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: #090d14;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.watchlist__saved-group > button:first-child {
+  min-width: 0;
+  max-width: 150px;
+  border-radius: 5px 0 0 5px;
+}
+
+.watchlist__saved-group[data-active='true'] > button,
+.watchlist__saved-group > button:hover,
+.watchlist__saved-groups > button:hover,
+.watchlist__saved-groups > button[aria-selected='true'] {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.watchlist__saved-group-delete {
+  width: 24px;
+  justify-content: center;
+  padding: 0;
+  border-left: 0;
+  border-radius: 0 5px 5px 0;
+  color: var(--faint);
+}
+
+.watchlist__saved-group-delete:hover {
+  color: var(--focus);
+}
+
+.watchlist__saved-groups span,
+.watchlist__saved-group span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watchlist__saved-groups em,
+.watchlist__saved-group em {
+  color: var(--faint);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.watchlist__saved-groups .watchlist__group-add {
+  width: 30px;
+  justify-content: center;
+  padding: 0;
+  color: var(--focus);
+  font-size: 16px;
+}
+
 .watchlist__groups {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

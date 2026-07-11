@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  addDefaultWatchlistItem,
+  addWatchlistItem,
+  createWatchlist,
+  deleteWatchlist,
   fetchCategoryInstruments,
-  fetchDefaultWatchlist,
   fetchInstrumentCandles,
   fetchInstrumentCategories,
   fetchInstrumentIntradayCandles,
   fetchInstrumentNews,
   fetchInstrumentQuote,
   fetchInstrumentQuotes,
-  removeDefaultWatchlistItem,
+  fetchWatchlistItems,
+  fetchWatchlists,
+  removeWatchlistItem,
   searchInstruments,
 } from './api';
 import { useStream } from './useStream';
@@ -23,6 +26,7 @@ import type {
   PriceSign,
   Quote,
   Trade,
+  WatchlistGroup,
 } from '@invest/shared';
 
 type RangeKey = '1M' | '3M' | '6M' | '1Y' | 'ALL';
@@ -462,6 +466,10 @@ function InstrumentRow({
 
 export function App(): JSX.Element {
   const [watchlist, setWatchlist] = useState<Instrument[]>([]);
+  const [savedWatchlists, setSavedWatchlists] = useState<WatchlistGroup[]>([]);
+  const [activeSavedWatchlistId, setActiveSavedWatchlistId] = useState(
+    () => window.localStorage.getItem(`${STORAGE_PREFIX}activeSavedWatchlistId`) ?? 'default',
+  );
   const [categories, setCategories] = useState<InstrumentCategory[]>([]);
   const [activeCategory, setActiveCategory] = useState<string>('kr-major');
   const [categoryItems, setCategoryItems] = useState<Instrument[]>([]);
@@ -509,16 +517,27 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('showMovingAverage', showMovingAverage), [showMovingAverage]);
   useEffect(() => writeStoredValue('showRsi', showRsi), [showRsi]);
   useEffect(() => writeStoredValue('bottomDockTab', bottomDockTab), [bottomDockTab]);
+  useEffect(() => writeStoredValue('activeSavedWatchlistId', activeSavedWatchlistId), [activeSavedWatchlistId]);
 
-  // 관심종목 로드 → 첫 종목 자동 선택
   useEffect(() => {
-    fetchDefaultWatchlist()
-      .then((items) => {
-        setWatchlist(items);
-        if (items.length) setSelectedInstrument((cur) => cur ?? items[0]);
+    fetchWatchlists()
+      .then((groups) => {
+        setSavedWatchlists(groups);
+        if (!groups.some((group) => group.id === activeSavedWatchlistId)) {
+          setActiveSavedWatchlistId(groups[0]?.id ?? 'default');
+        }
       })
       .catch((e) => setError(String(e)));
-  }, []);
+  }, [activeSavedWatchlistId]);
+
+  useEffect(() => {
+    fetchWatchlistItems(activeSavedWatchlistId)
+      .then((items) => {
+        setWatchlist(items);
+        if (items.length) setSelectedInstrument((current) => current ?? items[0]);
+      })
+      .catch((e) => setError(String(e)));
+  }, [activeSavedWatchlistId]);
 
   useEffect(() => {
     fetchInstrumentCategories()
@@ -761,15 +780,55 @@ export function App(): JSX.Element {
     setSelectedInstrument(instrument);
   }
 
+  function updateActiveGroupCount(delta: number): void {
+    setSavedWatchlists((groups) =>
+      groups.map((group) =>
+        group.id === activeSavedWatchlistId
+          ? { ...group, itemCount: Math.max(0, group.itemCount + delta) }
+          : group,
+      ),
+    );
+  }
+
   function toggleWatch(instrument: Instrument): void {
     if (watchedIds.has(instrument.id)) {
-      removeDefaultWatchlistItem(instrument.id)
-        .then(() => setWatchlist((items) => items.filter((item) => item.id !== instrument.id)))
+      removeWatchlistItem(activeSavedWatchlistId, instrument.id)
+        .then(() => {
+          setWatchlist((items) => items.filter((item) => item.id !== instrument.id));
+          updateActiveGroupCount(-1);
+        })
         .catch((e) => setError(String(e)));
       return;
     }
-    addDefaultWatchlistItem(instrument.id)
-      .then((item) => setWatchlist((items) => (items.some((cur) => cur.id === item.id) ? items : [...items, item])))
+    addWatchlistItem(activeSavedWatchlistId, instrument.id)
+      .then((item) =>
+        setWatchlist((items) => {
+          if (items.some((cur) => cur.id === item.id)) return items;
+          updateActiveGroupCount(1);
+          return [...items, item];
+        }),
+      )
+      .catch((e) => setError(String(e)));
+  }
+
+  function createSavedWatchlist(): void {
+    const name = window.prompt('새 관심그룹 이름');
+    if (!name?.trim()) return;
+    createWatchlist(name.trim())
+      .then((group) => {
+        setSavedWatchlists((groups) => [...groups, group]);
+        setActiveSavedWatchlistId(group.id);
+      })
+      .catch((e) => setError(String(e)));
+  }
+
+  function deleteSavedWatchlist(id: string): void {
+    if (id === 'default') return;
+    deleteWatchlist(id)
+      .then(() => {
+        setSavedWatchlists((groups) => groups.filter((group) => group.id !== id));
+        if (activeSavedWatchlistId === id) setActiveSavedWatchlistId('default');
+      })
       .catch((e) => setError(String(e)));
   }
 
@@ -1122,7 +1181,43 @@ export function App(): JSX.Element {
             <strong>관심종목</strong>
             <span>{watchlist.length}</span>
           </div>
-          <div className="watchlist__groups" role="tablist" aria-label="관심종목 그룹">
+          <div className="watchlist__saved-groups" role="tablist" aria-label="저장 관심그룹">
+            {savedWatchlists.map((group) => (
+              <div className="watchlist__saved-group" data-active={group.id === activeSavedWatchlistId} key={group.id}>
+                <button
+                  aria-selected={group.id === activeSavedWatchlistId}
+                  onClick={() => setActiveSavedWatchlistId(group.id)}
+                  role="tab"
+                  title={`${group.name} ${group.itemCount}개`}
+                  type="button"
+                >
+                  <span>{group.name}</span>
+                  <em>{group.itemCount}</em>
+                </button>
+                {group.id !== 'default' && (
+                  <button
+                    aria-label={`${group.name} 삭제`}
+                    className="watchlist__saved-group-delete"
+                    onClick={() => deleteSavedWatchlist(group.id)}
+                    title="관심그룹 삭제"
+                    type="button"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            ))}
+            <button
+              aria-label="관심그룹 추가"
+              className="watchlist__group-add"
+              onClick={createSavedWatchlist}
+              title="관심그룹 추가"
+              type="button"
+            >
+              +
+            </button>
+          </div>
+          <div className="watchlist__groups" role="tablist" aria-label="관심종목 필터">
             {WATCH_GROUP_OPTIONS.map((option) => (
               <button
                 aria-selected={option.key === watchGroup}

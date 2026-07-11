@@ -55,6 +55,13 @@ export interface InstrumentCategory {
   description: string;
 }
 
+/** 사용자 관심그룹 */
+export interface WatchlistGroup {
+  id: string;
+  name: string;
+  itemCount: number;
+}
+
 /** 종목 관련 뉴스 제목 */
 export interface NewsItem {
   id: string;

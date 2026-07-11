@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { pool } from './client.js';
-import type { Instrument, InstrumentCategory, WatchItem } from '@invest/shared';
+import type { Instrument, InstrumentCategory, WatchItem, WatchlistGroup } from '@invest/shared';
 
 /**
  * 국내/해외 종목 마스터 저장소.
@@ -19,6 +20,12 @@ interface InstrumentRow {
   provider_symbol: string;
   exchange_code: string;
   timezone: string;
+}
+
+interface WatchlistRow {
+  id: string;
+  name: string;
+  item_count: string;
 }
 
 const DEFAULT_WATCHLIST_ID = 'default';
@@ -193,6 +200,52 @@ export async function getCategoryInstruments(categoryId: string, limit = 80): Pr
 }
 
 export async function getDefaultWatchlist(): Promise<Instrument[]> {
+  return getWatchlistItems(DEFAULT_WATCHLIST_ID);
+}
+
+export async function getWatchlists(): Promise<WatchlistGroup[]> {
+  const result = await pool.query<WatchlistRow>(`
+    SELECT w.id, w.name, count(wi.instrument_id)::text AS item_count
+    FROM watchlists w
+    LEFT JOIN watchlist_items wi ON wi.watchlist_id = w.id
+    GROUP BY w.id, w.name, w.created_at
+    ORDER BY
+      CASE WHEN w.id = $1 THEN 0 ELSE 1 END,
+      w.created_at,
+      w.name
+  `, [DEFAULT_WATCHLIST_ID]);
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    itemCount: Number(row.item_count),
+  }));
+}
+
+export async function createWatchlist(name: string): Promise<WatchlistGroup> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error('관심그룹 이름이 필요합니다.');
+
+  const id = `wl_${randomUUID()}`;
+  const result = await pool.query<{ id: string; name: string }>(
+    `
+      INSERT INTO watchlists (id, name)
+      VALUES ($1, $2)
+      RETURNING id, name
+    `,
+    [id, trimmed],
+  );
+
+  return { id: result.rows[0].id, name: result.rows[0].name, itemCount: 0 };
+}
+
+export async function deleteWatchlist(id: string): Promise<boolean> {
+  if (id === DEFAULT_WATCHLIST_ID) return false;
+  const result = await pool.query('DELETE FROM watchlists WHERE id = $1', [id]);
+  return (result.rowCount ?? 0) > 0;
+}
+
+export async function getWatchlistItems(watchlistId: string): Promise<Instrument[]> {
   const result = await pool.query<InstrumentRow>(
     `
       SELECT i.id, i.symbol, i.name, i.english_name, i.market, i.country, i.currency,
@@ -202,7 +255,7 @@ export async function getDefaultWatchlist(): Promise<Instrument[]> {
       WHERE wi.watchlist_id = $1 AND i.is_active = true
       ORDER BY wi.position, wi.created_at, i.symbol
     `,
-    [DEFAULT_WATCHLIST_ID],
+    [watchlistId],
   );
   return result.rows.map(rowToInstrument);
 }
@@ -240,6 +293,10 @@ export async function seedDefaultWatchlist(items: WatchItem[]): Promise<void> {
 }
 
 export async function addDefaultWatchlistItem(instrumentId: string): Promise<Instrument | null> {
+  return addWatchlistItem(DEFAULT_WATCHLIST_ID, instrumentId);
+}
+
+export async function addWatchlistItem(watchlistId: string, instrumentId: string): Promise<Instrument | null> {
   const instrument = await getInstrument(instrumentId);
   if (!instrument) return null;
   await pool.query(
@@ -252,15 +309,19 @@ export async function addDefaultWatchlistItem(instrumentId: string): Promise<Ins
       )
       ON CONFLICT (watchlist_id, instrument_id) DO NOTHING
     `,
-    [DEFAULT_WATCHLIST_ID, instrumentId],
+    [watchlistId, instrumentId],
   );
   return instrument;
 }
 
 export async function removeDefaultWatchlistItem(instrumentId: string): Promise<void> {
+  await removeWatchlistItem(DEFAULT_WATCHLIST_ID, instrumentId);
+}
+
+export async function removeWatchlistItem(watchlistId: string, instrumentId: string): Promise<void> {
   await pool.query(
     'DELETE FROM watchlist_items WHERE watchlist_id = $1 AND instrument_id = $2',
-    [DEFAULT_WATCHLIST_ID, instrumentId],
+    [watchlistId, instrumentId],
   );
 }
 
