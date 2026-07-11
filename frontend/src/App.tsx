@@ -1668,6 +1668,14 @@ export function App(): JSX.Element {
               </span>
               <span className="chart-readout__tool">{activeToolOption.title}</span>
             </div>
+            {selectedInstrument && (
+              <div className="chart-watermark" aria-hidden="true">
+                <strong>{selectedInstrument.symbol}</strong>
+                <span>
+                  {selectedName} · {activeTimeframe.label}
+                </span>
+              </div>
+            )}
             {selectedInstrument && chartCandles.length > 0 ? (
               <Chart
                 candles={chartCandles}

@@ -1015,6 +1015,41 @@ button {
   color: var(--focus);
 }
 
+.chart-watermark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  max-width: min(620px, calc(100% - 48px));
+  transform: translate(-50%, -50%);
+  color: rgba(229, 231, 235, 0.055);
+  pointer-events: none;
+  text-align: center;
+  user-select: none;
+}
+
+.chart-watermark strong {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 76px;
+  font-weight: 800;
+  line-height: 0.92;
+}
+
+.chart-watermark span {
+  overflow: hidden;
+  max-width: 100%;
+  margin-top: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 18px;
+  font-weight: 700;
+}
+
 .chart {
   position: relative;
   flex: 1;
