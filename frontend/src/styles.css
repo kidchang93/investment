@@ -1504,6 +1504,22 @@ button {
   color: var(--faint);
 }
 
+.news-panel__summary {
+  display: grid;
+  gap: 4px;
+  padding-top: 3px;
+}
+
+.news-panel__summary span {
+  padding: 2px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.06);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
 .news-panel__rows {
   overflow-y: auto;
 }

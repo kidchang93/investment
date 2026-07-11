@@ -1163,6 +1163,23 @@ export function App(): JSX.Element {
     return names;
   }, [categoryItems, selectedInstrument, watchlist]);
   const selectedNews = selectedInstrument ? (newsByCode[selectedInstrument.id] ?? []) : [];
+  const newsSummary = useMemo(() => {
+    const sources = new Map<string, number>();
+    let latestPublishedAt = 0;
+
+    for (const item of selectedNews) {
+      sources.set(item.source, (sources.get(item.source) ?? 0) + 1);
+      if (item.publishedAt && item.publishedAt > latestPublishedAt) latestPublishedAt = item.publishedAt;
+    }
+
+    const topSource = [...sources.entries()].sort((a, b) => b[1] - a[1])[0];
+    return {
+      latestPublishedAt: latestPublishedAt || undefined,
+      sourceCount: sources.size,
+      topSourceName: topSource?.[0],
+      topSourceCount: topSource?.[1] ?? 0,
+    };
+  }, [selectedNews]);
   const trimmedSymbolQuery = symbolQuery.trim();
   const isSymbolSearchPanelOpen =
     trimmedSymbolQuery.length >= 2 && (symbolResults.length > 0 || isSymbolSearching || hasSymbolSearchCompleted);
@@ -1864,6 +1881,15 @@ export function App(): JSX.Element {
                 <strong>뉴스</strong>
                 <span>{selectedInstrument ? selectedInstrument.name : '종목 미선택'}</span>
                 <em>{selectedNews.length ? `${selectedNews.length}건` : '대기'}</em>
+                {selectedNews.length > 0 && (
+                  <div className="news-panel__summary" aria-label="뉴스 요약">
+                    <span>최신 {formatNewsTime(newsSummary.latestPublishedAt)}</span>
+                    <span>
+                      출처 {newsSummary.sourceCount}곳
+                      {newsSummary.topSourceName ? ` · ${newsSummary.topSourceName} ${newsSummary.topSourceCount}` : ''}
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="news-panel__rows">
                 {selectedNews.map((item) => (
