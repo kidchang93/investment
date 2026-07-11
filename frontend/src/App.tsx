@@ -150,6 +150,15 @@ function formatClock(ms: number | null): string {
   }).format(new Date(ms));
 }
 
+function formatCandleDate(seconds: number, withTime: boolean): string {
+  return new Intl.DateTimeFormat('ko-KR', {
+    month: '2-digit',
+    day: '2-digit',
+    ...(withTime ? { hour: '2-digit', minute: '2-digit', hour12: false } : {}),
+    timeZone: 'Asia/Seoul',
+  }).format(new Date(seconds * 1000));
+}
+
 function formatNumber(n: number | undefined): string {
   return n !== undefined && Number.isFinite(n) ? n.toLocaleString('ko-KR') : '-';
 }
@@ -614,6 +623,20 @@ export function App(): JSX.Element {
         : aggregateCandles(selectedIntradayCandles, activeTimeframe.minutes ?? 1),
     [activeTimeframe.minutes, timeframe, selectedIntradayCandles, visibleCandles],
   );
+  const volumeSummary = useMemo(() => {
+    const candlesWithVolume = chartCandles.filter((candle) => Number.isFinite(candle.volume ?? NaN));
+    const total = candlesWithVolume.reduce((sum, candle) => sum + (candle.volume ?? 0), 0);
+    const max = candlesWithVolume.reduce<Candle | undefined>(
+      (winner, candle) => (!winner || (candle.volume ?? 0) > (winner.volume ?? 0) ? candle : winner),
+      undefined,
+    );
+    return {
+      count: candlesWithVolume.length,
+      total,
+      average: candlesWithVolume.length ? total / candlesWithVolume.length : undefined,
+      max,
+    };
+  }, [chartCandles]);
   const selectedName = selectedInstrument?.name ?? '';
   const selectedQuote = selectedInstrument ? quotesByCode[selectedInstrument.id] : undefined;
   const snapshot = toSnapshot(selectedTrade, selectedQuote);
@@ -944,6 +967,31 @@ export function App(): JSX.Element {
               </div>
             )}
           </div>
+
+          {bottomDockTab === 'volume' && (
+            <section className="volume-panel" aria-label="거래량 요약">
+              <div>
+                <span>표시 캔들</span>
+                <strong>{volumeSummary.count ? `${volumeSummary.count}개` : '-'}</strong>
+              </div>
+              <div>
+                <span>총 거래량</span>
+                <strong>{volumeSummary.count ? formatVolume(volumeSummary.total) : '-'}</strong>
+              </div>
+              <div>
+                <span>평균 거래량</span>
+                <strong>{volumeSummary.average !== undefined ? formatVolume(volumeSummary.average) : '-'}</strong>
+              </div>
+              <div>
+                <span>최대 거래량</span>
+                <strong>{volumeSummary.max ? formatVolume(volumeSummary.max.volume ?? 0) : '-'}</strong>
+              </div>
+              <div>
+                <span>최대 거래량 시점</span>
+                <strong>{volumeSummary.max ? formatCandleDate(volumeSummary.max.time, timeframe !== '1D') : '-'}</strong>
+              </div>
+            </section>
+          )}
 
           {bottomDockTab === 'trades' && (
             <section className="trade-tape" aria-label="최근 체결">

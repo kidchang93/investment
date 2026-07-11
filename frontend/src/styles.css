@@ -675,6 +675,41 @@ button {
   color: var(--muted);
 }
 
+.volume-panel {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  min-height: 76px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--border);
+  background: #0b0f17;
+}
+
+.volume-panel div {
+  display: grid;
+  align-content: center;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.44);
+}
+
+.volume-panel span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.volume-panel strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 3px;
+  color: var(--text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
 .trade-tape {
   display: grid;
   grid-template-columns: 150px minmax(0, 1fr);
@@ -1107,6 +1142,10 @@ button {
   .trade-tape {
     grid-template-columns: 1fr;
     max-height: 180px;
+  }
+
+  .volume-panel {
+    grid-template-columns: 1fr;
   }
 
   .trade-tape__header {
