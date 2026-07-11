@@ -580,6 +580,7 @@ export function App(): JSX.Element {
   );
   const [error, setError] = useState<string | null>(null);
   const [quoteRefreshAt, setQuoteRefreshAt] = useState<number | null>(null);
+  const [isQuoteRefreshing, setIsQuoteRefreshing] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [intradayCandlesByCode, setIntradayCandlesByCode] = useState<Record<string, Candle[]>>({});
   const stream = useStream();
@@ -804,6 +805,7 @@ export function App(): JSX.Element {
   const refreshVisibleQuotes = useCallback(
     (respectVisibility = true, shouldApply: () => boolean = () => true): void => {
       if (quoteTargetIds.length === 0 || (respectVisibility && document.hidden)) return;
+      setIsQuoteRefreshing(true);
       void fetchInstrumentQuotes(quoteTargetIds)
         .then((quotes) => {
           if (!shouldApply()) return;
@@ -816,6 +818,9 @@ export function App(): JSX.Element {
         })
         .catch((e) => {
           if (shouldApply()) setError(String(e));
+        })
+        .finally(() => {
+          setIsQuoteRefreshing(false);
         });
     },
     [quoteTargetKey],
@@ -1113,12 +1118,12 @@ export function App(): JSX.Element {
           <span className="freshness-chip" data-tone={quoteFreshnessTone}>{quoteFreshnessLabel}</span>
           <button
             className="status-refresh"
-            disabled={quoteTargetIds.length === 0}
+            disabled={quoteTargetIds.length === 0 || isQuoteRefreshing}
             onClick={() => refreshVisibleQuotes(false)}
             title="보이는 종목 시세 즉시 갱신"
             type="button"
           >
-            갱신
+            {isQuoteRefreshing ? '갱신중' : '갱신'}
           </button>
           <span
             className="status-dot"
