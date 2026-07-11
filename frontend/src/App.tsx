@@ -29,6 +29,7 @@ type ChartTool = 'cursor' | 'crosshair' | 'trend' | 'measure' | 'text' | 'lock';
 type MoveFilter = 'all' | 'up' | 'down';
 type WatchSortKey = 'custom' | 'rate' | 'volume' | 'name';
 type SessionTone = 'open' | 'pre' | 'closed';
+type WatchGroup = 'all' | 'kr' | 'global' | 'fund';
 
 interface PriceSnapshot {
   price: number;
@@ -76,6 +77,13 @@ const WATCH_SORT_OPTIONS: Array<{ key: WatchSortKey; label: string }> = [
   { key: 'rate', label: '등락률순' },
   { key: 'volume', label: '거래량순' },
   { key: 'name', label: '이름순' },
+];
+
+const WATCH_GROUP_OPTIONS: Array<{ key: WatchGroup; label: string }> = [
+  { key: 'all', label: '전체' },
+  { key: 'kr', label: '국내' },
+  { key: 'global', label: '해외' },
+  { key: 'fund', label: 'ETF/ETN' },
 ];
 
 const TOOL_OPTIONS: Array<{ key: ChartTool; label: string; title: string }> = [
@@ -253,6 +261,13 @@ function filterByMove(
   return items.filter((item) => moveTone(getSnapshot(item)?.sign) === filter);
 }
 
+function matchesWatchGroup(instrument: Instrument, group: WatchGroup): boolean {
+  if (group === 'all') return true;
+  if (group === 'kr') return instrument.country === 'KR';
+  if (group === 'global') return instrument.country !== 'KR';
+  return instrument.assetType === 'etf' || instrument.assetType === 'etn';
+}
+
 function filterCandles(candles: Candle[], range: RangeKey): Candle[] {
   const option = RANGE_OPTIONS.find((item) => item.key === range);
   if (!option?.days || candles.length === 0) return candles;
@@ -417,6 +432,7 @@ export function App(): JSX.Element {
   const [symbolResults, setSymbolResults] = useState<Instrument[]>([]);
   const [range, setRange] = useState<RangeKey>('3M');
   const [timeframe, setTimeframe] = useState<TimeframeKey>('1D');
+  const [watchGroup, setWatchGroup] = useState<WatchGroup>('all');
   const [moveFilter, setMoveFilter] = useState<MoveFilter>('all');
   const [watchSort, setWatchSort] = useState<WatchSortKey>('custom');
   const [activeTool, setActiveTool] = useState<ChartTool>('crosshair');
@@ -614,20 +630,21 @@ export function App(): JSX.Element {
     );
   const filteredWatchlist = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const grouped = watchlist.filter((item) => matchesWatchGroup(item, watchGroup));
     const matched = q
-      ? watchlist.filter(
+      ? grouped.filter(
           (item) =>
             item.name.toLowerCase().includes(q) ||
             item.symbol.toLowerCase().includes(q) ||
             (item.englishName?.toLowerCase().includes(q) ?? false),
         )
-      : watchlist;
+      : grouped;
     return sortBySnapshot(
       filterByMove(matched, moveFilter, getSnapshotForInstrument),
       watchSort,
       getSnapshotForInstrument,
     );
-  }, [moveFilter, query, quotesByCode, stream.trades, watchSort, watchlist]);
+  }, [moveFilter, query, quotesByCode, stream.trades, watchGroup, watchSort, watchlist]);
   const visibleCategoryItems = useMemo(
     () =>
       sortBySnapshot(
@@ -923,6 +940,19 @@ export function App(): JSX.Element {
           <div className="watchlist__header">
             <strong>관심종목</strong>
             <span>{watchlist.length}</span>
+          </div>
+          <div className="watchlist__groups" role="tablist" aria-label="관심종목 그룹">
+            {WATCH_GROUP_OPTIONS.map((option) => (
+              <button
+                aria-selected={option.key === watchGroup}
+                key={option.key}
+                onClick={() => setWatchGroup(option.key)}
+                role="tab"
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
           <input
             aria-label="종목 검색"

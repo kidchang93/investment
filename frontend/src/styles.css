@@ -719,6 +719,31 @@ button {
   font-size: 12px;
 }
 
+.watchlist__groups {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 10px 12px 0;
+}
+
+.watchlist__groups button {
+  height: 28px;
+  min-width: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.watchlist__groups button:hover,
+.watchlist__groups button[aria-selected='true'] {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
 .watchlist__search {
   width: calc(100% - 24px);
   height: 34px;
