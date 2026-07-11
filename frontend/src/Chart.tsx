@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createChart,
   CrosshairMode,
@@ -239,6 +239,8 @@ export function Chart({
   const priceLineRef = useRef<IPriceLine | null>(null);
   const priceLevelLinesRef = useRef<IPriceLine[]>([]);
   const onReadoutChangeRef = useRef(onReadoutChange);
+  const latestPriceRef = useRef(latestPrice);
+  const lastPriceRafRef = useRef<number | null>(null);
   // 실시간 갱신 시 "오늘 캔들"의 time을 알아야 한다. 마지막 일봉 time을 기준으로 잡는다.
   const lastTimeRef = useRef<UTCTimestamp | null>(null);
   const [crosshair, setCrosshair] = useState<CrosshairReadout | null>(null);
@@ -246,6 +248,21 @@ export function Chart({
   const rsiPoints = useMemo(() => calculateRsiPoints(candles), [candles]);
   const rsiPath = rsiPoints.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ');
   const latestRsi = rsiPoints.at(-1)?.value;
+  latestPriceRef.current = latestPrice;
+
+  const refreshLastPriceY = useCallback((): void => {
+    const series = seriesRef.current;
+    const latest = latestPriceRef.current;
+    setLastPriceY(series && latest ? series.priceToCoordinate(latest.price) : null);
+  }, []);
+
+  const scheduleLastPriceYRefresh = useCallback((): void => {
+    if (lastPriceRafRef.current !== null) return;
+    lastPriceRafRef.current = window.requestAnimationFrame(() => {
+      lastPriceRafRef.current = null;
+      refreshLastPriceY();
+    });
+  }, [refreshLastPriceY]);
 
   useEffect(() => {
     onReadoutChangeRef.current = onReadoutChange;
@@ -377,9 +394,17 @@ export function Chart({
       });
       onReadoutChangeRef.current?.(readout);
     });
+    chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleLastPriceYRefresh);
+    window.addEventListener('resize', scheduleLastPriceYRefresh);
 
     return () => {
       onReadoutChangeRef.current?.(null);
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(scheduleLastPriceYRefresh);
+      window.removeEventListener('resize', scheduleLastPriceYRefresh);
+      if (lastPriceRafRef.current !== null) {
+        window.cancelAnimationFrame(lastPriceRafRef.current);
+        lastPriceRafRef.current = null;
+      }
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -389,7 +414,7 @@ export function Chart({
       priceLineRef.current = null;
       priceLevelLinesRef.current = [];
     };
-  }, []);
+  }, [scheduleLastPriceYRefresh]);
 
   useEffect(() => {
     chartRef.current?.timeScale().applyOptions({
@@ -405,10 +430,12 @@ export function Chart({
 
     if (command.type === 'fit') {
       chart.timeScale().fitContent();
+      scheduleLastPriceYRefresh();
       return;
     }
     zoomVisibleRange(chart, command.type === 'zoomIn' ? 0.72 : 1.35);
-  }, [command]);
+    scheduleLastPriceYRefresh();
+  }, [command, scheduleLastPriceYRefresh]);
 
   // 일봉 데이터 세팅 (종목 전환 시)
   useEffect(() => {
@@ -421,7 +448,8 @@ export function Chart({
     ma20Ref.current?.setData(showMovingAverage ? toMovingAverageData(candles, 20) : []);
     lastTimeRef.current = candles.length ? (candles[candles.length - 1].time as UTCTimestamp) : null;
     chartRef.current?.timeScale().fitContent();
-  }, [candles, showMovingAverage]);
+    scheduleLastPriceYRefresh();
+  }, [candles, scheduleLastPriceYRefresh, showMovingAverage]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -446,8 +474,8 @@ export function Chart({
       axisLabelVisible: true,
       title: '현재가',
     });
-    setLastPriceY(series.priceToCoordinate(latestPrice.price));
-  }, [latestPrice]);
+    scheduleLastPriceYRefresh();
+  }, [latestPrice, scheduleLastPriceYRefresh]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -522,7 +550,8 @@ export function Chart({
       color: volumeColor(latest.price, latest.open),
     });
     lastTimeRef.current = tradeTime;
-  }, [latestPrice, liveTrade, updateLastCandle]);
+    scheduleLastPriceYRefresh();
+  }, [latestPrice, liveTrade, scheduleLastPriceYRefresh, updateLastCandle]);
 
   return (
     <div className="chart">
