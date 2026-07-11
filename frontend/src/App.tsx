@@ -6,6 +6,7 @@ import {
   fetchInstrumentCandles,
   fetchInstrumentCategories,
   fetchInstrumentQuote,
+  fetchInstrumentQuotes,
   removeDefaultWatchlistItem,
   searchInstruments,
 } from './api';
@@ -54,6 +55,10 @@ const TOOL_OPTIONS: Array<{ key: ChartTool; label: string; title: string }> = [
 ];
 
 const OVERSEAS_REFRESH_MS = 5_000;
+const LIST_QUOTE_REFRESH_MS = 15_000;
+const MAX_LIST_QUOTE_TARGETS = 30;
+const CATEGORY_QUOTE_TARGETS = 20;
+const SEARCH_QUOTE_TARGETS = 10;
 
 function signColor(sign?: PriceSign): string {
   if (sign === '1' || sign === '2') return '#e5484d';
@@ -85,6 +90,16 @@ function formatVolume(n: number): string {
 function formatTradeTime(time: string | undefined): string {
   if (!time || !/^\d{6}$/.test(time)) return '실시간 대기';
   return `${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4, 6)}`;
+}
+
+function formatClock(ms: number | null): string {
+  if (!ms) return '시세 연결 대기';
+  return new Intl.DateTimeFormat('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date(ms));
 }
 
 function toSnapshot(trade: Trade | undefined, quote: Quote | undefined): PriceSnapshot | undefined {
@@ -175,6 +190,7 @@ export function App(): JSX.Element {
   const [range, setRange] = useState<RangeKey>('3M');
   const [activeTool, setActiveTool] = useState<ChartTool>('crosshair');
   const [error, setError] = useState<string | null>(null);
+  const [quoteRefreshAt, setQuoteRefreshAt] = useState<number | null>(null);
   const stream = useStream();
 
   // 관심종목 로드 → 첫 종목 자동 선택
@@ -243,6 +259,55 @@ export function App(): JSX.Element {
     }, 200);
     return () => window.clearTimeout(timer);
   }, [symbolQuery]);
+
+  const quoteTargetIds = useMemo(() => {
+    const ids = new Set<string>();
+    const selectedOverseasId = selectedInstrument?.country !== 'KR' ? selectedInstrument?.id : undefined;
+
+    function add(instrument: Instrument): void {
+      if (instrument.id === selectedOverseasId) return;
+      ids.add(instrument.id);
+    }
+
+    if (selectedInstrument?.country === 'KR') add(selectedInstrument);
+    for (const instrument of watchlist) add(instrument);
+    for (const instrument of categoryItems.slice(0, CATEGORY_QUOTE_TARGETS)) add(instrument);
+    for (const instrument of symbolResults.slice(0, SEARCH_QUOTE_TARGETS)) add(instrument);
+    return [...ids].slice(0, MAX_LIST_QUOTE_TARGETS);
+  }, [categoryItems, selectedInstrument, symbolResults, watchlist]);
+  const quoteTargetKey = quoteTargetIds.join('|');
+
+  // 화면에 보이는 종목들의 REST 현재가를 유지해 클릭 전에도 리스트 가격이 채워지게 한다.
+  useEffect(() => {
+    if (quoteTargetIds.length === 0) return;
+
+    let disposed = false;
+    const refresh = (): void => {
+      if (document.hidden) return;
+      void fetchInstrumentQuotes(quoteTargetIds)
+        .then((quotes) => {
+          if (disposed) return;
+          setQuotesByCode((items) => {
+            const next = { ...items };
+            for (const quote of quotes) next[quote.code] = quote;
+            return next;
+          });
+          setQuoteRefreshAt(Date.now());
+        })
+        .catch((e) => {
+          if (!disposed) setError(String(e));
+        });
+    };
+
+    refresh();
+    const timer = window.setInterval(refresh, LIST_QUOTE_REFRESH_MS);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [quoteTargetKey]);
 
   const selectedCandles = selectedInstrument ? candlesByCode[selectedInstrument.id] : undefined;
   const visibleCandles = useMemo(
@@ -447,7 +512,7 @@ export function App(): JSX.Element {
             <button aria-selected="true" type="button">거래량</button>
             <button aria-selected="false" type="button">체결</button>
             <button aria-selected="false" type="button">뉴스</button>
-            <span>조회 전용 세션</span>
+            <span>조회 전용 세션 · 시세 갱신 {formatClock(quoteRefreshAt)}</span>
           </div>
         </main>
 

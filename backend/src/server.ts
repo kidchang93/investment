@@ -16,7 +16,27 @@ import {
 import { getDailyCandles, getInstrumentCandles, getInstrumentQuote, getQuote } from './kis/rest.js';
 import { KisRealtime } from './kis/realtime.js';
 import { WATCHLIST } from './watchlist.js';
-import type { ServerMessage, Trade, ConnectionStatus } from '@invest/shared';
+import type { ServerMessage, Trade, ConnectionStatus, Quote } from '@invest/shared';
+
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  let nextIndex = 0;
+
+  async function run(): Promise<void> {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(items[index]);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run));
+  return results;
+}
 
 async function main(): Promise<void> {
   assertCredentials();
@@ -64,6 +84,27 @@ async function main(): Promise<void> {
 
   app.get<{ Params: { code: string } }>('/api/quote/:code', async (req) => {
     return getQuote(req.params.code);
+  });
+
+  app.post<{ Body: { ids?: string[] } }>('/api/instruments/quotes', async (req, reply) => {
+    if (!Array.isArray(req.body.ids)) return reply.code(400).send({ message: 'ids 배열이 필요합니다.' });
+
+    const ids = [...new Set(req.body.ids.filter((id) => typeof id === 'string' && id.length > 0))].slice(0, 30);
+    if (ids.length === 0) return [];
+
+    const quotes = await mapLimit(ids, 4, async (id): Promise<Quote | null> => {
+      const instrument = await getInstrument(id);
+      if (!instrument) return null;
+
+      try {
+        return await getInstrumentQuote(instrument);
+      } catch (err) {
+        req.log.warn({ err, instrumentId: id }, '종목 현재가 배치 조회 실패');
+        return null;
+      }
+    });
+
+    return quotes.filter((quote): quote is Quote => quote !== null);
   });
 
   app.get<{ Params: { id: string } }>('/api/instruments/:id/candles', async (req, reply) => {

@@ -38,6 +38,16 @@ export async function fetchInstrumentQuote(id: string): Promise<Quote> {
   return res.json();
 }
 
+export async function fetchInstrumentQuotes(ids: string[]): Promise<Quote[]> {
+  const res = await fetch(`${API_BASE}/api/instruments/quotes`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) throw new Error(`종목 현재가 배치 조회 실패: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchInstrumentCategories(): Promise<InstrumentCategory[]> {
   const res = await fetch(`${API_BASE}/api/instruments/categories`);
   if (!res.ok) throw new Error(`종목 카테고리 조회 실패: ${res.status}`);
