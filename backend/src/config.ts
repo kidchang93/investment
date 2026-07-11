@@ -29,6 +29,7 @@ export const config = {
     ? 'ws://ops.koreainvestment.com:21000'
     : 'ws://ops.koreainvestment.com:31000',
   port: parsePort(process.env.PORT),
+  databaseUrl: process.env.DATABASE_URL ?? 'postgresql://kis:kis_local@localhost:55432/kis',
   /** 개인(P) / 법인(B). 개인 계정은 'P' */
   custType: 'P' as const,
 } as const;

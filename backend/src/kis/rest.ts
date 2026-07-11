@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 import { getAccessToken } from './auth.js';
-import type { Candle, CandlesResponse, PriceSign, Quote } from '@invest/shared';
+import type { Candle, CandlesResponse, Instrument, PriceSign, Quote } from '@invest/shared';
 
 /** KIS REST GET 공통 헬퍼. tr_id별로 헤더/인증을 채워 호출한다. */
 async function kisGet(
@@ -59,6 +59,11 @@ function requireNumber(value: string | undefined, field: string): number {
     throw new Error(`현재가 응답 숫자 필드가 올바르지 않습니다: ${field}`);
   }
   return n;
+}
+
+function optionalNumber(value: string | undefined): number | null {
+  const n = toNumber(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 /**
@@ -135,5 +140,97 @@ export async function getQuote(code: string): Promise<Quote> {
     high: requireNumber(o.stck_hgpr, 'stck_hgpr'),
     low: requireNumber(o.stck_lwpr, 'stck_lwpr'),
     accVolume: requireNumber(o.acml_vol, 'acml_vol'),
+  };
+}
+
+export async function getInstrumentCandles(
+  instrument: Instrument,
+  days = 120,
+): Promise<CandlesResponse> {
+  if (instrument.country === 'KR') {
+    const response = await getDailyCandles(instrument.providerSymbol, days);
+    return { ...response, code: instrument.id, name: instrument.name };
+  }
+  return getOverseasDailyCandles(instrument, days);
+}
+
+export async function getInstrumentQuote(instrument: Instrument): Promise<Quote> {
+  if (instrument.country === 'KR') {
+    const quote = await getQuote(instrument.providerSymbol);
+    return { ...quote, code: instrument.id };
+  }
+  return getOverseasQuote(instrument);
+}
+
+async function getOverseasDailyCandles(
+  instrument: Instrument,
+  days: number,
+): Promise<CandlesResponse> {
+  const json = await kisGet('/uapi/overseas-price/v1/quotations/dailyprice', 'HHDFS76240000', {
+    AUTH: '',
+    EXCD: instrument.exchangeCode,
+    SYMB: instrument.providerSymbol,
+    GUBN: '0', // 0: 일봉
+    BYMD: '',
+    MODP: '1', // 1: 수정주가 반영
+  });
+
+  const output2 = (json.output2 ?? []) as Array<Record<string, string>>;
+  const candles: Candle[] = output2
+    .filter((r) => r.xymd)
+    .map((r) => {
+      const y = Number(r.xymd.slice(0, 4));
+      const m = Number(r.xymd.slice(4, 6));
+      const d = Number(r.xymd.slice(6, 8));
+      return {
+        time: Math.floor(Date.UTC(y, m - 1, d) / 1000),
+        open: toNumber(r.open),
+        high: toNumber(r.high),
+        low: toNumber(r.low),
+        close: toNumber(r.clos),
+        volume: toNumber(r.tvol),
+      };
+    })
+    .filter(
+      (c) =>
+        Number.isFinite(c.time) &&
+        isPositiveFinite(c.open) &&
+        isPositiveFinite(c.high) &&
+        isPositiveFinite(c.low) &&
+        isPositiveFinite(c.close) &&
+        isNonNegativeFinite(c.volume ?? 0),
+    )
+    .sort((a, b) => a.time - b.time)
+    .slice(-days);
+
+  return { code: instrument.id, name: instrument.name, candles };
+}
+
+async function getOverseasQuote(instrument: Instrument): Promise<Quote> {
+  const [priceJson, detailJson] = await Promise.all([
+    kisGet('/uapi/overseas-price/v1/quotations/price', 'HHDFS00000300', {
+      AUTH: '',
+      EXCD: instrument.exchangeCode,
+      SYMB: instrument.providerSymbol,
+    }),
+    kisGet('/uapi/overseas-price/v1/quotations/price-detail', 'HHDFS76200200', {
+      AUTH: '',
+      EXCD: instrument.exchangeCode,
+      SYMB: instrument.providerSymbol,
+    }),
+  ]);
+  const priceOutput = (priceJson.output ?? {}) as Record<string, string>;
+  const detailOutput = (detailJson.output ?? {}) as Record<string, string>;
+  const price = requireNumber(priceOutput.last, 'last');
+  return {
+    code: instrument.id,
+    price,
+    change: requireNumber(priceOutput.diff, 'diff'),
+    changeRate: requireNumber(priceOutput.rate, 'rate'),
+    sign: parseSign(priceOutput.sign),
+    open: optionalNumber(detailOutput.open) ?? price,
+    high: optionalNumber(detailOutput.high) ?? price,
+    low: optionalNumber(detailOutput.low) ?? price,
+    accVolume: optionalNumber(priceOutput.tvol) ?? optionalNumber(detailOutput.tvol) ?? 0,
   };
 }

@@ -29,6 +29,32 @@ export interface CandlesResponse {
   candles: Candle[];
 }
 
+export type InstrumentCountry = 'KR' | 'US' | 'CN' | 'JP' | 'HK' | 'VN';
+export type InstrumentAssetType = 'stock' | 'etf' | 'etn' | 'index' | 'other';
+
+/** 국내/해외 통합 종목 마스터 */
+export interface Instrument {
+  id: string;
+  symbol: string;
+  name: string;
+  englishName?: string;
+  market: string;
+  country: InstrumentCountry;
+  currency: string;
+  assetType: InstrumentAssetType;
+  provider: 'kis';
+  providerSymbol: string;
+  exchangeCode: string;
+  timezone: string;
+}
+
+/** 종목 탐색용 추천 카테고리 */
+export interface InstrumentCategory {
+  id: string;
+  label: string;
+  description: string;
+}
+
 /** 전일대비 부호: 1(상한) 2(상승) 3(보합) 4(하한) 5(하락) */
 export type PriceSign = '1' | '2' | '3' | '4' | '5';
 

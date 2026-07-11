@@ -5,6 +5,7 @@ import {
   type IChartApi,
   type ISeriesApi,
   type CandlestickData,
+  type HistogramData,
   type UTCTimestamp,
 } from 'lightweight-charts';
 import type { Candle, Trade } from '@invest/shared';
@@ -26,6 +27,18 @@ function toCandlestickData(c: Candle): CandlestickData {
   };
 }
 
+function volumeColor(close: number, open: number): string {
+  return close >= open ? 'rgba(229, 72, 77, 0.32)' : 'rgba(59, 130, 246, 0.32)';
+}
+
+function toVolumeData(c: Candle): HistogramData {
+  return {
+    time: c.time as UTCTimestamp,
+    value: c.volume ?? 0,
+    color: volumeColor(c.close, c.open),
+  };
+}
+
 function yyyymmddToTimestamp(date: string): UTCTimestamp | null {
   if (!/^\d{8}$/.test(date)) return null;
   const y = Number(date.slice(0, 4));
@@ -43,6 +56,7 @@ export function Chart({ candles, liveTrade }: ChartProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   // 실시간 갱신 시 "오늘 캔들"의 time을 알아야 한다. 마지막 일봉 time을 기준으로 잡는다.
   const lastTimeRef = useRef<UTCTimestamp | null>(null);
 
@@ -54,16 +68,42 @@ export function Chart({ candles, liveTrade }: ChartProps): JSX.Element {
     const chart = createChart(container, {
       autoSize: true,
       layout: {
-        background: { color: '#0f1117' },
-        textColor: '#c7ccd6',
+        background: { color: '#0b0f17' },
+        textColor: '#8f98a8',
+        fontFamily:
+          "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif",
       },
       grid: {
-        vertLines: { color: '#1c1f2a' },
-        horzLines: { color: '#1c1f2a' },
+        vertLines: { color: 'rgba(148, 163, 184, 0.06)' },
+        horzLines: { color: 'rgba(148, 163, 184, 0.08)' },
       },
-      crosshair: { mode: CrosshairMode.Normal },
-      rightPriceScale: { borderColor: '#2a2e3a' },
-      timeScale: { borderColor: '#2a2e3a', timeVisible: false },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: 'rgba(226, 232, 240, 0.28)', labelBackgroundColor: '#1f2937' },
+        horzLine: { color: 'rgba(226, 232, 240, 0.28)', labelBackgroundColor: '#1f2937' },
+      },
+      rightPriceScale: {
+        borderColor: 'rgba(148, 163, 184, 0.12)',
+        scaleMargins: { top: 0.08, bottom: 0.24 },
+      },
+      timeScale: {
+        borderColor: 'rgba(148, 163, 184, 0.12)',
+        rightOffset: 8,
+        barSpacing: 8,
+        timeVisible: false,
+      },
+      handleScale: {
+        axisDoubleClickReset: true,
+        axisPressedMouseMove: true,
+        mouseWheel: true,
+        pinch: true,
+      },
+      handleScroll: {
+        horzTouchDrag: true,
+        mouseWheel: true,
+        pressedMouseMove: true,
+        vertTouchDrag: false,
+      },
     });
 
     const series = chart.addCandlestickSeries({
@@ -74,22 +114,36 @@ export function Chart({ candles, liveTrade }: ChartProps): JSX.Element {
       wickUpColor: '#e5484d',
       wickDownColor: '#3b82f6',
     });
+    const volume = chart.addHistogramSeries({
+      priceFormat: { type: 'volume' },
+      priceScaleId: '',
+    });
+    chart.priceScale('').applyOptions({
+      scaleMargins: {
+        top: 0.82,
+        bottom: 0,
+      },
+    });
 
     chartRef.current = chart;
     seriesRef.current = series;
+    volumeRef.current = volume;
 
     return () => {
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      volumeRef.current = null;
     };
   }, []);
 
   // 일봉 데이터 세팅 (종목 전환 시)
   useEffect(() => {
     const series = seriesRef.current;
+    const volume = volumeRef.current;
     if (!series) return;
     series.setData(candles.map(toCandlestickData));
+    volume?.setData(candles.map(toVolumeData));
     lastTimeRef.current = candles.length ? (candles[candles.length - 1].time as UTCTimestamp) : null;
     chartRef.current?.timeScale().fitContent();
   }, [candles]);
@@ -97,6 +151,7 @@ export function Chart({ candles, liveTrade }: ChartProps): JSX.Element {
   // 실시간 체결 반영: 마지막 캔들(오늘)의 OHLC 갱신
   useEffect(() => {
     const series = seriesRef.current;
+    const volume = volumeRef.current;
     const tradeTime = liveTrade ? yyyymmddToTimestamp(liveTrade.date) : null;
     const lastTime = lastTimeRef.current;
     if (!series || !liveTrade || tradeTime === null) return;
@@ -107,6 +162,11 @@ export function Chart({ candles, liveTrade }: ChartProps): JSX.Element {
       high: liveTrade.high,
       low: liveTrade.low,
       close: liveTrade.price,
+    });
+    volume?.update({
+      time: tradeTime,
+      value: liveTrade.accVolume,
+      color: volumeColor(liveTrade.price, liveTrade.open),
     });
     lastTimeRef.current = tradeTime;
   }, [liveTrade]);

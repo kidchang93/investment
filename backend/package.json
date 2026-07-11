@@ -6,17 +6,20 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "sync:instruments": "tsx src/scripts/syncInstruments.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
     "@invest/shared": "*",
     "dotenv": "^16.4.5",
     "fastify": "^5.1.0",
+    "pg": "^8.22.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "@types/pg": "^8.20.0",
     "@types/ws": "^8.5.13",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"

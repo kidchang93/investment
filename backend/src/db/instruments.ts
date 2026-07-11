@@ -1,0 +1,319 @@
+import { pool } from './client.js';
+import type { Instrument, InstrumentCategory, WatchItem } from '@invest/shared';
+
+/**
+ * 국내/해외 종목 마스터 저장소.
+ * KIS 원본 종목 파일은 sync 스크립트에서 정규화하고, 서버는 이 타입만 조회한다.
+ */
+
+interface InstrumentRow {
+  id: string;
+  symbol: string;
+  name: string;
+  english_name: string | null;
+  market: string;
+  country: Instrument['country'];
+  currency: string;
+  asset_type: Instrument['assetType'];
+  provider: 'kis';
+  provider_symbol: string;
+  exchange_code: string;
+  timezone: string;
+}
+
+const DEFAULT_WATCHLIST_ID = 'default';
+
+export const INSTRUMENT_CATEGORIES: InstrumentCategory[] = [
+  {
+    id: 'kr-major',
+    label: '국내 대표주',
+    description: '국내 대형주와 플랫폼/자동차 대표 종목',
+  },
+  {
+    id: 'us-megacap',
+    label: '미국 대표주',
+    description: '미국 빅테크와 시장 대표 종목',
+  },
+  {
+    id: 'kr-etf',
+    label: '국내 ETF/ETN',
+    description: '국내 상장 ETF와 ETN',
+  },
+  {
+    id: 'us-etf',
+    label: '미국 ETF',
+    description: '미국 주요 지수/섹터 ETF',
+  },
+  {
+    id: 'kospi',
+    label: 'KOSPI',
+    description: '유가증권시장 종목',
+  },
+  {
+    id: 'kosdaq',
+    label: 'KOSDAQ',
+    description: '코스닥시장 종목',
+  },
+  {
+    id: 'nasdaq',
+    label: 'NASDAQ',
+    description: '나스닥 상장 종목',
+  },
+];
+
+export async function ensureInstrumentSchema(): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS instruments (
+      id text PRIMARY KEY,
+      symbol text NOT NULL,
+      name text NOT NULL,
+      english_name text,
+      market text NOT NULL,
+      country text NOT NULL,
+      currency text NOT NULL,
+      asset_type text NOT NULL,
+      provider text NOT NULL DEFAULT 'kis',
+      provider_symbol text NOT NULL,
+      exchange_code text NOT NULL,
+      timezone text NOT NULL,
+      is_active boolean NOT NULL DEFAULT true,
+      search_text text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS instruments_symbol_idx ON instruments (symbol);
+    CREATE INDEX IF NOT EXISTS instruments_market_idx ON instruments (market);
+    CREATE INDEX IF NOT EXISTS instruments_country_idx ON instruments (country);
+    CREATE INDEX IF NOT EXISTS instruments_search_text_idx ON instruments USING gin (to_tsvector('simple', search_text));
+
+    CREATE TABLE IF NOT EXISTS watchlists (
+      id text PRIMARY KEY,
+      name text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS watchlist_items (
+      watchlist_id text NOT NULL REFERENCES watchlists(id) ON DELETE CASCADE,
+      instrument_id text NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
+      position integer NOT NULL DEFAULT 0,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (watchlist_id, instrument_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS watchlist_items_position_idx ON watchlist_items (watchlist_id, position);
+  `);
+  await pool.query(
+    `
+      INSERT INTO watchlists (id, name)
+      VALUES ($1, '기본 관심종목')
+      ON CONFLICT (id) DO NOTHING
+    `,
+    [DEFAULT_WATCHLIST_ID],
+  );
+}
+
+export async function searchInstruments(query: string, limit = 30): Promise<Instrument[]> {
+  const q = query.trim();
+  if (!q) return [];
+
+  const result = await pool.query<InstrumentRow>(
+    `
+      SELECT id, symbol, name, english_name, market, country, currency, asset_type,
+             provider, provider_symbol, exchange_code, timezone
+      FROM instruments
+      WHERE is_active = true
+        AND (
+          symbol ILIKE $1 OR
+          name ILIKE $1 OR
+          COALESCE(english_name, '') ILIKE $1 OR
+          search_text ILIKE $1
+        )
+      ORDER BY
+        CASE WHEN symbol = upper($2) THEN 0 ELSE 1 END,
+        CASE WHEN symbol ILIKE $3 THEN 0 ELSE 1 END,
+        CASE WHEN country = 'KR' THEN 0 ELSE 1 END,
+        symbol
+      LIMIT $4
+    `,
+    [`%${q}%`, q, `${q}%`, limit],
+  );
+
+  return result.rows.map(rowToInstrument);
+}
+
+export async function getInstrument(id: string): Promise<Instrument | null> {
+  const result = await pool.query<InstrumentRow>(
+    `
+      SELECT id, symbol, name, english_name, market, country, currency, asset_type,
+             provider, provider_symbol, exchange_code, timezone
+      FROM instruments
+      WHERE id = $1 AND is_active = true
+    `,
+    [id],
+  );
+  return result.rows[0] ? rowToInstrument(result.rows[0]) : null;
+}
+
+export function getInstrumentCategories(): InstrumentCategory[] {
+  return INSTRUMENT_CATEGORIES;
+}
+
+export async function getCategoryInstruments(categoryId: string, limit = 80): Promise<Instrument[]> {
+  switch (categoryId) {
+    case 'kr-major':
+      return getBySymbols(['005930', '000660', '035420', '035720', '005380', '012450', '068270'], [
+        'KOSPI',
+        'KOSDAQ',
+      ]);
+    case 'us-megacap':
+      return getBySymbols(['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NFLX'], [
+        'NAS',
+        'NYS',
+        'AMS',
+      ]);
+    case 'us-etf':
+      return getBySymbols(['SPY', 'QQQ', 'VOO', 'VTI', 'DIA', 'IWM', 'SOXX', 'SMH', 'TLT', 'GLD'], [
+        'NAS',
+        'NYS',
+        'AMS',
+      ]);
+    case 'kr-etf':
+      return getByFilter("country = 'KR' AND asset_type IN ('etf', 'etn')", limit);
+    case 'kospi':
+      return getByFilter("market = 'KOSPI' AND asset_type = 'stock'", limit);
+    case 'kosdaq':
+      return getByFilter("market = 'KOSDAQ' AND asset_type = 'stock'", limit);
+    case 'nasdaq':
+      return getByFilter("market = 'NAS' AND asset_type = 'stock'", limit);
+    default:
+      return [];
+  }
+}
+
+export async function getDefaultWatchlist(): Promise<Instrument[]> {
+  const result = await pool.query<InstrumentRow>(
+    `
+      SELECT i.id, i.symbol, i.name, i.english_name, i.market, i.country, i.currency,
+             i.asset_type, i.provider, i.provider_symbol, i.exchange_code, i.timezone
+      FROM watchlist_items wi
+      JOIN instruments i ON i.id = wi.instrument_id
+      WHERE wi.watchlist_id = $1 AND i.is_active = true
+      ORDER BY wi.position, wi.created_at, i.symbol
+    `,
+    [DEFAULT_WATCHLIST_ID],
+  );
+  return result.rows.map(rowToInstrument);
+}
+
+export async function seedDefaultWatchlist(items: WatchItem[]): Promise<void> {
+  const count = await pool.query<{ count: string }>(
+    'SELECT count(*) FROM watchlist_items WHERE watchlist_id = $1',
+    [DEFAULT_WATCHLIST_ID],
+  );
+  if (Number(count.rows[0]?.count ?? 0) > 0) return;
+
+  for (const [index, item] of items.entries()) {
+    const instrument = await pool.query<{ id: string }>(
+      `
+        SELECT id
+        FROM instruments
+        WHERE country = 'KR' AND symbol = $1 AND is_active = true
+        ORDER BY
+          CASE market WHEN 'KOSPI' THEN 0 WHEN 'KOSDAQ' THEN 1 WHEN 'KONEX' THEN 2 ELSE 3 END
+        LIMIT 1
+      `,
+      [item.code],
+    );
+    const id = instrument.rows[0]?.id;
+    if (!id) continue;
+    await pool.query(
+      `
+        INSERT INTO watchlist_items (watchlist_id, instrument_id, position)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (watchlist_id, instrument_id) DO NOTHING
+      `,
+      [DEFAULT_WATCHLIST_ID, id, index],
+    );
+  }
+}
+
+export async function addDefaultWatchlistItem(instrumentId: string): Promise<Instrument | null> {
+  const instrument = await getInstrument(instrumentId);
+  if (!instrument) return null;
+  await pool.query(
+    `
+      INSERT INTO watchlist_items (watchlist_id, instrument_id, position)
+      VALUES (
+        $1,
+        $2,
+        COALESCE((SELECT max(position) + 1 FROM watchlist_items WHERE watchlist_id = $1), 0)
+      )
+      ON CONFLICT (watchlist_id, instrument_id) DO NOTHING
+    `,
+    [DEFAULT_WATCHLIST_ID, instrumentId],
+  );
+  return instrument;
+}
+
+export async function removeDefaultWatchlistItem(instrumentId: string): Promise<void> {
+  await pool.query(
+    'DELETE FROM watchlist_items WHERE watchlist_id = $1 AND instrument_id = $2',
+    [DEFAULT_WATCHLIST_ID, instrumentId],
+  );
+}
+
+async function getBySymbols(symbols: string[], markets: string[]): Promise<Instrument[]> {
+  const result = await pool.query<InstrumentRow>(
+    `
+      SELECT DISTINCT ON (symbol)
+             id, symbol, name, english_name, market, country, currency, asset_type,
+             provider, provider_symbol, exchange_code, timezone
+      FROM instruments
+      WHERE is_active = true
+        AND symbol = ANY($1)
+        AND market = ANY($2)
+      ORDER BY
+        symbol,
+        array_position($1, symbol),
+        array_position($2, market)
+    `,
+    [symbols, markets],
+  );
+  return result.rows
+    .map(rowToInstrument)
+    .sort((a, b) => symbols.indexOf(a.symbol) - symbols.indexOf(b.symbol));
+}
+
+async function getByFilter(whereSql: string, limit: number): Promise<Instrument[]> {
+  const result = await pool.query<InstrumentRow>(
+    `
+      SELECT id, symbol, name, english_name, market, country, currency, asset_type,
+             provider, provider_symbol, exchange_code, timezone
+      FROM instruments
+      WHERE is_active = true AND ${whereSql}
+      ORDER BY symbol
+      LIMIT $1
+    `,
+    [limit],
+  );
+  return result.rows.map(rowToInstrument);
+}
+
+function rowToInstrument(row: InstrumentRow): Instrument {
+  return {
+    id: row.id,
+    symbol: row.symbol,
+    name: row.name,
+    englishName: row.english_name ?? undefined,
+    market: row.market,
+    country: row.country,
+    currency: row.currency,
+    assetType: row.asset_type,
+    provider: row.provider,
+    providerSymbol: row.provider_symbol,
+    exchangeCode: row.exchange_code,
+    timezone: row.timezone,
+  };
+}
