@@ -201,6 +201,11 @@ function formatNewsTime(seconds: number | undefined): string {
   }).format(new Date(seconds * 1000));
 }
 
+function newsSearchUrl(item: NewsItem): string {
+  const query = [item.symbol, item.title].filter(Boolean).join(' ');
+  return `https://www.google.com/search?tbm=nws&q=${encodeURIComponent(query)}`;
+}
+
 function formatNumber(n: number | undefined): string {
   return n !== undefined && Number.isFinite(n) ? n.toLocaleString('ko-KR') : '-';
 }
@@ -1242,14 +1247,22 @@ export function App(): JSX.Element {
               <div className="news-panel__header">
                 <strong>뉴스</strong>
                 <span>{selectedInstrument ? selectedInstrument.name : '종목 미선택'}</span>
+                <em>{selectedNews.length ? `${selectedNews.length}건` : '대기'}</em>
               </div>
               <div className="news-panel__rows">
                 {selectedNews.map((item) => (
-                  <div className="news-panel__row" key={item.id}>
+                  <a
+                    className="news-panel__row"
+                    href={newsSearchUrl(item)}
+                    key={item.id}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
                     <span>{formatNewsTime(item.publishedAt)}</span>
                     <strong>{item.title}</strong>
                     <em>{item.source}</em>
-                  </div>
+                    <small>검색</small>
+                  </a>
                 ))}
                 {selectedInstrument && selectedNews.length === 0 && (
                   <div className="news-panel__empty">뉴스 조회 결과 없음</div>
