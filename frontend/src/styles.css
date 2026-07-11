@@ -1149,6 +1149,21 @@ button {
   background: linear-gradient(90deg, rgba(59, 130, 246, 0.08), transparent 46%);
 }
 
+.trade-tape__row.is-latest {
+  border-left: 2px solid var(--border-soft);
+  padding-left: 10px;
+}
+
+.trade-tape__row.is-latest[data-move='up'] {
+  border-left-color: rgba(229, 72, 77, 0.72);
+  background: linear-gradient(90deg, rgba(229, 72, 77, 0.16), transparent 58%);
+}
+
+.trade-tape__row.is-latest[data-move='down'] {
+  border-left-color: rgba(59, 130, 246, 0.72);
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.16), transparent 58%);
+}
+
 .trade-tape__row strong,
 .trade-tape__row em {
   overflow: hidden;

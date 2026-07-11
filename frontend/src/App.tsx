@@ -1578,7 +1578,7 @@ export function App(): JSX.Element {
               <div className="trade-tape__rows">
                 {tapeTrades.map((trade, index) => (
                   <div
-                    className="trade-tape__row"
+                    className={`trade-tape__row${index === 0 ? ' is-latest' : ''}`}
                     data-move={moveTone(trade.sign)}
                     key={`${trade.code}-${trade.date}-${trade.time}-${index}`}
                   >
