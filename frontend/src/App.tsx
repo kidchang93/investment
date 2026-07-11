@@ -37,6 +37,7 @@ type WatchSortKey = 'custom' | 'rate' | 'volume' | 'name';
 type SessionTone = 'open' | 'pre' | 'closed';
 type WatchGroup = 'all' | 'kr' | 'global' | 'fund';
 type BottomDockTab = 'volume' | 'trades' | 'news';
+type BottomDockMode = 'hidden' | 'normal' | 'expanded';
 
 interface PriceSnapshot {
   price: number;
@@ -91,6 +92,12 @@ const WATCH_GROUP_OPTIONS: Array<{ key: WatchGroup; label: string }> = [
   { key: 'kr', label: '국내' },
   { key: 'global', label: '해외' },
   { key: 'fund', label: 'ETF/ETN' },
+];
+
+const BOTTOM_DOCK_MODE_OPTIONS: Array<{ key: BottomDockMode; label: string }> = [
+  { key: 'hidden', label: '숨김' },
+  { key: 'normal', label: '기본' },
+  { key: 'expanded', label: '확장' },
 ];
 
 const TOOL_OPTIONS: Array<{ key: ChartTool; label: string; title: string }> = [
@@ -507,6 +514,9 @@ export function App(): JSX.Element {
   const [bottomDockTab, setBottomDockTab] = useState<BottomDockTab>(() =>
     readStoredValue('bottomDockTab', 'volume', ['volume', 'trades', 'news']),
   );
+  const [bottomDockMode, setBottomDockMode] = useState<BottomDockMode>(() =>
+    readStoredValue('bottomDockMode', 'normal', BOTTOM_DOCK_MODE_OPTIONS.map((option) => option.key)),
+  );
   const [error, setError] = useState<string | null>(null);
   const [quoteRefreshAt, setQuoteRefreshAt] = useState<number | null>(null);
   const [intradayCandlesByCode, setIntradayCandlesByCode] = useState<Record<string, Candle[]>>({});
@@ -524,6 +534,7 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('focusMode', isFocusMode), [isFocusMode]);
   useEffect(() => writeStoredValue('watchlistCollapsed', isWatchlistCollapsed), [isWatchlistCollapsed]);
   useEffect(() => writeStoredValue('bottomDockTab', bottomDockTab), [bottomDockTab]);
+  useEffect(() => writeStoredValue('bottomDockMode', bottomDockMode), [bottomDockMode]);
   useEffect(() => writeStoredValue('activeSavedWatchlistId', activeSavedWatchlistId), [activeSavedWatchlistId]);
   useEffect(() => setHoveredChartReadout(null), [range, selectedInstrument?.id, timeframe]);
 
@@ -749,6 +760,7 @@ export function App(): JSX.Element {
       ? Math.min(100, Math.max(0, ((snapshot.price - snapshot.low) / (snapshot.high - snapshot.low)) * 100))
       : 50;
   const watchedIds = useMemo(() => new Set(watchlist.map((item) => item.id)), [watchlist]);
+  const bottomPanelClass = `bottom-panel bottom-panel--${bottomDockMode}`;
   const watchlistSummary = useMemo(() => {
     const summary: {
       up: number;
@@ -895,6 +907,11 @@ export function App(): JSX.Element {
 
   function runChartCommand(type: ChartCommandType): void {
     setChartCommand({ type, nonce: Date.now() });
+  }
+
+  function selectBottomDockTab(tab: BottomDockTab): void {
+    setBottomDockTab(tab);
+    if (bottomDockMode === 'hidden') setBottomDockMode('normal');
   }
 
   return (
@@ -1172,8 +1189,8 @@ export function App(): JSX.Element {
             )}
           </div>
 
-          {bottomDockTab === 'volume' && (
-            <section className="volume-panel" aria-label="거래량 요약">
+          {bottomDockMode !== 'hidden' && bottomDockTab === 'volume' && (
+            <section className={`volume-panel ${bottomPanelClass}`} aria-label="거래량 요약">
               <div>
                 <span>표시 캔들</span>
                 <strong>{volumeSummary.count ? `${volumeSummary.count}개` : '-'}</strong>
@@ -1197,8 +1214,8 @@ export function App(): JSX.Element {
             </section>
           )}
 
-          {bottomDockTab === 'trades' && (
-            <section className="trade-tape" aria-label="최근 체결">
+          {bottomDockMode !== 'hidden' && bottomDockTab === 'trades' && (
+            <section className={`trade-tape ${bottomPanelClass}`} aria-label="최근 체결">
               <div className="trade-tape__header">
                 <strong>최근 체결</strong>
                 <span>{selectedInstrument?.country === 'KR' ? selectedName : '국내 구독 종목'}</span>
@@ -1220,8 +1237,8 @@ export function App(): JSX.Element {
             </section>
           )}
 
-          {bottomDockTab === 'news' && (
-            <section className="news-panel" aria-label="종목 뉴스">
+          {bottomDockMode !== 'hidden' && bottomDockTab === 'news' && (
+            <section className={`news-panel ${bottomPanelClass}`} aria-label="종목 뉴스">
               <div className="news-panel__header">
                 <strong>뉴스</strong>
                 <span>{selectedInstrument ? selectedInstrument.name : '종목 미선택'}</span>
@@ -1243,9 +1260,40 @@ export function App(): JSX.Element {
           )}
 
           <div className="bottom-dock">
-            <button aria-selected={bottomDockTab === 'volume'} onClick={() => setBottomDockTab('volume')} type="button">거래량</button>
-            <button aria-selected={bottomDockTab === 'trades'} onClick={() => setBottomDockTab('trades')} type="button">체결</button>
-            <button aria-selected={bottomDockTab === 'news'} onClick={() => setBottomDockTab('news')} type="button">뉴스</button>
+            <button
+              aria-selected={bottomDockTab === 'volume' && bottomDockMode !== 'hidden'}
+              onClick={() => selectBottomDockTab('volume')}
+              type="button"
+            >
+              거래량
+            </button>
+            <button
+              aria-selected={bottomDockTab === 'trades' && bottomDockMode !== 'hidden'}
+              onClick={() => selectBottomDockTab('trades')}
+              type="button"
+            >
+              체결
+            </button>
+            <button
+              aria-selected={bottomDockTab === 'news' && bottomDockMode !== 'hidden'}
+              onClick={() => selectBottomDockTab('news')}
+              type="button"
+            >
+              뉴스
+            </button>
+            <div className="bottom-dock__modes" role="tablist" aria-label="하단 패널 높이">
+              {BOTTOM_DOCK_MODE_OPTIONS.map((option) => (
+                <button
+                  aria-selected={bottomDockMode === option.key}
+                  key={option.key}
+                  onClick={() => setBottomDockMode(option.key)}
+                  role="tab"
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
             <span>조회 전용 세션 · 시세 갱신 {formatClock(quoteRefreshAt)}</span>
           </div>
         </main>

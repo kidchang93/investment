@@ -902,20 +902,63 @@ button {
   font-size: 12px;
 }
 
+.bottom-panel {
+  --bottom-panel-height: 138px;
+  flex-shrink: 0;
+}
+
+.bottom-panel--expanded {
+  --bottom-panel-height: 248px;
+}
+
+.volume-panel.bottom-panel {
+  --bottom-panel-height: 76px;
+  max-height: var(--bottom-panel-height);
+  min-height: var(--bottom-panel-height);
+  overflow: hidden;
+}
+
+.volume-panel.bottom-panel--expanded {
+  --bottom-panel-height: 132px;
+  align-content: start;
+}
+
+.trade-tape.bottom-panel,
+.news-panel.bottom-panel {
+  max-height: var(--bottom-panel-height);
+  min-height: var(--bottom-panel-height);
+}
+
 .bottom-dock {
   display: flex;
   align-items: center;
   min-height: 38px;
+  min-width: 0;
+  overflow-x: auto;
   padding: 5px 12px;
   border-top: 1px solid var(--border);
   background: #0d121a;
   gap: 4px;
 }
 
+.bottom-dock__modes {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
+.bottom-dock__modes button {
+  padding: 0 8px;
+}
+
 .bottom-dock span {
   margin-left: auto;
   color: var(--muted);
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .watchlist {
@@ -1474,6 +1517,27 @@ button {
 
   .volume-panel {
     grid-template-columns: 1fr;
+  }
+
+  .volume-panel.bottom-panel {
+    --bottom-panel-height: 156px;
+    overflow-y: auto;
+  }
+
+  .volume-panel.bottom-panel--expanded {
+    --bottom-panel-height: 236px;
+  }
+
+  .trade-tape.bottom-panel,
+  .news-panel.bottom-panel {
+    --bottom-panel-height: 180px;
+    max-height: var(--bottom-panel-height);
+    min-height: var(--bottom-panel-height);
+  }
+
+  .trade-tape.bottom-panel--expanded,
+  .news-panel.bottom-panel--expanded {
+    --bottom-panel-height: 260px;
   }
 
   .trade-tape__header,
