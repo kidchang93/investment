@@ -241,6 +241,12 @@ function getRangePosition(price: number, low: number, high: number): number | nu
   return Math.min(100, Math.max(0, ((price - low) / (high - low)) * 100));
 }
 
+function quoteSourceForInstrument(instrument: Instrument, trade?: Trade, quote?: Quote): '실시간' | 'REST' | '대기' {
+  if (instrument.country === 'KR' && trade) return '실시간';
+  if (quote) return 'REST';
+  return '대기';
+}
+
 function formatPrice(n: number): string {
   return Number.isFinite(n) ? n.toLocaleString('ko-KR') : '-';
 }
@@ -531,7 +537,7 @@ function InstrumentRow({
   const snapshot = toSnapshot(trade, quote);
   const color = signColor(snapshot?.sign);
   const tone = moveTone(snapshot?.sign);
-  const quoteSource = trade ? '실시간' : quote ? 'REST' : '대기';
+  const quoteSource = quoteSourceForInstrument(instrument, trade, quote);
   const rangePosition = snapshot ? getRangePosition(snapshot.price, snapshot.low, snapshot.high) : null;
   const prevPriceRef = useRef<number | undefined>(snapshot?.price);
   const [flashing, setFlashing] = useState(false);
@@ -1531,10 +1537,13 @@ export function App(): JSX.Element {
             <div className="recent-symbols" role="tablist" aria-label="최근 종목">
               <span className="recent-symbols__label">최근</span>
               {recentInstruments.map((instrument) => {
+                const recentTrade = instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined;
+                const recentQuote = quotesByCode[instrument.id];
                 const recentSnapshot = toSnapshot(
-                  instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined,
-                  quotesByCode[instrument.id],
+                  recentTrade,
+                  recentQuote,
                 );
+                const recentSource = quoteSourceForInstrument(instrument, recentTrade, recentQuote);
                 return (
                   <button
                     aria-selected={instrument.id === selectedInstrument?.id}
@@ -1551,6 +1560,7 @@ export function App(): JSX.Element {
                         ? `${formatPrice(recentSnapshot.price)} ${formatRate(recentSnapshot.changeRate)}`
                         : marketLabel(instrument)}
                     </em>
+                    <small data-source={recentSource}>{recentSource}</small>
                   </button>
                 );
               })}
@@ -1570,10 +1580,14 @@ export function App(): JSX.Element {
             <div className="comparison-strip" aria-label="종목 비교">
               <span className="comparison-strip__label">비교</span>
               {comparisonItems.map((instrument) => {
+                const comparisonTrade =
+                  instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined;
+                const comparisonQuote = quotesByCode[instrument.id];
                 const comparisonSnapshot = toSnapshot(
-                  instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined,
-                  quotesByCode[instrument.id],
+                  comparisonTrade,
+                  comparisonQuote,
                 );
+                const comparisonSource = quoteSourceForInstrument(instrument, comparisonTrade, comparisonQuote);
                 return (
                   <button
                     key={instrument.id}
@@ -1588,6 +1602,7 @@ export function App(): JSX.Element {
                         ? `${formatPrice(comparisonSnapshot.price)} · ${formatRate(comparisonSnapshot.changeRate)}`
                         : '-'}
                     </em>
+                    <small data-source={comparisonSource}>{comparisonSource}</small>
                   </button>
                 );
               })}

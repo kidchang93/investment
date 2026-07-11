@@ -480,11 +480,11 @@ button {
 
 .recent-symbols button {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 7px;
-  min-width: 164px;
-  max-width: 236px;
+  min-width: 210px;
+  max-width: 286px;
   height: 28px;
   padding: 0 9px;
   border: 1px solid transparent;
@@ -518,7 +518,8 @@ button {
 
 .recent-symbols button span,
 .recent-symbols strong,
-.recent-symbols em {
+.recent-symbols em,
+.recent-symbols small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -541,6 +542,28 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+.recent-symbols small,
+.comparison-strip small {
+  justify-self: end;
+  padding: 1px 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.recent-symbols small[data-source='실시간'],
+.comparison-strip small[data-source='실시간'] {
+  border-color: rgba(34, 197, 94, 0.28);
+  color: #8ee59e;
+}
+
+.recent-symbols small[data-source='REST'],
+.comparison-strip small[data-source='REST'] {
+  color: var(--muted);
+}
+
 .comparison-strip {
   display: flex;
   align-items: center;
@@ -561,11 +584,11 @@ button {
 
 .comparison-strip button {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 7px;
-  min-width: 190px;
-  max-width: 260px;
+  min-width: 236px;
+  max-width: 310px;
   height: 30px;
   padding: 0 9px;
   border: 1px solid var(--border-soft);
@@ -583,7 +606,8 @@ button {
 
 .comparison-strip strong,
 .comparison-strip span,
-.comparison-strip em {
+.comparison-strip em,
+.comparison-strip small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
