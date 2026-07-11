@@ -173,6 +173,12 @@ function writeStoredJson(key: string, value: unknown): void {
   window.localStorage.setItem(`${STORAGE_PREFIX}${key}`, JSON.stringify(value));
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tagName = target.tagName.toLowerCase();
+  return target.isContentEditable || tagName === 'input' || tagName === 'textarea' || tagName === 'select';
+}
+
 function signColor(sign?: PriceSign): string {
   if (sign === '1' || sign === '2') return '#e5484d';
   if (sign === '4' || sign === '5') return '#3b82f6';
@@ -595,6 +601,52 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('activeSavedWatchlistId', activeSavedWatchlistId), [activeSavedWatchlistId]);
   useEffect(() => writeStoredJson('recentInstruments', recentInstruments), [recentInstruments]);
   useEffect(() => setHoveredChartReadout(null), [range, selectedInstrument?.id, timeframe]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(event.target)) return;
+
+      const key = event.key.toLowerCase();
+      if (key === 'f') {
+        event.preventDefault();
+        runChartCommand('fit');
+        return;
+      }
+      if (event.key === '+' || event.key === '=') {
+        event.preventDefault();
+        runChartCommand('zoomIn');
+        return;
+      }
+      if (event.key === '-' || event.key === '_') {
+        event.preventDefault();
+        runChartCommand('zoomOut');
+        return;
+      }
+      if (key === 'c') {
+        event.preventDefault();
+        setShowComparePanel((value) => !value);
+        return;
+      }
+      if (key === 'b') {
+        event.preventDefault();
+        setBottomDockMode((mode) => (mode === 'hidden' ? 'normal' : 'hidden'));
+        return;
+      }
+      if (key === 'w') {
+        event.preventDefault();
+        setIsWatchlistCollapsed((value) => !value);
+        return;
+      }
+      if (event.key === 'Escape') {
+        setIsFocusMode(false);
+        setShowComparePanel(false);
+        setBottomDockMode((mode) => (mode === 'hidden' ? 'normal' : mode));
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   useEffect(() => {
     if (!selectedInstrument) return;
