@@ -1315,6 +1315,17 @@ export function App(): JSX.Element {
     () => summarizeInstrumentMoves(visibleCategoryItems, getSnapshotForInstrument),
     [quotesByCode, stream.trades, visibleCategoryItems],
   );
+  const categoryQuoteProgress = useMemo(() => {
+    const requestedIds = new Set([
+      ...categoryItems.slice(0, DISCOVER_INITIAL_QUOTE_TARGETS).map((instrument) => instrument.id),
+      ...visibleCategoryQuoteIds,
+    ]);
+    return {
+      loaded: visibleCategoryItems.filter((instrument) => getSnapshotForInstrument(instrument)).length,
+      requested: visibleCategoryItems.filter((instrument) => requestedIds.has(instrument.id)).length,
+      total: visibleCategoryItems.length,
+    };
+  }, [categoryItems, quotesByCode, stream.trades, visibleCategoryItems, visibleCategoryQuoteIds]);
   const tapeTrades = useMemo(
     () =>
       selectedInstrument?.country === 'KR'
@@ -2828,7 +2839,10 @@ export function App(): JSX.Element {
             </div>
             <div className="discover__section-label discover__section-label--results">
               <strong>{categories.find((category) => category.id === activeCategory)?.label ?? '결과'}</strong>
-              <span>{visibleCategoryItems.length}개 · {categorySummary.waiting > 0 ? `시세 대기 ${categorySummary.waiting}` : '시세 반영'}</span>
+              <span>
+                {categoryQuoteProgress.loaded}/{categoryQuoteProgress.total} 반영 ·{' '}
+                {isQuoteRefreshing ? `갱신 중 ${categoryQuoteProgress.requested}개` : '화면 근처 우선'}
+              </span>
             </div>
             <div className="watchlist__rows discover__rows" ref={discoverRowsRef}>
               {visibleCategoryItems.map((instrument) => (
