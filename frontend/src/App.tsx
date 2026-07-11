@@ -1286,6 +1286,7 @@ export function App(): JSX.Element {
                       </div>
                     );
                   })}
+                  <div className="symbol-search__hint">↑↓ 이동 · Enter 선택 · Esc 닫기</div>
                 </div>
               )}
             </div>

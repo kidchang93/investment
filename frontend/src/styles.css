@@ -372,6 +372,14 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+.symbol-search__hint {
+  min-height: 28px;
+  padding: 7px 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.08);
+  color: var(--faint);
+  font-size: 11px;
+}
+
 .symbol-search__watch {
   width: 24px;
   height: 24px;
