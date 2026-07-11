@@ -1245,6 +1245,33 @@ button {
   font-style: normal;
 }
 
+.trade-tape__price-cell {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  min-width: 0;
+}
+
+.trade-tape__range {
+  position: relative;
+  display: block;
+  width: 70px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.48), rgba(148, 163, 184, 0.14), rgba(229, 72, 77, 0.48));
+}
+
+.trade-tape__range span {
+  position: absolute;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(229, 231, 235, 0.86);
+  border-radius: 50%;
+  background: #0d121a;
+}
+
 .trade-tape__move {
   display: inline-flex;
   align-items: center;
@@ -1269,6 +1296,7 @@ button {
 }
 
 .trade-tape__row em,
+.trade-tape__price-cell,
 .trade-tape__row span:nth-child(n + 5) {
   justify-self: end;
 }

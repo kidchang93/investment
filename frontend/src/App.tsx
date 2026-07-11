@@ -235,6 +235,11 @@ function summarizeInstrumentMoves(
   return summary;
 }
 
+function getRangePosition(price: number, low: number, high: number): number | null {
+  if (!Number.isFinite(price) || !Number.isFinite(low) || !Number.isFinite(high) || high <= low) return null;
+  return Math.min(100, Math.max(0, ((price - low) / (high - low)) * 100));
+}
+
 function formatPrice(n: number): string {
   return Number.isFinite(n) ? n.toLocaleString('ko-KR') : '-';
 }
@@ -515,10 +520,7 @@ function InstrumentRow({
   const color = signColor(snapshot?.sign);
   const tone = moveTone(snapshot?.sign);
   const quoteSource = trade ? '실시간' : quote ? 'REST' : '대기';
-  const rangePosition =
-    snapshot && snapshot.high > snapshot.low
-      ? Math.min(100, Math.max(0, ((snapshot.price - snapshot.low) / (snapshot.high - snapshot.low)) * 100))
-      : null;
+  const rangePosition = snapshot ? getRangePosition(snapshot.price, snapshot.low, snapshot.high) : null;
   const prevPriceRef = useRef<number | undefined>(snapshot?.price);
   const [flashing, setFlashing] = useState(false);
 
@@ -1722,22 +1724,36 @@ export function App(): JSX.Element {
                 <span>{selectedInstrument?.country === 'KR' ? selectedName : '국내 구독 종목'}</span>
               </div>
               <div className="trade-tape__rows">
-                {tapeTrades.map((trade, index) => (
-                  <div
-                    className={`trade-tape__row${index === 0 ? ' is-latest' : ''}`}
-                    data-move={moveTone(trade.sign)}
-                    key={`${trade.code}-${trade.date}-${trade.time}-${index}`}
-                  >
-                    <span className="trade-tape__time">{formatTradeTime(trade.time)}</span>
-                    <span className="trade-tape__move">{moveTone(trade.sign) === 'up' ? '상승' : moveTone(trade.sign) === 'down' ? '하락' : '보합'}</span>
-                    <strong>{instrumentNameByProviderSymbol.get(trade.code) ?? trade.code}</strong>
-                    <em style={{ color: signColor(trade.sign) }}>{formatPrice(trade.price)}</em>
-                    <span>{formatSignedPrice(trade.change)}</span>
-                    <span>{formatRate(trade.changeRate)}</span>
-                    <span>{formatVolume(trade.volume)}</span>
-                    <span>{formatVolume(trade.accVolume)}</span>
-                  </div>
-                ))}
+                {tapeTrades.map((trade, index) => {
+                  const tradeRangePosition = getRangePosition(trade.price, trade.low, trade.high);
+                  return (
+                    <div
+                      className={`trade-tape__row${index === 0 ? ' is-latest' : ''}`}
+                      data-move={moveTone(trade.sign)}
+                      key={`${trade.code}-${trade.date}-${trade.time}-${index}`}
+                    >
+                      <span className="trade-tape__time">{formatTradeTime(trade.time)}</span>
+                      <span className="trade-tape__move">{moveTone(trade.sign) === 'up' ? '상승' : moveTone(trade.sign) === 'down' ? '하락' : '보합'}</span>
+                      <strong>{instrumentNameByProviderSymbol.get(trade.code) ?? trade.code}</strong>
+                      <span className="trade-tape__price-cell">
+                        <em style={{ color: signColor(trade.sign) }}>{formatPrice(trade.price)}</em>
+                        {tradeRangePosition !== null && (
+                          <span
+                            aria-label={`당일 저가 ${formatPrice(trade.low)}, 고가 ${formatPrice(trade.high)} 범위 내 ${Math.round(tradeRangePosition)}% 위치`}
+                            className="trade-tape__range"
+                            title={`저가 ${formatPrice(trade.low)} · 고가 ${formatPrice(trade.high)}`}
+                          >
+                            <span style={{ left: `${tradeRangePosition}%` }} />
+                          </span>
+                        )}
+                      </span>
+                      <span>{formatSignedPrice(trade.change)}</span>
+                      <span>{formatRate(trade.changeRate)}</span>
+                      <span>{formatVolume(trade.volume)}</span>
+                      <span>{formatVolume(trade.accVolume)}</span>
+                    </div>
+                  );
+                })}
                 {tapeTrades.length === 0 && (
                   <div className="trade-tape__empty">체결 수신 대기</div>
                 )}
