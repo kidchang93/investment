@@ -175,6 +175,14 @@ interface ChatMessage {
   tone: 'normal' | 'alert' | 'macro';
 }
 
+interface SimulationPosition {
+  instrumentId: string;
+  symbol: string;
+  name: string;
+  quantity: number;
+  averagePrice: number;
+}
+
 const RANGE_OPTIONS: Array<{ key: RangeKey; label: string; days?: number }> = [
   { key: '1M', label: '1개월', days: 31 },
   { key: '3M', label: '3개월', days: 93 },
@@ -542,6 +550,31 @@ function readStoredInstruments(key: string): Instrument[] {
 
 function writeStoredJson(key: string, value: unknown): void {
   window.localStorage.setItem(`${STORAGE_PREFIX}${key}`, JSON.stringify(value));
+}
+
+function isSimulationPosition(value: unknown): value is SimulationPosition {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return (
+    typeof item.instrumentId === 'string' &&
+    typeof item.symbol === 'string' &&
+    typeof item.name === 'string' &&
+    typeof item.quantity === 'number' &&
+    Number.isFinite(item.quantity) &&
+    typeof item.averagePrice === 'number' &&
+    Number.isFinite(item.averagePrice)
+  );
+}
+
+function readStoredSimulationPositions(): SimulationPosition[] {
+  const value = window.localStorage.getItem(`${STORAGE_PREFIX}simulationPositions`);
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter(isSimulationPosition) : [];
+  } catch {
+    return [];
+  }
 }
 
 function areStringArraysEqual(a: string[], b: string[]): boolean {
@@ -1288,6 +1321,12 @@ export function App(): JSX.Element {
   const [orderLimitPrice, setOrderLimitPrice] = useState('');
   const [orderAcknowledged, setOrderAcknowledged] = useState(false);
   const [isOrderSubmitting, setIsOrderSubmitting] = useState(false);
+  const [simulationCash, setSimulationCash] = useState(() => {
+    const value = Number(window.localStorage.getItem(`${STORAGE_PREFIX}simulationCash`));
+    return Number.isFinite(value) && value >= 0 ? value : 1_000_000;
+  });
+  const [simulationPositions, setSimulationPositions] = useState<SimulationPosition[]>(readStoredSimulationPositions);
+  const [simulationQuantity, setSimulationQuantity] = useState('1');
   const [error, setError] = useState<string | null>(null);
   const [quoteRefreshAt, setQuoteRefreshAt] = useState<number | null>(null);
   const [isQuoteRefreshing, setIsQuoteRefreshing] = useState(false);
@@ -1320,6 +1359,8 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('sidePanelTab', sidePanelTab), [sidePanelTab]);
   useEffect(() => writeStoredValue('activeSavedWatchlistId', activeSavedWatchlistId), [activeSavedWatchlistId]);
   useEffect(() => writeStoredJson('recentInstruments', recentInstruments), [recentInstruments]);
+  useEffect(() => writeStoredValue('simulationCash', String(simulationCash)), [simulationCash]);
+  useEffect(() => writeStoredJson('simulationPositions', simulationPositions), [simulationPositions]);
   useEffect(() => setHoveredChartReadout(null), [range, selectedInstrument?.id, timeframe]);
 
   useEffect(() => {
@@ -1913,6 +1954,28 @@ export function App(): JSX.Element {
   }, [feeAmountNumber, feeExpectedReturnNumber, feeMarket, feeMarketOption.taxRate]);
   const bestFeeRow = feeRows[0];
   const worstFeeRow = feeRows[feeRows.length - 1];
+  const simulationQuantityNumber = Number(simulationQuantity);
+  const simulationMarketValue = useMemo(
+    () =>
+      simulationPositions.reduce((total, position) => {
+        const instrument =
+          [...terminalItems, ...recentInstruments, ...watchlist, ...categoryItems].find(
+            (item) => item.id === position.instrumentId,
+          );
+        const positionSnapshot = instrument ? getSnapshotForInstrument(instrument) : undefined;
+        return total + position.quantity * (positionSnapshot?.price ?? position.averagePrice);
+      }, 0),
+    [categoryItems, quotesByCode, recentInstruments, simulationPositions, stream.trades, terminalItems, watchlist],
+  );
+  const simulationCostBasis = simulationPositions.reduce(
+    (total, position) => total + position.quantity * position.averagePrice,
+    0,
+  );
+  const simulationEquity = simulationCash + simulationMarketValue;
+  const simulationPnl = simulationEquity - 1_000_000;
+  const simulationSelectedPosition = selectedInstrument
+    ? simulationPositions.find((position) => position.instrumentId === selectedInstrument.id)
+    : undefined;
   const watchlistSummary = useMemo(
     () => summarizeInstrumentMoves(watchlist, getSnapshotForInstrument),
     [quotesByCode, stream.trades, watchlist],
@@ -2334,6 +2397,64 @@ export function App(): JSX.Element {
     } finally {
       setIsOrderSubmitting(false);
     }
+  }
+
+  function submitSimulationOrder(side: OrderSide): void {
+    if (!selectedInstrument || !snapshot) {
+      setError('시뮬레이션할 종목과 현재가를 먼저 확인하세요.');
+      return;
+    }
+    if (!Number.isFinite(simulationQuantityNumber) || simulationQuantityNumber <= 0) {
+      setError('시뮬레이션 수량은 0보다 커야 합니다.');
+      return;
+    }
+
+    const notional = simulationQuantityNumber * snapshot.price;
+    if (side === 'buy') {
+      if (notional > simulationCash) {
+        setError('시뮬레이션 현금이 부족합니다.');
+        return;
+      }
+      setSimulationCash((cash) => cash - notional);
+      setSimulationPositions((positions) => {
+        const existing = positions.find((position) => position.instrumentId === selectedInstrument.id);
+        if (!existing) {
+          return [
+            ...positions,
+            {
+              instrumentId: selectedInstrument.id,
+              symbol: selectedInstrument.symbol,
+              name: selectedInstrument.name,
+              quantity: simulationQuantityNumber,
+              averagePrice: snapshot.price,
+            },
+          ];
+        }
+        return positions.map((position) => {
+          if (position.instrumentId !== selectedInstrument.id) return position;
+          const nextQuantity = position.quantity + simulationQuantityNumber;
+          const nextAveragePrice =
+            (position.averagePrice * position.quantity + notional) / nextQuantity;
+          return { ...position, quantity: nextQuantity, averagePrice: nextAveragePrice };
+        });
+      });
+      return;
+    }
+
+    if (!simulationSelectedPosition || simulationSelectedPosition.quantity < simulationQuantityNumber) {
+      setError('시뮬레이션 보유 수량이 부족합니다.');
+      return;
+    }
+    setSimulationCash((cash) => cash + notional);
+    setSimulationPositions((positions) =>
+      positions
+        .map((position) =>
+          position.instrumentId === selectedInstrument.id
+            ? { ...position, quantity: position.quantity - simulationQuantityNumber }
+            : position,
+        )
+        .filter((position) => position.quantity > 0),
+    );
   }
 
   return (
@@ -3291,42 +3412,120 @@ export function App(): JSX.Element {
                       <span>실매매 전 단계</span>
                       <strong>테스트매매 시뮬레이션</strong>
                     </div>
-                    <small>가상 포인트 · 주문 전송 없음</small>
+                    <small>{formatSignedPrice(Math.round(simulationPnl))} pt</small>
+                  </div>
+                  <div className="terminal-sim-metrics">
+                    <div>
+                      <span>총 평가</span>
+                      <strong>{formatPrice(Math.round(simulationEquity))} pt</strong>
+                    </div>
+                    <div>
+                      <span>현금</span>
+                      <strong>{formatPrice(Math.round(simulationCash))} pt</strong>
+                    </div>
+                    <div>
+                      <span>평가금액</span>
+                      <strong>{formatPrice(Math.round(simulationMarketValue))} pt</strong>
+                    </div>
+                    <div>
+                      <span>투자원금</span>
+                      <strong>{formatPrice(Math.round(simulationCostBasis))} pt</strong>
+                    </div>
+                    <div>
+                      <span>평가손익</span>
+                      <strong data-tone={feeImpactTone(simulationPnl)}>{formatSignedPrice(Math.round(simulationPnl))} pt</strong>
+                    </div>
                   </div>
                   <div className="terminal-simulation-grid">
                     <section className="terminal-panel">
                       <div className="terminal-panel__header">
-                        <strong>시뮬 시작 조건</strong>
-                        <span>1,000,000 pt</span>
+                        <strong>가상 주문</strong>
+                        <span>{selectedInstrument?.name ?? '종목 선택 대기'}</span>
                       </div>
-                      <p>야간선물·원자재·코인을 대상으로 격리 마진과 레버리지 감각을 검증하는 화면입니다. 실제 주문 API와는 연결하지 않습니다.</p>
-                      <button
-                        onClick={() => {
-                          setActivePage('trade');
-                          setOrderAcknowledged(false);
-                        }}
-                        type="button"
-                      >
-                        주문 티켓 구조 확인
-                      </button>
+                      <div className="terminal-sim-ticket">
+                        <label>
+                          <span>수량</span>
+                          <input
+                            inputMode="decimal"
+                            onChange={(event) => setSimulationQuantity(event.target.value)}
+                            value={simulationQuantity}
+                          />
+                        </label>
+                        <div>
+                          <span>현재가</span>
+                          <strong>{snapshot ? formatPrice(snapshot.price) : '-'}</strong>
+                        </div>
+                        <div>
+                          <span>보유</span>
+                          <strong>{simulationSelectedPosition ? formatPrice(simulationSelectedPosition.quantity) : '0'}</strong>
+                        </div>
+                        <button onClick={() => submitSimulationOrder('buy')} type="button">가상 매수</button>
+                        <button onClick={() => submitSimulationOrder('sell')} type="button">가상 매도</button>
+                        <button
+                          onClick={() => {
+                            setSimulationCash(1_000_000);
+                            setSimulationPositions([]);
+                          }}
+                          type="button"
+                        >
+                          초기화
+                        </button>
+                      </div>
                     </section>
                     <section className="terminal-panel">
                       <div className="terminal-panel__header">
-                        <strong>리더보드</strong>
-                        <span>샘플 랭킹</span>
+                        <strong>보유 포지션</strong>
+                        <span>{simulationPositions.length}개</span>
                       </div>
-                      <div className="terminal-leaderboard">
-                        {SIMULATION_LEADERS.map((leader) => (
-                          <div key={leader.rank}>
-                            <span>#{leader.rank}</span>
-                            <strong>{leader.name}</strong>
-                            <em>{formatSignedPrice(leader.pnl)} pt</em>
-                            <small>{leader.trades}회 · 승률 {leader.winRate}%</small>
-                          </div>
-                        ))}
+                      <div className="terminal-sim-positions">
+                        {simulationPositions.map((position) => {
+                          const instrument =
+                            [...terminalItems, ...recentInstruments, ...watchlist, ...categoryItems].find(
+                              (item) => item.id === position.instrumentId,
+                            );
+                          const positionSnapshot = instrument ? getSnapshotForInstrument(instrument) : undefined;
+                          const currentPrice = positionSnapshot?.price ?? position.averagePrice;
+                          const pnl = (currentPrice - position.averagePrice) * position.quantity;
+                          return (
+                            <button
+                              data-tone={feeImpactTone(pnl)}
+                              key={position.instrumentId}
+                              onClick={() => instrument && selectInstrument(instrument)}
+                              type="button"
+                            >
+                              <span>{position.symbol}</span>
+                              <strong>{position.name}</strong>
+                              <em>{formatPrice(position.quantity)}주 · {formatPrice(Math.round(position.averagePrice))}</em>
+                              <small>{formatSignedPrice(Math.round(pnl))} pt</small>
+                            </button>
+                          );
+                        })}
+                        {simulationPositions.length === 0 && <p>가상 매수하면 포지션이 표시됩니다</p>}
                       </div>
                     </section>
                   </div>
+                  <section className="terminal-panel">
+                    <div className="terminal-panel__header">
+                      <strong>리더보드</strong>
+                      <span>내 순위는 로컬 평가 기준</span>
+                    </div>
+                    <div className="terminal-leaderboard">
+                      <div>
+                        <span>#0</span>
+                        <strong>my-simulation</strong>
+                        <em>{formatSignedPrice(Math.round(simulationPnl))} pt</em>
+                        <small>{simulationPositions.length}개 보유</small>
+                      </div>
+                      {SIMULATION_LEADERS.map((leader) => (
+                        <div key={leader.rank}>
+                          <span>#{leader.rank}</span>
+                          <strong>{leader.name}</strong>
+                          <em>{formatSignedPrice(leader.pnl)} pt</em>
+                          <small>{leader.trades}회 · 승률 {leader.winRate}%</small>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
                 </section>
               )}
             </section>

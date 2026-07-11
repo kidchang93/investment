@@ -1539,11 +1539,60 @@ button {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
 }
 
-.terminal-simulation-grid .terminal-panel button {
+.terminal-sim-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.terminal-sim-metrics div,
+.terminal-sim-ticket label,
+.terminal-sim-ticket > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: rgba(8, 11, 17, 0.46);
+}
+
+.terminal-sim-metrics span,
+.terminal-sim-ticket span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.terminal-sim-metrics strong[data-tone='up'] {
+  color: #ff9b9f;
+}
+
+.terminal-sim-metrics strong[data-tone='down'] {
+  color: #93c5fd;
+}
+
+.terminal-sim-ticket {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.terminal-sim-ticket input {
+  width: 100%;
+  height: 32px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: #080b11;
+  color: var(--text);
+}
+
+.terminal-simulation-grid .terminal-panel button,
+.terminal-sim-ticket button {
   width: max-content;
   max-width: 100%;
   height: 34px;
-  margin-top: 12px;
   padding: 0 12px;
   border: 1px solid rgba(245, 196, 81, 0.34);
   border-radius: 6px;
@@ -1551,6 +1600,58 @@ button {
   color: var(--focus);
   cursor: pointer;
   font-weight: 800;
+}
+
+.terminal-sim-ticket button {
+  width: 100%;
+  margin: 0;
+}
+
+.terminal-sim-positions {
+  display: grid;
+  gap: 7px;
+}
+
+.terminal-sim-positions button,
+.terminal-sim-positions p {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) minmax(130px, 0.55fr) 110px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 42px;
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: rgba(8, 11, 17, 0.46);
+  color: inherit;
+  text-align: left;
+}
+
+.terminal-sim-positions button[data-tone='up'] small {
+  color: #ff9b9f;
+}
+
+.terminal-sim-positions button[data-tone='down'] small {
+  color: #93c5fd;
+}
+
+.terminal-sim-positions span,
+.terminal-sim-positions strong,
+.terminal-sim-positions em,
+.terminal-sim-positions small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-sim-positions span,
+.terminal-sim-positions em,
+.terminal-sim-positions small {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
 }
 
 .terminal-leaderboard div {
@@ -4013,7 +4114,8 @@ button {
   .terminal-report-grid,
   .terminal-report-layout,
   .terminal-lounge-layout,
-  .terminal-chat-layout {
+  .terminal-chat-layout,
+  .terminal-sim-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -4102,6 +4204,9 @@ button {
   .terminal-theme-list article,
   .terminal-ranking-list button,
   .terminal-ranking-list p,
+  .terminal-sim-ticket,
+  .terminal-sim-positions button,
+  .terminal-sim-positions p,
   .terminal-fee-table__head,
   .terminal-fee-table__row {
     grid-template-columns: 1fr;
@@ -4122,6 +4227,7 @@ button {
   .terminal-lounge-layout,
   .terminal-chat-layout,
   .terminal-chat-composer,
+  .terminal-sim-metrics,
   .terminal-heatmap-legend {
     grid-template-columns: 1fr;
   }
