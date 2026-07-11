@@ -70,6 +70,8 @@ interface ChartProps {
   showMovingAverage?: boolean;
   /** RSI 보조지표 표시 여부 */
   showRsi?: boolean;
+  /** 당일 시가/고가/저가 기준선 표시 여부 */
+  showPriceLevels?: boolean;
   /** crosshair가 가리키는 캔들의 readout 값 */
   onReadoutChange?: (readout: ChartReadout | null) => void;
 }
@@ -222,6 +224,7 @@ export function Chart({
   command,
   showMovingAverage = false,
   showRsi = false,
+  showPriceLevels = false,
   onReadoutChange,
 }: ChartProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -231,6 +234,7 @@ export function Chart({
   const ma5Ref = useRef<ISeriesApi<'Line'> | null>(null);
   const ma20Ref = useRef<ISeriesApi<'Line'> | null>(null);
   const priceLineRef = useRef<IPriceLine | null>(null);
+  const priceLevelLinesRef = useRef<IPriceLine[]>([]);
   const onReadoutChangeRef = useRef(onReadoutChange);
   // 실시간 갱신 시 "오늘 캔들"의 time을 알아야 한다. 마지막 일봉 time을 기준으로 잡는다.
   const lastTimeRef = useRef<UTCTimestamp | null>(null);
@@ -380,6 +384,7 @@ export function Chart({
       ma5Ref.current = null;
       ma20Ref.current = null;
       priceLineRef.current = null;
+      priceLevelLinesRef.current = [];
     };
   }, []);
 
@@ -440,6 +445,45 @@ export function Chart({
     });
     setLastPriceY(series.priceToCoordinate(latestPrice.price));
   }, [latestPrice]);
+
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+
+    for (const line of priceLevelLinesRef.current) {
+      series.removePriceLine(line);
+    }
+    priceLevelLinesRef.current = [];
+
+    if (!latestPrice || !showPriceLevels) return;
+
+    priceLevelLinesRef.current = [
+      series.createPriceLine({
+        price: latestPrice.high,
+        color: 'rgba(229, 72, 77, 0.72)',
+        lineWidth: 1,
+        lineStyle: LineStyle.Dotted,
+        axisLabelVisible: true,
+        title: '고가',
+      }),
+      series.createPriceLine({
+        price: latestPrice.open,
+        color: 'rgba(245, 196, 81, 0.72)',
+        lineWidth: 1,
+        lineStyle: LineStyle.Dotted,
+        axisLabelVisible: true,
+        title: '시가',
+      }),
+      series.createPriceLine({
+        price: latestPrice.low,
+        color: 'rgba(59, 130, 246, 0.72)',
+        lineWidth: 1,
+        lineStyle: LineStyle.Dotted,
+        axisLabelVisible: true,
+        title: '저가',
+      }),
+    ];
+  }, [latestPrice, showPriceLevels]);
 
   // 실시간 체결 반영: 마지막 캔들(오늘)의 OHLC 갱신
   useEffect(() => {

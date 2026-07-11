@@ -548,6 +548,7 @@ export function App(): JSX.Element {
   const [chartCommand, setChartCommand] = useState<ChartCommand | undefined>(undefined);
   const [showMovingAverage, setShowMovingAverage] = useState(() => readStoredBoolean('showMovingAverage', false));
   const [showRsi, setShowRsi] = useState(() => readStoredBoolean('showRsi', false));
+  const [showPriceLevels, setShowPriceLevels] = useState(() => readStoredBoolean('showPriceLevels', false));
   const [isFocusMode, setIsFocusMode] = useState(() => readStoredBoolean('focusMode', false));
   const [isWatchlistCollapsed, setIsWatchlistCollapsed] = useState(() =>
     readStoredBoolean('watchlistCollapsed', false),
@@ -573,6 +574,7 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('watchSort', watchSort), [watchSort]);
   useEffect(() => writeStoredValue('showMovingAverage', showMovingAverage), [showMovingAverage]);
   useEffect(() => writeStoredValue('showRsi', showRsi), [showRsi]);
+  useEffect(() => writeStoredValue('showPriceLevels', showPriceLevels), [showPriceLevels]);
   useEffect(() => writeStoredValue('focusMode', isFocusMode), [isFocusMode]);
   useEffect(() => writeStoredValue('watchlistCollapsed', isWatchlistCollapsed), [isWatchlistCollapsed]);
   useEffect(() => writeStoredValue('bottomDockTab', bottomDockTab), [bottomDockTab]);
@@ -1087,6 +1089,14 @@ export function App(): JSX.Element {
                 RSI
               </button>
               <button
+                aria-pressed={showPriceLevels}
+                onClick={() => setShowPriceLevels((value) => !value)}
+                title="시가/고가/저가 기준선 표시"
+                type="button"
+              >
+                레벨
+              </button>
+              <button
                 aria-pressed={isFocusMode}
                 onClick={() => setIsFocusMode((value) => !value)}
                 title={isFocusMode ? '집중 모드 해제' : '집중 모드'}
@@ -1275,6 +1285,7 @@ export function App(): JSX.Element {
                 command={chartCommand}
                 showMovingAverage={showMovingAverage}
                 showRsi={showRsi}
+                showPriceLevels={showPriceLevels}
                 onReadoutChange={setHoveredChartReadout}
               />
             ) : (
