@@ -1131,6 +1131,7 @@ export function App(): JSX.Element {
 
           {recentInstruments.length > 0 && (
             <div className="recent-symbols" role="tablist" aria-label="최근 종목">
+              <span className="recent-symbols__label">최근</span>
               {recentInstruments.map((instrument) => {
                 const recentSnapshot = toSnapshot(
                   instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined,
@@ -1155,6 +1156,15 @@ export function App(): JSX.Element {
                   </button>
                 );
               })}
+              <button
+                aria-label="최근 종목 비우기"
+                className="recent-symbols__clear"
+                onClick={() => setRecentInstruments([])}
+                title="최근 종목 비우기"
+                type="button"
+              >
+                비우기
+              </button>
             </div>
           )}
 
