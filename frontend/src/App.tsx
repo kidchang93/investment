@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addWatchlistItem,
   createWatchlist,
@@ -801,17 +801,12 @@ export function App(): JSX.Element {
     return [...ids].slice(0, MAX_LIST_QUOTE_TARGETS);
   }, [categoryItems, recentInstruments, selectedInstrument, symbolResults, watchlist]);
   const quoteTargetKey = quoteTargetIds.join('|');
-
-  // 화면에 보이는 종목들의 REST 현재가를 유지해 클릭 전에도 리스트 가격이 채워지게 한다.
-  useEffect(() => {
-    if (quoteTargetIds.length === 0) return;
-
-    let disposed = false;
-    const refresh = (): void => {
-      if (document.hidden) return;
+  const refreshVisibleQuotes = useCallback(
+    (respectVisibility = true, shouldApply: () => boolean = () => true): void => {
+      if (quoteTargetIds.length === 0 || (respectVisibility && document.hidden)) return;
       void fetchInstrumentQuotes(quoteTargetIds)
         .then((quotes) => {
-          if (disposed) return;
+          if (!shouldApply()) return;
           setQuotesByCode((items) => {
             const next = { ...items };
             for (const quote of quotes) next[quote.code] = quote;
@@ -820,8 +815,20 @@ export function App(): JSX.Element {
           setQuoteRefreshAt(Date.now());
         })
         .catch((e) => {
-          if (!disposed) setError(String(e));
+          if (shouldApply()) setError(String(e));
         });
+    },
+    [quoteTargetKey],
+  );
+
+  // 화면에 보이는 종목들의 REST 현재가를 유지해 클릭 전에도 리스트 가격이 채워지게 한다.
+  useEffect(() => {
+    if (quoteTargetIds.length === 0) return;
+
+    let disposed = false;
+    const refresh = (): void => {
+      if (disposed) return;
+      refreshVisibleQuotes(true, () => !disposed);
     };
 
     refresh();
@@ -832,7 +839,7 @@ export function App(): JSX.Element {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [quoteTargetKey]);
+  }, [quoteTargetIds.length, quoteTargetKey, refreshVisibleQuotes]);
 
   const selectedCandles = selectedInstrument ? candlesByCode[selectedInstrument.id] : undefined;
   const visibleCandles = useMemo(
@@ -1104,6 +1111,15 @@ export function App(): JSX.Element {
         <div className="app__status">
           <span className="mode-chip">실전</span>
           <span className="freshness-chip" data-tone={quoteFreshnessTone}>{quoteFreshnessLabel}</span>
+          <button
+            className="status-refresh"
+            disabled={quoteTargetIds.length === 0}
+            onClick={() => refreshVisibleQuotes(false)}
+            title="보이는 종목 시세 즉시 갱신"
+            type="button"
+          >
+            갱신
+          </button>
           <span
             className="status-dot"
             data-connected={stream.kisConnected}
