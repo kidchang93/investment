@@ -933,6 +933,26 @@ export function App(): JSX.Element {
         }
       : null
   );
+  const activeChartReadoutStats = activeChartReadout
+    ? {
+        change: activeChartReadout.close - activeChartReadout.open,
+        changeRate:
+          activeChartReadout.open !== 0
+            ? ((activeChartReadout.close - activeChartReadout.open) / activeChartReadout.open) * 100
+            : 0,
+        range: activeChartReadout.high - activeChartReadout.low,
+        rangeRate:
+          activeChartReadout.low !== 0
+            ? ((activeChartReadout.high - activeChartReadout.low) / activeChartReadout.low) * 100
+            : 0,
+        tone:
+          activeChartReadout.close > activeChartReadout.open
+            ? 'up'
+            : activeChartReadout.close < activeChartReadout.open
+              ? 'down'
+              : 'flat',
+      }
+    : null;
 
   useEffect(() => {
     if (!selectedInstrument || !snapshot) {
@@ -1592,6 +1612,18 @@ export function App(): JSX.Element {
                 C {activeChartReadout ? formatPrice(activeChartReadout.close) : '-'}
               </span>
               <span>V {activeChartReadout ? formatVolume(activeChartReadout.volume) : '-'}</span>
+              <span className="chart-readout__metric" data-tone={activeChartReadoutStats?.tone ?? 'flat'}>
+                변동{' '}
+                {activeChartReadoutStats
+                  ? `${formatSignedPrice(activeChartReadoutStats.change)} (${formatRate(activeChartReadoutStats.changeRate)})`
+                  : '-'}
+              </span>
+              <span className="chart-readout__metric">
+                폭{' '}
+                {activeChartReadoutStats
+                  ? `${formatPrice(activeChartReadoutStats.range)} (${formatRate(activeChartReadoutStats.rangeRate)})`
+                  : '-'}
+              </span>
               <span className="chart-readout__tool">{activeToolOption.title}</span>
             </div>
             {selectedInstrument && chartCandles.length > 0 ? (
