@@ -671,6 +671,7 @@ export function App(): JSX.Element {
   const [categories, setCategories] = useState<InstrumentCategory[]>([]);
   const [activeCategory, setActiveCategory] = useState<string>('kr-all');
   const [categoryItems, setCategoryItems] = useState<Instrument[]>([]);
+  const [discoverQuery, setDiscoverQuery] = useState('');
   const [selectedInstrument, setSelectedInstrument] = useState<Instrument | null>(null);
   const [visibleCategoryQuoteIds, setVisibleCategoryQuoteIds] = useState<string[]>([]);
   const [recentInstruments, setRecentInstruments] = useState<Instrument[]>(() =>
@@ -870,7 +871,7 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     setVisibleCategoryQuoteIds([]);
-  }, [activeCategory]);
+  }, [activeCategory, discoverQuery]);
 
   // 선택 종목의 일봉 로드 (한 번 받은 종목은 캐시)
   useEffect(() => {
@@ -979,6 +980,17 @@ export function App(): JSX.Element {
       .catch((e) => setError(String(e)));
   }, [bottomDockTab, newsByCode, selectedInstrument]);
 
+  const discoverFilteredCategoryItems = useMemo(() => {
+    const q = discoverQuery.trim().toLowerCase();
+    if (!q) return categoryItems;
+    return categoryItems.filter(
+      (instrument) =>
+        instrument.name.toLowerCase().includes(q) ||
+        instrument.symbol.toLowerCase().includes(q) ||
+        (instrument.englishName?.toLowerCase().includes(q) ?? false),
+    );
+  }, [categoryItems, discoverQuery]);
+
   const quoteTargetIds = useMemo(() => {
     const ids = new Set<string>();
     const selectedOverseasId = selectedInstrument?.country !== 'KR' ? selectedInstrument?.id : undefined;
@@ -996,12 +1008,22 @@ export function App(): JSX.Element {
     for (const instrument of recentInstruments) add(instrument);
     for (const instrument of watchlist) add(instrument);
     if (sidePanelTab === 'discover') {
-      for (const instrument of categoryItems.slice(0, DISCOVER_INITIAL_QUOTE_TARGETS)) add(instrument);
+      for (const instrument of discoverFilteredCategoryItems.slice(0, DISCOVER_INITIAL_QUOTE_TARGETS)) {
+        add(instrument);
+      }
       for (const id of visibleCategoryQuoteIds) addId(id);
     }
     for (const instrument of symbolResults.slice(0, SEARCH_QUOTE_TARGETS)) add(instrument);
     return [...ids];
-  }, [categoryItems, recentInstruments, selectedInstrument, sidePanelTab, symbolResults, visibleCategoryQuoteIds, watchlist]);
+  }, [
+    discoverFilteredCategoryItems,
+    recentInstruments,
+    selectedInstrument,
+    sidePanelTab,
+    symbolResults,
+    visibleCategoryQuoteIds,
+    watchlist,
+  ]);
   const quoteTargetKey = quoteTargetIds.join('|');
   const refreshVisibleQuotes = useCallback(
     (respectVisibility = true, shouldApply: () => boolean = () => true): void => {
@@ -1255,11 +1277,11 @@ export function App(): JSX.Element {
   const visibleCategoryItems = useMemo(
     () =>
       sortBySnapshot(
-        filterByMove(categoryItems, moveFilter, getSnapshotForInstrument),
+        filterByMove(discoverFilteredCategoryItems, moveFilter, getSnapshotForInstrument),
         watchSort === 'custom' ? 'rate' : watchSort,
         getSnapshotForInstrument,
       ),
-    [categoryItems, moveFilter, quotesByCode, stream.trades, watchSort],
+    [discoverFilteredCategoryItems, moveFilter, quotesByCode, stream.trades, watchSort],
   );
 
   useEffect(() => {
@@ -1317,7 +1339,7 @@ export function App(): JSX.Element {
   );
   const categoryQuoteProgress = useMemo(() => {
     const requestedIds = new Set([
-      ...categoryItems.slice(0, DISCOVER_INITIAL_QUOTE_TARGETS).map((instrument) => instrument.id),
+      ...discoverFilteredCategoryItems.slice(0, DISCOVER_INITIAL_QUOTE_TARGETS).map((instrument) => instrument.id),
       ...visibleCategoryQuoteIds,
     ]);
     return {
@@ -1325,7 +1347,7 @@ export function App(): JSX.Element {
       requested: visibleCategoryItems.filter((instrument) => requestedIds.has(instrument.id)).length,
       total: visibleCategoryItems.length,
     };
-  }, [categoryItems, quotesByCode, stream.trades, visibleCategoryItems, visibleCategoryQuoteIds]);
+  }, [discoverFilteredCategoryItems, quotesByCode, stream.trades, visibleCategoryItems, visibleCategoryQuoteIds]);
   const tapeTrades = useMemo(
     () =>
       selectedInstrument?.country === 'KR'
@@ -2835,6 +2857,16 @@ export function App(): JSX.Element {
                     </option>
                   ))}
                 </select>
+              </label>
+              <label>
+                <span>검색</span>
+                <input
+                  aria-label="탐색 결과 검색"
+                  onChange={(event) => setDiscoverQuery(event.target.value)}
+                  placeholder="종목명/코드"
+                  type="search"
+                  value={discoverQuery}
+                />
               </label>
             </div>
             <div className="discover__section-label discover__section-label--results">
