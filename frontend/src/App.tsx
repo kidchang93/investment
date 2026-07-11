@@ -103,6 +103,23 @@ const LIST_QUOTE_REFRESH_MS = 15_000;
 const MAX_LIST_QUOTE_TARGETS = 30;
 const CATEGORY_QUOTE_TARGETS = 20;
 const SEARCH_QUOTE_TARGETS = 10;
+const STORAGE_PREFIX = 'investment-monitor:';
+
+function readStoredValue<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
+  const value = window.localStorage.getItem(`${STORAGE_PREFIX}${key}`);
+  return allowed.includes(value as T) ? (value as T) : fallback;
+}
+
+function readStoredBoolean(key: string, fallback: boolean): boolean {
+  const value = window.localStorage.getItem(`${STORAGE_PREFIX}${key}`);
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return fallback;
+}
+
+function writeStoredValue(key: string, value: string | boolean): void {
+  window.localStorage.setItem(`${STORAGE_PREFIX}${key}`, String(value));
+}
 
 function signColor(sign?: PriceSign): string {
   if (sign === '1' || sign === '2') return '#e5484d';
@@ -455,22 +472,43 @@ export function App(): JSX.Element {
   const [query, setQuery] = useState('');
   const [symbolQuery, setSymbolQuery] = useState('');
   const [symbolResults, setSymbolResults] = useState<Instrument[]>([]);
-  const [range, setRange] = useState<RangeKey>('3M');
-  const [timeframe, setTimeframe] = useState<TimeframeKey>('1D');
-  const [watchGroup, setWatchGroup] = useState<WatchGroup>('all');
-  const [moveFilter, setMoveFilter] = useState<MoveFilter>('all');
-  const [watchSort, setWatchSort] = useState<WatchSortKey>('custom');
+  const [range, setRange] = useState<RangeKey>(() =>
+    readStoredValue('range', '3M', RANGE_OPTIONS.map((option) => option.key)),
+  );
+  const [timeframe, setTimeframe] = useState<TimeframeKey>(() =>
+    readStoredValue('timeframe', '1D', TIMEFRAME_OPTIONS.map((option) => option.key)),
+  );
+  const [watchGroup, setWatchGroup] = useState<WatchGroup>(() =>
+    readStoredValue('watchGroup', 'all', WATCH_GROUP_OPTIONS.map((option) => option.key)),
+  );
+  const [moveFilter, setMoveFilter] = useState<MoveFilter>(() =>
+    readStoredValue('moveFilter', 'all', MOVE_FILTER_OPTIONS.map((option) => option.key)),
+  );
+  const [watchSort, setWatchSort] = useState<WatchSortKey>(() =>
+    readStoredValue('watchSort', 'custom', WATCH_SORT_OPTIONS.map((option) => option.key)),
+  );
   const [activeTool, setActiveTool] = useState<ChartTool>('crosshair');
   const [chartCommand, setChartCommand] = useState<ChartCommand | undefined>(undefined);
-  const [showMovingAverage, setShowMovingAverage] = useState(false);
-  const [showRsi, setShowRsi] = useState(false);
-  const [bottomDockTab, setBottomDockTab] = useState<BottomDockTab>('volume');
+  const [showMovingAverage, setShowMovingAverage] = useState(() => readStoredBoolean('showMovingAverage', false));
+  const [showRsi, setShowRsi] = useState(() => readStoredBoolean('showRsi', false));
+  const [bottomDockTab, setBottomDockTab] = useState<BottomDockTab>(() =>
+    readStoredValue('bottomDockTab', 'volume', ['volume', 'trades', 'news']),
+  );
   const [error, setError] = useState<string | null>(null);
   const [quoteRefreshAt, setQuoteRefreshAt] = useState<number | null>(null);
   const [intradayCandlesByCode, setIntradayCandlesByCode] = useState<Record<string, Candle[]>>({});
   const stream = useStream();
   const selectedTrade =
     selectedInstrument?.country === 'KR' ? stream.trades[selectedInstrument.providerSymbol] : undefined;
+
+  useEffect(() => writeStoredValue('range', range), [range]);
+  useEffect(() => writeStoredValue('timeframe', timeframe), [timeframe]);
+  useEffect(() => writeStoredValue('watchGroup', watchGroup), [watchGroup]);
+  useEffect(() => writeStoredValue('moveFilter', moveFilter), [moveFilter]);
+  useEffect(() => writeStoredValue('watchSort', watchSort), [watchSort]);
+  useEffect(() => writeStoredValue('showMovingAverage', showMovingAverage), [showMovingAverage]);
+  useEffect(() => writeStoredValue('showRsi', showRsi), [showRsi]);
+  useEffect(() => writeStoredValue('bottomDockTab', bottomDockTab), [bottomDockTab]);
 
   // 관심종목 로드 → 첫 종목 자동 선택
   useEffect(() => {
