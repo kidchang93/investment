@@ -1085,6 +1085,24 @@ button {
   color: #8dbaff;
 }
 
+.chart-readout__indicator {
+  padding: 2px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.08);
+  font-weight: 700;
+}
+
+.chart-readout__indicator[data-line='ma5'] {
+  border-color: rgba(245, 196, 81, 0.28);
+  color: var(--focus);
+}
+
+.chart-readout__indicator[data-line='ma20'] {
+  border-color: rgba(34, 197, 94, 0.26);
+  color: #8ee59e;
+}
+
 .chart-readout__tool {
   padding: 2px 6px;
   border: 1px solid var(--border-soft);

@@ -241,6 +241,13 @@ function getRangePosition(price: number, low: number, high: number): number | nu
   return Math.min(100, Math.max(0, ((price - low) / (high - low)) * 100));
 }
 
+function movingAverageLatest(candles: Candle[], period: number): number | undefined {
+  if (candles.length < period) return undefined;
+  const slice = candles.slice(-period);
+  const sum = slice.reduce((total, candle) => total + candle.close, 0);
+  return sum / period;
+}
+
 function quoteSourceForInstrument(instrument: Instrument, trade?: Trade, quote?: Quote): '실시간' | 'REST' | '대기' {
   if (instrument.country === 'KR' && trade) return '실시간';
   if (quote) return 'REST';
@@ -1000,6 +1007,13 @@ export function App(): JSX.Element {
   }, [chartCandles]);
   const volumeUpRatio = volumeSummary.total > 0 ? (volumeSummary.upVolume / volumeSummary.total) * 100 : 0;
   const volumeDownRatio = volumeSummary.total > 0 ? (volumeSummary.downVolume / volumeSummary.total) * 100 : 0;
+  const chartMovingAverages = useMemo(
+    () => ({
+      ma5: movingAverageLatest(chartCandles, 5),
+      ma20: movingAverageLatest(chartCandles, 20),
+    }),
+    [chartCandles],
+  );
   const selectedName = selectedInstrument?.name ?? '';
   const selectedQuote = selectedInstrument ? quotesByCode[selectedInstrument.id] : undefined;
   const snapshot = toSnapshot(selectedTrade, selectedQuote);
@@ -1779,6 +1793,16 @@ export function App(): JSX.Element {
                   ? `${formatPrice(activeChartReadoutStats.range)} (${formatRate(activeChartReadoutStats.rangeRate)})`
                   : '-'}
               </span>
+              {showMovingAverage && chartMovingAverages.ma5 !== undefined && (
+                <span className="chart-readout__indicator" data-line="ma5">
+                  MA5 {formatPrice(chartMovingAverages.ma5)}
+                </span>
+              )}
+              {showMovingAverage && chartMovingAverages.ma20 !== undefined && (
+                <span className="chart-readout__indicator" data-line="ma20">
+                  MA20 {formatPrice(chartMovingAverages.ma20)}
+                </span>
+              )}
               <span className="chart-readout__tool">{activeToolOption.title}</span>
             </div>
             {selectedInstrument && (
