@@ -1869,6 +1869,11 @@ button {
   font-size: 9px;
 }
 
+.watchlist.is-compact-list .instrument-row__range {
+  width: 74px;
+  height: 3px;
+}
+
 .instrument-row:hover {
   background: rgba(21, 27, 38, 0.7);
 }
@@ -1988,6 +1993,28 @@ button {
 
 .instrument-row__source[data-source='REST'] {
   color: var(--muted);
+}
+
+.instrument-row__range {
+  position: relative;
+  display: block;
+  width: 92px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.52), rgba(148, 163, 184, 0.16), rgba(229, 72, 77, 0.52));
+}
+
+.instrument-row__range span {
+  position: absolute;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(229, 231, 235, 0.9);
+  border-radius: 50%;
+  background: #0d121a;
+  box-shadow: 0 0 0 2px rgba(9, 13, 20, 0.85);
 }
 
 .instrument-row__watch {

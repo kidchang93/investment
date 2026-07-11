@@ -472,6 +472,10 @@ function InstrumentRow({
   const color = signColor(snapshot?.sign);
   const tone = moveTone(snapshot?.sign);
   const quoteSource = trade ? '실시간' : quote ? 'REST' : '대기';
+  const rangePosition =
+    snapshot && snapshot.high > snapshot.low
+      ? Math.min(100, Math.max(0, ((snapshot.price - snapshot.low) / (snapshot.high - snapshot.low)) * 100))
+      : null;
   const prevPriceRef = useRef<number | undefined>(snapshot?.price);
   const [flashing, setFlashing] = useState(false);
 
@@ -512,6 +516,15 @@ function InstrumentRow({
           </span>
         )}
         <span className="instrument-row__source" data-source={quoteSource}>{quoteSource}</span>
+        {snapshot && rangePosition !== null && (
+          <span
+            aria-label={`당일 저가 ${formatPrice(snapshot.low)}, 고가 ${formatPrice(snapshot.high)} 범위 내 ${Math.round(rangePosition)}% 위치`}
+            className="instrument-row__range"
+            title={`저가 ${formatPrice(snapshot.low)} · 고가 ${formatPrice(snapshot.high)}`}
+          >
+            <span style={{ left: `${rangePosition}%` }} />
+          </span>
+        )}
       </div>
       <span
         className="instrument-row__watch"
