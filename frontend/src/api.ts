@@ -4,6 +4,7 @@ import type {
   CandlesResponse,
   CreateOrderRequest,
   CreateOrderResponse,
+  ExchangeRate,
   Instrument,
   InstrumentCategory,
   NewsItem,
@@ -40,6 +41,12 @@ export async function fetchTradingOverview(): Promise<TradingOverview> {
 export async function fetchKisAccountSnapshot(): Promise<BrokerAccountSnapshot> {
   const res = await fetch(`${API_BASE}/api/broker/kis/account`);
   if (!res.ok) throw new Error(`KIS 계좌 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchUsdKrwExchangeRate(): Promise<ExchangeRate> {
+  const res = await fetch(`${API_BASE}/api/exchange-rates/usd-krw`);
+  if (!res.ok) throw new Error(`USD/KRW 환율 조회 실패: ${res.status}`);
   return res.json();
 }
 

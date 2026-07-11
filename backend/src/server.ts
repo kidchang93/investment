@@ -30,6 +30,7 @@ import {
   getInstrumentQuote,
   getKisDomesticAccountSnapshot,
   getQuote,
+  getUsdKrwExchangeRate,
 } from './kis/rest.js';
 import { KisRealtime } from './kis/realtime.js';
 import { WATCHLIST } from './watchlist.js';
@@ -93,6 +94,15 @@ async function main(): Promise<void> {
 
   app.get('/api/broker/kis/account', async () => {
     return getKisDomesticAccountSnapshot();
+  });
+
+  app.get('/api/exchange-rates/usd-krw', async (_req, reply) => {
+    try {
+      return await getUsdKrwExchangeRate();
+    } catch (err) {
+      app.log.warn({ err }, 'USD/KRW 환율 조회 실패');
+      return reply.code(502).send({ message: 'USD/KRW 환율을 조회할 수 없습니다.' });
+    }
   });
 
   app.post<{ Body: Partial<CreateOrderRequest> }>('/api/trading/orders', async (req, reply) => {

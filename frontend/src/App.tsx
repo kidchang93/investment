@@ -14,6 +14,7 @@ import {
   fetchInstrumentQuotes,
   fetchTerminalInstruments,
   fetchTradingOverview,
+  fetchUsdKrwExchangeRate,
   fetchWatchlistItems,
   fetchWatchlists,
   removeWatchlistItem,
@@ -26,6 +27,7 @@ import type {
   Candle,
   CandlesResponse,
   ClientSubscribeInstrument,
+  ExchangeRate,
   Instrument,
   InstrumentCategory,
   NewsItem,
@@ -379,7 +381,7 @@ const MACRO_BOARD_GROUPS: Array<{ label: string; items: MacroBoardItem[] }> = [
   {
     label: '환율·금리',
     items: [
-      { key: 'usdkrw', label: 'USD/KRW', detail: '환율 원본 연동 예정', filter: 'fx', fallback: '-' },
+      { key: 'usdkrw', label: 'USD/KRW', detail: '환율 조회 대기', filter: 'fx', fallback: '-' },
       { key: 'eurusd', label: 'EUR/USD', detail: '환율 지표 예정', filter: 'fx', fallback: '-' },
       { key: 'dxy', label: '달러인덱스', detail: '글로벌 지표 예정', filter: 'fx', fallback: '-' },
       { key: 'us10y', label: '미10년금리', detail: '금리 지표 예정', filter: 'rates', fallback: '-' },
@@ -504,6 +506,7 @@ const SIMULATION_LEADERS = [
 
 const OVERSEAS_REFRESH_MS = 5_000;
 const LIST_QUOTE_REFRESH_MS = 60_000;
+const FX_REFRESH_MS = 60_000;
 const QUOTE_STALE_MS = LIST_QUOTE_REFRESH_MS * 2;
 const TRADE_STALE_MS = 10_000;
 // 탐색 리스트는 전체 현재가를 선조회하지 않는다. 첫 화면과 스크롤로 보인 종목만 점진적으로 채운다.
@@ -662,8 +665,46 @@ function quoteSourceForInstrument(instrument: Instrument, trade?: Trade, quote?:
   return '대기';
 }
 
+function isRealtimeChartInstrument(instrument: Instrument | null): boolean {
+  return Boolean(instrument && instrument.market === 'KRX_NIGHT' && (instrument.assetType === 'future' || instrument.assetType === 'future_spread'));
+}
+
+function realtimeChartStatusLabel(instrument: Instrument | null, trade: Trade | undefined): string {
+  if (!isRealtimeChartInstrument(instrument)) return '';
+  return trade ? '실시간 차트 수신중' : '실시간 차트 대기';
+}
+
 function formatPrice(n: number): string {
   return Number.isFinite(n) ? n.toLocaleString('ko-KR') : '-';
+}
+
+function formatCurrencyPrice(n: number | undefined, currency = 'KRW'): string {
+  if (n === undefined || !Number.isFinite(n)) return '-';
+  if (currency === 'KRW') {
+    return `${n.toLocaleString('ko-KR', { maximumFractionDigits: 0 })}원`;
+  }
+  if (currency === 'USD') {
+    return `$${n.toLocaleString('ko-KR', {
+      minimumFractionDigits: n < 100 ? 2 : 0,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+  return `${n.toLocaleString('ko-KR', { maximumFractionDigits: 2 })} ${currency}`;
+}
+
+function formatSignedCurrencyPrice(n: number, currency = 'KRW'): string {
+  if (!Number.isFinite(n)) return '-';
+  return `${n > 0 ? '+' : ''}${formatCurrencyPrice(n, currency)}`;
+}
+
+function formatExchangeRate(rate: number | undefined): string {
+  if (rate === undefined || !Number.isFinite(rate)) return '-';
+  return `${rate.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}원`;
+}
+
+function formatConvertedKrw(value: number | undefined, currency: string | undefined, exchangeRate: ExchangeRate | null): string | undefined {
+  if (value === undefined || !Number.isFinite(value) || currency !== 'USD' || !exchangeRate) return undefined;
+  return `약 ${formatCurrencyPrice(Math.round(value * exchangeRate.rate), 'KRW')}`;
 }
 
 function formatRate(n: number): string {
@@ -850,10 +891,7 @@ function formatNumber(n: number | undefined): string {
 }
 
 function formatMoney(n: number | undefined, currency = 'KRW'): string {
-  if (n === undefined || !Number.isFinite(n)) return '-';
-  return `${n.toLocaleString('ko-KR', {
-    maximumFractionDigits: currency === 'KRW' ? 0 : 2,
-  })} ${currency}`;
+  return formatCurrencyPrice(n, currency);
 }
 
 function orderStatusLabel(status: string): string {
@@ -1212,17 +1250,17 @@ function InstrumentRow({
         </span>
       </div>
       <div className="instrument-row__price" style={{ color }}>
-        <span>{snapshot ? formatPrice(snapshot.price) : '-'}</span>
+        <span>{snapshot ? formatCurrencyPrice(snapshot.price, instrument.currency) : '-'}</span>
         {snapshot && (
           <span className="instrument-row__rate">
-            {formatSignedPrice(snapshot.change)} ({formatRate(snapshot.changeRate)})
+            {formatSignedCurrencyPrice(snapshot.change, instrument.currency)} ({formatRate(snapshot.changeRate)})
           </span>
         )}
         {snapshot && rangePosition !== null && (
           <span
-            aria-label={`당일 저가 ${formatPrice(snapshot.low)}, 고가 ${formatPrice(snapshot.high)} 범위 내 ${Math.round(rangePosition)}% 위치`}
+            aria-label={`당일 저가 ${formatCurrencyPrice(snapshot.low, instrument.currency)}, 고가 ${formatCurrencyPrice(snapshot.high, instrument.currency)} 범위 내 ${Math.round(rangePosition)}% 위치`}
             className="instrument-row__range"
-            title={`저가 ${formatPrice(snapshot.low)} · 고가 ${formatPrice(snapshot.high)}`}
+            title={`저가 ${formatCurrencyPrice(snapshot.low, instrument.currency)} · 고가 ${formatCurrencyPrice(snapshot.high, instrument.currency)}`}
           >
             <span style={{ left: `${rangePosition}%` }} />
           </span>
@@ -1324,6 +1362,7 @@ export function App(): JSX.Element {
   );
   const [tradingOverview, setTradingOverview] = useState<TradingOverview | null>(null);
   const [kisAccountSnapshot, setKisAccountSnapshot] = useState<BrokerAccountSnapshot | null>(null);
+  const [usdKrwRate, setUsdKrwRate] = useState<ExchangeRate | null>(null);
   const [isKisAccountRefreshing, setIsKisAccountRefreshing] = useState(false);
   const [orderSide, setOrderSide] = useState<OrderSide>('buy');
   const [orderType, setOrderType] = useState<OrderType>('market');
@@ -1488,6 +1527,25 @@ export function App(): JSX.Element {
   useEffect(() => {
     refreshKisAccountSnapshot();
   }, [refreshKisAccountSnapshot]);
+
+  useEffect(() => {
+    let disposed = false;
+    const refresh = (): void => {
+      void fetchUsdKrwExchangeRate()
+        .then((rate) => {
+          if (!disposed) setUsdKrwRate(rate);
+        })
+        .catch(() => {
+          if (!disposed) setUsdKrwRate(null);
+        });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, FX_REFRESH_MS);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     const q = discoverQuery.trim();
@@ -1776,6 +1834,9 @@ export function App(): JSX.Element {
   const snapshot = toSnapshot(selectedTrade, selectedQuote);
   const selectedColor = signColor(snapshot?.sign);
   const selectedTone = moveTone(snapshot?.sign);
+  const selectedCurrency = selectedInstrument?.currency ?? 'KRW';
+  const selectedKrwConversion = formatConvertedKrw(snapshot?.price, selectedInstrument?.currency, usdKrwRate);
+  const realtimeChartLabel = realtimeChartStatusLabel(selectedInstrument, selectedTrade);
   const activeToolOption = TOOL_OPTIONS.find((tool) => tool.key === activeTool) ?? TOOL_OPTIONS[1];
   const quoteLagMs = quoteRefreshAt ? Math.max(0, nowMs - quoteRefreshAt) : null;
   const quoteFreshnessTone = quoteLagMs === null ? 'waiting' : quoteLagMs > QUOTE_STALE_MS ? 'stale' : 'fresh';
@@ -1898,10 +1959,11 @@ export function App(): JSX.Element {
           .map((item) => {
             const instrument = item.instrumentId ? terminalInstrumentById.get(item.instrumentId) : undefined;
             const itemSnapshot = instrument ? getSnapshotForInstrument(instrument) : undefined;
-            return { ...item, instrument, snapshot: itemSnapshot };
+            const exchangeRate = item.key === 'usdkrw' ? usdKrwRate : undefined;
+            return { ...item, instrument, snapshot: itemSnapshot, exchangeRate };
           }),
       })).filter((group) => group.items.length > 0),
-    [macroFilter, quotesByCode, stream.trades, terminalInstrumentById],
+    [macroFilter, quotesByCode, stream.trades, terminalInstrumentById, usdKrwRate],
   );
   const macroCoreItems = macroBoardGroups[0]?.items ?? [];
   const upcomingEvents = useMemo(
@@ -2231,6 +2293,12 @@ export function App(): JSX.Element {
     Number.isFinite(orderQuantityNumber) && orderEffectivePrice !== undefined
       ? orderQuantityNumber * orderEffectivePrice
       : undefined;
+  const orderEffectivePriceKrw = formatConvertedKrw(orderEffectivePrice, selectedInstrument?.currency, usdKrwRate);
+  const orderEstimatedNotionalKrw = formatConvertedKrw(
+    orderEstimatedNotional,
+    selectedInstrument?.currency,
+    usdKrwRate,
+  );
   const orderRiskMessages = useMemo(() => {
     const messages: string[] = [];
     if (!selectedInstrument) messages.push('종목을 먼저 선택하세요.');
@@ -2297,6 +2365,12 @@ export function App(): JSX.Element {
 
   function selectInstrument(instrument: Instrument): void {
     setSelectedInstrument(instrument);
+    if (isRealtimeChartInstrument(instrument)) {
+      setActivePage('market');
+      setTimeframe('1');
+      setBottomDockTab('trades');
+      if (bottomDockMode === 'hidden') setBottomDockMode('normal');
+    }
   }
 
   function updateActiveGroupCount(delta: number): void {
@@ -2472,8 +2546,8 @@ export function App(): JSX.Element {
     <div className={`app${isFocusMode ? ' is-focus-mode' : ''}`}>
       <header className="app__header">
         <div>
-          <span className="app__eyebrow">야간 지표 · 뉴스 · 출처 터미널</span>
-          <h1>Night Market Monitor</h1>
+          <span className="app__eyebrow">실시간 차트 · 뉴스 · 출처 터미널</span>
+          <h1>KidChang-Charts</h1>
         </div>
         <nav className="app__nav" aria-label="주요 화면">
           {APP_PAGE_OPTIONS.map((page) => (
@@ -2490,6 +2564,13 @@ export function App(): JSX.Element {
         </nav>
         <div className="app__status">
           <span className="mode-chip">조회 전용</span>
+          <span
+            className="freshness-chip"
+            data-tone={usdKrwRate ? 'fresh' : 'waiting'}
+            title={usdKrwRate ? `갱신 ${formatClock(usdKrwRate.fetchedAt)}` : '환율 조회 대기'}
+          >
+            USD/KRW {usdKrwRate ? formatExchangeRate(usdKrwRate.rate) : '대기'}
+          </span>
           <span className="freshness-chip" data-tone={quoteFreshnessTone}>{quoteFreshnessLabel}</span>
           <span className="freshness-chip" data-tone={tradeFreshnessTone}>{tradeFreshnessLabel}</span>
           <button
@@ -2637,7 +2718,7 @@ export function App(): JSX.Element {
                           <small>{marketLabel(instrument)}</small>
                           <em style={{ color: signColor(resultSnapshot?.sign) }}>
                             {resultSnapshot
-                              ? `${formatPrice(resultSnapshot.price)} · ${formatRate(resultSnapshot.changeRate)}`
+                              ? `${formatCurrencyPrice(resultSnapshot.price, instrument.currency)} · ${formatRate(resultSnapshot.changeRate)}`
                               : '-'}
                           </em>
                         </button>
@@ -2766,11 +2847,10 @@ export function App(): JSX.Element {
                     title={`${instrument.name} ${marketLabel(instrument)}`}
                     type="button"
                   >
-                    <span>{instrument.symbol}</span>
                     <strong>{instrument.name}</strong>
                     <em style={{ color: signColor(recentSnapshot?.sign) }}>
                       {recentSnapshot
-                        ? `${formatPrice(recentSnapshot.price)} ${formatRate(recentSnapshot.changeRate)}`
+                        ? `${formatCurrencyPrice(recentSnapshot.price, instrument.currency)} ${formatRate(recentSnapshot.changeRate)}`
                         : marketLabel(instrument)}
                     </em>
                     <small data-source={recentSource}>{recentSource}</small>
@@ -2812,7 +2892,7 @@ export function App(): JSX.Element {
                     <span>{instrument.name}</span>
                     <em style={{ color: signColor(comparisonSnapshot?.sign) }}>
                       {comparisonSnapshot
-                        ? `${formatPrice(comparisonSnapshot.price)} · ${formatRate(comparisonSnapshot.changeRate)}`
+                        ? `${formatCurrencyPrice(comparisonSnapshot.price, instrument.currency)} · ${formatRate(comparisonSnapshot.changeRate)}`
                         : '-'}
                     </em>
                     <small data-source={comparisonSource}>{comparisonSource}</small>
@@ -2835,8 +2915,8 @@ export function App(): JSX.Element {
                 </div>
                 <div className="terminal-board__hero-metric" data-tone={selectedTone}>
                   <span>{selectedInstrument ? assetTypeLabel(selectedInstrument.assetType) : '선택 대기'}</span>
-                  <strong>{snapshot ? formatPrice(snapshot.price) : '-'}</strong>
-                  <em>{snapshot ? `${formatSignedPrice(snapshot.change)} · ${formatRate(snapshot.changeRate)}` : '탐색에서 지표를 선택하세요'}</em>
+                  <strong>{snapshot ? formatCurrencyPrice(snapshot.price, selectedCurrency) : '-'}</strong>
+                  <em>{snapshot ? `${formatSignedCurrencyPrice(snapshot.change, selectedCurrency)} · ${formatRate(snapshot.changeRate)}` : '탐색에서 지표를 선택하세요'}</em>
                 </div>
               </div>
 
@@ -2855,11 +2935,12 @@ export function App(): JSX.Element {
                         data-tone={itemTone}
                         key={instrument.id}
                         onClick={() => selectInstrument(instrument)}
+                        title={isRealtimeChartInstrument(instrument) ? '실시간 1분 차트로 이동' : instrument.name}
                         type="button"
                       >
                         <span>{assetTypeLabel(instrument.assetType)}</span>
                         <strong>{instrument.name}</strong>
-                        <em>{itemSnapshot ? formatPrice(itemSnapshot.price) : '-'}</em>
+                        <em>{itemSnapshot ? formatCurrencyPrice(itemSnapshot.price, instrument.currency) : '-'}</em>
                         <small>{itemSnapshot ? formatRate(itemSnapshot.changeRate) : '조회 대기'}</small>
                       </button>
                     );
@@ -3050,40 +3131,74 @@ export function App(): JSX.Element {
                     ))}
                   </div>
                   <div className="terminal-kpi-row">
-                    {macroCoreItems.map((item) => (
-                      <button
-                        data-tone={moveTone(item.snapshot?.sign)}
-                        key={item.key}
-                        onClick={() => item.instrument && selectInstrument(item.instrument)}
-                        type="button"
-                      >
-                        <span>{item.label}</span>
-                        <strong>{item.snapshot ? formatPrice(item.snapshot.price) : (item.fallback ?? '-')}</strong>
-                        <em>{item.snapshot ? formatRate(item.snapshot.changeRate) : item.detail}</em>
-                      </button>
-                    ))}
+                    {macroCoreItems.map((item) => {
+                      const itemTone = item.exchangeRate
+                        ? feeImpactTone(item.exchangeRate.changeRate)
+                        : moveTone(item.snapshot?.sign);
+                      return (
+                        <button
+                          data-tone={itemTone}
+                          key={item.key}
+                          onClick={() => item.instrument && selectInstrument(item.instrument)}
+                          type="button"
+                        >
+                          <span>{item.label}</span>
+                          <strong>
+                            {item.exchangeRate
+                              ? formatExchangeRate(item.exchangeRate.rate)
+                              : item.snapshot
+                                ? formatCurrencyPrice(item.snapshot.price, item.instrument?.currency)
+                                : (item.fallback ?? '-')}
+                          </strong>
+                          <em>
+                            {item.exchangeRate
+                              ? formatRate(item.exchangeRate.changeRate)
+                              : item.snapshot
+                                ? formatRate(item.snapshot.changeRate)
+                                : item.detail}
+                          </em>
+                        </button>
+                      );
+                    })}
                   </div>
                   <div className="terminal-macro-grid">
                     {macroBoardGroups.map((group) => (
                       <section className="terminal-panel" key={group.label}>
                         <div className="terminal-panel__header">
                           <strong>{group.label}</strong>
-                          <span>{group.items.filter((item) => item.snapshot).length}/{group.items.length}</span>
+                          <span>{group.items.filter((item) => item.snapshot || item.exchangeRate).length}/{group.items.length}</span>
                         </div>
                         <div className="terminal-macro-list">
-                          {group.items.map((item) => (
-                            <button
-                              data-tone={moveTone(item.snapshot?.sign)}
-                              disabled={!item.instrument}
-                              key={item.key}
-                              onClick={() => item.instrument && selectInstrument(item.instrument)}
-                              type="button"
-                            >
-                              <span>{item.label}</span>
-                              <strong>{item.snapshot ? formatPrice(item.snapshot.price) : (item.fallback ?? '-')}</strong>
-                              <em>{item.snapshot ? formatRate(item.snapshot.changeRate) : item.detail}</em>
-                            </button>
-                          ))}
+                          {group.items.map((item) => {
+                            const itemTone = item.exchangeRate
+                              ? feeImpactTone(item.exchangeRate.changeRate)
+                              : moveTone(item.snapshot?.sign);
+                            return (
+                              <button
+                                data-tone={itemTone}
+                                disabled={!item.instrument && !item.exchangeRate}
+                                key={item.key}
+                                onClick={() => item.instrument && selectInstrument(item.instrument)}
+                                type="button"
+                              >
+                                <span>{item.label}</span>
+                                <strong>
+                                  {item.exchangeRate
+                                    ? formatExchangeRate(item.exchangeRate.rate)
+                                    : item.snapshot
+                                      ? formatCurrencyPrice(item.snapshot.price, item.instrument?.currency)
+                                      : (item.fallback ?? '-')}
+                                </strong>
+                                <em>
+                                  {item.exchangeRate
+                                    ? formatRate(item.exchangeRate.changeRate)
+                                    : item.snapshot
+                                      ? formatRate(item.snapshot.changeRate)
+                                      : item.detail}
+                                </em>
+                              </button>
+                            );
+                          })}
                         </div>
                       </section>
                     ))}
@@ -3244,7 +3359,7 @@ export function App(): JSX.Element {
                       >
                         <span>#{index + 1}</span>
                         <strong>{item.instrument.name}</strong>
-                        <em>{item.snapshot ? formatPrice(item.snapshot.price) : '-'}</em>
+                        <em>{item.snapshot ? formatCurrencyPrice(item.snapshot.price, item.instrument.currency) : '-'}</em>
                         <small>{item.snapshot ? formatRate(item.snapshot.changeRate) : '조회 대기'}</small>
                       </button>
                     ))}
@@ -3489,7 +3604,7 @@ export function App(): JSX.Element {
                         </label>
                         <div>
                           <span>현재가</span>
-                          <strong>{snapshot ? formatPrice(snapshot.price) : '-'}</strong>
+                          <strong>{snapshot ? formatCurrencyPrice(snapshot.price, selectedCurrency) : '-'}</strong>
                         </div>
                         <div>
                           <span>보유</span>
@@ -3592,16 +3707,17 @@ export function App(): JSX.Element {
               data-move={selectedTone}
               style={{ color: selectedColor }}
             >
-              <strong>{snapshot ? formatPrice(snapshot.price) : '-'}</strong>
+              <strong>{snapshot ? formatCurrencyPrice(snapshot.price, selectedCurrency) : '-'}</strong>
+              {selectedKrwConversion && <span className="quote-header__converted">{selectedKrwConversion}</span>}
               {snapshot && (
                 <span>
-                  {formatSignedPrice(snapshot.change)} ({formatRate(snapshot.changeRate)})
+                  {formatSignedCurrencyPrice(snapshot.change, selectedCurrency)} ({formatRate(snapshot.changeRate)})
                 </span>
               )}
               {snapshot && (
                 <div className="quote-header__price-context">
                   <em data-tone={snapshot.price >= snapshot.open ? 'up' : 'down'}>
-                    시가대비 {openChange !== undefined ? formatSignedPrice(openChange) : '-'}
+                    시가대비 {openChange !== undefined ? formatSignedCurrencyPrice(openChange, selectedCurrency) : '-'}
                     {openChangeRate !== undefined ? ` (${formatRate(openChangeRate)})` : ''}
                   </em>
                   {dayRangePosition !== null && <em>범위 {Math.round(dayRangePosition)}%</em>}
@@ -3611,15 +3727,15 @@ export function App(): JSX.Element {
             <div className="quote-stats">
               <div>
                 <span>시가</span>
-                <strong>{snapshot ? formatPrice(snapshot.open) : '-'}</strong>
+                <strong>{snapshot ? formatCurrencyPrice(snapshot.open, selectedCurrency) : '-'}</strong>
               </div>
               <div>
                 <span>고가</span>
-                <strong>{snapshot ? formatPrice(snapshot.high) : '-'}</strong>
+                <strong>{snapshot ? formatCurrencyPrice(snapshot.high, selectedCurrency) : '-'}</strong>
               </div>
               <div>
                 <span>저가</span>
-                <strong>{snapshot ? formatPrice(snapshot.low) : '-'}</strong>
+                <strong>{snapshot ? formatCurrencyPrice(snapshot.low, selectedCurrency) : '-'}</strong>
               </div>
               <div>
                 <span>거래량</span>
@@ -3646,14 +3762,16 @@ export function App(): JSX.Element {
             </div>
             <div className="market-strip__item">
               <span>전일종가</span>
-              <strong>{formatNumber(previousClose)}</strong>
+              <strong>{formatCurrencyPrice(previousClose, selectedCurrency)}</strong>
               <small>정규장 {marketSession.hours}</small>
             </div>
             <div className="market-strip__range">
               <div>
                 <span>당일 범위</span>
                 <strong>
-                  {snapshot ? `${formatPrice(snapshot.low)} - ${formatPrice(snapshot.high)}` : '-'}
+                  {snapshot
+                    ? `${formatCurrencyPrice(snapshot.low, selectedCurrency)} - ${formatCurrencyPrice(snapshot.high, selectedCurrency)}`
+                    : '-'}
                 </strong>
               </div>
               <div className="market-strip__range-track">
@@ -3743,10 +3861,12 @@ export function App(): JSX.Element {
                 <div>
                   <span>예상 단가</span>
                   <strong>{formatMoney(orderEffectivePrice, selectedInstrument?.currency)}</strong>
+                  {orderEffectivePriceKrw && <small>{orderEffectivePriceKrw}</small>}
                 </div>
                 <div>
                   <span>예상 주문액</span>
                   <strong>{formatMoney(orderEstimatedNotional, selectedInstrument?.currency)}</strong>
+                  {orderEstimatedNotionalKrw && <small>{orderEstimatedNotionalKrw}</small>}
                 </div>
                 <div>
                   <span>주문 가능</span>
@@ -3853,6 +3973,9 @@ export function App(): JSX.Element {
               {chartOverlayBadges.map((badge) => (
                 <em key={badge}>{badge}</em>
               ))}
+              {realtimeChartLabel && (
+                <em data-tone={selectedTrade ? 'live' : 'waiting'}>{realtimeChartLabel}</em>
+              )}
             </div>
           </div>}
 
@@ -3889,6 +4012,11 @@ export function App(): JSX.Element {
                   MA20 {formatPrice(chartMovingAverages.ma20)}
                 </span>
               )}
+              {realtimeChartLabel && (
+                <span className="chart-readout__live" data-tone={selectedTrade ? 'live' : 'waiting'}>
+                  {realtimeChartLabel}
+                </span>
+              )}
               <span className="chart-readout__tool">{activeToolOption.title}</span>
             </div>
             {selectedInstrument && (
@@ -3918,7 +4046,9 @@ export function App(): JSX.Element {
                 {selectedInstrument
                   ? timeframe === '1D'
                     ? '차트 로딩 중'
-                    : '실시간 분봉 대기'
+                    : isRealtimeChartInstrument(selectedInstrument)
+                      ? '실시간 체결 수신 시 1분봉이 생성됩니다'
+                      : '실시간 분봉 대기'
                   : '종목을 선택하세요'}
               </div>
             )}
@@ -3982,7 +4112,7 @@ export function App(): JSX.Element {
                 </div>
                 {tapeTrades[0] && (
                   <small style={{ color: signColor(tapeTrades[0].sign) }}>
-                    최신 {formatPrice(tapeTrades[0].price)} · {formatRate(tapeTrades[0].changeRate)}
+                    최신 {formatCurrencyPrice(tapeTrades[0].price, 'KRW')} · {formatRate(tapeTrades[0].changeRate)}
                   </small>
                 )}
               </div>
@@ -3999,12 +4129,12 @@ export function App(): JSX.Element {
                       <span className="trade-tape__move">{moveTone(trade.sign) === 'up' ? '상승' : moveTone(trade.sign) === 'down' ? '하락' : '보합'}</span>
                       <strong>{instrumentNameByProviderSymbol.get(trade.code) ?? trade.code}</strong>
                       <span className="trade-tape__price-cell">
-                        <em style={{ color: signColor(trade.sign) }}>{formatPrice(trade.price)}</em>
+                        <em style={{ color: signColor(trade.sign) }}>{formatCurrencyPrice(trade.price, 'KRW')}</em>
                         {tradeRangePosition !== null && (
                           <span
-                            aria-label={`당일 저가 ${formatPrice(trade.low)}, 고가 ${formatPrice(trade.high)} 범위 내 ${Math.round(tradeRangePosition)}% 위치`}
+                            aria-label={`당일 저가 ${formatCurrencyPrice(trade.low, 'KRW')}, 고가 ${formatCurrencyPrice(trade.high, 'KRW')} 범위 내 ${Math.round(tradeRangePosition)}% 위치`}
                             className="trade-tape__range"
-                            title={`저가 ${formatPrice(trade.low)} · 고가 ${formatPrice(trade.high)}`}
+                            title={`저가 ${formatCurrencyPrice(trade.low, 'KRW')} · 고가 ${formatCurrencyPrice(trade.high, 'KRW')}`}
                           >
                             <span style={{ left: `${tradeRangePosition}%` }} />
                           </span>

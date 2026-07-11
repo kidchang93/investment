@@ -603,11 +603,11 @@ button {
 
 .recent-symbols button {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 7px;
-  min-width: 210px;
-  max-width: 286px;
+  min-width: 176px;
+  max-width: 258px;
   height: 28px;
   padding: 0 9px;
   border: 1px solid transparent;
@@ -639,18 +639,12 @@ button {
   border-color: rgba(245, 196, 81, 0.34);
 }
 
-.recent-symbols button span,
 .recent-symbols strong,
 .recent-symbols em,
 .recent-symbols small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.recent-symbols button span {
-  color: var(--focus);
-  font-weight: 700;
 }
 
 .recent-symbols strong {
@@ -1882,6 +1876,11 @@ button {
   font-size: 13px;
 }
 
+.quote-header__converted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .quote-header__price-context {
   display: flex;
   justify-content: flex-end;
@@ -2207,6 +2206,15 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.order-ticket__summary small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2613,6 +2621,18 @@ button {
   line-height: 1.3;
 }
 
+.chart-toolbar__meta em[data-tone='live'] {
+  border-color: rgba(34, 197, 94, 0.34);
+  background: rgba(34, 197, 94, 0.12);
+  color: #8ee59e;
+}
+
+.chart-toolbar__meta em[data-tone='waiting'] {
+  border-color: rgba(245, 196, 81, 0.3);
+  background: rgba(245, 196, 81, 0.1);
+  color: var(--focus);
+}
+
 .chart-frame {
   position: relative;
   display: flex;
@@ -2712,6 +2732,21 @@ button {
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.08);
   color: var(--focus);
+}
+
+.chart-readout__live {
+  padding: 2px 6px;
+  border: 1px solid rgba(245, 196, 81, 0.28);
+  border-radius: 999px;
+  background: rgba(245, 196, 81, 0.1);
+  color: var(--focus);
+  font-weight: 700;
+}
+
+.chart-readout__live[data-tone='live'] {
+  border-color: rgba(34, 197, 94, 0.34);
+  background: rgba(34, 197, 94, 0.12);
+  color: #8ee59e;
 }
 
 .chart-watermark {
@@ -4096,6 +4131,10 @@ button {
   gap: 3px;
   font-size: 14px;
   font-variant-numeric: tabular-nums;
+}
+
+.instrument-row__price > span:first-child {
+  white-space: nowrap;
 }
 
 .instrument-row__rate {

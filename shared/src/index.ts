@@ -124,6 +124,17 @@ export interface Quote {
   accVolume: number;
 }
 
+/** 환율 스냅샷 */
+export interface ExchangeRate {
+  pair: 'USD/KRW';
+  baseCurrency: 'USD';
+  quoteCurrency: 'KRW';
+  rate: number;
+  change: number;
+  changeRate: number;
+  fetchedAt: number;
+}
+
 /** 백엔드 → 프론트 WebSocket 스트림 메시지 (판별 유니언) */
 export type ServerMessage =
   | { type: 'trade'; data: Trade }

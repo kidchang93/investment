@@ -1,6 +1,16 @@
 import { config } from '../config.js';
 import { getAccessToken } from './auth.js';
-import type { BrokerAccountSnapshot, BrokerPosition, Candle, CandlesResponse, Instrument, NewsItem, PriceSign, Quote } from '@invest/shared';
+import type {
+  BrokerAccountSnapshot,
+  BrokerPosition,
+  Candle,
+  CandlesResponse,
+  ExchangeRate,
+  Instrument,
+  NewsItem,
+  PriceSign,
+  Quote,
+} from '@invest/shared';
 
 /** KIS REST GET 공통 헬퍼. tr_id별로 헤더/인증을 채워 호출한다. */
 async function kisGet(
@@ -226,6 +236,22 @@ async function fetchTradingViewQuote(symbol: string): Promise<TradingViewQuote> 
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function getUsdKrwExchangeRate(): Promise<ExchangeRate> {
+  const quote = await fetchTradingViewQuote('FX_IDC:USDKRW');
+  const rate = quote.close;
+  const change = Number((quote.change_abs ?? rate - (quote.open ?? rate)).toFixed(4));
+  const changeRate = Number((quote.change ?? (quote.open ? change / quote.open * 100 : 0)).toFixed(2));
+  return {
+    pair: 'USD/KRW',
+    baseCurrency: 'USD',
+    quoteCurrency: 'KRW',
+    rate,
+    change,
+    changeRate,
+    fetchedAt: Date.now(),
+  };
 }
 
 function convertGdrPrice(price: number | undefined, fx: number, ratio: number): number | undefined {
