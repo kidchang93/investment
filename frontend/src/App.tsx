@@ -496,7 +496,10 @@ function InstrumentRow({
       type="button"
     >
       <div className="instrument-row__name">
-        <strong>{instrument.name}</strong>
+        <div className="instrument-row__title">
+          <strong>{instrument.name}</strong>
+          {active && <em>선택</em>}
+        </div>
         <span className="instrument-row__code">
           {instrument.symbol} · {marketLabel(instrument)}
         </span>

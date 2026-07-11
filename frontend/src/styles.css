@@ -1801,11 +1801,29 @@ button {
   min-width: 0;
 }
 
-.instrument-row__name strong {
+.instrument-row__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.instrument-row__title strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
+}
+
+.instrument-row__title em {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(245, 196, 81, 0.16);
+  color: var(--focus);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.25;
 }
 
 .instrument-row__code {
