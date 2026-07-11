@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { STREAM_URL } from './config';
-import type { ServerMessage, Trade } from '@invest/shared';
+import type { ClientMessage, ClientSubscribeInstrument, ServerMessage, Trade } from '@invest/shared';
 
 const RECONNECT_MS = 3_000;
 const MAX_RECENT_TRADES = 80;
@@ -20,6 +20,8 @@ export interface StreamState {
   recentTrades: Trade[];
   /** 상태/에러 메시지 (있을 때) */
   message?: string;
+  /** 국내 종목 실시간 체결 구독 추가 */
+  subscribe: (instruments: ClientSubscribeInstrument[]) => void;
 }
 
 /**
@@ -32,10 +34,32 @@ export function useStream(): StreamState {
     socketOpen: false,
     trades: {},
     recentTrades: [],
+    subscribe: () => undefined,
   });
   // 재접속·언마운트 사이에서 소켓/타이머를 안전하게 정리하기 위한 ref
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const subscribedInstrumentsRef = useRef<Map<string, ClientSubscribeInstrument>>(new Map());
+
+  const sendSubscribe = useCallback((ws: WebSocket, instruments: ClientSubscribeInstrument[]): void => {
+    if (instruments.length === 0) return;
+    const msg: ClientMessage = { type: 'subscribe', instruments };
+    ws.send(JSON.stringify(msg));
+  }, []);
+
+  const subscribe = useCallback(
+    (instruments: ClientSubscribeInstrument[]): void => {
+      const nextInstruments = instruments
+        .map((instrument) => ({ ...instrument, code: instrument.code.trim().toUpperCase() }))
+        .filter((instrument) => /^[0-9A-Z]{6,9}$/.test(instrument.code) && !subscribedInstrumentsRef.current.has(instrument.code));
+      if (nextInstruments.length === 0) return;
+
+      for (const instrument of nextInstruments) subscribedInstrumentsRef.current.set(instrument.code, instrument);
+      const ws = wsRef.current;
+      if (ws?.readyState === WebSocket.OPEN) sendSubscribe(ws, nextInstruments);
+    },
+    [sendSubscribe],
+  );
 
   useEffect(() => {
     let disposed = false;
@@ -47,6 +71,7 @@ export function useStream(): StreamState {
       ws.onopen = () => {
         if (disposed) return;
         setState((s) => ({ ...s, socketOpen: true }));
+        sendSubscribe(ws, [...subscribedInstrumentsRef.current.values()]);
       };
 
       ws.onmessage = (ev) => {
@@ -106,7 +131,7 @@ export function useStream(): StreamState {
       if (timerRef.current) clearTimeout(timerRef.current);
       wsRef.current?.close();
     };
-  }, []);
+  }, [sendSubscribe]);
 
-  return state;
+  return { ...state, subscribe };
 }

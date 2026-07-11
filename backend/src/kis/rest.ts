@@ -67,6 +67,12 @@ function parseSign(value: string | undefined): PriceSign {
   return '3';
 }
 
+function signFromChange(change: number): PriceSign {
+  if (change > 0) return '2';
+  if (change < 0) return '5';
+  return '3';
+}
+
 function requireNumber(value: string | undefined, field: string): number {
   const n = toNumber(value);
   if (!Number.isFinite(n)) {
@@ -164,6 +170,72 @@ function optionalKstDateTimeToTimestamp(date: string | undefined, time: string |
   if (!/^\d{8}$/.test(date ?? '') || !/^\d{6}$/.test(time ?? '')) return undefined;
   const timestamp = kstDateTimeToTimestamp(date as string, time as string);
   return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function isFutureAssetType(assetType: Instrument['assetType']): boolean {
+  return assetType === 'future' || assetType === 'future_spread';
+}
+
+interface TradingViewQuote {
+  close: number;
+  change?: number;
+  change_abs?: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  volume?: number;
+  currency?: string;
+}
+
+const NIGHT_PROXY_SPECS: Record<
+  string,
+  { underlyingCode: string; sourceSymbol: string; fxSymbol: string; ratio: number }
+> = {
+  'KR:NIGHT_PROXY:005930': {
+    underlyingCode: '005930',
+    sourceSymbol: 'LSE:BC94',
+    fxSymbol: 'FX_IDC:USDKRW',
+    ratio: 25,
+  },
+};
+
+const COMMODITY_CANDLE_SPECS: Record<string, Pick<Instrument, 'providerSymbol' | 'exchangeCode'>> = {
+  'GLOBAL:TV_COMMODITY:GOLD': { providerSymbol: 'GCQ26', exchangeCode: 'CME' },
+  'GLOBAL:TV_COMMODITY:SILVER': { providerSymbol: 'SIU26', exchangeCode: 'CME' },
+  'GLOBAL:TV_COMMODITY:WTI': { providerSymbol: 'CLQ26', exchangeCode: 'CME' },
+  'GLOBAL:TV_COMMODITY:NATGAS': { providerSymbol: 'NGQ26', exchangeCode: 'CME' },
+};
+
+async function fetchTradingViewQuote(symbol: string): Promise<TradingViewQuote> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  const url = new URL('https://scanner.tradingview.com/symbol');
+  url.searchParams.set('symbol', symbol);
+  url.searchParams.set('fields', 'close,change,change_abs,open,high,low,volume,currency');
+
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`TradingView 조회 실패 (${res.status})`);
+    }
+    const json = (await res.json()) as Partial<TradingViewQuote> & { code?: string; errmsg?: string };
+    if (json.code || !Number.isFinite(json.close)) {
+      throw new Error(`TradingView 응답이 올바르지 않습니다: ${symbol}`);
+    }
+    return json as TradingViewQuote;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function convertGdrPrice(price: number | undefined, fx: number, ratio: number): number | undefined {
+  if (!Number.isFinite(price ?? NaN)) return undefined;
+  return Number(((price as number) * fx / ratio).toFixed(2));
+}
+
+function todayUtcSeconds(): number {
+  const now = new Date();
+  return Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) / 1000);
 }
 
 /** 국내주식 1분봉 시세 (주식일별분봉조회, tr_id: FHKST03010230). */
@@ -269,6 +341,14 @@ export async function getInstrumentCandles(
   instrument: Instrument,
   days = 120,
 ): Promise<CandlesResponse> {
+  if (instrument.assetType === 'night_proxy') {
+    return { code: instrument.id, name: instrument.name, candles: [] };
+  }
+  if (instrument.assetType === 'commodity') return getCommodityIndicatorCandles(instrument, days);
+  if (isFutureAssetType(instrument.assetType)) {
+    if (instrument.market === 'OV_FUT') return getOverseasFutureDailyCandles(instrument);
+    return getDomesticFutureDailyCandles(instrument, days);
+  }
   if (instrument.country === 'KR') {
     const response = await getDailyCandles(instrument.providerSymbol, days);
     return { ...response, code: instrument.id, name: instrument.name };
@@ -277,11 +357,252 @@ export async function getInstrumentCandles(
 }
 
 export async function getInstrumentQuote(instrument: Instrument): Promise<Quote> {
+  if (instrument.assetType === 'commodity') {
+    return getTradingViewInstrumentQuote(instrument);
+  }
+  if (instrument.assetType === 'night_proxy') {
+    return getNightProxyQuote(instrument);
+  }
+  if (isFutureAssetType(instrument.assetType)) {
+    if (instrument.market === 'OV_FUT') return getOverseasFutureQuote(instrument);
+    return getDomesticFutureQuote(instrument);
+  }
   if (instrument.country === 'KR') {
     const quote = await getQuote(instrument.providerSymbol);
     return { ...quote, code: instrument.id };
   }
   return getOverseasQuote(instrument);
+}
+
+async function getCommodityIndicatorCandles(
+  instrument: Instrument,
+  _days: number,
+): Promise<CandlesResponse> {
+  const spec = COMMODITY_CANDLE_SPECS[instrument.id];
+  if (!spec) return { code: instrument.id, name: instrument.name, candles: [] };
+  try {
+    const response = await getOverseasFutureDailyCandles({
+      ...instrument,
+      assetType: 'future',
+      market: 'OV_FUT',
+      provider: 'kis',
+      providerSymbol: spec.providerSymbol,
+      exchangeCode: spec.exchangeCode,
+    });
+    return { ...response, code: instrument.id, name: instrument.name };
+  } catch {
+    const quote = await fetchTradingViewQuote(instrument.providerSymbol);
+    return {
+      code: instrument.id,
+      name: instrument.name,
+      candles: [
+        {
+          time: todayUtcSeconds(),
+          open: quote.open ?? quote.close,
+          high: quote.high ?? quote.close,
+          low: quote.low ?? quote.close,
+          close: quote.close,
+          volume: quote.volume ?? 0,
+        },
+      ],
+    };
+  }
+}
+
+async function getTradingViewInstrumentQuote(instrument: Instrument): Promise<Quote> {
+  const quote = await fetchTradingViewQuote(instrument.providerSymbol);
+  const price = quote.close;
+  const change = Number((quote.change_abs ?? price - (quote.open ?? price)).toFixed(4));
+  const changeRate = Number((quote.change ?? (quote.open ? change / quote.open * 100 : 0)).toFixed(2));
+  return {
+    code: instrument.id,
+    price,
+    change,
+    changeRate,
+    sign: signFromChange(change),
+    open: quote.open ?? price,
+    high: quote.high ?? price,
+    low: quote.low ?? price,
+    accVolume: Number.isFinite(quote.volume ?? NaN) ? (quote.volume as number) : 0,
+  };
+}
+
+async function getNightProxyQuote(instrument: Instrument): Promise<Quote> {
+  const spec = NIGHT_PROXY_SPECS[instrument.id];
+  if (!spec) {
+    throw new Error(`지원하지 않는 야간 환산가입니다: ${instrument.id}`);
+  }
+
+  const [source, fx, regularQuote] = await Promise.all([
+    fetchTradingViewQuote(spec.sourceSymbol),
+    fetchTradingViewQuote(spec.fxSymbol),
+    getQuote(spec.underlyingCode),
+  ]);
+  const price = convertGdrPrice(source.close, fx.close, spec.ratio);
+  if (!Number.isFinite(price ?? NaN)) {
+    throw new Error(`야간 환산가 계산에 실패했습니다: ${instrument.id}`);
+  }
+
+  const regularPrice = regularQuote.price;
+  const change = Number(((price as number) - regularPrice).toFixed(2));
+  const changeRate = regularPrice > 0 ? Number((change / regularPrice * 100).toFixed(2)) : 0;
+  const open = convertGdrPrice(source.open, fx.close, spec.ratio) ?? (price as number);
+  const high = convertGdrPrice(source.high, fx.close, spec.ratio) ?? (price as number);
+  const low = convertGdrPrice(source.low, fx.close, spec.ratio) ?? (price as number);
+
+  return {
+    code: instrument.id,
+    price: price as number,
+    change,
+    changeRate,
+    sign: signFromChange(change),
+    open,
+    high,
+    low,
+    accVolume: Number.isFinite(source.volume ?? NaN) ? (source.volume as number) : 0,
+  };
+}
+
+/** 국내 선물옵션 현재가 (선물옵션 시세, tr_id: FHMIF10000000). */
+async function getDomesticFutureQuote(instrument: Instrument): Promise<Quote> {
+  const json = await kisGet(
+    '/uapi/domestic-futureoption/v1/quotations/inquire-price',
+    'FHMIF10000000',
+    {
+      FID_COND_MRKT_DIV_CODE: instrument.exchangeCode || 'F',
+      FID_INPUT_ISCD: instrument.providerSymbol,
+    },
+  );
+  const o = (json.output1 ?? {}) as Record<string, string>;
+  return {
+    code: instrument.id,
+    price: requireNumber(o.futs_prpr, 'futs_prpr'),
+    change: requireNumber(o.futs_prdy_vrss, 'futs_prdy_vrss'),
+    changeRate: requireNumber(o.futs_prdy_ctrt, 'futs_prdy_ctrt'),
+    sign: parseSign(o.prdy_vrss_sign),
+    open: requireNumber(o.futs_oprc, 'futs_oprc'),
+    high: requireNumber(o.futs_hgpr, 'futs_hgpr'),
+    low: requireNumber(o.futs_lwpr, 'futs_lwpr'),
+    accVolume: requireNumber(o.acml_vol, 'acml_vol'),
+  };
+}
+
+/** 해외선물 현재가 (해외선물종목현재가, tr_id: HHDFC55010000). */
+async function getOverseasFutureQuote(instrument: Instrument): Promise<Quote> {
+  const json = await kisGet(
+    '/uapi/overseas-futureoption/v1/quotations/inquire-price',
+    'HHDFC55010000',
+    { SRS_CD: instrument.providerSymbol },
+  );
+  const rows = json.output1;
+  const o = (Array.isArray(rows) ? rows[0] : rows ?? {}) as Record<string, string>;
+  return {
+    code: instrument.id,
+    price: requireNumber(o.last_price, 'last_price'),
+    change: requireNumber(o.prev_diff_price, 'prev_diff_price'),
+    changeRate: requireNumber(o.prev_diff_rate, 'prev_diff_rate'),
+    sign: parseSign(o.prev_diff_flag),
+    open: requireNumber(o.open_price, 'open_price'),
+    high: requireNumber(o.high_price, 'high_price'),
+    low: requireNumber(o.low_price, 'low_price'),
+    accVolume: requireNumber(o.vol, 'vol'),
+  };
+}
+
+async function getDomesticFutureDailyCandles(
+  instrument: Instrument,
+  days: number,
+): Promise<CandlesResponse> {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(start.getDate() - Math.ceil(days * 1.7));
+
+  const json = await kisGet(
+    '/uapi/domestic-futureoption/v1/quotations/inquire-daily-fuopchartprice',
+    'FHKIF03020100',
+    {
+      FID_COND_MRKT_DIV_CODE: instrument.exchangeCode || 'F',
+      FID_INPUT_ISCD: instrument.providerSymbol,
+      FID_INPUT_DATE_1: yyyymmdd(start),
+      FID_INPUT_DATE_2: yyyymmdd(end),
+      FID_PERIOD_DIV_CODE: 'D',
+    },
+  );
+
+  const output2 = (json.output2 ?? []) as Array<Record<string, string>>;
+  const candles: Candle[] = output2
+    .filter((r) => /^\d{8}$/.test(r.stck_bsop_date ?? ''))
+    .map((r) => {
+      const y = Number(r.stck_bsop_date.slice(0, 4));
+      const m = Number(r.stck_bsop_date.slice(4, 6));
+      const d = Number(r.stck_bsop_date.slice(6, 8));
+      return {
+        time: Math.floor(Date.UTC(y, m - 1, d) / 1000),
+        open: toNumber(r.futs_oprc),
+        high: toNumber(r.futs_hgpr),
+        low: toNumber(r.futs_lwpr),
+        close: toNumber(r.futs_prpr),
+        volume: toNumber(r.acml_vol),
+      };
+    })
+    .filter(
+      (c) =>
+        Number.isFinite(c.time) &&
+        isPositiveFinite(c.open) &&
+        isPositiveFinite(c.high) &&
+        isPositiveFinite(c.low) &&
+        isPositiveFinite(c.close) &&
+        isNonNegativeFinite(c.volume ?? 0),
+    )
+    .sort((a, b) => a.time - b.time);
+
+  return { code: instrument.id, name: instrument.name, candles };
+}
+
+async function getOverseasFutureDailyCandles(instrument: Instrument): Promise<CandlesResponse> {
+  const json = await kisGet(
+    '/uapi/overseas-futureoption/v1/quotations/daily-ccnl',
+    'HHDFC55020100',
+    {
+      SRS_CD: instrument.providerSymbol,
+      EXCH_CD: instrument.exchangeCode,
+      START_DATE_TIME: '',
+      CLOSE_DATE_TIME: yyyymmdd(new Date()),
+      QRY_TP: 'Q',
+      QRY_CNT: '40',
+      QRY_GAP: '',
+      INDEX_KEY: '',
+    },
+  );
+
+  const output2 = (json.output2 ?? []) as Array<Record<string, string>>;
+  const candles: Candle[] = output2
+    .filter((r) => /^\d{8}$/.test(r.data_date ?? ''))
+    .map((r) => {
+      const y = Number(r.data_date.slice(0, 4));
+      const m = Number(r.data_date.slice(4, 6));
+      const d = Number(r.data_date.slice(6, 8));
+      return {
+        time: Math.floor(Date.UTC(y, m - 1, d) / 1000),
+        open: toNumber(r.open_price),
+        high: toNumber(r.high_price),
+        low: toNumber(r.low_price),
+        close: toNumber(r.last_price),
+        volume: toNumber(r.vol),
+      };
+    })
+    .filter(
+      (c) =>
+        Number.isFinite(c.time) &&
+        isPositiveFinite(c.open) &&
+        isPositiveFinite(c.high) &&
+        isPositiveFinite(c.low) &&
+        isPositiveFinite(c.close) &&
+        isNonNegativeFinite(c.volume ?? 0),
+    )
+    .sort((a, b) => a.time - b.time);
+
+  return { code: instrument.id, name: instrument.name, candles };
 }
 
 export async function getKisDomesticAccountSnapshot(): Promise<BrokerAccountSnapshot> {
@@ -361,11 +682,15 @@ export async function getKisDomesticAccountSnapshot(): Promise<BrokerAccountSnap
 }
 
 export async function getInstrumentIntradayCandles(instrument: Instrument): Promise<CandlesResponse> {
+  if (instrument.assetType === 'night_proxy' || instrument.assetType === 'commodity') {
+    return { code: instrument.id, name: instrument.name, candles: [] };
+  }
   if (instrument.country === 'KR') return getDomesticIntradayCandles(instrument);
   return getOverseasIntradayCandles(instrument);
 }
 
 export async function getInstrumentNews(instrument: Instrument): Promise<NewsItem[]> {
+  if (instrument.assetType === 'night_proxy' || instrument.assetType === 'commodity') return [];
   if (instrument.country === 'KR') return getDomesticNews(instrument);
   return getOverseasNews(instrument);
 }

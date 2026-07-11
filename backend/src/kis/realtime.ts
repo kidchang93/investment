@@ -2,12 +2,15 @@ import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 import { config } from '../config.js';
 import { getApprovalKey } from './auth.js';
-import type { Trade, ConnectionStatus, PriceSign } from '@invest/shared';
+import type { ClientSubscribeInstrument, Trade, ConnectionStatus, PriceSign } from '@invest/shared';
 
 /** 실시간 주식체결가 TR */
 const TR_TRADE = 'H0STCNT0';
+/** KRX 야간선물 실시간종목체결 TR */
+const TR_KRX_NIGHT_FUTURES_TRADE = 'H0MFCNT0';
 /** H0STCNT0 레코드당 필드 수 (여러 체결이 한 프레임에 붙어올 때 분할 기준) */
 const FIELDS_PER_RECORD = 46;
+const NIGHT_FUTURES_FIELDS_PER_RECORD = 49;
 const RECONNECT_MS = 3_000;
 
 function isPriceSign(value: string | undefined): value is PriceSign {
@@ -20,6 +23,17 @@ function isPositiveFinite(value: number): boolean {
 
 function isNonNegativeFinite(value: number): boolean {
   return Number.isFinite(value) && value >= 0;
+}
+
+function kstToday(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}${values.month}${values.day}`;
 }
 
 /**
@@ -35,7 +49,7 @@ function isNonNegativeFinite(value: number): boolean {
 export class KisRealtime extends EventEmitter {
   private ws: WebSocket | null = null;
   private approvalKey = '';
-  private readonly codes = new Set<string>();
+  private readonly subscriptions = new Map<string, { trId: string; code: string }>();
   private connected = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
 
@@ -44,16 +58,21 @@ export class KisRealtime extends EventEmitter {
   }
 
   async start(codes: string[]): Promise<void> {
-    for (const c of codes) this.codes.add(c);
+    for (const code of codes) this.addSubscription(TR_TRADE, code);
     this.approvalKey = await getApprovalKey();
     this.connect();
   }
 
   /** 실행 중 종목 추가 구독 (매매 기능 확장 시 사용). */
   subscribe(code: string): void {
-    if (this.codes.has(code)) return;
-    this.codes.add(code);
-    if (this.connected) this.sendSubscription(code, '1');
+    this.subscribeInstrument({ code, market: 'KOSPI', assetType: 'stock' });
+  }
+
+  subscribeInstrument(instrument: ClientSubscribeInstrument): void {
+    const trId = this.resolveTradeTrId(instrument);
+    if (!trId) return;
+    if (!this.addSubscription(trId, instrument.code)) return;
+    if (this.connected) this.sendSubscription(trId, instrument.code, '1');
   }
 
   private connect(): void {
@@ -63,7 +82,9 @@ export class KisRealtime extends EventEmitter {
     ws.on('open', () => {
       this.connected = true;
       this.emitStatus({ kisConnected: true });
-      for (const code of this.codes) this.sendSubscription(code, '1');
+      for (const subscription of this.subscriptions.values()) {
+        this.sendSubscription(subscription.trId, subscription.code, '1');
+      }
     });
     ws.on('message', (buf: WebSocket.RawData) => this.onMessage(buf.toString()));
     ws.on('close', () => {
@@ -85,7 +106,7 @@ export class KisRealtime extends EventEmitter {
   }
 
   /** tr_type: '1'=등록, '2'=해제 */
-  private sendSubscription(code: string, trType: '1' | '2'): void {
+  private sendSubscription(trId: string, code: string, trType: '1' | '2'): void {
     const msg = {
       header: {
         approval_key: this.approvalKey,
@@ -93,9 +114,29 @@ export class KisRealtime extends EventEmitter {
         tr_type: trType,
         'content-type': 'utf-8',
       },
-      body: { input: { tr_id: TR_TRADE, tr_key: code } },
+      body: { input: { tr_id: trId, tr_key: code } },
     };
     this.ws?.send(JSON.stringify(msg));
+  }
+
+  private addSubscription(trId: string, code: string): boolean {
+    const normalized = code.trim().toUpperCase();
+    const key = `${trId}:${normalized}`;
+    if (this.subscriptions.has(key)) return false;
+    this.subscriptions.set(key, { trId, code: normalized });
+    return true;
+  }
+
+  private isFutureAssetType(assetType: ClientSubscribeInstrument['assetType']): boolean {
+    return assetType === 'future' || assetType === 'future_spread';
+  }
+
+  private resolveTradeTrId(instrument: ClientSubscribeInstrument): string | null {
+    if (this.isFutureAssetType(instrument.assetType) && instrument.market === 'KRX_NIGHT') {
+      return TR_KRX_NIGHT_FUTURES_TRADE;
+    }
+    if (!this.isFutureAssetType(instrument.assetType)) return TR_TRADE;
+    return null;
   }
 
   private onMessage(raw: string): void {
@@ -114,8 +155,17 @@ export class KisRealtime extends EventEmitter {
 
     // 실시간 데이터 프레임: "암호화여부|tr_id|건수|필드^필드^..."
     const parts = raw.split('|');
-    if (parts.length < 4 || parts[1] !== TR_TRADE) return;
+    if (parts.length < 4) return;
+    if (parts[1] === TR_TRADE) {
+      this.onStockTradeFrame(parts);
+      return;
+    }
+    if (parts[1] === TR_KRX_NIGHT_FUTURES_TRADE) {
+      this.onNightFuturesTradeFrame(parts);
+    }
+  }
 
+  private onStockTradeFrame(parts: string[]): void {
     const count = Number(parts[2]) || 1;
     const fields = parts[3].split('^');
     for (let i = 0; i < count; i++) {
@@ -156,6 +206,52 @@ export class KisRealtime extends EventEmitter {
         volume,
         accVolume,
         date: f[33],
+      };
+      this.emit('trade', trade);
+    }
+  }
+
+  private onNightFuturesTradeFrame(parts: string[]): void {
+    const count = Number(parts[2]) || 1;
+    const fields = parts[3].split('^');
+    for (let i = 0; i < count; i++) {
+      const f = fields.slice(i * NIGHT_FUTURES_FIELDS_PER_RECORD, (i + 1) * NIGHT_FUTURES_FIELDS_PER_RECORD);
+      if (f.length < NIGHT_FUTURES_FIELDS_PER_RECORD || !isPriceSign(f[3])) continue;
+
+      const price = Number(f[5]);
+      const change = Number(f[2]);
+      const changeRate = Number(f[4]);
+      const open = Number(f[6]);
+      const high = Number(f[7]);
+      const low = Number(f[8]);
+      const volume = Number(f[9]);
+      const accVolume = Number(f[10]);
+      if (
+        !isPositiveFinite(price) ||
+        !Number.isFinite(change) ||
+        !Number.isFinite(changeRate) ||
+        !isPositiveFinite(open) ||
+        !isPositiveFinite(high) ||
+        !isPositiveFinite(low) ||
+        !isNonNegativeFinite(volume) ||
+        !isNonNegativeFinite(accVolume)
+      ) {
+        continue;
+      }
+
+      const trade: Trade = {
+        code: f[0],
+        time: f[1],
+        price,
+        sign: f[3],
+        change,
+        changeRate,
+        open,
+        high,
+        low,
+        volume,
+        accVolume,
+        date: kstToday(),
       };
       this.emit('trade', trade);
     }

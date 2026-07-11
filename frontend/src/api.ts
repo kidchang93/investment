@@ -100,8 +100,11 @@ export async function fetchInstrumentCategories(): Promise<InstrumentCategory[]>
   return res.json();
 }
 
-export async function fetchCategoryInstruments(id: string): Promise<Instrument[]> {
-  const res = await fetch(`${API_BASE}/api/instruments/categories/${encodeURIComponent(id)}`);
+export async function fetchCategoryInstruments(id: string, query = ''): Promise<Instrument[]> {
+  const params = new URLSearchParams();
+  if (query.trim()) params.set('q', query.trim());
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  const res = await fetch(`${API_BASE}/api/instruments/categories/${encodeURIComponent(id)}${suffix}`);
   if (!res.ok) throw new Error(`종목 리스트 조회 실패: ${res.status}`);
   return res.json();
 }

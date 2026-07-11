@@ -49,6 +49,10 @@ async function main(): Promise<void> {
   const instruments = [
     ...(await loadDomesticInstruments()),
     ...(await loadOverseasInstruments()),
+    ...(await loadOverseasFutureInstruments()),
+    ...(await loadDomesticNightFutureInstruments()),
+    ...loadNightProxyInstruments(),
+    ...loadCommodityIndicators(),
   ];
 
   await upsertInstruments(dedupe(instruments));
@@ -128,6 +132,163 @@ async function loadOverseasInstruments(): Promise<NormalizedInstrument[]> {
   return result;
 }
 
+async function loadOverseasFutureInstruments(): Promise<NormalizedInstrument[]> {
+  const text = await readOptionalMaster('ffcode.mst');
+  if (!text) return [];
+
+  const result: NormalizedInstrument[] = [];
+  for (const row of text.split(/\r?\n/)) {
+    if (!row.trim()) continue;
+    const symbol = row.slice(0, 32).trim();
+    const name = row.slice(82, 107).trim();
+    const exchangeCode = row.slice(-92, -82).trim();
+    const productCode = row.slice(-82, -72).trim();
+    const productKind = row.slice(-72, -69).trim();
+    const isSpread = row.slice(-5, -4).trim() === 'Y';
+    if (!symbol || !name || !exchangeCode || isSpread) continue;
+
+    result.push({
+      id: `GLOBAL:OV_FUT:${encodeInstrumentSymbol(symbol)}`,
+      symbol,
+      name,
+      market: 'OV_FUT',
+      country: 'GLOBAL',
+      currency: 'USD',
+      assetType: 'future',
+      provider: 'kis',
+      providerSymbol: symbol,
+      exchangeCode,
+      timezone: 'America/Chicago',
+      searchText: [symbol, name, exchangeCode, productCode, productKind, '해외선물', '해외선물옵션']
+        .filter(Boolean)
+        .join(' '),
+    });
+  }
+
+  return result;
+}
+
+async function loadDomesticNightFutureInstruments(): Promise<NormalizedInstrument[]> {
+  const text = await readOptionalMaster('fo_cme_code.mst');
+  if (!text) return [];
+
+  const result: NormalizedInstrument[] = [];
+  for (const row of text.split(/\r?\n/)) {
+    if (!row.trim()) continue;
+    const productType = row.slice(0, 1).trim();
+    const symbol = row.slice(1, 10).trim();
+    const standardCode = row.slice(10, 22).trim();
+    const name = row.slice(22, 63).trim();
+    const underlyingCode = row.slice(72, 81).trim();
+    const underlyingName = row.slice(81).trim();
+    if (!symbol || !name) continue;
+
+    const assetType: NormalizedInstrument['assetType'] =
+      productType === '2' || name.startsWith('SP ') ? 'future_spread' : 'future';
+
+    result.push({
+      id: `KR:KRX_NIGHT:${symbol}`,
+      symbol,
+      name: `야간 ${underlyingName || name} ${name}`,
+      market: 'KRX_NIGHT',
+      country: 'KR',
+      currency: 'KRW',
+      assetType,
+      provider: 'kis',
+      providerSymbol: symbol,
+      exchangeCode: 'F',
+      timezone: 'Asia/Seoul',
+      searchText: [symbol, standardCode, name, underlyingCode, underlyingName, productType, '국내 야간선물', 'KRX 야간선물']
+        .filter(Boolean)
+        .join(' '),
+    });
+  }
+
+  return result;
+}
+
+function loadNightProxyInstruments(): NormalizedInstrument[] {
+  return [
+    {
+      id: 'KR:NIGHT_PROXY:005930',
+      symbol: '005930-NIGHT',
+      name: '삼성전자 야간 환산가',
+      market: 'NIGHT_PROXY',
+      country: 'KR',
+      currency: 'KRW',
+      assetType: 'night_proxy',
+      provider: 'kis',
+      providerSymbol: 'LSE:BC94',
+      exchangeCode: 'TV',
+      timezone: 'Europe/London',
+      searchText: [
+        '005930',
+        '삼성전자',
+        '삼성전자 야간',
+        '삼야',
+        'GDR',
+        'LSE:BC94',
+        '야간 환산가',
+        '야간지표',
+      ].join(' '),
+    },
+  ];
+}
+
+function loadCommodityIndicators(): NormalizedInstrument[] {
+  const indicators: Array<{
+    id: string;
+    symbol: string;
+    name: string;
+    providerSymbol: string;
+    keywords: string[];
+  }> = [
+    {
+      id: 'GLOBAL:TV_COMMODITY:GOLD',
+      symbol: 'GOLD',
+      name: '금 선물',
+      providerSymbol: 'COMEX:GC1!',
+      keywords: ['금', '골드', 'gold', '원자재', '귀금속'],
+    },
+    {
+      id: 'GLOBAL:TV_COMMODITY:SILVER',
+      symbol: 'SILVER',
+      name: '은 선물',
+      providerSymbol: 'COMEX:SI1!',
+      keywords: ['은', '실버', 'silver', '원자재', '귀금속'],
+    },
+    {
+      id: 'GLOBAL:TV_COMMODITY:WTI',
+      symbol: 'WTI',
+      name: 'WTI 원유',
+      providerSymbol: 'NYMEX:CL1!',
+      keywords: ['원유', 'WTI', '유가', 'oil', 'crude', '원자재'],
+    },
+    {
+      id: 'GLOBAL:TV_COMMODITY:NATGAS',
+      symbol: 'NATGAS',
+      name: '천연가스',
+      providerSymbol: 'NYMEX:NG1!',
+      keywords: ['천연가스', '가스', 'natural gas', 'natgas', '원자재'],
+    },
+  ];
+
+  return indicators.map((indicator) => ({
+    id: indicator.id,
+    symbol: indicator.symbol,
+    name: indicator.name,
+    market: 'TV_COMMODITY',
+    country: 'GLOBAL',
+    currency: 'USD',
+    assetType: 'commodity',
+    provider: 'tradingview',
+    providerSymbol: indicator.providerSymbol,
+    exchangeCode: indicator.providerSymbol.split(':')[0] ?? 'TV',
+    timezone: 'America/New_York',
+    searchText: [indicator.symbol, indicator.name, indicator.providerSymbol, ...indicator.keywords].join(' '),
+  }));
+}
+
 async function upsertInstruments(instruments: NormalizedInstrument[]): Promise<void> {
   const client = await pool.connect();
   try {
@@ -189,6 +350,16 @@ async function upsertInstruments(instruments: NormalizedInstrument[]): Promise<v
 
 function dedupe(instruments: NormalizedInstrument[]): NormalizedInstrument[] {
   return [...new Map(instruments.map((item) => [item.id, item])).values()];
+}
+
+async function readOptionalMaster(file: string): Promise<string | null> {
+  try {
+    return decoder.decode(await readFile(resolve(MASTER_DIR, file)));
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 function mapOverseasAssetType(value: string | undefined): Instrument['assetType'] {

@@ -24,6 +24,7 @@ import type {
   BrokerAccountSnapshot,
   Candle,
   CandlesResponse,
+  ClientSubscribeInstrument,
   Instrument,
   InstrumentCategory,
   NewsItem,
@@ -47,7 +48,7 @@ type WatchGroup = 'all' | 'kr' | 'global' | 'fund';
 type BottomDockTab = 'volume' | 'trades' | 'news';
 type BottomDockMode = 'hidden' | 'normal' | 'expanded';
 type LayoutPreset = 'balanced' | 'chart' | 'reading';
-type AppPage = 'market' | 'trade' | 'portfolio';
+type AppPage = 'terminal' | 'market' | 'trade' | 'portfolio';
 type SidePanelTab = 'watch' | 'discover';
 
 interface PriceSnapshot {
@@ -135,15 +136,22 @@ const TOOL_OPTIONS: Array<{ key: ChartTool; label: string; title: string }> = [
 ];
 
 const APP_PAGE_OPTIONS: Array<{ key: AppPage; label: string; title: string }> = [
-  { key: 'market', label: '시세', title: '차트와 관심종목' },
-  { key: 'trade', label: '매매', title: '주문 티켓과 선택 종목' },
-  { key: 'portfolio', label: '포트폴리오', title: '계좌, 보유, 체결 기록' },
+  { key: 'terminal', label: '터미널', title: '야간 지표와 데이터 출처' },
+  { key: 'market', label: '차트', title: '차트와 관심종목' },
+  { key: 'portfolio', label: '포트폴리오', title: '계좌와 보유 현황' },
 ];
 
 const SIDE_PANEL_OPTIONS: Array<{ key: SidePanelTab; label: string }> = [
   { key: 'watch', label: '관심' },
   { key: 'discover', label: '탐색' },
 ];
+
+const TERMINAL_CATEGORY_SHORTCUTS = [
+  { id: 'kr-night-proxies', label: '야간 환산가', detail: 'GDR·환율 기반' },
+  { id: 'kr-night-futures', label: '국내 야간선물', detail: 'KRX 야간 단일 선물' },
+  { id: 'global-commodities', label: '원자재', detail: '금·은·원유·가스' },
+  { id: 'overseas-futures', label: '해외선물', detail: '글로벌 선물' },
+] as const;
 
 const OVERSEAS_REFRESH_MS = 5_000;
 const LIST_QUOTE_REFRESH_MS = 60_000;
@@ -274,9 +282,9 @@ function movingAverageLatest(candles: Candle[], period: number): number | undefi
   return sum / period;
 }
 
-function quoteSourceForInstrument(instrument: Instrument, trade?: Trade, quote?: Quote): '실시간' | 'REST' | '대기' {
+function quoteSourceForInstrument(instrument: Instrument, trade?: Trade, quote?: Quote): '실시간' | '조회' | '대기' {
   if (instrument.country === 'KR' && trade) return '실시간';
-  if (quote) return 'REST';
+  if (quote) return '조회';
   return '대기';
 }
 
@@ -348,9 +356,23 @@ function formatNewsTime(seconds: number | undefined): string {
   }).format(new Date(seconds * 1000));
 }
 
+function cleanNewsSearchText(text: string): string {
+  return text
+    .replace(/\b(?:ICH|NEWS|CNTT|DATA)[A-Z0-9_-]+\b/gi, ' ')
+    .replace(/\b[A-Z]{2,}\d{3,}\b/g, ' ')
+    .replace(/\b\d{6,}\b/g, ' ')
+    .replace(/[$#][A-Za-z0-9가-힣._-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function newsSearchUrl(item: NewsItem): string {
-  const query = [item.symbol, item.title].filter(Boolean).join(' ');
+  const query = cleanNewsSearchText(item.title) || item.source || '경제 뉴스';
   return `https://www.google.com/search?tbm=nws&q=${encodeURIComponent(query)}`;
+}
+
+function topicNewsUrl(query: string): string {
+  return `https://www.google.com/search?tbm=nws&q=${encodeURIComponent(cleanNewsSearchText(query) || query)}`;
 }
 
 function formatNumber(n: number | undefined): string {
@@ -393,6 +415,14 @@ function assetTypeLabel(assetType: Instrument['assetType']): string {
       return 'ETN';
     case 'index':
       return '지수';
+    case 'future':
+      return '선물';
+    case 'future_spread':
+      return '스프레드';
+    case 'night_proxy':
+      return '야간 환산가';
+    case 'commodity':
+      return '원자재';
     case 'other':
       return '기타';
   }
@@ -412,6 +442,8 @@ function countryLabel(country: Instrument['country']): string {
       return '홍콩';
     case 'VN':
       return '베트남';
+    case 'GLOBAL':
+      return '해외';
   }
 }
 
@@ -437,6 +469,30 @@ function getMarketSession(instrument: Instrument | null): MarketSession {
     return { tone: 'closed', label: '-', detail: '종목 미선택', hours: '-', localTime: '-' };
   }
 
+  if (instrument.assetType === 'night_proxy') {
+    const parts = getZonedParts(instrument.timezone);
+    const now = parts.hour * 60 + parts.minute;
+    const open = 8 * 60;
+    const close = 16 * 60 + 30;
+    const localTime = `${parts.label} ${instrument.timezone}`;
+    if (parts.weekday === 'Sat' || parts.weekday === 'Sun') {
+      return { tone: 'closed', label: '휴장', detail: 'GDR 기준 주말', hours: '08:00-16:30', localTime };
+    }
+    if (now >= open && now <= close) {
+      return { tone: 'open', label: 'GDR 장', detail: '환산가 갱신', hours: '08:00-16:30', localTime };
+    }
+    return { tone: 'closed', label: 'GDR 장마감', detail: '최근 환산가', hours: '08:00-16:30', localTime };
+  }
+
+  if (instrument.assetType === 'commodity') {
+    const parts = getZonedParts(instrument.timezone);
+    const localTime = `${parts.label} ${instrument.timezone}`;
+    if (parts.weekday === 'Sat' || parts.weekday === 'Sun') {
+      return { tone: 'closed', label: '휴장', detail: '원자재 선물 주말', hours: '거의 24시간', localTime };
+    }
+    return { tone: 'open', label: '글로벌 장', detail: '외부 지표 갱신', hours: '거의 24시간', localTime };
+  }
+
   const sessions: Record<Instrument['country'], { open: number; close: number; hours: string; pre?: number }> = {
     KR: { open: 9 * 60, close: 15 * 60 + 30, hours: '09:00-15:30' },
     US: { pre: 4 * 60, open: 9 * 60 + 30, close: 16 * 60, hours: '09:30-16:00' },
@@ -444,6 +500,7 @@ function getMarketSession(instrument: Instrument | null): MarketSession {
     JP: { open: 9 * 60, close: 15 * 60 + 30, hours: '09:00-15:30' },
     HK: { open: 9 * 60 + 30, close: 16 * 60, hours: '09:30-16:00' },
     VN: { open: 9 * 60, close: 15 * 60, hours: '09:00-15:00' },
+    GLOBAL: { open: 0, close: 23 * 60 + 59, hours: '거래소별 상이' },
   };
   const parts = getZonedParts(instrument.timezone);
   const weekdayClosed = parts.weekday === 'Sat' || parts.weekday === 'Sun';
@@ -575,6 +632,69 @@ function marketLabel(instrument: Instrument): string {
   return `${instrument.market} · ${instrument.currency}`;
 }
 
+interface DataSourceLink {
+  label: string;
+  detail: string;
+  url: string;
+}
+
+function tradingViewSymbolUrl(symbol: string): string {
+  return `https://www.tradingview.com/symbols/${symbol.replace(':', '-')}/`;
+}
+
+function yasunReferenceUrl(instrument: Instrument): string {
+  if (instrument.id === 'KR:NIGHT_PROXY:005930') return 'https://yasun.gg/samsung-night';
+  if (instrument.id === 'GLOBAL:TV_COMMODITY:GOLD') return 'https://yasun.gg/gold';
+  if (instrument.id === 'GLOBAL:TV_COMMODITY:SILVER') return 'https://yasun.gg/silver';
+  if (instrument.id === 'GLOBAL:TV_COMMODITY:WTI') return 'https://yasun.gg/wti';
+  if (instrument.id === 'GLOBAL:TV_COMMODITY:NATGAS') return 'https://yasun.gg/natural-gas';
+  if (instrument.market === 'KRX_NIGHT' && instrument.name.includes('KOSPI200')) return 'https://yasun.gg/kospi200';
+  if (instrument.market === 'KRX_NIGHT' && instrument.name.includes('KOSDAQ150')) return 'https://yasun.gg/kosdaq150';
+  return 'https://yasun.gg/chart';
+}
+
+function dataSourceLinksForInstrument(instrument: Instrument | null): DataSourceLink[] {
+  if (!instrument) {
+    return [
+      {
+        label: '참고 UX',
+        detail: '야간 지표 터미널 구성',
+        url: 'https://yasun.gg/',
+      },
+    ];
+  }
+
+  if (instrument.assetType === 'night_proxy') {
+    return [
+      { label: 'GDR 원본', detail: instrument.providerSymbol, url: tradingViewSymbolUrl(instrument.providerSymbol) },
+      { label: '환율 원본', detail: 'FX_IDC:USDKRW', url: tradingViewSymbolUrl('FX_IDC:USDKRW') },
+      { label: '국내 기준가', detail: 'KIS 삼성전자 현재가', url: 'https://apiportal.koreainvestment.com/apiservice' },
+      { label: '참고 화면', detail: 'YASUN 삼성전자 야간', url: yasunReferenceUrl(instrument) },
+    ];
+  }
+
+  if (instrument.assetType === 'commodity') {
+    return [
+      { label: '원본 시세', detail: instrument.providerSymbol, url: tradingViewSymbolUrl(instrument.providerSymbol) },
+      { label: '참고 화면', detail: `YASUN ${instrument.name}`, url: yasunReferenceUrl(instrument) },
+      { label: '뉴스 검색', detail: `${instrument.name} 원자재 뉴스`, url: topicNewsUrl(`${instrument.name} 원자재`) },
+    ];
+  }
+
+  if (instrument.market === 'KRX_NIGHT') {
+    return [
+      { label: 'KIS 시세', detail: '국내 선물옵션 API', url: 'https://apiportal.koreainvestment.com/apiservice' },
+      { label: '참고 화면', detail: 'YASUN 야간선물', url: yasunReferenceUrl(instrument) },
+      { label: '뉴스 검색', detail: `${instrument.name} 야간선물`, url: topicNewsUrl(`${instrument.name} 야간선물`) },
+    ];
+  }
+
+  return [
+    { label: 'KIS 시세', detail: `${instrument.market} ${instrument.providerSymbol}`, url: 'https://apiportal.koreainvestment.com/apiservice' },
+    { label: '뉴스 검색', detail: instrument.name, url: topicNewsUrl(instrument.name) },
+  ];
+}
+
 /** 감시 종목 한 줄 */
 function InstrumentRow({
   instrument,
@@ -596,7 +716,6 @@ function InstrumentRow({
   const snapshot = toSnapshot(trade, quote);
   const color = signColor(snapshot?.sign);
   const tone = moveTone(snapshot?.sign);
-  const quoteSource = quoteSourceForInstrument(instrument, trade, quote);
   const rangePosition = snapshot ? getRangePosition(snapshot.price, snapshot.low, snapshot.high) : null;
   const prevPriceRef = useRef<number | undefined>(snapshot?.price);
   const [flashing, setFlashing] = useState(false);
@@ -637,7 +756,6 @@ function InstrumentRow({
             {formatSignedPrice(snapshot.change)} ({formatRate(snapshot.changeRate)})
           </span>
         )}
-        <span className="instrument-row__source" data-source={quoteSource}>{quoteSource}</span>
         {snapshot && rangePosition !== null && (
           <span
             aria-label={`당일 저가 ${formatPrice(snapshot.low)}, 고가 ${formatPrice(snapshot.high)} 범위 내 ${Math.round(rangePosition)}% 위치`}
@@ -671,7 +789,7 @@ export function App(): JSX.Element {
     () => window.localStorage.getItem(`${STORAGE_PREFIX}activeSavedWatchlistId`) ?? 'default',
   );
   const [categories, setCategories] = useState<InstrumentCategory[]>([]);
-  const [activeCategory, setActiveCategory] = useState<string>('kr-all');
+  const [activeCategory, setActiveCategory] = useState<string>('kr-night-proxies');
   const [categoryItems, setCategoryItems] = useState<Instrument[]>([]);
   const [discoverQuery, setDiscoverQuery] = useState('');
   const [selectedInstrument, setSelectedInstrument] = useState<Instrument | null>(null);
@@ -725,10 +843,10 @@ export function App(): JSX.Element {
     readStoredValue('bottomDockMode', 'normal', BOTTOM_DOCK_MODE_OPTIONS.map((option) => option.key)),
   );
   const [activePage, setActivePage] = useState<AppPage>(() =>
-    readStoredValue('activePage', 'market', APP_PAGE_OPTIONS.map((option) => option.key)),
+    readStoredValue('activePage', 'terminal', APP_PAGE_OPTIONS.map((option) => option.key)),
   );
   const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>(() =>
-    readStoredValue('sidePanelTab', 'watch', SIDE_PANEL_OPTIONS.map((option) => option.key)),
+    readStoredValue('sidePanelTab', 'discover', SIDE_PANEL_OPTIONS.map((option) => option.key)),
   );
   const [tradingOverview, setTradingOverview] = useState<TradingOverview | null>(null);
   const [kisAccountSnapshot, setKisAccountSnapshot] = useState<BrokerAccountSnapshot | null>(null);
@@ -880,10 +998,23 @@ export function App(): JSX.Element {
   }, [refreshKisAccountSnapshot]);
 
   useEffect(() => {
-    fetchCategoryInstruments(activeCategory)
-      .then(setCategoryItems)
-      .catch((e) => setError(String(e)));
-  }, [activeCategory]);
+    const q = discoverQuery.trim();
+    const serverQuery = q.length >= 2 ? q : '';
+    let disposed = false;
+    const timer = window.setTimeout(() => {
+      fetchCategoryInstruments(activeCategory, serverQuery)
+        .then((items) => {
+          if (!disposed) setCategoryItems(items);
+        })
+        .catch((e) => {
+          if (!disposed) setError(String(e));
+        });
+    }, serverQuery ? 180 : 0);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
+  }, [activeCategory, discoverQuery]);
 
   useEffect(() => {
     setVisibleCategoryQuoteIds([]);
@@ -990,11 +1121,12 @@ export function App(): JSX.Element {
   }, [selectedInstrument, timeframe]);
 
   useEffect(() => {
-    if (!selectedInstrument || bottomDockTab !== 'news' || newsByCode[selectedInstrument.id]) return;
+    const shouldLoadNews = activePage === 'terminal' || bottomDockTab === 'news';
+    if (!selectedInstrument || !shouldLoadNews || newsByCode[selectedInstrument.id]) return;
     fetchInstrumentNews(selectedInstrument.id)
       .then((items) => setNewsByCode((current) => ({ ...current, [selectedInstrument.id]: items })))
       .catch((e) => setError(String(e)));
-  }, [bottomDockTab, newsByCode, selectedInstrument]);
+  }, [activePage, bottomDockTab, newsByCode, selectedInstrument]);
 
   const discoverFilteredCategoryItems = useMemo(() => {
     const q = discoverQuery.trim().toLowerCase();
@@ -1069,7 +1201,7 @@ export function App(): JSX.Element {
     [quoteTargetKey],
   );
 
-  // 화면에 보이는 종목들의 REST 현재가를 유지해 클릭 전에도 리스트 가격이 채워지게 한다.
+  // 화면에 보이는 종목들의 조회 현재가를 유지해 클릭 전에도 리스트 가격이 채워지게 한다.
   useEffect(() => {
     if (quoteTargetIds.length === 0) return;
 
@@ -1100,11 +1232,12 @@ export function App(): JSX.Element {
   );
   const activeTimeframe = TIMEFRAME_OPTIONS.find((option) => option.key === timeframe) ?? TIMEFRAME_OPTIONS[3];
   const chartCandles = useMemo(
-    () =>
-      timeframe === '1D'
-        ? visibleCandles
-        : aggregateCandles(selectedIntradayCandles, activeTimeframe.minutes ?? 1),
-    [activeTimeframe.minutes, timeframe, selectedIntradayCandles, visibleCandles],
+    () => {
+      if (timeframe === '1D') return visibleCandles;
+      if (selectedInstrument?.assetType === 'commodity' && selectedIntradayCandles.length === 0) return visibleCandles;
+      return aggregateCandles(selectedIntradayCandles, activeTimeframe.minutes ?? 1);
+    },
+    [activeTimeframe.minutes, timeframe, selectedInstrument?.assetType, selectedIntradayCandles, visibleCandles],
   );
   const volumeSummary = useMemo(() => {
     const candlesWithVolume = chartCandles.filter((candle) => Number.isFinite(candle.volume ?? NaN));
@@ -1150,7 +1283,7 @@ export function App(): JSX.Element {
   const quoteLagMs = quoteRefreshAt ? Math.max(0, nowMs - quoteRefreshAt) : null;
   const quoteFreshnessTone = quoteLagMs === null ? 'waiting' : quoteLagMs > QUOTE_STALE_MS ? 'stale' : 'fresh';
   const quoteFreshnessLabel =
-    quoteLagMs === null ? 'REST 대기' : `REST ${Math.floor(quoteLagMs / 1000)}초 전`;
+    quoteLagMs === null ? '조회 대기' : `조회 ${Math.floor(quoteLagMs / 1000)}초 전`;
   const latestTradeMs = tradeTimestampMs(stream.recentTrades[0]);
   const tradeLagMs = latestTradeMs ? Math.max(0, nowMs - latestTradeMs) : null;
   const tradeFreshnessTone =
@@ -1364,6 +1497,48 @@ export function App(): JSX.Element {
       total: visibleCategoryItems.length,
     };
   }, [discoverFilteredCategoryItems, quotesByCode, stream.trades, visibleCategoryItems, visibleCategoryQuoteIds]);
+  const realtimeSubscriptionInstruments = useMemo(() => {
+    const instruments = new Map<string, ClientSubscribeInstrument>();
+    const visibleIds = new Set(visibleCategoryQuoteIds);
+
+    function add(instrument: Instrument | null | undefined): void {
+      if (!instrument || instrument.country !== 'KR') return;
+      if (!/^[0-9A-Z]{6,9}$/.test(instrument.providerSymbol)) return;
+      instruments.set(instrument.providerSymbol, {
+        code: instrument.providerSymbol,
+        market: instrument.market,
+        assetType: instrument.assetType,
+      });
+    }
+
+    add(selectedInstrument);
+    for (const instrument of recentInstruments) add(instrument);
+    for (const instrument of watchlist) add(instrument);
+    if (sidePanelTab === 'discover') {
+      for (const instrument of discoverFilteredCategoryItems.slice(0, DISCOVER_INITIAL_QUOTE_TARGETS)) add(instrument);
+      for (const instrument of visibleCategoryItems) {
+        if (visibleIds.has(instrument.id)) add(instrument);
+      }
+    }
+
+    return [...instruments.values()];
+  }, [
+    discoverFilteredCategoryItems,
+    recentInstruments,
+    selectedInstrument,
+    sidePanelTab,
+    visibleCategoryItems,
+    visibleCategoryQuoteIds,
+    watchlist,
+  ]);
+  const realtimeSubscriptionKey = realtimeSubscriptionInstruments
+    .map((instrument) => `${instrument.assetType}:${instrument.market}:${instrument.code}`)
+    .join('|');
+
+  useEffect(() => {
+    stream.subscribe(realtimeSubscriptionInstruments);
+  }, [realtimeSubscriptionKey, realtimeSubscriptionInstruments, stream.subscribe]);
+
   const tapeTrades = useMemo(
     () =>
       selectedInstrument?.country === 'KR'
@@ -1390,6 +1565,8 @@ export function App(): JSX.Element {
     return names;
   }, [categoryItems, selectedInstrument, watchlist]);
   const selectedNews = selectedInstrument ? (newsByCode[selectedInstrument.id] ?? []) : [];
+  const selectedSourceLinks = useMemo(() => dataSourceLinksForInstrument(selectedInstrument), [selectedInstrument]);
+  const selectedTopicNewsUrl = selectedInstrument ? topicNewsUrl(selectedInstrument.name) : topicNewsUrl('코스피 야간선물 원자재');
   const newsSummary = useMemo(() => {
     const sources = new Map<string, number>();
     let latestPublishedAt = 0;
@@ -1622,8 +1799,8 @@ export function App(): JSX.Element {
     <div className={`app${isFocusMode ? ' is-focus-mode' : ''}`}>
       <header className="app__header">
         <div>
-          <span className="app__eyebrow">Paper 매매 워크스테이션</span>
-          <h1>Investment Monitor</h1>
+          <span className="app__eyebrow">야간 지표 · 뉴스 · 출처 터미널</span>
+          <h1>Night Market Monitor</h1>
         </div>
         <nav className="app__nav" aria-label="주요 화면">
           {APP_PAGE_OPTIONS.map((page) => (
@@ -1639,7 +1816,7 @@ export function App(): JSX.Element {
           ))}
         </nav>
         <div className="app__status">
-          <span className="mode-chip">실전</span>
+          <span className="mode-chip">조회 전용</span>
           <span className="freshness-chip" data-tone={quoteFreshnessTone}>{quoteFreshnessLabel}</span>
           <span className="freshness-chip" data-tone={tradeFreshnessTone}>{tradeFreshnessLabel}</span>
           <button
@@ -1975,6 +2152,104 @@ export function App(): JSX.Element {
                 <p>최근 종목이나 관심종목을 선택하면 비교할 수 있습니다</p>
               )}
             </div>
+          )}
+
+          {activePage === 'terminal' && (
+            <section className="terminal-board" aria-label="야간 지표 터미널">
+              <div className="terminal-board__hero">
+                <div>
+                  <span>YASUN 스타일 참고 · 조회 전용</span>
+                  <h2>야간 지표 터미널</h2>
+                  <p>국내 야간선물, GDR 환산가, 원자재와 관련 뉴스를 한 화면에서 확인합니다.</p>
+                </div>
+                <div className="terminal-board__hero-metric" data-tone={selectedTone}>
+                  <span>{selectedInstrument ? assetTypeLabel(selectedInstrument.assetType) : '선택 대기'}</span>
+                  <strong>{snapshot ? formatPrice(snapshot.price) : '-'}</strong>
+                  <em>{snapshot ? `${formatSignedPrice(snapshot.change)} · ${formatRate(snapshot.changeRate)}` : '탐색에서 지표를 선택하세요'}</em>
+                </div>
+              </div>
+
+              <div className="terminal-board__grid">
+                <section className="terminal-panel terminal-panel--shortcuts" aria-label="빠른 지표 탐색">
+                  <div className="terminal-panel__header">
+                    <strong>지표 묶음</strong>
+                    <span>클릭하면 탐색 탭으로 이동</span>
+                  </div>
+                  <div className="terminal-shortcuts">
+                    {TERMINAL_CATEGORY_SHORTCUTS.map((shortcut) => (
+                      <button
+                        key={shortcut.id}
+                        onClick={() => {
+                          setSidePanelTab('discover');
+                          setActiveCategory(shortcut.id);
+                          setActivePage('terminal');
+                        }}
+                        type="button"
+                      >
+                        <strong>{shortcut.label}</strong>
+                        <span>{shortcut.detail}</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="terminal-panel" aria-label="데이터 출처">
+                  <div className="terminal-panel__header">
+                    <strong>데이터 출처</strong>
+                    <span>{selectedInstrument?.name ?? '공통 링크'}</span>
+                  </div>
+                  <div className="terminal-sources">
+                    {selectedSourceLinks.map((source) => (
+                      <a href={source.url} key={`${source.label}-${source.url}`} rel="noreferrer" target="_blank">
+                        <strong>{source.label}</strong>
+                        <span>{source.detail}</span>
+                      </a>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="terminal-panel terminal-panel--news" aria-label="뉴스룸">
+                  <div className="terminal-panel__header">
+                    <strong>뉴스룸</strong>
+                    <span>{selectedNews.length > 0 ? `선택 종목 ${selectedNews.length}건` : '검색 기반 fallback'}</span>
+                  </div>
+                  <div className="terminal-news">
+                    {selectedNews.slice(0, 5).map((item) => (
+                      <a href={newsSearchUrl(item)} key={item.id} rel="noreferrer" target="_blank">
+                        <span>{formatNewsTime(item.publishedAt)}</span>
+                        <strong>{item.title}</strong>
+                        <em>{item.source}</em>
+                      </a>
+                    ))}
+                    {selectedNews.length === 0 && (
+                      <>
+                        <a href={selectedTopicNewsUrl} rel="noreferrer" target="_blank">
+                          <span>검색</span>
+                          <strong>{selectedInstrument ? `${selectedInstrument.name} 관련 뉴스` : '야간선물·원자재 뉴스'}</strong>
+                          <em>Google News</em>
+                        </a>
+                        <a href="https://yasun.gg/news" rel="noreferrer" target="_blank">
+                          <span>참고</span>
+                          <strong>YASUN 뉴스룸 구조 보기</strong>
+                          <em>yasun.gg</em>
+                        </a>
+                      </>
+                    )}
+                  </div>
+                </section>
+
+                <section className="terminal-panel terminal-panel--notice" aria-label="데이터 고지">
+                  <div className="terminal-panel__header">
+                    <strong>운영 원칙</strong>
+                    <span>매매 기능 보류</span>
+                  </div>
+                  <p>
+                    이 화면의 GDR 환산가와 원자재는 공식 주문 종목이 아니라 참고 지표입니다. 매매 로직은 숨기고
+                    시세·뉴스·출처 검증 흐름을 먼저 강화합니다.
+                  </p>
+                </section>
+              </div>
+            </section>
           )}
 
           {activePage !== 'portfolio' && <section className="quote-header">

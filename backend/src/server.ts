@@ -32,11 +32,20 @@ import {
 } from './kis/rest.js';
 import { KisRealtime } from './kis/realtime.js';
 import { WATCHLIST } from './watchlist.js';
-import type { CreateOrderRequest, ServerMessage, Trade, ConnectionStatus, Quote } from '@invest/shared';
+import type {
+  ClientMessage,
+  ClientSubscribeInstrument,
+  CreateOrderRequest,
+  ServerMessage,
+  Trade,
+  ConnectionStatus,
+  Quote,
+} from '@invest/shared';
 
 const BATCH_QUOTE_LIMIT = 360;
 const BATCH_QUOTE_DELAY_MS = 120;
 const QUOTE_CACHE_TTL_MS = 45_000;
+const STREAM_SUBSCRIBE_LIMIT = 80;
 
 const quoteCache = new Map<string, { quote: Quote; fetchedAt: number }>();
 
@@ -44,6 +53,23 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function normalizeSubscribeInstruments(msg: ClientMessage): ClientSubscribeInstrument[] {
+  const legacy = (msg.codes ?? []).map((code) => ({ code, market: 'KOSPI', assetType: 'stock' as const }));
+  const instruments = [...legacy, ...(msg.instruments ?? [])];
+  const seen = new Set<string>();
+  const result: ClientSubscribeInstrument[] = [];
+
+  for (const instrument of instruments) {
+    const code = instrument.code.trim().toUpperCase();
+    if (!/^[0-9A-Z]{6,9}$/.test(code) || seen.has(code)) continue;
+    seen.add(code);
+    result.push({ ...instrument, code });
+    if (result.length >= STREAM_SUBSCRIBE_LIMIT) break;
+  }
+
+  return result;
 }
 
 async function main(): Promise<void> {
@@ -119,8 +145,8 @@ async function main(): Promise<void> {
     return getInstrumentCategories();
   });
 
-  app.get<{ Params: { id: string } }>('/api/instruments/categories/:id', async (req) => {
-    return getCategoryInstruments(req.params.id);
+  app.get<{ Params: { id: string }; Querystring: { q?: string } }>('/api/instruments/categories/:id', async (req) => {
+    return getCategoryInstruments(req.params.id, 300, req.query.q ?? '');
   });
 
   app.get('/api/watchlists/default', async () => {
@@ -268,6 +294,16 @@ async function main(): Promise<void> {
         data: { kisConnected: kis.isConnected },
       } satisfies ServerMessage),
     );
+    ws.on('message', (raw) => {
+      let msg: ClientMessage;
+      try {
+        msg = JSON.parse(raw.toString()) as ClientMessage;
+      } catch {
+        return;
+      }
+      if (msg.type !== 'subscribe') return;
+      for (const instrument of normalizeSubscribeInstruments(msg)) kis.subscribeInstrument(instrument);
+    });
     ws.on('close', () => clients.delete(ws));
     ws.on('error', () => clients.delete(ws));
   });

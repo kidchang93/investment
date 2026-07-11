@@ -29,8 +29,17 @@ export interface CandlesResponse {
   candles: Candle[];
 }
 
-export type InstrumentCountry = 'KR' | 'US' | 'CN' | 'JP' | 'HK' | 'VN';
-export type InstrumentAssetType = 'stock' | 'etf' | 'etn' | 'index' | 'other';
+export type InstrumentCountry = 'KR' | 'US' | 'CN' | 'JP' | 'HK' | 'VN' | 'GLOBAL';
+export type InstrumentAssetType =
+  | 'stock'
+  | 'etf'
+  | 'etn'
+  | 'index'
+  | 'future'
+  | 'future_spread'
+  | 'night_proxy'
+  | 'commodity'
+  | 'other';
 
 /** 국내/해외 통합 종목 마스터 */
 export interface Instrument {
@@ -42,7 +51,7 @@ export interface Instrument {
   country: InstrumentCountry;
   currency: string;
   assetType: InstrumentAssetType;
-  provider: 'kis';
+  provider: 'kis' | 'tradingview';
   providerSymbol: string;
   exchangeCode: string;
   timezone: string;
@@ -119,6 +128,15 @@ export interface Quote {
 export type ServerMessage =
   | { type: 'trade'; data: Trade }
   | { type: 'status'; data: ConnectionStatus };
+
+export interface ClientSubscribeInstrument {
+  code: string;
+  market: string;
+  assetType: InstrumentAssetType;
+}
+
+/** 프론트 → 백엔드 WebSocket 제어 메시지 */
+export type ClientMessage = { type: 'subscribe'; codes?: string[]; instruments?: ClientSubscribeInstrument[] };
 
 /** KIS 실시간 연결 상태 */
 export interface ConnectionStatus {

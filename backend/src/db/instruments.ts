@@ -17,7 +17,7 @@ interface InstrumentRow {
   country: Instrument['country'];
   currency: string;
   asset_type: Instrument['assetType'];
-  provider: 'kis';
+  provider: Instrument['provider'];
   provider_symbol: string;
   exchange_code: string;
   timezone: string;
@@ -109,6 +109,31 @@ export const INSTRUMENT_CATEGORIES: InstrumentCategory[] = [
     description: '미국 주요 지수/섹터 ETF와 해외 ETF',
   },
   {
+    id: 'overseas-futures',
+    label: '해외선물',
+    description: '해외선물옵션 마스터의 해외선물 종목',
+  },
+  {
+    id: 'kr-night-futures',
+    label: '국내 야간선물',
+    description: 'CME/KRX 연계 국내 야간 단일 선물 종목',
+  },
+  {
+    id: 'kr-night-future-spreads',
+    label: '야간선물 스프레드',
+    description: '국내 야간선물 만기 간 스프레드 종목',
+  },
+  {
+    id: 'kr-night-proxies',
+    label: '야간 환산가',
+    description: '해외 GDR과 환율로 환산한 국내 종목 야간 참고가',
+  },
+  {
+    id: 'global-commodities',
+    label: '원자재',
+    description: '금, 은, 원유, 천연가스 등 글로벌 원자재 지표',
+  },
+  {
     id: 'kospi',
     label: 'KOSPI',
     description: '유가증권시장 종목',
@@ -182,7 +207,7 @@ export async function ensureDomesticAssetTypes(): Promise<void> {
   const result = await pool.query<DomesticAssetTypeRow>(`
     SELECT id, name, asset_type
     FROM instruments
-    WHERE country = 'KR' AND is_active = true
+    WHERE country = 'KR' AND is_active = true AND asset_type IN ('stock', 'etf', 'etn')
   `);
 
   const updates = result.rows
@@ -259,61 +284,81 @@ export function getInstrumentCategories(): InstrumentCategory[] {
   return INSTRUMENT_CATEGORIES;
 }
 
-export async function getCategoryInstruments(categoryId: string, limit = 300): Promise<Instrument[]> {
+export async function getCategoryInstruments(categoryId: string, limit = 300, query = ''): Promise<Instrument[]> {
   switch (categoryId) {
     case 'kr-major':
-      return getBySymbols(['005930', '000660', '035420', '035720', '005380', '012450', '068270'], [
-        'KOSPI',
-        'KOSDAQ',
-      ]);
+      return filterByQuery(
+        await getBySymbols(['005930', '000660', '035420', '035720', '005380', '012450', '068270'], [
+          'KOSPI',
+          'KOSDAQ',
+        ]),
+        query,
+      );
     case 'us-megacap':
-      return getBySymbols(['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NFLX'], [
-        'NAS',
-        'NYS',
-        'AMS',
-      ]);
+      return filterByQuery(
+        await getBySymbols(['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NFLX'], [
+          'NAS',
+          'NYS',
+          'AMS',
+        ]),
+        query,
+      );
     case 'kr-all':
-      return getByFilter("country = 'KR' AND asset_type = 'stock'", limit);
+      return getByFilter("country = 'KR' AND asset_type = 'stock'", limit, query);
     case 'us-all':
-      return getByFilter("country = 'US' AND asset_type = 'stock'", limit);
+      return getByFilter("country = 'US' AND asset_type = 'stock'", limit, query);
     case 'us-etf':
-      return getByFilter("country = 'US' AND asset_type = 'etf'", limit);
+      return getByFilter("country = 'US' AND asset_type = 'etf'", limit, query);
+    case 'overseas-futures':
+      return getByFilter("market = 'OV_FUT' AND asset_type = 'future'", limit, query);
+    case 'kr-night-futures':
+      return getByFilter("market = 'KRX_NIGHT' AND asset_type = 'future'", limit, query);
+    case 'kr-night-future-spreads':
+      return getByFilter("market = 'KRX_NIGHT' AND asset_type = 'future_spread'", limit, query);
+    case 'kr-night-proxies':
+      return getByFilter("market = 'NIGHT_PROXY' AND asset_type = 'night_proxy'", limit, query);
+    case 'global-commodities':
+      return getByFilter("market = 'TV_COMMODITY' AND asset_type = 'commodity'", limit, query);
     case 'kr-etf':
-      return getByFilter("country = 'KR' AND asset_type IN ('etf', 'etn')", limit);
+      return getByFilter("country = 'KR' AND asset_type IN ('etf', 'etn')", limit, query);
     case 'kr-etf-us':
       return getByFilter(
         "country = 'KR' AND asset_type = 'etf' AND (name ILIKE '%미국%' OR name ILIKE '%나스닥%' OR name ILIKE '%S&P%' OR name ILIKE '%NASDAQ%')",
         limit,
+        query,
       );
     case 'kr-etf-income':
       return getByFilter(
         "country = 'KR' AND asset_type = 'etf' AND (name ILIKE '%배당%' OR name ILIKE '%커버드콜%' OR name ILIKE '%월배당%')",
         limit,
+        query,
       );
     case 'kr-etf-bond':
       return getByFilter(
         "country = 'KR' AND asset_type = 'etf' AND (name ILIKE '%채권%' OR name ILIKE '%국채%' OR name ILIKE '%회사채%' OR name ILIKE '%CD금리%' OR name ILIKE '%머니마켓%')",
         limit,
+        query,
       );
     case 'kr-etf-leverage':
       return getByFilter(
         "country = 'KR' AND asset_type = 'etf' AND (name ILIKE '%레버리지%' OR name ILIKE '%인버스%')",
         limit,
+        query,
       );
     case 'kr-etf-kodex':
-      return getByFilter("country = 'KR' AND asset_type = 'etf' AND name ILIKE 'KODEX%'", limit);
+      return getByFilter("country = 'KR' AND asset_type = 'etf' AND name ILIKE 'KODEX%'", limit, query);
     case 'kr-etf-tiger':
-      return getByFilter("country = 'KR' AND asset_type = 'etf' AND name ILIKE 'TIGER%'", limit);
+      return getByFilter("country = 'KR' AND asset_type = 'etf' AND name ILIKE 'TIGER%'", limit, query);
     case 'kr-etf-ace':
-      return getByFilter("country = 'KR' AND asset_type = 'etf' AND name ILIKE 'ACE%'", limit);
+      return getByFilter("country = 'KR' AND asset_type = 'etf' AND name ILIKE 'ACE%'", limit, query);
     case 'kr-etf-kiwoom':
-      return getByFilter("country = 'KR' AND asset_type = 'etf' AND name ILIKE 'KIWOOM%'", limit);
+      return getByFilter("country = 'KR' AND asset_type = 'etf' AND name ILIKE 'KIWOOM%'", limit, query);
     case 'kospi':
-      return getByFilter("market = 'KOSPI' AND asset_type = 'stock'", limit);
+      return getByFilter("market = 'KOSPI' AND asset_type = 'stock'", limit, query);
     case 'kosdaq':
-      return getByFilter("market = 'KOSDAQ' AND asset_type = 'stock'", limit);
+      return getByFilter("market = 'KOSDAQ' AND asset_type = 'stock'", limit, query);
     case 'nasdaq':
-      return getByFilter("market = 'NAS' AND asset_type = 'stock'", limit);
+      return getByFilter("market = 'NAS' AND asset_type = 'stock'", limit, query);
     default:
       return [];
   }
@@ -467,19 +512,42 @@ async function getBySymbols(symbols: string[], markets: string[]): Promise<Instr
     .sort((a, b) => symbols.indexOf(a.symbol) - symbols.indexOf(b.symbol));
 }
 
-async function getByFilter(whereSql: string, limit: number): Promise<Instrument[]> {
+async function getByFilter(whereSql: string, limit: number, query = ''): Promise<Instrument[]> {
+  const q = query.trim();
   const result = await pool.query<InstrumentRow>(
     `
       SELECT id, symbol, name, english_name, market, country, currency, asset_type,
              provider, provider_symbol, exchange_code, timezone
       FROM instruments
       WHERE is_active = true AND ${whereSql}
-      ORDER BY symbol
+        AND (
+          $2 = '' OR
+          symbol ILIKE $3 OR
+          name ILIKE $3 OR
+          COALESCE(english_name, '') ILIKE $3 OR
+          search_text ILIKE $3
+        )
+      ORDER BY
+        CASE WHEN $2 <> '' AND symbol = upper($2) THEN 0 ELSE 1 END,
+        CASE WHEN $2 <> '' AND symbol ILIKE $4 THEN 0 ELSE 1 END,
+        CASE WHEN $2 <> '' AND country = 'KR' THEN 0 ELSE 1 END,
+        symbol
       LIMIT $1
     `,
-    [limit],
+    [limit, q, `%${q}%`, `${q}%`],
   );
   return result.rows.map(rowToInstrument);
+}
+
+function filterByQuery(instruments: Instrument[], query: string): Instrument[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return instruments;
+  return instruments.filter(
+    (instrument) =>
+      instrument.symbol.toLowerCase().includes(q) ||
+      instrument.name.toLowerCase().includes(q) ||
+      (instrument.englishName?.toLowerCase().includes(q) ?? false),
+  );
 }
 
 function rowToInstrument(row: InstrumentRow): Instrument {

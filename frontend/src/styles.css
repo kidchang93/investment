@@ -114,6 +114,7 @@ button {
 }
 
 .mode-chip {
+  white-space: nowrap;
   height: 24px;
   padding: 0 9px;
   border: 1px solid rgba(229, 72, 77, 0.34);
@@ -696,8 +697,8 @@ button {
   color: #8ee59e;
 }
 
-.recent-symbols small[data-source='REST'],
-.comparison-strip small[data-source='REST'] {
+.recent-symbols small[data-source='조회'],
+.comparison-strip small[data-source='조회'] {
   color: var(--muted);
 }
 
@@ -812,6 +813,163 @@ button {
 .bottom-dock button[aria-selected='true'] small {
   background: rgba(245, 196, 81, 0.16);
   color: var(--focus);
+}
+
+.terminal-board {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid var(--border);
+  background: #0b0f17;
+}
+
+.terminal-board__hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 0.28fr);
+  gap: 14px;
+  align-items: stretch;
+  padding: 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(21, 27, 38, 0.96), rgba(10, 14, 21, 0.96));
+}
+
+.terminal-board__hero span,
+.terminal-board__hero p,
+.terminal-panel__header span,
+.terminal-panel p {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.terminal-board__hero h2 {
+  margin: 5px 0 6px;
+  font-size: 24px;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.terminal-board__hero p,
+.terminal-panel p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.terminal-board__hero-metric {
+  display: grid;
+  align-content: center;
+  justify-items: end;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: rgba(8, 11, 17, 0.72);
+  font-variant-numeric: tabular-nums;
+}
+
+.terminal-board__hero-metric[data-tone='up'] {
+  border-color: rgba(229, 72, 77, 0.3);
+}
+
+.terminal-board__hero-metric[data-tone='down'] {
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.terminal-board__hero-metric strong {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 24px;
+}
+
+.terminal-board__hero-metric em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.terminal-board__grid {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.9fr) minmax(240px, 1fr) minmax(280px, 1.2fr) minmax(220px, 0.85fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.terminal-panel {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.terminal-panel__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.terminal-panel__header strong {
+  font-size: 13px;
+}
+
+.terminal-shortcuts,
+.terminal-sources,
+.terminal-news {
+  display: grid;
+  gap: 7px;
+}
+
+.terminal-shortcuts button,
+.terminal-sources a,
+.terminal-news a {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: rgba(8, 11, 17, 0.46);
+  color: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+
+.terminal-shortcuts button {
+  cursor: pointer;
+}
+
+.terminal-shortcuts button:hover,
+.terminal-sources a:hover,
+.terminal-news a:hover {
+  border-color: rgba(245, 196, 81, 0.32);
+  background: rgba(245, 196, 81, 0.08);
+}
+
+.terminal-shortcuts strong,
+.terminal-sources strong,
+.terminal-news strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.terminal-shortcuts span,
+.terminal-sources span,
+.terminal-news span,
+.terminal-news em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
 }
 
 .quote-header {
@@ -2969,7 +3127,6 @@ button {
   font-size: 12px;
 }
 
-.discover__rows .instrument-row__source,
 .discover__rows .instrument-row__title em {
   font-size: 9px;
 }
@@ -3017,7 +3174,6 @@ button {
   font-size: 12px;
 }
 
-.watchlist.is-compact-list .instrument-row__source,
 .watchlist.is-compact-list .instrument-row__title em {
   font-size: 9px;
 }
@@ -3128,26 +3284,6 @@ button {
   white-space: nowrap;
 }
 
-.instrument-row__source {
-  justify-self: end;
-  padding: 1px 5px;
-  border: 1px solid var(--border-soft);
-  border-radius: 999px;
-  color: var(--faint);
-  font-size: 10px;
-  line-height: 1.25;
-  white-space: nowrap;
-}
-
-.instrument-row__source[data-source='실시간'] {
-  border-color: rgba(34, 197, 94, 0.28);
-  color: #8ee59e;
-}
-
-.instrument-row__source[data-source='REST'] {
-  color: var(--muted);
-}
-
 .instrument-row__range {
   position: relative;
   display: block;
@@ -3197,6 +3333,11 @@ button {
 
   .quote-header {
     grid-template-columns: minmax(150px, 1fr) auto;
+  }
+
+  .terminal-board__hero,
+  .terminal-board__grid {
+    grid-template-columns: 1fr 1fr;
   }
 
   .quote-stats {
@@ -3270,6 +3411,15 @@ button {
   .chart-toolbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .terminal-board__hero,
+  .terminal-board__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .terminal-board__hero-metric {
+    justify-items: start;
   }
 
   .trade-tape {
