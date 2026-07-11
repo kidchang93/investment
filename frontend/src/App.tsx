@@ -745,6 +745,7 @@ export function App(): JSX.Element {
   const selectedQuote = selectedInstrument ? quotesByCode[selectedInstrument.id] : undefined;
   const snapshot = toSnapshot(selectedTrade, selectedQuote);
   const selectedColor = signColor(snapshot?.sign);
+  const activeToolOption = TOOL_OPTIONS.find((tool) => tool.key === activeTool) ?? TOOL_OPTIONS[1];
   const activeChartReadout = hoveredChartReadout ?? (
     snapshot
       ? {
@@ -1158,7 +1159,7 @@ export function App(): JSX.Element {
             </span>
           </div>
 
-          <div className="chart-frame">
+          <div className="chart-frame" data-tool={activeTool}>
             <div className="chart-readout">
               <strong>{selectedName || '-'}</strong>
               <span>{activeChartReadout ? activeChartReadout.date : '-'}</span>
@@ -1169,7 +1170,7 @@ export function App(): JSX.Element {
                 C {activeChartReadout ? formatPrice(activeChartReadout.close) : '-'}
               </span>
               <span>V {activeChartReadout ? formatVolume(activeChartReadout.volume) : '-'}</span>
-              <span>{TOOL_OPTIONS.find((tool) => tool.key === activeTool)?.title}</span>
+              <span className="chart-readout__tool">{activeToolOption.title}</span>
             </div>
             {selectedInstrument && chartCandles.length > 0 ? (
               <Chart

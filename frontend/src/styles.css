@@ -612,6 +612,32 @@ button {
   min-height: 0;
 }
 
+.chart-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 1px solid transparent;
+  pointer-events: none;
+}
+
+.chart-frame[data-tool='trend']::after,
+.chart-frame[data-tool='measure']::after,
+.chart-frame[data-tool='text']::after {
+  border-color: rgba(245, 196, 81, 0.28);
+}
+
+.chart-frame[data-tool='lock']::after {
+  border-color: rgba(148, 163, 184, 0.22);
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(148, 163, 184, 0.03),
+    rgba(148, 163, 184, 0.03) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+}
+
 .chart-readout {
   position: absolute;
   top: 10px;
@@ -635,6 +661,14 @@ button {
 .chart-readout strong {
   color: var(--text);
   font-size: 12px;
+}
+
+.chart-readout__tool {
+  padding: 2px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--focus);
 }
 
 .chart {
