@@ -51,7 +51,18 @@ type BottomDockMode = 'hidden' | 'normal' | 'expanded';
 type LayoutPreset = 'balanced' | 'chart' | 'reading';
 type AppPage = 'terminal' | 'market' | 'trade' | 'portfolio';
 type SidePanelTab = 'watch' | 'discover';
-type TerminalTab = 'overview' | 'news' | 'macro' | 'calendar' | 'themes' | 'fees' | 'simulation';
+type TerminalTab =
+  | 'overview'
+  | 'news'
+  | 'macro'
+  | 'calendar'
+  | 'reports'
+  | 'heatmap'
+  | 'ranking'
+  | 'themes'
+  | 'fees'
+  | 'lounge'
+  | 'simulation';
 type NewsFilter = 'all' | 'macro' | 'stocks' | 'commodities' | 'crypto' | 'policy';
 
 interface PriceSnapshot {
@@ -121,6 +132,31 @@ interface FeeBroker {
   product: string;
   commissionRate: number;
   institutionRate: number;
+}
+
+interface ReportModel {
+  key: string;
+  label: string;
+  score: number;
+  detail: string;
+}
+
+interface HeatmapItem {
+  symbol: string;
+  name: string;
+  sector: string;
+  weight: number;
+  change: number;
+}
+
+interface LoungePost {
+  id: string;
+  author: string;
+  title: string;
+  body: string;
+  tag: string;
+  replies: number;
+  likes: number;
 }
 
 const RANGE_OPTIONS: Array<{ key: RangeKey; label: string; days?: number }> = [
@@ -202,8 +238,12 @@ const TERMINAL_TAB_OPTIONS: Array<{ key: TerminalTab; label: string; title: stri
   { key: 'news', label: '뉴스룸', title: '속보와 종목별 뉴스' },
   { key: 'macro', label: '매크로', title: '원자재·환율·금리·지수' },
   { key: 'calendar', label: '캘린더', title: '경제 지표 발표 일정' },
+  { key: 'reports', label: '리포트', title: '가치투자 모델 보고서' },
+  { key: 'heatmap', label: '히트맵', title: '시총 상위 종목 등락 지도' },
+  { key: 'ranking', label: '랭킹', title: '24시간 인기 종목' },
   { key: 'themes', label: '테마', title: '도미넌스와 테마 흐름' },
   { key: 'fees', label: '수수료', title: '증권사 비용 계산' },
+  { key: 'lounge', label: '라운지', title: '트레이더 쓰레드 피드' },
   { key: 'simulation', label: '시뮬', title: '테스트매매와 리더보드' },
 ];
 
@@ -308,6 +348,58 @@ const THEME_FLOW_ITEMS: ThemeFlowItem[] = [
   { name: '2차전지', leader: 'LG에너지솔루션', score: 64, change: -3.8, tags: ['IRA', '소재'] },
   { name: '바이오', leader: '삼성바이오로직스', score: 58, change: 4.1, tags: ['CDMO', '실적'] },
   { name: '조선', leader: 'HD한국조선해양', score: 55, change: 6.5, tags: ['LNG', '수주'] },
+];
+
+const REPORT_MODELS: ReportModel[] = [
+  { key: 'magic', label: '마법공식', score: 82, detail: '수익성·자본효율 기반 정렬' },
+  { key: 'graham', label: '그레이엄', score: 76, detail: '안전마진·재무 안정성 점검' },
+  { key: 'dcf', label: 'DCF', score: 69, detail: '현금흐름 할인 민감도' },
+  { key: 'damodaran', label: '다모다란', score: 71, detail: '시장 프리미엄·리스크 조정' },
+];
+
+const HEATMAP_ITEMS: HeatmapItem[] = [
+  { symbol: '005930', name: '삼성전자', sector: 'semiconductor', weight: 18, change: 0.22 },
+  { symbol: '000660', name: 'SK하이닉스', sector: 'semiconductor', weight: 14, change: -0.27 },
+  { symbol: '373220', name: 'LG에너지솔루션', sector: 'battery', weight: 8, change: -1.18 },
+  { symbol: '207940', name: '삼성바이오로직스', sector: 'bio', weight: 7, change: 0.84 },
+  { symbol: '012450', name: '한화에어로스페이스', sector: 'defense', weight: 6, change: 2.11 },
+  { symbol: '329180', name: 'HD현대중공업', sector: 'shipbuilding', weight: 5, change: 1.62 },
+  { symbol: '005380', name: '현대차', sector: 'auto', weight: 5, change: -0.42 },
+  { symbol: '035420', name: 'NAVER', sector: 'platform', weight: 4, change: 0.37 },
+  { symbol: '035720', name: '카카오', sector: 'platform', weight: 3, change: -0.75 },
+  { symbol: '051910', name: 'LG화학', sector: 'battery', weight: 3, change: -1.42 },
+  { symbol: '068270', name: '셀트리온', sector: 'bio', weight: 3, change: 0.51 },
+  { symbol: '000270', name: '기아', sector: 'auto', weight: 3, change: 0.18 },
+];
+
+const LOUNGE_POSTS: LoungePost[] = [
+  {
+    id: 'lounge-1',
+    author: 'macro-note',
+    title: 'CPI 전 야간선물 베이시스 체크',
+    body: 'KOSPI200 야간선물과 환율 움직임이 엇갈릴 때는 개장 전 현물 괴리를 먼저 봅니다.',
+    tag: '야간선물',
+    replies: 8,
+    likes: 24,
+  },
+  {
+    id: 'lounge-2',
+    author: 'oil-watch',
+    title: 'WTI 하락 때 정유·항공 반응 분리',
+    body: '원유 단기 급락은 비용주보다 수요 둔화 신호로 읽히는 구간이 있습니다.',
+    tag: '원자재',
+    replies: 5,
+    likes: 19,
+  },
+  {
+    id: 'lounge-3',
+    author: 'semi-cycle',
+    title: '삼닉 쏠림이 과열인지 확인하는 방법',
+    body: '반도체 거래대금 비중이 커질 때는 방산·전력기기 같은 2순위 테마의 상대강도도 같이 봅니다.',
+    tag: '테마',
+    replies: 11,
+    likes: 31,
+  },
 ];
 
 const FEE_BROKERS: FeeBroker[] = [
@@ -499,6 +591,46 @@ function formatClock(ms: number | null): string {
   }).format(new Date(ms));
 }
 
+function formatDuration(ms: number): string {
+  const totalMinutes = Math.max(0, Math.floor(ms / 60_000));
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return `${days}일 ${hours}시간`;
+  if (hours > 0) return `${hours}시간 ${minutes}분`;
+  return `${minutes}분`;
+}
+
+function getKoreanMarketCountdown(nowMs: number): { label: string; detail: string; target: string } {
+  const now = new Date(nowMs);
+  const target = new Date(now);
+  target.setHours(8, 45, 0, 0);
+
+  const day = now.getDay();
+  const isWeekend = day === 0 || day === 6;
+  const afterOpen = !isWeekend && now.getTime() >= target.getTime();
+  if (isWeekend || afterOpen) {
+    const daysUntilMonday = day === 6 ? 2 : day === 0 ? 1 : 1;
+    target.setDate(now.getDate() + daysUntilMonday);
+    target.setHours(8, 45, 0, 0);
+    if (target.getDay() === 6) target.setDate(target.getDate() + 2);
+    if (target.getDay() === 0) target.setDate(target.getDate() + 1);
+  }
+
+  const targetLabel = new Intl.DateTimeFormat('ko-KR', {
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(target);
+
+  return {
+    label: isWeekend ? '주말 모드' : afterOpen ? '정규장 이후' : '개장 전',
+    detail: `다음 기준 시각까지 ${formatDuration(target.getTime() - nowMs)}`,
+    target: targetLabel,
+  };
+}
+
 function tradeTimestampMs(trade: Trade | undefined): number | null {
   if (!trade || !/^\d{8}$/.test(trade.date) || !/^\d{6}$/.test(trade.time)) return null;
   const y = Number(trade.date.slice(0, 4));
@@ -594,6 +726,16 @@ function feeImpactTone(value: number): 'up' | 'down' | 'flat' {
   if (value > 0) return 'up';
   if (value < 0) return 'down';
   return 'flat';
+}
+
+function heatmapTone(change: number): 'up' | 'down' | 'flat' {
+  if (change > 0.1) return 'up';
+  if (change < -0.1) return 'down';
+  return 'flat';
+}
+
+function heatmapArea(weight: number): string {
+  return `${Math.max(0.75, Math.min(2.5, weight / 6))}fr`;
 }
 
 function formatNumber(n: number | undefined): string {
@@ -1650,6 +1792,28 @@ export function App(): JSX.Element {
     const down = THEME_FLOW_ITEMS.filter((item) => item.change < 0).length;
     return { up, down, total: THEME_FLOW_ITEMS.length };
   }, []);
+  const marketCountdown = useMemo(() => getKoreanMarketCountdown(nowMs), [nowMs]);
+  const popularInstruments = useMemo(() => {
+    const seen = new Set<string>();
+    const candidates = [...terminalItems, ...recentInstruments, ...watchlist, ...categoryItems].filter((instrument) => {
+      if (seen.has(instrument.id)) return false;
+      seen.add(instrument.id);
+      return true;
+    });
+
+    return candidates
+      .map((instrument) => ({ instrument, snapshot: getSnapshotForInstrument(instrument) }))
+      .sort((a, b) => Math.abs(b.snapshot?.changeRate ?? 0) - Math.abs(a.snapshot?.changeRate ?? 0))
+      .slice(0, 10);
+  }, [categoryItems, quotesByCode, recentInstruments, stream.trades, terminalItems, watchlist]);
+  const selectedReportModels = useMemo(() => {
+    const volumeBoost = snapshot ? Math.min(12, Math.log10(Math.max(1, snapshot.accVolume)) * 1.6) : 4;
+    const momentumPenalty = snapshot ? Math.min(10, Math.abs(snapshot.changeRate) * 0.8) : 0;
+    return REPORT_MODELS.map((model, index) => ({
+      ...model,
+      score: Math.round(Math.max(0, Math.min(100, model.score + volumeBoost - momentumPenalty - index))),
+    }));
+  }, [snapshot?.accVolume, snapshot?.changeRate]);
   const feeAmountNumber = parseAmountInput(feeAmount, 1_000_000);
   const feeExpectedReturnNumber = Number(feeExpectedReturn);
   const feeRows = useMemo(() => {
@@ -2580,11 +2744,11 @@ export function App(): JSX.Element {
 
                 <section className="terminal-panel terminal-panel--notice" aria-label="데이터 고지">
                   <div className="terminal-panel__header">
-                    <strong>운영 원칙</strong>
-                    <span>매매 기능 보류</span>
+                    <strong>{marketCountdown.label}</strong>
+                    <span>{marketCountdown.target}</span>
                   </div>
                   <p>
-                    이 화면의 GDR 환산가와 원자재는 공식 주문 종목이 아니라 참고 지표입니다. 매매 로직은 숨기고
+                    {marketCountdown.detail}. GDR 환산가와 원자재는 공식 주문 종목이 아니라 참고 지표이며,
                     시세·뉴스·출처 검증 흐름을 먼저 강화합니다.
                   </p>
                 </section>
@@ -2713,6 +2877,116 @@ export function App(): JSX.Element {
                 </section>
               )}
 
+              {terminalTab === 'reports' && (
+                <section className="terminal-page terminal-page--reports" aria-label="가치투자 리포트">
+                  <div className="terminal-page__header">
+                    <div>
+                      <span>마법공식 · 그레이엄 · DCF · 다모다란</span>
+                      <strong>가치투자 리포트</strong>
+                    </div>
+                    <small>{selectedInstrument?.name ?? '종목 선택 대기'}</small>
+                  </div>
+                  <div className="terminal-report-grid">
+                    {selectedReportModels.map((model) => (
+                      <article key={model.key}>
+                        <span>{model.label}</span>
+                        <strong>{model.score}</strong>
+                        <em>{model.detail}</em>
+                        <i style={{ width: `${model.score}%` }} />
+                      </article>
+                    ))}
+                  </div>
+                  <div className="terminal-report-layout">
+                    <section className="terminal-panel">
+                      <div className="terminal-panel__header">
+                        <strong>현재 리포트 요약</strong>
+                        <span>{selectedInstrument?.symbol ?? '-'}</span>
+                      </div>
+                      <p>
+                        {selectedInstrument
+                          ? `${selectedInstrument.name}의 현재가, 거래량, 변동률을 기준으로 가치 모델 점수를 재계산했습니다. 재무제표 API가 붙기 전까지는 가격 기반 예비 스코어로 표시합니다.`
+                          : '종목을 선택하면 가격 기반 예비 리포트를 생성합니다.'}
+                      </p>
+                    </section>
+                    <section className="terminal-panel">
+                      <div className="terminal-panel__header">
+                        <strong>다음 연동 항목</strong>
+                        <span>재무 데이터</span>
+                      </div>
+                      <div className="terminal-sources">
+                        <a href={topicNewsUrl(`${selectedInstrument?.name ?? '국내 주식'} 실적 재무제표`)} rel="noreferrer" target="_blank">
+                          <strong>실적 뉴스</strong>
+                          <span>재무제표·컨센서스 검색</span>
+                        </a>
+                        <a href={topicNewsUrl(`${selectedInstrument?.name ?? '국내 주식'} 밸류에이션`)} rel="noreferrer" target="_blank">
+                          <strong>밸류에이션</strong>
+                          <span>PER·PBR·DCF 참고 검색</span>
+                        </a>
+                      </div>
+                    </section>
+                  </div>
+                </section>
+              )}
+
+              {terminalTab === 'heatmap' && (
+                <section className="terminal-page terminal-page--heatmap" aria-label="섹터 히트맵">
+                  <div className="terminal-page__header">
+                    <div>
+                      <span>시총 상위 종목 · 등락률 시각화</span>
+                      <strong>섹터 히트맵</strong>
+                    </div>
+                    <small>-5% ~ +5% 범위</small>
+                  </div>
+                  <div className="terminal-heatmap">
+                    {HEATMAP_ITEMS.map((item) => (
+                      <article
+                        data-tone={heatmapTone(item.change)}
+                        key={item.symbol}
+                        style={{ flexGrow: Number(heatmapArea(item.weight).replace('fr', '')) }}
+                      >
+                        <strong>{item.name}</strong>
+                        <span>{item.symbol} · {item.sector}</span>
+                        <em>{formatRate(item.change)}</em>
+                      </article>
+                    ))}
+                  </div>
+                  <div className="terminal-heatmap-legend">
+                    <span>-5%</span>
+                    <i />
+                    <span>+5%</span>
+                    <em>실시간 시총 TOP100 API 연동 전까지 대표 종목 구성으로 표시합니다.</em>
+                  </div>
+                </section>
+              )}
+
+              {terminalTab === 'ranking' && (
+                <section className="terminal-page terminal-page--ranking" aria-label="24시간 인기 종목">
+                  <div className="terminal-page__header">
+                    <div>
+                      <span>최근·관심·터미널 지표 기반</span>
+                      <strong>24시간 인기 종목</strong>
+                    </div>
+                    <small>{popularInstruments.length}개 후보</small>
+                  </div>
+                  <div className="terminal-ranking-list">
+                    {popularInstruments.map((item, index) => (
+                      <button
+                        data-tone={moveTone(item.snapshot?.sign)}
+                        key={item.instrument.id}
+                        onClick={() => selectInstrument(item.instrument)}
+                        type="button"
+                      >
+                        <span>#{index + 1}</span>
+                        <strong>{item.instrument.name}</strong>
+                        <em>{item.snapshot ? formatPrice(item.snapshot.price) : '-'}</em>
+                        <small>{item.snapshot ? formatRate(item.snapshot.changeRate) : '조회 대기'}</small>
+                      </button>
+                    ))}
+                    {popularInstruments.length === 0 && <p>시세가 쌓이면 인기 종목을 표시합니다</p>}
+                  </div>
+                </section>
+              )}
+
               {terminalTab === 'themes' && (
                 <section className="terminal-page terminal-page--themes" aria-label="테마와 도미넌스">
                   <div className="terminal-page__header">
@@ -2807,6 +3081,37 @@ export function App(): JSX.Element {
                         <span data-tone={feeImpactTone(row.netPnl)}>{formatSignedPrice(Math.round(row.netPnl))}원</span>
                       </div>
                     ))}
+                  </div>
+                </section>
+              )}
+
+              {terminalTab === 'lounge' && (
+                <section className="terminal-page terminal-page--lounge" aria-label="라운지">
+                  <div className="terminal-page__header">
+                    <div>
+                      <span>트레이더 쓰레드 피드</span>
+                      <strong>라운지</strong>
+                    </div>
+                    <small>읽기 전용 샘플</small>
+                  </div>
+                  <div className="terminal-lounge-layout">
+                    <section className="terminal-panel">
+                      <div className="terminal-panel__header">
+                        <strong>새 글</strong>
+                        <span>로그인 기능 대기</span>
+                      </div>
+                      <p>커뮤니티 기능은 계정·신고·관리 도구가 붙은 뒤 쓰기 기능을 열고, 현재는 읽기 전용 피드 구조만 제공합니다.</p>
+                    </section>
+                    <div className="terminal-lounge-posts">
+                      {LOUNGE_POSTS.map((post) => (
+                        <article key={post.id}>
+                          <span>{post.tag} · @{post.author}</span>
+                          <strong>{post.title}</strong>
+                          <p>{post.body}</p>
+                          <em>댓글 {post.replies} · 좋아요 {post.likes}</em>
+                        </article>
+                      ))}
+                    </div>
                   </div>
                 </section>
               )}
