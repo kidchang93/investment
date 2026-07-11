@@ -125,3 +125,75 @@ export interface ConnectionStatus {
   kisConnected: boolean;
   message?: string;
 }
+
+export type TradingMode = 'paper' | 'live_disabled' | 'live';
+export type OrderSide = 'buy' | 'sell';
+export type OrderType = 'market' | 'limit';
+export type OrderTimeInForce = 'day' | 'ioc';
+export type OrderStatus = 'blocked' | 'accepted' | 'submitted' | 'filled' | 'canceled' | 'rejected';
+
+/** 매매 계정. 실계좌 정보는 프론트로 노출하지 않고 화면용 별칭과 모드만 제공한다. */
+export interface TradingAccount {
+  id: string;
+  label: string;
+  broker: 'paper' | 'kis';
+  mode: TradingMode;
+  baseCurrency: string;
+  cashBalance: number;
+  buyingPower: number;
+  maxOrderNotional: number;
+  liveEnabled: boolean;
+}
+
+/** 보유 포지션 스냅샷 */
+export interface Position {
+  id: string;
+  accountId: string;
+  instrument: Instrument;
+  quantity: number;
+  averagePrice: number;
+  currency: string;
+  marketValue?: number;
+  unrealizedPnl?: number;
+  unrealizedPnlRate?: number;
+}
+
+/** 서버에 저장된 주문 의도. 브로커 전송 전후 모두 같은 감사 단위로 관리한다. */
+export interface OrderIntent {
+  id: string;
+  accountId: string;
+  instrument: Instrument;
+  side: OrderSide;
+  orderType: OrderType;
+  timeInForce: OrderTimeInForce;
+  quantity: number;
+  limitPrice?: number;
+  estimatedPrice: number;
+  estimatedNotional: number;
+  currency: string;
+  status: OrderStatus;
+  riskMessages: string[];
+  createdAt: number;
+}
+
+export interface TradingOverview {
+  accounts: TradingAccount[];
+  positions: Position[];
+  recentOrders: OrderIntent[];
+}
+
+export interface CreateOrderRequest {
+  accountId: string;
+  instrumentId: string;
+  side: OrderSide;
+  orderType: OrderType;
+  timeInForce: OrderTimeInForce;
+  quantity: number;
+  limitPrice?: number;
+  estimatedPrice: number;
+  userAcknowledged: boolean;
+}
+
+export interface CreateOrderResponse {
+  order: OrderIntent;
+}

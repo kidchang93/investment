@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addWatchlistItem,
+  createOrder,
   createWatchlist,
   deleteWatchlist,
   fetchCategoryInstruments,
@@ -10,6 +11,7 @@ import {
   fetchInstrumentNews,
   fetchInstrumentQuote,
   fetchInstrumentQuotes,
+  fetchTradingOverview,
   fetchWatchlistItems,
   fetchWatchlists,
   removeWatchlistItem,
@@ -23,8 +25,12 @@ import type {
   Instrument,
   InstrumentCategory,
   NewsItem,
+  OrderSide,
+  OrderTimeInForce,
+  OrderType,
   PriceSign,
   Quote,
+  TradingOverview,
   Trade,
   WatchlistGroup,
 } from '@invest/shared';
@@ -329,6 +335,32 @@ function newsSearchUrl(item: NewsItem): string {
 
 function formatNumber(n: number | undefined): string {
   return n !== undefined && Number.isFinite(n) ? n.toLocaleString('ko-KR') : '-';
+}
+
+function formatMoney(n: number | undefined, currency = 'KRW'): string {
+  if (n === undefined || !Number.isFinite(n)) return '-';
+  return `${n.toLocaleString('ko-KR', {
+    maximumFractionDigits: currency === 'KRW' ? 0 : 2,
+  })} ${currency}`;
+}
+
+function orderStatusLabel(status: string): string {
+  switch (status) {
+    case 'blocked':
+      return '차단';
+    case 'accepted':
+      return '접수';
+    case 'submitted':
+      return '전송';
+    case 'filled':
+      return '체결';
+    case 'canceled':
+      return '취소';
+    case 'rejected':
+      return '거부';
+    default:
+      return status;
+  }
 }
 
 function assetTypeLabel(assetType: Instrument['assetType']): string {
@@ -670,6 +702,14 @@ export function App(): JSX.Element {
   const [bottomDockMode, setBottomDockMode] = useState<BottomDockMode>(() =>
     readStoredValue('bottomDockMode', 'normal', BOTTOM_DOCK_MODE_OPTIONS.map((option) => option.key)),
   );
+  const [tradingOverview, setTradingOverview] = useState<TradingOverview | null>(null);
+  const [orderSide, setOrderSide] = useState<OrderSide>('buy');
+  const [orderType, setOrderType] = useState<OrderType>('market');
+  const [orderTimeInForce, setOrderTimeInForce] = useState<OrderTimeInForce>('day');
+  const [orderQuantity, setOrderQuantity] = useState('1');
+  const [orderLimitPrice, setOrderLimitPrice] = useState('');
+  const [orderAcknowledged, setOrderAcknowledged] = useState(false);
+  const [isOrderSubmitting, setIsOrderSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [quoteRefreshAt, setQuoteRefreshAt] = useState<number | null>(null);
   const [isQuoteRefreshing, setIsQuoteRefreshing] = useState(false);
@@ -785,6 +825,12 @@ export function App(): JSX.Element {
   useEffect(() => {
     fetchInstrumentCategories()
       .then(setCategories)
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  useEffect(() => {
+    fetchTradingOverview()
+      .then(setTradingOverview)
       .catch((e) => setError(String(e)));
   }, []);
 
@@ -1222,6 +1268,12 @@ export function App(): JSX.Element {
   const trimmedSymbolQuery = symbolQuery.trim();
   const isSymbolSearchPanelOpen =
     trimmedSymbolQuery.length >= 2 && (symbolResults.length > 0 || isSymbolSearching || hasSymbolSearchCompleted);
+  const symbolSearchSummary = useMemo(
+    () => summarizeInstrumentMoves(symbolResults, getSnapshotForInstrument),
+    [quotesByCode, stream.trades, symbolResults],
+  );
+  const symbolSearchBreadthTotal =
+    symbolSearchSummary.up + symbolSearchSummary.down + symbolSearchSummary.flat;
   const activeSymbolResultId =
     isSymbolSearchPanelOpen && symbolResults[activeSymbolResultIndex]
       ? `symbol-search-result-${activeSymbolResultIndex}`
@@ -1230,6 +1282,64 @@ export function App(): JSX.Element {
     bottomDockTab === 'volume' ? '거래량' : bottomDockTab === 'trades' ? '체결' : '뉴스';
   const bottomDockModeLabel =
     BOTTOM_DOCK_MODE_OPTIONS.find((option) => option.key === bottomDockMode)?.label ?? bottomDockMode;
+  const activeTradingAccount = tradingOverview?.accounts[0];
+  const selectedPosition = tradingOverview?.positions.find(
+    (position) => position.instrument.id === selectedInstrument?.id,
+  );
+  const orderQuantityNumber = Number(orderQuantity);
+  const orderLimitPriceNumber = Number(orderLimitPrice);
+  const orderEstimatedPrice = snapshot?.price;
+  const orderEffectivePrice =
+    orderType === 'limit' && Number.isFinite(orderLimitPriceNumber) && orderLimitPriceNumber > 0
+      ? orderLimitPriceNumber
+      : orderEstimatedPrice;
+  const orderEstimatedNotional =
+    Number.isFinite(orderQuantityNumber) && orderEffectivePrice !== undefined
+      ? orderQuantityNumber * orderEffectivePrice
+      : undefined;
+  const orderRiskMessages = useMemo(() => {
+    const messages: string[] = [];
+    if (!selectedInstrument) messages.push('종목을 먼저 선택하세요.');
+    if (!activeTradingAccount) messages.push('매매 계정을 불러오는 중입니다.');
+    if (!Number.isFinite(orderQuantityNumber) || orderQuantityNumber <= 0) messages.push('수량은 0보다 커야 합니다.');
+    if (!orderEstimatedPrice) messages.push('현재가를 확인할 수 없습니다.');
+    if (orderType === 'limit' && (!Number.isFinite(orderLimitPriceNumber) || orderLimitPriceNumber <= 0)) {
+      messages.push('지정가를 입력하세요.');
+    }
+    if (selectedInstrument && activeTradingAccount && selectedInstrument.currency !== activeTradingAccount.baseCurrency) {
+      messages.push(
+        `계정 통화(${activeTradingAccount.baseCurrency})와 종목 통화(${selectedInstrument.currency})가 달라 아직 주문할 수 없습니다.`,
+      );
+    }
+    if (activeTradingAccount && orderEstimatedNotional !== undefined) {
+      if (orderEstimatedNotional > activeTradingAccount.maxOrderNotional) {
+        messages.push(`1회 주문 한도 ${formatMoney(activeTradingAccount.maxOrderNotional)}를 초과했습니다.`);
+      }
+      if (orderSide === 'buy' && orderEstimatedNotional > activeTradingAccount.buyingPower) {
+        messages.push('주문 가능 금액을 초과했습니다.');
+      }
+    }
+    if (orderSide === 'sell' && (selectedPosition?.quantity ?? 0) < orderQuantityNumber) {
+      messages.push('보유 수량보다 많은 매도 주문입니다.');
+    }
+    if (!orderAcknowledged) messages.push('주문 확인 체크가 필요합니다.');
+    return messages;
+  }, [
+    activeTradingAccount,
+    orderAcknowledged,
+    orderEstimatedNotional,
+    orderEstimatedPrice,
+    orderLimitPriceNumber,
+    orderQuantityNumber,
+    orderSide,
+    orderType,
+    selectedInstrument,
+    selectedInstrument?.currency,
+    selectedPosition?.quantity,
+  ]);
+  const orderCanSubmit =
+    Boolean(selectedInstrument && activeTradingAccount && orderRiskMessages.length === 0 && orderEstimatedPrice) &&
+    !isOrderSubmitting;
 
   function selectInstrument(instrument: Instrument): void {
     setSelectedInstrument(instrument);
@@ -1319,6 +1429,31 @@ export function App(): JSX.Element {
     setIsWatchlistCollapsed(false);
     setBottomDockMode('normal');
     setShowComparePanel(false);
+  }
+
+  async function submitOrderIntent(): Promise<void> {
+    if (!selectedInstrument || !activeTradingAccount || !orderEstimatedPrice) return;
+    setIsOrderSubmitting(true);
+    try {
+      await createOrder({
+        accountId: activeTradingAccount.id,
+        instrumentId: selectedInstrument.id,
+        side: orderSide,
+        orderType,
+        timeInForce: orderTimeInForce,
+        quantity: orderQuantityNumber,
+        limitPrice: orderType === 'limit' ? orderLimitPriceNumber : undefined,
+        estimatedPrice: orderEstimatedPrice,
+        userAcknowledged: orderAcknowledged,
+      });
+      setOrderAcknowledged(false);
+      const overview = await fetchTradingOverview();
+      setTradingOverview(overview);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setIsOrderSubmitting(false);
+    }
   }
 
   return (
@@ -1433,6 +1568,36 @@ export function App(): JSX.Element {
                   <div className="symbol-search__summary">
                     <strong>{isSymbolSearching ? '검색중' : `${symbolResults.length}개 결과`}</strong>
                     <span>{trimmedSymbolQuery}</span>
+                    {symbolResults.length > 0 && (
+                      <div className="symbol-search__breadth" aria-label="검색 결과 등락 요약">
+                        <em data-tone="up">상승 {symbolSearchSummary.up}</em>
+                        <em data-tone="down">하락 {symbolSearchSummary.down}</em>
+                        <em>보합 {symbolSearchSummary.flat}</em>
+                        <em>대기 {symbolSearchSummary.waiting}</em>
+                        {symbolSearchBreadthTotal > 0 && (
+                          <span>
+                            <i
+                              data-tone="up"
+                              style={{ flexBasis: `${(symbolSearchSummary.up / symbolSearchBreadthTotal) * 100}%` }}
+                            />
+                            <i
+                              data-tone="flat"
+                              style={{ flexBasis: `${(symbolSearchSummary.flat / symbolSearchBreadthTotal) * 100}%` }}
+                            />
+                            <i
+                              data-tone="down"
+                              style={{ flexBasis: `${(symbolSearchSummary.down / symbolSearchBreadthTotal) * 100}%` }}
+                            />
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {symbolSearchSummary.topMover && (
+                      <small className="symbol-search__top">
+                        최대 변동 {symbolSearchSummary.topMover.instrument.name}{' '}
+                        {formatRate(symbolSearchSummary.topMover.snapshot.changeRate)}
+                      </small>
+                    )}
                   </div>
                   {symbolResults.map((instrument, index) => {
                     const resultSnapshot = toSnapshot(undefined, quotesByCode[instrument.id]);
@@ -1725,6 +1890,140 @@ export function App(): JSX.Element {
               <strong>{marketSession.localTime}</strong>
               <small>{quoteRefreshAt ? `갱신 ${formatClock(quoteRefreshAt)}` : '갱신 대기'}</small>
             </div>
+          </section>
+
+          <section className="order-ticket" aria-label="매매 주문 티켓">
+            <div className="order-ticket__header">
+              <div>
+                <span>주문 티켓</span>
+                <strong>{selectedInstrument ? `${selectedInstrument.symbol} · ${selectedInstrument.name}` : '종목 미선택'}</strong>
+              </div>
+              <div className="order-ticket__account">
+                <em>{activeTradingAccount?.label ?? '계정 대기'}</em>
+                <span>{activeTradingAccount?.mode === 'paper' ? 'PAPER' : 'LIVE 잠금'}</span>
+              </div>
+            </div>
+            <div className="order-ticket__body">
+              <div className="order-ticket__controls">
+                <div className="order-ticket__segments" role="tablist" aria-label="매수 매도">
+                  <button
+                    aria-selected={orderSide === 'buy'}
+                    data-side="buy"
+                    onClick={() => setOrderSide('buy')}
+                    role="tab"
+                    type="button"
+                  >
+                    매수
+                  </button>
+                  <button
+                    aria-selected={orderSide === 'sell'}
+                    data-side="sell"
+                    onClick={() => setOrderSide('sell')}
+                    role="tab"
+                    type="button"
+                  >
+                    매도
+                  </button>
+                </div>
+                <select
+                  aria-label="주문 유형"
+                  onChange={(event) => setOrderType(event.target.value as OrderType)}
+                  value={orderType}
+                >
+                  <option value="market">시장가</option>
+                  <option value="limit">지정가</option>
+                </select>
+                <select
+                  aria-label="주문 유효기간"
+                  onChange={(event) => setOrderTimeInForce(event.target.value as OrderTimeInForce)}
+                  value={orderTimeInForce}
+                >
+                  <option value="day">DAY</option>
+                  <option value="ioc">IOC</option>
+                </select>
+                <label>
+                  <span>수량</span>
+                  <input
+                    min="0"
+                    onChange={(event) => setOrderQuantity(event.target.value)}
+                    step="1"
+                    type="number"
+                    value={orderQuantity}
+                  />
+                </label>
+                <label>
+                  <span>지정가</span>
+                  <input
+                    disabled={orderType !== 'limit'}
+                    min="0"
+                    onChange={(event) => setOrderLimitPrice(event.target.value)}
+                    placeholder={snapshot ? formatPrice(snapshot.price) : '현재가 대기'}
+                    step="1"
+                    type="number"
+                    value={orderLimitPrice}
+                  />
+                </label>
+              </div>
+              <div className="order-ticket__summary">
+                <div>
+                  <span>예상 단가</span>
+                  <strong>{formatMoney(orderEffectivePrice, selectedInstrument?.currency)}</strong>
+                </div>
+                <div>
+                  <span>예상 주문액</span>
+                  <strong>{formatMoney(orderEstimatedNotional, selectedInstrument?.currency)}</strong>
+                </div>
+                <div>
+                  <span>주문 가능</span>
+                  <strong>{formatMoney(activeTradingAccount?.buyingPower, activeTradingAccount?.baseCurrency)}</strong>
+                </div>
+                <div>
+                  <span>보유 수량</span>
+                  <strong>{selectedPosition ? formatNumber(selectedPosition.quantity) : '-'}</strong>
+                </div>
+              </div>
+              <div className="order-ticket__risk">
+                <label className="order-ticket__ack">
+                  <input
+                    checked={orderAcknowledged}
+                    onChange={(event) => setOrderAcknowledged(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span>paper 주문이며 실계좌로 전송되지 않음을 확인했습니다.</span>
+                </label>
+                <div className="order-ticket__messages">
+                  {orderRiskMessages.length === 0 ? (
+                    <em data-tone="ok">주문 의도 생성 가능</em>
+                  ) : (
+                    orderRiskMessages.map((message) => <em key={message}>{message}</em>)
+                  )}
+                </div>
+              </div>
+              <button
+                className="order-ticket__submit"
+                disabled={!orderCanSubmit}
+                onClick={() => void submitOrderIntent()}
+                type="button"
+              >
+                {isOrderSubmitting ? '저장 중' : 'Paper 주문 저장'}
+              </button>
+            </div>
+            {tradingOverview && (
+              <div className="order-ticket__recent" aria-label="최근 주문 의도">
+                <span>최근 주문</span>
+                {tradingOverview.recentOrders.slice(0, 3).map((order) => (
+                  <div key={order.id}>
+                    <strong>{order.instrument.symbol}</strong>
+                    <em data-status={order.status}>{orderStatusLabel(order.status)}</em>
+                    <span>
+                      {order.side === 'buy' ? '매수' : '매도'} {formatNumber(order.quantity)} ·{' '}
+                      {formatMoney(order.estimatedNotional, order.currency)}
+                    </span>
+                  </div>
+                ))}
+                {tradingOverview.recentOrders.length === 0 && <strong>저장된 주문 없음</strong>}
+              </div>
+            )}
           </section>
 
           <div className="chart-toolbar">

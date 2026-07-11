@@ -19,6 +19,7 @@ import {
   searchInstruments,
   seedDefaultWatchlist,
 } from './db/instruments.js';
+import { createOrderIntent, ensureTradingSchema, getTradingOverview } from './db/trading.js';
 import {
   getDailyCandles,
   getInstrumentCandles,
@@ -29,7 +30,7 @@ import {
 } from './kis/rest.js';
 import { KisRealtime } from './kis/realtime.js';
 import { WATCHLIST } from './watchlist.js';
-import type { ServerMessage, Trade, ConnectionStatus, Quote } from '@invest/shared';
+import type { CreateOrderRequest, ServerMessage, Trade, ConnectionStatus, Quote } from '@invest/shared';
 
 async function mapLimit<T, R>(
   items: T[],
@@ -57,11 +58,58 @@ async function main(): Promise<void> {
   const app = Fastify({ logger: true });
   await app.register(cors, { origin: true });
   await ensureInstrumentSchema();
+  await ensureTradingSchema();
   await seedDefaultWatchlist(WATCHLIST);
 
   // ── REST ────────────────────────────────────────────────
   app.get('/api/health', async () => ({ ok: true, env: config.env }));
   app.get('/api/watchlist', async () => WATCHLIST);
+
+  app.get('/api/trading/overview', async () => {
+    return getTradingOverview();
+  });
+
+  app.post<{ Body: Partial<CreateOrderRequest> }>('/api/trading/orders', async (req, reply) => {
+    const {
+      accountId,
+      instrumentId,
+      side,
+      orderType,
+      timeInForce,
+      quantity,
+      limitPrice,
+      userAcknowledged,
+    } = req.body;
+
+    if (!accountId || !instrumentId || !side || !orderType || !timeInForce || typeof quantity !== 'number') {
+      return reply.code(400).send({ message: '주문 필수 값이 부족합니다.' });
+    }
+    if ((side !== 'buy' && side !== 'sell') || (orderType !== 'market' && orderType !== 'limit')) {
+      return reply.code(400).send({ message: '주문 방향 또는 주문 유형이 올바르지 않습니다.' });
+    }
+    if (timeInForce !== 'day' && timeInForce !== 'ioc') {
+      return reply.code(400).send({ message: '주문 유효기간이 올바르지 않습니다.' });
+    }
+
+    const instrument = await getInstrument(instrumentId);
+    if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
+
+    const quote = await getInstrumentQuote(instrument);
+    const order = await createOrderIntent({
+      accountId,
+      instrumentId,
+      side,
+      orderType,
+      timeInForce,
+      quantity,
+      limitPrice,
+      estimatedPrice: quote.price,
+      userAcknowledged: userAcknowledged === true,
+    });
+
+    if (!order) return reply.code(404).send({ message: '매매 계정 또는 종목을 찾을 수 없습니다.' });
+    return { order };
+  });
 
   app.get<{ Querystring: { q?: string } }>('/api/instruments/search', async (req) => {
     return searchInstruments(req.query.q ?? '');

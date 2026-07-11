@@ -1,10 +1,13 @@
 import { API_BASE } from './config';
 import type {
   CandlesResponse,
+  CreateOrderRequest,
+  CreateOrderResponse,
   Instrument,
   InstrumentCategory,
   NewsItem,
   Quote,
+  TradingOverview,
   WatchItem,
   WatchlistGroup,
 } from '@invest/shared';
@@ -24,6 +27,22 @@ export async function fetchCandles(code: string): Promise<CandlesResponse> {
 export async function fetchQuote(code: string): Promise<Quote> {
   const res = await fetch(`${API_BASE}/api/quote/${code}`);
   if (!res.ok) throw new Error(`quote 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchTradingOverview(): Promise<TradingOverview> {
+  const res = await fetch(`${API_BASE}/api/trading/overview`);
+  if (!res.ok) throw new Error(`매매 개요 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+export async function createOrder(request: CreateOrderRequest): Promise<CreateOrderResponse> {
+  const res = await fetch(`${API_BASE}/api/trading/orders`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!res.ok) throw new Error(`주문 생성 실패: ${res.status}`);
   return res.json();
 }
 

@@ -344,6 +344,72 @@ button {
   font-weight: 700;
 }
 
+.symbol-search__breadth {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.symbol-search__breadth em {
+  padding: 1px 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.symbol-search__breadth em[data-tone='up'] {
+  border-color: rgba(229, 72, 77, 0.24);
+  color: #ff9b9f;
+}
+
+.symbol-search__breadth em[data-tone='down'] {
+  border-color: rgba(59, 130, 246, 0.24);
+  color: #93c5fd;
+}
+
+.symbol-search__breadth span {
+  display: flex;
+  flex: 1 1 110px;
+  min-width: 90px;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.symbol-search__breadth i {
+  min-width: 3px;
+}
+
+.symbol-search__breadth i[data-tone='up'] {
+  background: rgba(229, 72, 77, 0.72);
+}
+
+.symbol-search__breadth i[data-tone='flat'] {
+  background: rgba(148, 163, 184, 0.32);
+}
+
+.symbol-search__breadth i[data-tone='down'] {
+  background: rgba(59, 130, 246, 0.72);
+}
+
+.symbol-search__top {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .symbol-search__empty {
   min-height: 52px;
   padding: 18px 10px;
@@ -920,6 +986,294 @@ button {
   border: 1px solid #0b0f17;
   border-radius: 999px;
   background: var(--text);
+}
+
+.order-ticket {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.36fr);
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: #0b1018;
+}
+
+.order-ticket__header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 7px 14px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  gap: 12px;
+}
+
+.order-ticket__header > div:first-child {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 8px;
+}
+
+.order-ticket__header span,
+.order-ticket__summary span,
+.order-ticket__recent > span,
+.order-ticket__controls label span {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.order-ticket__header strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.order-ticket__account {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.order-ticket__account em,
+.order-ticket__account span {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.order-ticket__account span {
+  border-color: rgba(245, 196, 81, 0.3);
+  color: var(--focus);
+  font-weight: 700;
+}
+
+.order-ticket__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.9fr) minmax(260px, 0.75fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 14px;
+}
+
+.order-ticket__controls {
+  display: flex;
+  align-items: end;
+  min-width: 0;
+  gap: 7px;
+}
+
+.order-ticket__segments {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: #090d14;
+}
+
+.order-ticket__segments button {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.order-ticket__segments button[aria-selected='true'][data-side='buy'] {
+  background: rgba(229, 72, 77, 0.14);
+  color: #ff9b9f;
+}
+
+.order-ticket__segments button[aria-selected='true'][data-side='sell'] {
+  background: rgba(59, 130, 246, 0.14);
+  color: #93c5fd;
+}
+
+.order-ticket__controls select,
+.order-ticket__controls input {
+  height: 31px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  outline: none;
+  background: #090d14;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.order-ticket__controls select {
+  min-width: 78px;
+  padding: 0 8px;
+}
+
+.order-ticket__controls label {
+  display: grid;
+  gap: 3px;
+  min-width: 74px;
+}
+
+.order-ticket__controls input {
+  width: 100%;
+  padding: 0 8px;
+}
+
+.order-ticket__controls input:disabled {
+  color: var(--faint);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.order-ticket__summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.order-ticket__summary div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  border-radius: 5px;
+  background: rgba(9, 13, 20, 0.72);
+}
+
+.order-ticket__summary strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.order-ticket__risk {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.order-ticket__ack {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.order-ticket__ack input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--focus);
+}
+
+.order-ticket__messages {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.order-ticket__messages em {
+  padding: 2px 6px;
+  border: 1px solid rgba(245, 196, 81, 0.24);
+  border-radius: 999px;
+  color: var(--focus);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.order-ticket__messages em[data-tone='ok'] {
+  border-color: rgba(34, 197, 94, 0.28);
+  color: #8ee59e;
+}
+
+.order-ticket__submit {
+  align-self: stretch;
+  min-width: 108px;
+  min-height: 36px;
+  border: 1px solid rgba(245, 196, 81, 0.34);
+  border-radius: 6px;
+  background: rgba(245, 196, 81, 0.12);
+  color: var(--focus);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.order-ticket__submit:hover:not(:disabled) {
+  background: rgba(245, 196, 81, 0.18);
+}
+
+.order-ticket__submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.order-ticket__recent {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 14px 10px 0;
+  border-left: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.order-ticket__recent div {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.order-ticket__recent strong,
+.order-ticket__recent span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.order-ticket__recent em {
+  padding: 1px 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.order-ticket__recent em[data-status='blocked'],
+.order-ticket__recent em[data-status='rejected'] {
+  border-color: rgba(245, 196, 81, 0.28);
+  color: var(--focus);
+}
+
+.order-ticket__recent em[data-status='accepted'],
+.order-ticket__recent em[data-status='filled'] {
+  border-color: rgba(34, 197, 94, 0.28);
+  color: #8ee59e;
 }
 
 .chart-toolbar {
@@ -2449,6 +2803,19 @@ button {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .order-ticket {
+    grid-template-columns: 1fr;
+  }
+
+  .order-ticket__body {
+    grid-template-columns: 1fr;
+  }
+
+  .order-ticket__recent {
+    padding: 0 14px 10px;
+    border-left: 0;
+  }
+
   .watchlist {
     width: 280px;
   }
@@ -2562,6 +2929,24 @@ button {
 
   .market-strip {
     grid-template-columns: 1fr;
+  }
+
+  .order-ticket__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .order-ticket__controls {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .order-ticket__controls label {
+    flex: 1 1 120px;
+  }
+
+  .order-ticket__summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .watchlist {
