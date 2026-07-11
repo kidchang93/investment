@@ -323,6 +323,70 @@ button {
   overflow-x: auto;
 }
 
+.recent-symbols {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  background: #090d14;
+  gap: 5px;
+  overflow-x: auto;
+}
+
+.recent-symbols button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 164px;
+  max-width: 236px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.recent-symbols button:hover,
+.recent-symbols button[aria-selected='true'] {
+  border-color: var(--border-soft);
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.recent-symbols button[aria-selected='true'] {
+  border-color: rgba(245, 196, 81, 0.34);
+}
+
+.recent-symbols span,
+.recent-symbols strong,
+.recent-symbols em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-symbols span {
+  color: var(--focus);
+  font-weight: 700;
+}
+
+.recent-symbols strong {
+  min-width: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.recent-symbols em {
+  justify-self: end;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
 .chart-commandbar__actions button,
 .bottom-dock button {
   display: inline-flex;

@@ -114,6 +114,7 @@ const LIST_QUOTE_REFRESH_MS = 15_000;
 const MAX_LIST_QUOTE_TARGETS = 30;
 const CATEGORY_QUOTE_TARGETS = 20;
 const SEARCH_QUOTE_TARGETS = 10;
+const RECENT_INSTRUMENT_LIMIT = 8;
 const STORAGE_PREFIX = 'investment-monitor:';
 
 function readStoredValue<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
@@ -130,6 +131,39 @@ function readStoredBoolean(key: string, fallback: boolean): boolean {
 
 function writeStoredValue(key: string, value: string | boolean): void {
   window.localStorage.setItem(`${STORAGE_PREFIX}${key}`, String(value));
+}
+
+function isStoredInstrument(value: unknown): value is Instrument {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  return (
+    typeof item.id === 'string' &&
+    typeof item.symbol === 'string' &&
+    typeof item.name === 'string' &&
+    typeof item.market === 'string' &&
+    typeof item.country === 'string' &&
+    typeof item.currency === 'string' &&
+    typeof item.assetType === 'string' &&
+    item.provider === 'kis' &&
+    typeof item.providerSymbol === 'string' &&
+    typeof item.exchangeCode === 'string' &&
+    typeof item.timezone === 'string'
+  );
+}
+
+function readStoredInstruments(key: string): Instrument[] {
+  const value = window.localStorage.getItem(`${STORAGE_PREFIX}${key}`);
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter(isStoredInstrument).slice(0, RECENT_INSTRUMENT_LIMIT) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredJson(key: string, value: unknown): void {
+  window.localStorage.setItem(`${STORAGE_PREFIX}${key}`, JSON.stringify(value));
 }
 
 function signColor(sign?: PriceSign): string {
@@ -486,6 +520,9 @@ export function App(): JSX.Element {
   const [activeCategory, setActiveCategory] = useState<string>('kr-major');
   const [categoryItems, setCategoryItems] = useState<Instrument[]>([]);
   const [selectedInstrument, setSelectedInstrument] = useState<Instrument | null>(null);
+  const [recentInstruments, setRecentInstruments] = useState<Instrument[]>(() =>
+    readStoredInstruments('recentInstruments'),
+  );
   const [candlesByCode, setCandlesByCode] = useState<Record<string, CandlesResponse>>({});
   const [quotesByCode, setQuotesByCode] = useState<Record<string, Quote>>({});
   const [newsByCode, setNewsByCode] = useState<Record<string, NewsItem[]>>({});
@@ -541,7 +578,19 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('bottomDockTab', bottomDockTab), [bottomDockTab]);
   useEffect(() => writeStoredValue('bottomDockMode', bottomDockMode), [bottomDockMode]);
   useEffect(() => writeStoredValue('activeSavedWatchlistId', activeSavedWatchlistId), [activeSavedWatchlistId]);
+  useEffect(() => writeStoredJson('recentInstruments', recentInstruments), [recentInstruments]);
   useEffect(() => setHoveredChartReadout(null), [range, selectedInstrument?.id, timeframe]);
+
+  useEffect(() => {
+    if (!selectedInstrument) return;
+    setRecentInstruments((items) => {
+      const next = [
+        selectedInstrument,
+        ...items.filter((instrument) => instrument.id !== selectedInstrument.id),
+      ].slice(0, RECENT_INSTRUMENT_LIMIT);
+      return next.every((instrument, index) => instrument.id === items[index]?.id) ? items : next;
+    });
+  }, [selectedInstrument]);
 
   useEffect(() => {
     fetchWatchlists()
@@ -671,11 +720,12 @@ export function App(): JSX.Element {
     }
 
     if (selectedInstrument?.country === 'KR') add(selectedInstrument);
+    for (const instrument of recentInstruments) add(instrument);
     for (const instrument of watchlist) add(instrument);
     for (const instrument of categoryItems.slice(0, CATEGORY_QUOTE_TARGETS)) add(instrument);
     for (const instrument of symbolResults.slice(0, SEARCH_QUOTE_TARGETS)) add(instrument);
     return [...ids].slice(0, MAX_LIST_QUOTE_TARGETS);
-  }, [categoryItems, selectedInstrument, symbolResults, watchlist]);
+  }, [categoryItems, recentInstruments, selectedInstrument, symbolResults, watchlist]);
   const quoteTargetKey = quoteTargetIds.join('|');
 
   // 화면에 보이는 종목들의 REST 현재가를 유지해 클릭 전에도 리스트 가격이 채워지게 한다.
@@ -986,7 +1036,7 @@ export function App(): JSX.Element {
                         <button
                           className="symbol-search__select"
                           onClick={() => {
-                            setSelectedInstrument(instrument);
+                            selectInstrument(instrument);
                             setSymbolQuery('');
                             setSymbolResults([]);
                           }}
@@ -1047,6 +1097,35 @@ export function App(): JSX.Element {
               <button type="button">비교</button>
             </div>
           </div>
+
+          {recentInstruments.length > 0 && (
+            <div className="recent-symbols" role="tablist" aria-label="최근 종목">
+              {recentInstruments.map((instrument) => {
+                const recentSnapshot = toSnapshot(
+                  instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined,
+                  quotesByCode[instrument.id],
+                );
+                return (
+                  <button
+                    aria-selected={instrument.id === selectedInstrument?.id}
+                    key={instrument.id}
+                    onClick={() => selectInstrument(instrument)}
+                    role="tab"
+                    title={`${instrument.name} ${marketLabel(instrument)}`}
+                    type="button"
+                  >
+                    <span>{instrument.symbol}</span>
+                    <strong>{instrument.name}</strong>
+                    <em style={{ color: signColor(recentSnapshot?.sign) }}>
+                      {recentSnapshot
+                        ? `${formatPrice(recentSnapshot.price)} ${formatRate(recentSnapshot.changeRate)}`
+                        : marketLabel(instrument)}
+                    </em>
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           <section className="quote-header">
             <div className="quote-header__identity">
