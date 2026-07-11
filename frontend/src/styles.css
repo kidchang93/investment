@@ -1620,7 +1620,7 @@ button {
 
 .watchlist__tools {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 92px;
+  grid-template-columns: minmax(0, 1fr) 86px 50px;
   gap: 7px;
   padding: 0 12px 10px;
 }
@@ -1633,7 +1633,8 @@ button {
 }
 
 .watchlist__segments button,
-.watchlist__tools select {
+.watchlist__tools select,
+.watchlist__density {
   height: 28px;
   border: 1px solid var(--border-soft);
   border-radius: 5px;
@@ -1642,12 +1643,15 @@ button {
   font-size: 12px;
 }
 
-.watchlist__segments button {
+.watchlist__segments button,
+.watchlist__density {
   cursor: pointer;
 }
 
 .watchlist__segments button:hover,
-.watchlist__segments button[aria-selected='true'] {
+.watchlist__segments button[aria-selected='true'],
+.watchlist__density:hover,
+.watchlist__density[aria-pressed='true'] {
   background: var(--panel-2);
   color: var(--text);
 }
@@ -1660,6 +1664,10 @@ button {
 
 .watchlist__tools select:focus {
   border-color: rgba(245, 196, 81, 0.75);
+}
+
+.watchlist__density[aria-pressed='true'] {
+  color: var(--focus);
 }
 
 .watchlist__rows {
@@ -1741,6 +1749,34 @@ button {
   color: var(--text);
   cursor: pointer;
   text-align: left;
+}
+
+.watchlist.is-compact-list .instrument-row {
+  min-height: 44px;
+  padding: 6px 12px;
+}
+
+.watchlist.is-compact-list .instrument-row__name {
+  gap: 1px;
+}
+
+.watchlist.is-compact-list .instrument-row__title strong {
+  font-size: 12px;
+}
+
+.watchlist.is-compact-list .instrument-row__code,
+.watchlist.is-compact-list .instrument-row__rate {
+  font-size: 10px;
+}
+
+.watchlist.is-compact-list .instrument-row__price {
+  gap: 1px;
+  font-size: 12px;
+}
+
+.watchlist.is-compact-list .instrument-row__source,
+.watchlist.is-compact-list .instrument-row__title em {
+  font-size: 9px;
 }
 
 .instrument-row:hover {

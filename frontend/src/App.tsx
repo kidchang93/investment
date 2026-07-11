@@ -570,6 +570,7 @@ export function App(): JSX.Element {
   const [showPriceLevels, setShowPriceLevels] = useState(() => readStoredBoolean('showPriceLevels', false));
   const [showComparePanel, setShowComparePanel] = useState(() => readStoredBoolean('showComparePanel', false));
   const [isFocusMode, setIsFocusMode] = useState(() => readStoredBoolean('focusMode', false));
+  const [isCompactList, setIsCompactList] = useState(() => readStoredBoolean('compactList', false));
   const [layoutPreset, setLayoutPreset] = useState<LayoutPreset>(() =>
     readStoredValue('layoutPreset', 'balanced', LAYOUT_PRESET_OPTIONS.map((option) => option.key)),
   );
@@ -604,6 +605,7 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('showPriceLevels', showPriceLevels), [showPriceLevels]);
   useEffect(() => writeStoredValue('showComparePanel', showComparePanel), [showComparePanel]);
   useEffect(() => writeStoredValue('focusMode', isFocusMode), [isFocusMode]);
+  useEffect(() => writeStoredValue('compactList', isCompactList), [isCompactList]);
   useEffect(() => writeStoredValue('layoutPreset', layoutPreset), [layoutPreset]);
   useEffect(() => writeStoredValue('watchlistCollapsed', isWatchlistCollapsed), [isWatchlistCollapsed]);
   useEffect(() => writeStoredValue('bottomDockTab', bottomDockTab), [bottomDockTab]);
@@ -1676,7 +1678,7 @@ export function App(): JSX.Element {
           </div>
         </main>
 
-        <aside className={`watchlist${isWatchlistCollapsed ? ' is-collapsed' : ''}`}>
+        <aside className={`watchlist${isWatchlistCollapsed ? ' is-collapsed' : ''}${isCompactList ? ' is-compact-list' : ''}`}>
           <div className="watchlist__header">
             <strong>관심종목</strong>
             <span>{watchlist.length}</span>
@@ -1790,6 +1792,15 @@ export function App(): JSX.Element {
                 </option>
               ))}
             </select>
+            <button
+              aria-pressed={isCompactList}
+              className="watchlist__density"
+              onClick={() => setIsCompactList((value) => !value)}
+              title={isCompactList ? '기본 리스트 보기' : '촘촘한 리스트 보기'}
+              type="button"
+            >
+              촘촘
+            </button>
           </div>
           <div className="watchlist__rows watchlist__rows--saved">
             {filteredWatchlist.map((instrument) => (
