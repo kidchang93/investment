@@ -176,10 +176,37 @@ export interface OrderIntent {
   createdAt: number;
 }
 
+/** paper/live 공통 체결 기록 */
+export interface TradingFill {
+  id: string;
+  orderId: string;
+  accountId: string;
+  instrument: Instrument;
+  side: OrderSide;
+  quantity: number;
+  price: number;
+  notional: number;
+  currency: string;
+  createdAt: number;
+}
+
+/** 현금 증감 원장 */
+export interface CashLedgerEntry {
+  id: string;
+  accountId: string;
+  orderId?: string;
+  amount: number;
+  balanceAfter: number;
+  currency: string;
+  reason: 'paper_buy' | 'paper_sell' | 'adjustment';
+  createdAt: number;
+}
+
 export interface TradingOverview {
   accounts: TradingAccount[];
   positions: Position[];
   recentOrders: OrderIntent[];
+  recentFills: TradingFill[];
 }
 
 export interface CreateOrderRequest {
@@ -196,4 +223,5 @@ export interface CreateOrderRequest {
 
 export interface CreateOrderResponse {
   order: OrderIntent;
+  fill?: TradingFill;
 }

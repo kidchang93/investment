@@ -37,12 +37,12 @@
 - `trading_positions`: 계정별 포지션 스냅샷
 - `trading_order_intents`: 사용자가 만든 주문 의도와 서버 리스크 검증 결과
 - `trading_order_events`: 주문 의도별 상태 이벤트와 payload
+- `trading_fills`: paper/live 공통 체결 기록
+- `trading_cash_ledger`: 현금 증감 원장
 
 다음 단계 테이블:
 
 - `trading_broker_orders`: KIS에 실제 전송된 주문번호, 원주문번호, 정정/취소 관계
-- `trading_fills`: 체결 단위 기록
-- `trading_cash_ledger`: 현금 증감 원장
 - `trading_risk_rules`: 계정별 주문 한도, 종목/시장 제한, 장 시간 제한
 - `trading_schedules`: 주식모으기/리밸런싱 같은 반복 주문 규칙
 
@@ -55,12 +55,12 @@
    - `POST /api/trading/orders`
    - 프런트 주문 티켓
 
-2. **다음: paper 체결 엔진**
+2. **완료: paper 체결 엔진**
    - 시장가 paper 주문을 현재가 기준 즉시 체결
    - 포지션/현금 원장 갱신
-   - 최근 체결과 평가손익 표시
+   - 최근 체결 표시
 
-3. **그 다음: KIS 계좌 조회**
+3. **다음: KIS 계좌 조회**
    - 계좌번호/상품코드는 서버 환경 변수에만 저장
    - 잔고/주문가능금액/체결내역 조회를 `kis/`에서 정규화
    - 프런트에는 `@invest/shared` 타입만 전달

@@ -19,7 +19,7 @@ import {
   searchInstruments,
   seedDefaultWatchlist,
 } from './db/instruments.js';
-import { createOrderIntent, ensureTradingSchema, getTradingOverview } from './db/trading.js';
+import { createOrderIntent, ensureTradingSchema, getFillByOrderId, getTradingOverview } from './db/trading.js';
 import {
   getDailyCandles,
   getInstrumentCandles,
@@ -108,7 +108,8 @@ async function main(): Promise<void> {
     });
 
     if (!order) return reply.code(404).send({ message: '매매 계정 또는 종목을 찾을 수 없습니다.' });
-    return { order };
+    const fill = await getFillByOrderId(order.id);
+    return fill ? { order, fill } : { order };
   });
 
   app.get<{ Querystring: { q?: string } }>('/api/instruments/search', async (req) => {

@@ -45,6 +45,8 @@ type WatchGroup = 'all' | 'kr' | 'global' | 'fund';
 type BottomDockTab = 'volume' | 'trades' | 'news';
 type BottomDockMode = 'hidden' | 'normal' | 'expanded';
 type LayoutPreset = 'balanced' | 'chart' | 'reading';
+type AppPage = 'market' | 'trade' | 'portfolio';
+type SidePanelTab = 'watch' | 'discover';
 
 interface PriceSnapshot {
   price: number;
@@ -128,6 +130,17 @@ const TOOL_OPTIONS: Array<{ key: ChartTool; label: string; title: string }> = [
   { key: 'measure', label: '<>', title: '측정' },
   { key: 'text', label: 'T', title: '텍스트' },
   { key: 'lock', label: '#', title: '도구 잠금' },
+];
+
+const APP_PAGE_OPTIONS: Array<{ key: AppPage; label: string; title: string }> = [
+  { key: 'market', label: '시세', title: '차트와 관심종목' },
+  { key: 'trade', label: '매매', title: '주문 티켓과 선택 종목' },
+  { key: 'portfolio', label: '포트폴리오', title: '계좌, 보유, 체결 기록' },
+];
+
+const SIDE_PANEL_OPTIONS: Array<{ key: SidePanelTab; label: string }> = [
+  { key: 'watch', label: '관심' },
+  { key: 'discover', label: '탐색' },
 ];
 
 const OVERSEAS_REFRESH_MS = 5_000;
@@ -702,6 +715,12 @@ export function App(): JSX.Element {
   const [bottomDockMode, setBottomDockMode] = useState<BottomDockMode>(() =>
     readStoredValue('bottomDockMode', 'normal', BOTTOM_DOCK_MODE_OPTIONS.map((option) => option.key)),
   );
+  const [activePage, setActivePage] = useState<AppPage>(() =>
+    readStoredValue('activePage', 'market', APP_PAGE_OPTIONS.map((option) => option.key)),
+  );
+  const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>(() =>
+    readStoredValue('sidePanelTab', 'watch', SIDE_PANEL_OPTIONS.map((option) => option.key)),
+  );
   const [tradingOverview, setTradingOverview] = useState<TradingOverview | null>(null);
   const [orderSide, setOrderSide] = useState<OrderSide>('buy');
   const [orderType, setOrderType] = useState<OrderType>('market');
@@ -736,6 +755,8 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('watchlistCollapsed', isWatchlistCollapsed), [isWatchlistCollapsed]);
   useEffect(() => writeStoredValue('bottomDockTab', bottomDockTab), [bottomDockTab]);
   useEffect(() => writeStoredValue('bottomDockMode', bottomDockMode), [bottomDockMode]);
+  useEffect(() => writeStoredValue('activePage', activePage), [activePage]);
+  useEffect(() => writeStoredValue('sidePanelTab', sidePanelTab), [sidePanelTab]);
   useEffect(() => writeStoredValue('activeSavedWatchlistId', activeSavedWatchlistId), [activeSavedWatchlistId]);
   useEffect(() => writeStoredJson('recentInstruments', recentInstruments), [recentInstruments]);
   useEffect(() => setHoveredChartReadout(null), [range, selectedInstrument?.id, timeframe]);
@@ -1340,6 +1361,17 @@ export function App(): JSX.Element {
   const orderCanSubmit =
     Boolean(selectedInstrument && activeTradingAccount && orderRiskMessages.length === 0 && orderEstimatedPrice) &&
     !isOrderSubmitting;
+  const portfolioPositionCount = tradingOverview?.positions.length ?? 0;
+  const portfolioMarketValue = useMemo(
+    () =>
+      tradingOverview?.positions.reduce((total, position) => {
+        const positionSnapshot = getSnapshotForInstrument(position.instrument);
+        return total + position.quantity * (positionSnapshot?.price ?? position.averagePrice);
+      }, 0) ?? 0,
+    [quotesByCode, stream.trades, tradingOverview?.positions],
+  );
+  const recentFillTotal =
+    tradingOverview?.recentFills.slice(0, 10).reduce((total, fill) => total + fill.notional, 0) ?? 0;
 
   function selectInstrument(instrument: Instrument): void {
     setSelectedInstrument(instrument);
@@ -1460,9 +1492,22 @@ export function App(): JSX.Element {
     <div className={`app${isFocusMode ? ' is-focus-mode' : ''}`}>
       <header className="app__header">
         <div>
-          <span className="app__eyebrow">조회 전용</span>
-          <h1>실시간 시세</h1>
+          <span className="app__eyebrow">Paper 매매 워크스테이션</span>
+          <h1>Investment Monitor</h1>
         </div>
+        <nav className="app__nav" aria-label="주요 화면">
+          {APP_PAGE_OPTIONS.map((page) => (
+            <button
+              aria-current={activePage === page.key ? 'page' : undefined}
+              key={page.key}
+              onClick={() => setActivePage(page.key)}
+              title={page.title}
+              type="button"
+            >
+              {page.label}
+            </button>
+          ))}
+        </nav>
         <div className="app__status">
           <span className="mode-chip">실전</span>
           <span className="freshness-chip" data-tone={quoteFreshnessTone}>{quoteFreshnessLabel}</span>
@@ -1492,8 +1537,8 @@ export function App(): JSX.Element {
 
       {error && <div className="app__error">{error}</div>}
 
-      <div className="app__body">
-        <nav className="tool-rail" aria-label="차트 도구">
+      <div className={`app__body app__body--${activePage}`}>
+        {activePage === 'market' && <nav className="tool-rail" aria-label="차트 도구">
           {TOOL_OPTIONS.map((tool) => (
             <button
               aria-label={tool.title}
@@ -1507,9 +1552,10 @@ export function App(): JSX.Element {
               {tool.label}
             </button>
           ))}
-        </nav>
+        </nav>}
 
-        <main className="chart-panel">
+        <main className={`chart-panel chart-panel--${activePage}`}>
+          {activePage !== 'portfolio' ? (
           <div className="chart-commandbar">
             <div className="chart-commandbar__symbol">
               <span>{selectedInstrument?.country ?? '-'}</span>
@@ -1652,7 +1698,7 @@ export function App(): JSX.Element {
                 </div>
               )}
             </div>
-            <div className="chart-commandbar__actions">
+            {activePage === 'market' && <div className="chart-commandbar__actions">
               <div className="layout-presets" role="tablist" aria-label="레이아웃 프리셋">
                 {LAYOUT_PRESET_OPTIONS.map((option) => (
                   <button
@@ -1710,10 +1756,19 @@ export function App(): JSX.Element {
               >
                 비교
               </button>
-            </div>
+            </div>}
           </div>
+          ) : (
+            <div className="page-heading">
+              <div>
+                <span>계좌 현황</span>
+                <strong>포트폴리오</strong>
+              </div>
+              <small>{activeTradingAccount?.label ?? '계정 대기'} · {formatMoney(activeTradingAccount?.cashBalance, activeTradingAccount?.baseCurrency)}</small>
+            </div>
+          )}
 
-          {recentInstruments.length > 0 && (
+          {activePage !== 'portfolio' && recentInstruments.length > 0 && (
             <div className="recent-symbols" role="tablist" aria-label="최근 종목">
               <span className="recent-symbols__label">최근</span>
               {recentInstruments.map((instrument) => {
@@ -1756,7 +1811,7 @@ export function App(): JSX.Element {
             </div>
           )}
 
-          {showComparePanel && (
+          {activePage === 'market' && showComparePanel && (
             <div className="comparison-strip" aria-label="종목 비교">
               <span className="comparison-strip__label">비교</span>
               {comparisonItems.map((instrument) => {
@@ -1792,7 +1847,7 @@ export function App(): JSX.Element {
             </div>
           )}
 
-          <section className="quote-header">
+          {activePage !== 'portfolio' && <section className="quote-header">
             <div className="quote-header__identity">
               <div className="quote-header__symbol-row">
                 <span className="quote-header__code">{selectedInstrument?.symbol ?? '-'}</span>
@@ -1851,9 +1906,9 @@ export function App(): JSX.Element {
                 <strong>{snapshot ? formatVolume(snapshot.accVolume) : '-'}</strong>
               </div>
             </div>
-          </section>
+          </section>}
 
-          <section className="market-strip" aria-label="종목 상세 정보">
+          {activePage !== 'portfolio' && <section className="market-strip" aria-label="종목 상세 정보">
             <div className="market-strip__status" data-tone={marketSession.tone}>
               <span>장 상태</span>
               <strong>{marketSession.label}</strong>
@@ -1890,9 +1945,9 @@ export function App(): JSX.Element {
               <strong>{marketSession.localTime}</strong>
               <small>{quoteRefreshAt ? `갱신 ${formatClock(quoteRefreshAt)}` : '갱신 대기'}</small>
             </div>
-          </section>
+          </section>}
 
-          <section className="order-ticket" aria-label="매매 주문 티켓">
+          {activePage === 'trade' && <section className="order-ticket" aria-label="매매 주문 티켓">
             <div className="order-ticket__header">
               <div>
                 <span>주문 티켓</span>
@@ -2005,7 +2060,7 @@ export function App(): JSX.Element {
                 onClick={() => void submitOrderIntent()}
                 type="button"
               >
-                {isOrderSubmitting ? '저장 중' : 'Paper 주문 저장'}
+                {isOrderSubmitting ? '처리 중' : orderType === 'market' ? 'Paper 즉시 체결' : 'Paper 주문 저장'}
               </button>
             </div>
             {tradingOverview && (
@@ -2022,11 +2077,23 @@ export function App(): JSX.Element {
                   </div>
                 ))}
                 {tradingOverview.recentOrders.length === 0 && <strong>저장된 주문 없음</strong>}
+                <span>최근 체결</span>
+                {tradingOverview.recentFills.slice(0, 3).map((fill) => (
+                  <div key={fill.id}>
+                    <strong>{fill.instrument.symbol}</strong>
+                    <em data-status="filled">체결</em>
+                    <span>
+                      {fill.side === 'buy' ? '매수' : '매도'} {formatNumber(fill.quantity)} ·{' '}
+                      {formatMoney(fill.notional, fill.currency)}
+                    </span>
+                  </div>
+                ))}
+                {tradingOverview.recentFills.length === 0 && <strong>체결 없음</strong>}
               </div>
             )}
-          </section>
+          </section>}
 
-          <div className="chart-toolbar">
+          {activePage === 'market' && <div className="chart-toolbar">
             <div className="chart-toolbar__group">
               <div className="timeframe-tabs" role="tablist" aria-label="봉 종류">
                 {TIMEFRAME_OPTIONS.map((item) => (
@@ -2067,9 +2134,9 @@ export function App(): JSX.Element {
                 <em key={badge}>{badge}</em>
               ))}
             </div>
-          </div>
+          </div>}
 
-          <div className="chart-frame" data-tool={activeTool}>
+          {activePage === 'market' && <div className="chart-frame" data-tool={activeTool}>
             <div className="chart-readout">
               <strong>{selectedName || '-'}</strong>
               <span>{activeChartReadout ? activeChartReadout.date : '-'}</span>
@@ -2135,9 +2202,9 @@ export function App(): JSX.Element {
                   : '종목을 선택하세요'}
               </div>
             )}
-          </div>
+          </div>}
 
-          {bottomDockMode !== 'hidden' && bottomDockTab === 'volume' && (
+          {activePage === 'market' && bottomDockMode !== 'hidden' && bottomDockTab === 'volume' && (
             <section className={`volume-panel ${bottomPanelClass}`} aria-label="거래량 요약">
               <div>
                 <span>표시 캔들</span>
@@ -2183,7 +2250,7 @@ export function App(): JSX.Element {
             </section>
           )}
 
-          {bottomDockMode !== 'hidden' && bottomDockTab === 'trades' && (
+          {activePage === 'market' && bottomDockMode !== 'hidden' && bottomDockTab === 'trades' && (
             <section className={`trade-tape ${bottomPanelClass}`} aria-label="최근 체결">
               <div className="trade-tape__header">
                 <strong>최근 체결</strong>
@@ -2237,7 +2304,7 @@ export function App(): JSX.Element {
             </section>
           )}
 
-          {bottomDockMode !== 'hidden' && bottomDockTab === 'news' && (
+          {activePage === 'market' && bottomDockMode !== 'hidden' && bottomDockTab === 'news' && (
             <section className={`news-panel ${bottomPanelClass}`} aria-label="종목 뉴스">
               <div className="news-panel__header">
                 <strong>뉴스</strong>
@@ -2276,7 +2343,7 @@ export function App(): JSX.Element {
             </section>
           )}
 
-          <div className="bottom-dock">
+          {activePage === 'market' && <div className="bottom-dock">
             <button
               aria-selected={bottomDockTab === 'volume' && bottomDockMode !== 'hidden'}
               onClick={() => selectBottomDockTab('volume')}
@@ -2319,13 +2386,158 @@ export function App(): JSX.Element {
             <span className="bottom-dock__status">
               조회 전용 세션 · 시세 갱신 {formatClock(quoteRefreshAt)} · {quoteFreshnessLabel}
             </span>
-          </div>
+          </div>}
+
+          {activePage === 'portfolio' && (
+            <section className="portfolio-page" aria-label="포트폴리오">
+              <div className="portfolio-page__metrics">
+                <div>
+                  <span>현금</span>
+                  <strong>{formatMoney(activeTradingAccount?.cashBalance, activeTradingAccount?.baseCurrency)}</strong>
+                </div>
+                <div>
+                  <span>주문 가능</span>
+                  <strong>{formatMoney(activeTradingAccount?.buyingPower, activeTradingAccount?.baseCurrency)}</strong>
+                </div>
+                <div>
+                  <span>보유 종목</span>
+                  <strong>{portfolioPositionCount}개</strong>
+                </div>
+                <div>
+                  <span>평가 기준액</span>
+                  <strong>{formatMoney(portfolioMarketValue, activeTradingAccount?.baseCurrency)}</strong>
+                </div>
+                <div>
+                  <span>최근 체결액</span>
+                  <strong>{formatMoney(recentFillTotal, activeTradingAccount?.baseCurrency)}</strong>
+                </div>
+              </div>
+
+              <div className="portfolio-page__grid">
+                <section className="portfolio-card" aria-label="보유 포지션">
+                  <div className="portfolio-card__header">
+                    <strong>보유 포지션</strong>
+                    <span>{portfolioPositionCount}개</span>
+                  </div>
+                  <div className="portfolio-table portfolio-table--positions">
+                    <div className="portfolio-table__head">
+                      <span>종목</span>
+                      <span>수량</span>
+                      <span>평균단가</span>
+                      <span>현재가</span>
+                      <span>평가금액</span>
+                    </div>
+                    {tradingOverview?.positions.map((position) => {
+                      const positionSnapshot = getSnapshotForInstrument(position.instrument);
+                      const markPrice = positionSnapshot?.price ?? position.averagePrice;
+                      return (
+                        <button
+                          className="portfolio-table__row"
+                          key={position.id}
+                          onClick={() => {
+                            selectInstrument(position.instrument);
+                            setActivePage('trade');
+                          }}
+                          type="button"
+                        >
+                          <strong>{position.instrument.symbol}</strong>
+                          <span>{formatNumber(position.quantity)}</span>
+                          <span>{formatMoney(position.averagePrice, position.currency)}</span>
+                          <span>{formatMoney(markPrice, position.currency)}</span>
+                          <span>{formatMoney(position.quantity * markPrice, position.currency)}</span>
+                        </button>
+                      );
+                    })}
+                    {portfolioPositionCount === 0 && <div className="portfolio-table__empty">보유 포지션 없음</div>}
+                  </div>
+                </section>
+
+                <section className="portfolio-card" aria-label="최근 주문">
+                  <div className="portfolio-card__header">
+                    <strong>최근 주문</strong>
+                    <span>{tradingOverview?.recentOrders.length ?? 0}건</span>
+                  </div>
+                  <div className="portfolio-table portfolio-table--orders">
+                    <div className="portfolio-table__head">
+                      <span>상태</span>
+                      <span>종목</span>
+                      <span>방향</span>
+                      <span>수량</span>
+                      <span>주문액</span>
+                    </div>
+                    {tradingOverview?.recentOrders.slice(0, 12).map((order) => (
+                      <button
+                        className="portfolio-table__row"
+                        key={order.id}
+                        onClick={() => {
+                          selectInstrument(order.instrument);
+                          setActivePage('trade');
+                        }}
+                        type="button"
+                      >
+                        <em data-status={order.status}>{orderStatusLabel(order.status)}</em>
+                        <strong>{order.instrument.symbol}</strong>
+                        <span>{order.side === 'buy' ? '매수' : '매도'}</span>
+                        <span>{formatNumber(order.quantity)}</span>
+                        <span>{formatMoney(order.estimatedNotional, order.currency)}</span>
+                      </button>
+                    ))}
+                    {(!tradingOverview || tradingOverview.recentOrders.length === 0) && (
+                      <div className="portfolio-table__empty">주문 기록 없음</div>
+                    )}
+                  </div>
+                </section>
+
+                <section className="portfolio-card portfolio-card--wide" aria-label="최근 체결">
+                  <div className="portfolio-card__header">
+                    <strong>최근 체결</strong>
+                    <span>{tradingOverview?.recentFills.length ?? 0}건</span>
+                  </div>
+                  <div className="portfolio-table portfolio-table--fills">
+                    <div className="portfolio-table__head">
+                      <span>종목</span>
+                      <span>방향</span>
+                      <span>수량</span>
+                      <span>체결가</span>
+                      <span>체결액</span>
+                    </div>
+                    {tradingOverview?.recentFills.slice(0, 16).map((fill) => (
+                      <button
+                        className="portfolio-table__row"
+                        key={fill.id}
+                        onClick={() => {
+                          selectInstrument(fill.instrument);
+                          setActivePage('trade');
+                        }}
+                        type="button"
+                      >
+                        <strong>{fill.instrument.symbol}</strong>
+                        <span>{fill.side === 'buy' ? '매수' : '매도'}</span>
+                        <span>{formatNumber(fill.quantity)}</span>
+                        <span>{formatMoney(fill.price, fill.currency)}</span>
+                        <span>{formatMoney(fill.notional, fill.currency)}</span>
+                      </button>
+                    ))}
+                    {(!tradingOverview || tradingOverview.recentFills.length === 0) && (
+                      <div className="portfolio-table__empty">체결 기록 없음</div>
+                    )}
+                  </div>
+                </section>
+              </div>
+            </section>
+          )}
         </main>
 
-        <aside className={`watchlist${isWatchlistCollapsed ? ' is-collapsed' : ''}${isCompactList ? ' is-compact-list' : ''}`}>
+        {activePage !== 'portfolio' && <aside className={`watchlist${isWatchlistCollapsed ? ' is-collapsed' : ''}${isCompactList ? ' is-compact-list' : ''}`}>
           <div className="watchlist__header">
-            <strong>관심종목</strong>
-            <span>{activeSavedWatchlist?.name ?? '기본'} · {watchlist.length}</span>
+            <div>
+              <strong>{sidePanelTab === 'watch' ? '관심종목' : '종목 탐색'}</strong>
+              <span>
+                {sidePanelTab === 'watch'
+                  ? `${activeSavedWatchlist?.name ?? '기본'} · ${watchlist.length}`
+                  : `${visibleCategoryItems.length}개 후보`}
+              </span>
+            </div>
             <button
               aria-label={isWatchlistCollapsed ? '관심종목 펼치기' : '관심종목 접기'}
               className="watchlist__collapse"
@@ -2336,7 +2548,20 @@ export function App(): JSX.Element {
               {isWatchlistCollapsed ? '‹' : '›'}
             </button>
           </div>
-          <div className="watchlist__summary" aria-label="관심종목 요약">
+          <div className="watchlist__tabs" role="tablist" aria-label="오른쪽 패널">
+            {SIDE_PANEL_OPTIONS.map((option) => (
+              <button
+                aria-selected={sidePanelTab === option.key}
+                key={option.key}
+                onClick={() => setSidePanelTab(option.key)}
+                role="tab"
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          {sidePanelTab === 'watch' && <div className="watchlist__summary" aria-label="관심종목 요약">
             <div className="watchlist__summary-counts">
               <span data-tone="up">상승 {watchlistSummary.up}</span>
               <span data-tone="down">하락 {watchlistSummary.down}</span>
@@ -2372,8 +2597,8 @@ export function App(): JSX.Element {
                 <strong>-</strong>
               )}
             </div>
-          </div>
-          <div className="watchlist__saved-groups" role="tablist" aria-label="저장 관심그룹">
+          </div>}
+          {sidePanelTab === 'watch' && <div className="watchlist__saved-groups" role="tablist" aria-label="저장 관심그룹">
             {savedWatchlists.map((group) => (
               <div className="watchlist__saved-group" data-active={group.id === activeSavedWatchlistId} key={group.id}>
                 <button
@@ -2409,8 +2634,8 @@ export function App(): JSX.Element {
             >
               +
             </button>
-          </div>
-          <div className="watchlist__groups" role="tablist" aria-label="관심종목 필터">
+          </div>}
+          {sidePanelTab === 'watch' && <div className="watchlist__groups" role="tablist" aria-label="관심종목 필터">
             {WATCH_GROUP_OPTIONS.map((option) => (
               <button
                 aria-selected={option.key === watchGroup}
@@ -2422,16 +2647,16 @@ export function App(): JSX.Element {
                 {option.label}
               </button>
             ))}
-          </div>
-          <input
+          </div>}
+          {sidePanelTab === 'watch' && <input
             aria-label="종목 검색"
             className="watchlist__search"
             onChange={(event) => setQuery(event.target.value)}
             placeholder="종목명 또는 코드"
             type="search"
             value={query}
-          />
-          <div className="watchlist__tools">
+          />}
+          {sidePanelTab === 'watch' && <div className="watchlist__tools">
             <div className="watchlist__segments" role="tablist" aria-label="등락 필터">
               {MOVE_FILTER_OPTIONS.map((option) => (
                 <button
@@ -2465,8 +2690,8 @@ export function App(): JSX.Element {
             >
               촘촘
             </button>
-          </div>
-          <div className="watchlist__section-title">
+          </div>}
+          {sidePanelTab === 'watch' && <div className="watchlist__section-title">
             <strong>현재 그룹</strong>
             <div className="watchlist__section-meta">
               <div className="watchlist__filter-chips" aria-label="현재 리스트 필터">
@@ -2476,8 +2701,8 @@ export function App(): JSX.Element {
               </div>
               <span>{filteredWatchlist.length} / {watchlist.length}</span>
             </div>
-          </div>
-          <div className="watchlist__rows watchlist__rows--saved">
+          </div>}
+          {sidePanelTab === 'watch' && <div className="watchlist__rows watchlist__rows--saved">
             {filteredWatchlist.map((instrument) => (
               <InstrumentRow
                 key={instrument.id}
@@ -2493,12 +2718,14 @@ export function App(): JSX.Element {
             {filteredWatchlist.length === 0 && (
               <div className="watchlist__empty">관심종목이 없습니다</div>
             )}
-          </div>
-          <div className="discover">
+          </div>}
+          {sidePanelTab === 'discover' && <div className="discover">
             <div className="discover__header">
-              <strong>추천 리스트</strong>
-              <div className="discover__meta">
+              <div>
+                <strong>추천 리스트</strong>
                 <span>{visibleCategoryItems.length}개 · 탐색 후 + 추가</span>
+              </div>
+              <div className="discover__meta">
                 <div className="discover__breadth" aria-label="추천 리스트 등락 요약">
                   <em data-tone="up">상승 {categorySummary.up}</em>
                   <em data-tone="down">하락 {categorySummary.down}</em>
@@ -2514,18 +2741,28 @@ export function App(): JSX.Element {
                 </span>
               </div>
             </div>
-            <div className="category-tabs">
+            <div className="discover__section-label">
+              <strong>카테고리</strong>
+              <span>{categories.find((category) => category.id === activeCategory)?.description ?? '추천 카테고리'}</span>
+            </div>
+            <div className="category-tabs" role="tablist" aria-label="추천 카테고리">
               {categories.map((category) => (
                 <button
                   aria-selected={category.id === activeCategory}
                   key={category.id}
                   onClick={() => setActiveCategory(category.id)}
+                  role="tab"
                   title={category.description}
                   type="button"
                 >
-                  {category.label}
+                  <strong>{category.label}</strong>
+                  <span>{category.description}</span>
                 </button>
               ))}
+            </div>
+            <div className="discover__section-label discover__section-label--results">
+              <strong>결과</strong>
+              <span>{visibleCategoryItems.length}개 · {categorySummary.waiting > 0 ? `시세 대기 ${categorySummary.waiting}` : '시세 반영'}</span>
             </div>
             <div className="watchlist__rows">
               {visibleCategoryItems.map((instrument) => (
@@ -2540,9 +2777,12 @@ export function App(): JSX.Element {
                   onToggleWatch={toggleWatch}
                 />
               ))}
+              {visibleCategoryItems.length === 0 && (
+                <div className="watchlist__empty">추천 종목이 없습니다</div>
+              )}
             </div>
-          </div>
-        </aside>
+          </div>}
+        </aside>}
       </div>
     </div>
   );

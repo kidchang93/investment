@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
 import { pool } from './client.js';
 import type {
   CreateOrderRequest,
@@ -6,6 +7,7 @@ import type {
   OrderIntent,
   OrderStatus,
   Position,
+  TradingFill,
   TradingAccount,
   TradingOverview,
 } from '@invest/shared';
@@ -63,6 +65,18 @@ interface OrderIntentRow extends InstrumentRow {
   order_currency: string;
   status: OrderStatus;
   risk_summary: string[] | null;
+  created_at_ms: string;
+}
+
+interface TradingFillRow extends InstrumentRow {
+  fill_id: string;
+  order_id: string;
+  account_id: string;
+  side: TradingFill['side'];
+  quantity: string;
+  price: string;
+  notional: string;
+  fill_currency: string;
   created_at_ms: string;
 }
 
@@ -127,6 +141,34 @@ export async function ensureTradingSchema(): Promise<void> {
       payload jsonb NOT NULL DEFAULT '{}'::jsonb,
       created_at timestamptz NOT NULL DEFAULT now()
     );
+
+    CREATE TABLE IF NOT EXISTS trading_fills (
+      id text PRIMARY KEY,
+      order_intent_id text NOT NULL REFERENCES trading_order_intents(id) ON DELETE CASCADE,
+      account_id text NOT NULL REFERENCES trading_accounts(id) ON DELETE RESTRICT,
+      instrument_id text NOT NULL REFERENCES instruments(id) ON DELETE RESTRICT,
+      side text NOT NULL,
+      quantity numeric(24, 8) NOT NULL,
+      price numeric(20, 6) NOT NULL,
+      notional numeric(20, 4) NOT NULL,
+      currency text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS trading_cash_ledger (
+      id text PRIMARY KEY,
+      account_id text NOT NULL REFERENCES trading_accounts(id) ON DELETE CASCADE,
+      order_intent_id text REFERENCES trading_order_intents(id) ON DELETE SET NULL,
+      amount numeric(20, 4) NOT NULL,
+      balance_after numeric(20, 4) NOT NULL,
+      currency text NOT NULL,
+      reason text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS trading_fills_account_created_idx ON trading_fills (account_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS trading_cash_ledger_account_created_idx
+      ON trading_cash_ledger (account_id, created_at DESC);
   `);
 
   await pool.query(
@@ -142,12 +184,13 @@ export async function ensureTradingSchema(): Promise<void> {
 }
 
 export async function getTradingOverview(): Promise<TradingOverview> {
-  const [accounts, positions, recentOrders] = await Promise.all([
+  const [accounts, positions, recentOrders, recentFills] = await Promise.all([
     getTradingAccounts(),
     getPositions(),
     getRecentOrders(),
+    getRecentFills(),
   ]);
-  return { accounts, positions, recentOrders };
+  return { accounts, positions, recentOrders, recentFills };
 }
 
 export async function createOrderIntent(request: CreateOrderRequest): Promise<OrderIntent | null> {
@@ -166,47 +209,76 @@ export async function createOrderIntent(request: CreateOrderRequest): Promise<Or
   const estimatedNotional = roundMoney(quantity * (limitPrice ?? estimatedPrice));
   const id = `ord_${randomUUID()}`;
 
-  await pool.query(
-    `
-      INSERT INTO trading_order_intents (
-        id, account_id, instrument_id, side, order_type, time_in_force, quantity,
-        limit_price, estimated_price, estimated_notional, currency, status, risk_summary, user_acknowledged
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14)
-    `,
-    [
-      id,
-      account.id,
-      instrument.id,
-      request.side,
-      request.orderType,
-      request.timeInForce,
-      quantity,
-      limitPrice ?? null,
-      estimatedPrice,
-      estimatedNotional,
-      instrument.currency,
-      status,
-      JSON.stringify(riskMessages),
-      request.userAcknowledged,
-    ],
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  await pool.query(
-    `
-      INSERT INTO trading_order_events (id, order_intent_id, event_type, message, payload)
-      VALUES ($1, $2, $3, $4, $5::jsonb)
-    `,
-    [
-      `oev_${randomUUID()}`,
+    await client.query(
+      `
+        INSERT INTO trading_order_intents (
+          id, account_id, instrument_id, side, order_type, time_in_force, quantity,
+          limit_price, estimated_price, estimated_notional, currency, status, risk_summary, user_acknowledged
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14)
+      `,
+      [
+        id,
+        account.id,
+        instrument.id,
+        request.side,
+        request.orderType,
+        request.timeInForce,
+        quantity,
+        limitPrice ?? null,
+        estimatedPrice,
+        estimatedNotional,
+        instrument.currency,
+        status,
+        JSON.stringify(riskMessages),
+        request.userAcknowledged,
+      ],
+    );
+
+    await insertOrderEvent(
+      client,
       id,
       status,
       status === 'accepted' ? 'paper 주문 의도가 접수되었습니다.' : '리스크 검증으로 주문이 차단되었습니다.',
-      JSON.stringify({ riskMessages }),
-    ],
-  );
+      { riskMessages },
+    );
+
+    if (status === 'accepted' && request.orderType === 'market') {
+      await executePaperMarketFill(client, id, account, instrument, request.side, quantity, estimatedPrice);
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 
   return getOrderIntent(id);
+}
+
+export async function getFillByOrderId(orderId: string): Promise<TradingFill | null> {
+  const result = await pool.query<TradingFillRow>(
+    `
+      SELECT f.id AS fill_id, f.order_intent_id AS order_id, f.account_id, f.side, f.quantity,
+             f.price, f.notional, f.currency AS fill_currency,
+             (extract(epoch from f.created_at) * 1000)::bigint::text AS created_at_ms,
+             i.id, i.symbol, i.name, i.english_name, i.market, i.country, i.currency, i.asset_type,
+             i.provider, i.provider_symbol, i.exchange_code, i.timezone
+      FROM trading_fills f
+      JOIN instruments i ON i.id = f.instrument_id
+      WHERE f.order_intent_id = $1
+      ORDER BY f.created_at DESC
+      LIMIT 1
+    `,
+    [orderId],
+  );
+  return result.rows[0] ? rowToTradingFill(result.rows[0]) : null;
 }
 
 async function validateOrderRequest(
@@ -294,6 +366,24 @@ async function getRecentOrders(limit = 20): Promise<OrderIntent[]> {
   return result.rows.map(rowToOrderIntent);
 }
 
+async function getRecentFills(limit = 20): Promise<TradingFill[]> {
+  const result = await pool.query<TradingFillRow>(
+    `
+      SELECT f.id AS fill_id, f.order_intent_id AS order_id, f.account_id, f.side, f.quantity,
+             f.price, f.notional, f.currency AS fill_currency,
+             (extract(epoch from f.created_at) * 1000)::bigint::text AS created_at_ms,
+             i.id, i.symbol, i.name, i.english_name, i.market, i.country, i.currency, i.asset_type,
+             i.provider, i.provider_symbol, i.exchange_code, i.timezone
+      FROM trading_fills f
+      JOIN instruments i ON i.id = f.instrument_id
+      ORDER BY f.created_at DESC
+      LIMIT $1
+    `,
+    [limit],
+  );
+  return result.rows.map(rowToTradingFill);
+}
+
 async function getOrderIntent(id: string): Promise<OrderIntent | null> {
   const result = await pool.query<OrderIntentRow>(
     `
@@ -333,6 +423,150 @@ async function getPositionQuantity(accountId: string, instrumentId: string): Pro
   return Number(result.rows[0]?.quantity ?? 0);
 }
 
+async function executePaperMarketFill(
+  client: PoolClient,
+  orderId: string,
+  account: TradingAccount,
+  instrument: Instrument,
+  side: TradingFill['side'],
+  quantity: number,
+  price: number,
+): Promise<string> {
+  const notional = roundMoney(quantity * price);
+  const signedCashAmount = side === 'buy' ? -notional : notional;
+  const fillId = `fill_${randomUUID()}`;
+  const ledgerId = `cash_${randomUUID()}`;
+
+  const accountResult = await client.query<{ cash_balance: string }>(
+    `
+      UPDATE trading_accounts
+      SET
+        cash_balance = cash_balance + $2,
+        buying_power = buying_power + $2,
+        updated_at = now()
+      WHERE id = $1
+      RETURNING cash_balance
+    `,
+    [account.id, signedCashAmount],
+  );
+  const balanceAfter = Number(accountResult.rows[0]?.cash_balance ?? account.cashBalance + signedCashAmount);
+
+  await client.query(
+    `
+      INSERT INTO trading_fills (
+        id, order_intent_id, account_id, instrument_id, side, quantity, price, notional, currency
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `,
+    [fillId, orderId, account.id, instrument.id, side, quantity, price, notional, instrument.currency],
+  );
+
+  await client.query(
+    `
+      INSERT INTO trading_cash_ledger (
+        id, account_id, order_intent_id, amount, balance_after, currency, reason
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `,
+    [
+      ledgerId,
+      account.id,
+      orderId,
+      signedCashAmount,
+      balanceAfter,
+      instrument.currency,
+      side === 'buy' ? 'paper_buy' : 'paper_sell',
+    ],
+  );
+
+  if (side === 'buy') {
+    await upsertBuyPosition(client, account.id, instrument, quantity, price);
+  } else {
+    await applySellPosition(client, account.id, instrument.id, quantity);
+  }
+
+  await client.query(
+    `
+      UPDATE trading_order_intents
+      SET status = 'filled', updated_at = now()
+      WHERE id = $1
+    `,
+    [orderId],
+  );
+
+  await insertOrderEvent(client, orderId, 'filled', 'paper 시장가 주문이 즉시 체결되었습니다.', {
+    fillId,
+    quantity,
+    price,
+    notional,
+  });
+
+  return fillId;
+}
+
+async function upsertBuyPosition(
+  client: PoolClient,
+  accountId: string,
+  instrument: Instrument,
+  quantity: number,
+  price: number,
+): Promise<void> {
+  await client.query(
+    `
+      INSERT INTO trading_positions (id, account_id, instrument_id, quantity, average_price, currency)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (account_id, instrument_id)
+      DO UPDATE SET
+        average_price =
+          CASE
+            WHEN trading_positions.quantity + EXCLUDED.quantity = 0 THEN 0
+            ELSE (
+              (trading_positions.quantity * trading_positions.average_price)
+              + (EXCLUDED.quantity * EXCLUDED.average_price)
+            ) / (trading_positions.quantity + EXCLUDED.quantity)
+          END,
+        quantity = trading_positions.quantity + EXCLUDED.quantity,
+        updated_at = now()
+    `,
+    [`pos_${randomUUID()}`, accountId, instrument.id, quantity, price, instrument.currency],
+  );
+}
+
+async function applySellPosition(
+  client: PoolClient,
+  accountId: string,
+  instrumentId: string,
+  quantity: number,
+): Promise<void> {
+  await client.query(
+    `
+      UPDATE trading_positions
+      SET
+        quantity = quantity - $3,
+        average_price = CASE WHEN quantity - $3 = 0 THEN 0 ELSE average_price END,
+        updated_at = now()
+      WHERE account_id = $1 AND instrument_id = $2
+    `,
+    [accountId, instrumentId, quantity],
+  );
+}
+
+async function insertOrderEvent(
+  client: PoolClient,
+  orderId: string,
+  eventType: string,
+  message: string,
+  payload: unknown,
+): Promise<void> {
+  await client.query(
+    `
+      INSERT INTO trading_order_events (id, order_intent_id, event_type, message, payload)
+      VALUES ($1, $2, $3, $4, $5::jsonb)
+    `,
+    [`oev_${randomUUID()}`, orderId, eventType, message, JSON.stringify(payload)],
+  );
+}
+
 function rowToTradingAccount(row: TradingAccountRow): TradingAccount {
   return {
     id: row.id,
@@ -362,6 +596,21 @@ function rowToOrderIntent(row: OrderIntentRow): OrderIntent {
     currency: row.order_currency,
     status: row.status,
     riskMessages: Array.isArray(row.risk_summary) ? row.risk_summary : [],
+    createdAt: Number(row.created_at_ms),
+  };
+}
+
+function rowToTradingFill(row: TradingFillRow): TradingFill {
+  return {
+    id: row.fill_id,
+    orderId: row.order_id,
+    accountId: row.account_id,
+    instrument: rowToInstrument(row),
+    side: row.side,
+    quantity: Number(row.quantity),
+    price: Number(row.price),
+    notional: Number(row.notional),
+    currency: row.fill_currency,
     createdAt: Number(row.created_at_ms),
   };
 }
