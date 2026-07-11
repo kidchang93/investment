@@ -614,21 +614,40 @@ export function App(): JSX.Element {
               />
               {symbolResults.length > 0 && (
                 <div className="symbol-search__results">
-                  {symbolResults.map((instrument) => (
-                    <button
-                      key={instrument.id}
-                      onClick={() => {
-                        setSelectedInstrument(instrument);
-                        setSymbolQuery('');
-                        setSymbolResults([]);
-                      }}
-                      type="button"
-                    >
-                      <strong>{instrument.symbol}</strong>
-                      <span>{instrument.name}</span>
-                      <small>{marketLabel(instrument)}</small>
-                    </button>
-                  ))}
+                  {symbolResults.map((instrument) => {
+                    const resultSnapshot = toSnapshot(undefined, quotesByCode[instrument.id]);
+                    return (
+                      <div className="symbol-search__result" key={instrument.id}>
+                        <button
+                          className="symbol-search__select"
+                          onClick={() => {
+                            setSelectedInstrument(instrument);
+                            setSymbolQuery('');
+                            setSymbolResults([]);
+                          }}
+                          type="button"
+                        >
+                          <strong>{instrument.symbol}</strong>
+                          <span>{instrument.name}</span>
+                          <small>{marketLabel(instrument)}</small>
+                          <em style={{ color: signColor(resultSnapshot?.sign) }}>
+                            {resultSnapshot
+                              ? `${formatPrice(resultSnapshot.price)} · ${formatRate(resultSnapshot.changeRate)}`
+                              : '-'}
+                          </em>
+                        </button>
+                        <button
+                          aria-label={watchedIds.has(instrument.id) ? '관심종목에서 제거' : '관심종목에 추가'}
+                          className="symbol-search__watch"
+                          onClick={() => toggleWatch(instrument)}
+                          title={watchedIds.has(instrument.id) ? '관심종목에서 제거' : '관심종목에 추가'}
+                          type="button"
+                        >
+                          {watchedIds.has(instrument.id) ? '−' : '+'}
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
