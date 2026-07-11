@@ -229,24 +229,25 @@ button {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 48px;
-  padding: 8px 6px;
+  width: 32px;
+  padding: 6px 3px;
   border-right: 1px solid var(--border);
   background: #0b1018;
-  gap: 6px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
 .tool-rail__button {
-  width: 34px;
-  height: 34px;
+  width: 26px;
+  height: 26px;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: 4px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
+  line-height: 1;
 }
 
 .tool-rail__button:hover,
@@ -3826,10 +3827,16 @@ button {
   .tool-rail {
     flex-direction: row;
     width: auto;
-    height: 46px;
+    height: 36px;
+    padding: 4px 8px;
     border-right: 0;
     border-bottom: 1px solid var(--border);
     overflow-x: auto;
+  }
+
+  .tool-rail__button {
+    width: 28px;
+    height: 28px;
   }
 
   .chart-panel {
