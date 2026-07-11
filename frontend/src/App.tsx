@@ -62,8 +62,13 @@ type TerminalTab =
   | 'themes'
   | 'fees'
   | 'lounge'
+  | 'chat'
   | 'simulation';
 type NewsFilter = 'all' | 'macro' | 'stocks' | 'commodities' | 'crypto' | 'policy';
+type MacroFilter = 'all' | 'energy' | 'metals' | 'agriculture' | 'rates' | 'fx' | 'indices' | 'crypto';
+type CalendarRegionFilter = 'all' | 'domestic' | 'global';
+type CalendarImpactFilter = 'all' | '최고' | '높음' | '보통';
+type FeeMarket = 'kospi' | 'kosdaq' | 'konex' | 'us_stock' | 'kospi200_future' | 'kospi200_option';
 
 interface PriceSnapshot {
   price: number;
@@ -107,6 +112,7 @@ interface MacroBoardItem {
   key: string;
   label: string;
   detail: string;
+  filter: MacroFilter;
   instrumentId?: string;
   fallback?: string;
 }
@@ -117,6 +123,7 @@ interface EconomicEvent {
   region: string;
   title: string;
   impact: '최고' | '높음' | '보통';
+  scope: CalendarRegionFilter;
 }
 
 interface ThemeFlowItem {
@@ -132,6 +139,7 @@ interface FeeBroker {
   product: string;
   commissionRate: number;
   institutionRate: number;
+  supportsDerivatives: boolean;
 }
 
 interface ReportModel {
@@ -157,6 +165,14 @@ interface LoungePost {
   tag: string;
   replies: number;
   likes: number;
+}
+
+interface ChatMessage {
+  id: string;
+  author: string;
+  message: string;
+  time: string;
+  tone: 'normal' | 'alert' | 'macro';
 }
 
 const RANGE_OPTIONS: Array<{ key: RangeKey; label: string; days?: number }> = [
@@ -244,6 +260,7 @@ const TERMINAL_TAB_OPTIONS: Array<{ key: TerminalTab; label: string; title: stri
   { key: 'themes', label: '테마', title: '도미넌스와 테마 흐름' },
   { key: 'fees', label: '수수료', title: '증권사 비용 계산' },
   { key: 'lounge', label: '라운지', title: '트레이더 쓰레드 피드' },
+  { key: 'chat', label: '채팅', title: '실시간 채팅 미리보기' },
   { key: 'simulation', label: '시뮬', title: '테스트매매와 리더보드' },
 ];
 
@@ -254,6 +271,39 @@ const NEWS_FILTER_OPTIONS: Array<{ key: NewsFilter; label: string }> = [
   { key: 'commodities', label: '원자재' },
   { key: 'crypto', label: '코인' },
   { key: 'policy', label: '정책' },
+];
+
+const MACRO_FILTER_OPTIONS: Array<{ key: MacroFilter; label: string }> = [
+  { key: 'all', label: '전체' },
+  { key: 'energy', label: '에너지' },
+  { key: 'metals', label: '금속' },
+  { key: 'agriculture', label: '농산물' },
+  { key: 'rates', label: '금리' },
+  { key: 'fx', label: '환율' },
+  { key: 'indices', label: '지수' },
+  { key: 'crypto', label: '코인' },
+];
+
+const CALENDAR_REGION_OPTIONS: Array<{ key: CalendarRegionFilter; label: string }> = [
+  { key: 'all', label: '전체' },
+  { key: 'domestic', label: '국내' },
+  { key: 'global', label: '해외' },
+];
+
+const CALENDAR_IMPACT_OPTIONS: Array<{ key: CalendarImpactFilter; label: string }> = [
+  { key: 'all', label: '전체' },
+  { key: '최고', label: '최고' },
+  { key: '높음', label: '높음' },
+  { key: '보통', label: '보통' },
+];
+
+const FEE_MARKET_OPTIONS: Array<{ key: FeeMarket; label: string; taxRate: number; unit: string }> = [
+  { key: 'kospi', label: '코스피', taxRate: 0.002, unit: 'KRW' },
+  { key: 'kosdaq', label: '코스닥', taxRate: 0.002, unit: 'KRW' },
+  { key: 'konex', label: '코넥스', taxRate: 0.001, unit: 'KRW' },
+  { key: 'us_stock', label: '미국주식', taxRate: 0, unit: 'USD' },
+  { key: 'kospi200_future', label: 'KOSPI200 선물', taxRate: 0, unit: 'KRW' },
+  { key: 'kospi200_option', label: 'KOSPI200 옵션', taxRate: 0, unit: 'KRW' },
 ];
 
 const FALLBACK_TERMINAL_NEWS: TerminalNewsCard[] = [
@@ -295,50 +345,57 @@ const MACRO_BOARD_GROUPS: Array<{ label: string; items: MacroBoardItem[] }> = [
   {
     label: '핵심 지표',
     items: [
-      { key: 'night-samsung', label: '삼성전자 야간', detail: 'GDR 환산가', instrumentId: 'KR:NIGHT_PROXY:005930' },
-      { key: 'kospi-night', label: 'KOSPI200 야간', detail: 'KRX 야간선물', instrumentId: 'KR:KRX_NIGHT:A01609' },
-      { key: 'gold', label: '금', detail: 'COMEX 연속선물', instrumentId: 'GLOBAL:TV_COMMODITY:GOLD' },
-      { key: 'wti', label: 'WTI', detail: 'NYMEX 연속선물', instrumentId: 'GLOBAL:TV_COMMODITY:WTI' },
+      { key: 'night-samsung', label: '삼성전자 야간', detail: 'GDR 환산가', filter: 'indices', instrumentId: 'KR:NIGHT_PROXY:005930' },
+      { key: 'kospi-night', label: 'KOSPI200 야간', detail: 'KRX 야간선물', filter: 'indices', instrumentId: 'KR:KRX_NIGHT:A01609' },
+      { key: 'gold', label: '금', detail: 'COMEX 연속선물', filter: 'metals', instrumentId: 'GLOBAL:TV_COMMODITY:GOLD' },
+      { key: 'wti', label: 'WTI', detail: 'NYMEX 연속선물', filter: 'energy', instrumentId: 'GLOBAL:TV_COMMODITY:WTI' },
     ],
   },
   {
     label: '원자재',
     items: [
-      { key: 'silver', label: '은', detail: 'COMEX 연속선물', instrumentId: 'GLOBAL:TV_COMMODITY:SILVER' },
-      { key: 'natgas', label: '천연가스', detail: 'NYMEX 연속선물', instrumentId: 'GLOBAL:TV_COMMODITY:NATGAS' },
-      { key: 'brent', label: '브렌트유', detail: '권한 연동 대기', fallback: '-' },
-      { key: 'copper', label: '구리', detail: '권한 연동 대기', fallback: '-' },
+      { key: 'silver', label: '은', detail: 'COMEX 연속선물', filter: 'metals', instrumentId: 'GLOBAL:TV_COMMODITY:SILVER' },
+      { key: 'natgas', label: '천연가스', detail: 'NYMEX 연속선물', filter: 'energy', instrumentId: 'GLOBAL:TV_COMMODITY:NATGAS' },
+      { key: 'brent', label: '브렌트유', detail: '권한 연동 대기', filter: 'energy', fallback: '-' },
+      { key: 'copper', label: '구리', detail: '권한 연동 대기', filter: 'metals', fallback: '-' },
+      { key: 'corn', label: '옥수수', detail: '농산물 지표 예정', filter: 'agriculture', fallback: '-' },
+      { key: 'soybean', label: '대두', detail: '농산물 지표 예정', filter: 'agriculture', fallback: '-' },
     ],
   },
   {
     label: '환율·금리',
     items: [
-      { key: 'usdkrw', label: 'USD/KRW', detail: '환율 원본 연동 예정', fallback: '-' },
-      { key: 'dxy', label: '달러인덱스', detail: '글로벌 지표 예정', fallback: '-' },
-      { key: 'us10y', label: '미10년금리', detail: '금리 지표 예정', fallback: '-' },
-      { key: 'vix', label: 'VIX', detail: '변동성 지수 예정', fallback: '-' },
+      { key: 'usdkrw', label: 'USD/KRW', detail: '환율 원본 연동 예정', filter: 'fx', fallback: '-' },
+      { key: 'eurusd', label: 'EUR/USD', detail: '환율 지표 예정', filter: 'fx', fallback: '-' },
+      { key: 'dxy', label: '달러인덱스', detail: '글로벌 지표 예정', filter: 'fx', fallback: '-' },
+      { key: 'us10y', label: '미10년금리', detail: '금리 지표 예정', filter: 'rates', fallback: '-' },
+      { key: 'us2y', label: '미2년금리', detail: '금리 지표 예정', filter: 'rates', fallback: '-' },
+      { key: 'vix', label: 'VIX', detail: '변동성 지수 예정', filter: 'indices', fallback: '-' },
     ],
   },
   {
     label: '글로벌',
     items: [
-      { key: 'nasdaq-future', label: '나스닥100F', detail: '해외선물 탐색 연동', fallback: '-' },
-      { key: 'sp500', label: 'S&P500', detail: '지수 지표 예정', fallback: '-' },
-      { key: 'ewy', label: 'MSCI Korea', detail: '한국 ETF 지표 예정', fallback: '-' },
-      { key: 'btc', label: '비트코인', detail: '코인 지표 예정', fallback: '-' },
+      { key: 'nasdaq-future', label: '나스닥100F', detail: '해외선물 탐색 연동', filter: 'indices', fallback: '-' },
+      { key: 'sp500', label: 'S&P500', detail: '지수 지표 예정', filter: 'indices', fallback: '-' },
+      { key: 'ewy', label: 'MSCI Korea', detail: '한국 ETF 지표 예정', filter: 'indices', fallback: '-' },
+      { key: 'btc', label: '비트코인', detail: '코인 지표 예정', filter: 'crypto', fallback: '-' },
+      { key: 'eth', label: '이더리움', detail: '코인 지표 예정', filter: 'crypto', fallback: '-' },
     ],
   },
 ];
 
 const ECONOMIC_EVENTS: EconomicEvent[] = [
-  { date: '2026-07-13', time: '08:50', region: '일본', title: '생산자물가지수', impact: '보통' },
-  { date: '2026-07-14', time: '21:30', region: '미국', title: '소비자물가지수 CPI', impact: '최고' },
-  { date: '2026-07-15', time: '10:00', region: '한국', title: '수출입물가지수', impact: '보통' },
-  { date: '2026-07-15', time: '21:30', region: '미국', title: '생산자물가지수 PPI', impact: '높음' },
-  { date: '2026-07-16', time: '21:30', region: '미국', title: '소매판매', impact: '높음' },
-  { date: '2026-07-17', time: '23:00', region: '미국', title: '미시간대 소비심리', impact: '보통' },
-  { date: '2026-07-29', time: '03:00', region: '미국', title: 'FOMC 금리 결정', impact: '최고' },
-  { date: '2026-07-31', time: '21:30', region: '미국', title: 'PCE 물가지수', impact: '최고' },
+  { date: '2026-07-13', time: '08:50', region: '일본', title: '생산자물가지수', impact: '보통', scope: 'global' },
+  { date: '2026-07-14', time: '21:30', region: '미국', title: '소비자물가지수 CPI', impact: '최고', scope: 'global' },
+  { date: '2026-07-15', time: '10:00', region: '한국', title: '수출입물가지수', impact: '보통', scope: 'domestic' },
+  { date: '2026-07-15', time: '21:30', region: '미국', title: '생산자물가지수 PPI', impact: '높음', scope: 'global' },
+  { date: '2026-07-16', time: '10:00', region: '한국', title: '금융통화위원회 의사록', impact: '높음', scope: 'domestic' },
+  { date: '2026-07-16', time: '21:30', region: '미국', title: '소매판매', impact: '높음', scope: 'global' },
+  { date: '2026-07-17', time: '23:00', region: '미국', title: '미시간대 소비심리', impact: '보통', scope: 'global' },
+  { date: '2026-07-23', time: '08:00', region: '한국', title: '2분기 GDP 속보치', impact: '최고', scope: 'domestic' },
+  { date: '2026-07-29', time: '03:00', region: '미국', title: 'FOMC 금리 결정', impact: '최고', scope: 'global' },
+  { date: '2026-07-31', time: '21:30', region: '미국', title: 'PCE 물가지수', impact: '최고', scope: 'global' },
 ];
 
 const THEME_FLOW_ITEMS: ThemeFlowItem[] = [
@@ -402,15 +459,22 @@ const LOUNGE_POSTS: LoungePost[] = [
   },
 ];
 
+const CHAT_MESSAGES: ChatMessage[] = [
+  { id: 'chat-1', author: 'open-watch', message: '개장 전 환율이 먼저 튀면 야간 환산가 괴리를 같이 보세요.', time: '08:41', tone: 'macro' },
+  { id: 'chat-2', author: 'semi-bid', message: '삼전 GDR 프리미엄은 둔한데 KOSPI200 야간선물은 강합니다.', time: '08:43', tone: 'normal' },
+  { id: 'chat-3', author: 'risk-alert', message: 'CPI 발표 전후 뉴스 링크는 출처 확인 후 공유합니다.', time: '08:44', tone: 'alert' },
+  { id: 'chat-4', author: 'oil-desk', message: 'WTI 하락은 정유보다 항공/운송 쪽 반응도 같이 체크 중입니다.', time: '08:45', tone: 'normal' },
+];
+
 const FEE_BROKERS: FeeBroker[] = [
-  { name: '대신증권', product: '표준', commissionRate: 0.00008, institutionRate: 0.00003 },
-  { name: '미래에셋증권', product: '온라인', commissionRate: 0.00014, institutionRate: 0.00003 },
-  { name: '한국투자증권', product: '온라인', commissionRate: 0.00014, institutionRate: 0.00003 },
-  { name: 'NH투자증권', product: '나무', commissionRate: 0.00014, institutionRate: 0.00003 },
-  { name: '키움증권', product: '영웅문', commissionRate: 0.00015, institutionRate: 0.00003 },
-  { name: '삼성증권', product: 'mPOP', commissionRate: 0.00015, institutionRate: 0.00003 },
-  { name: 'KB증권', product: 'M-able', commissionRate: 0.00015, institutionRate: 0.00003 },
-  { name: '토스증권', product: '모바일', commissionRate: 0.00015, institutionRate: 0.00003 },
+  { name: '대신증권', product: '표준', commissionRate: 0.00008, institutionRate: 0.00003, supportsDerivatives: true },
+  { name: '미래에셋증권', product: '온라인', commissionRate: 0.00014, institutionRate: 0.00003, supportsDerivatives: true },
+  { name: '한국투자증권', product: '온라인', commissionRate: 0.00014, institutionRate: 0.00003, supportsDerivatives: true },
+  { name: 'NH투자증권', product: '나무', commissionRate: 0.00014, institutionRate: 0.00003, supportsDerivatives: true },
+  { name: '키움증권', product: '영웅문', commissionRate: 0.00015, institutionRate: 0.00003, supportsDerivatives: true },
+  { name: '삼성증권', product: 'mPOP', commissionRate: 0.00015, institutionRate: 0.00003, supportsDerivatives: true },
+  { name: 'KB증권', product: 'M-able', commissionRate: 0.00015, institutionRate: 0.00003, supportsDerivatives: true },
+  { name: '토스증권', product: '모바일', commissionRate: 0.00015, institutionRate: 0.00003, supportsDerivatives: false },
 ];
 
 const SIMULATION_LEADERS = [
@@ -1205,6 +1269,10 @@ export function App(): JSX.Element {
     readStoredValue('terminalTab', 'overview', TERMINAL_TAB_OPTIONS.map((option) => option.key)),
   );
   const [newsFilter, setNewsFilter] = useState<NewsFilter>('all');
+  const [macroFilter, setMacroFilter] = useState<MacroFilter>('all');
+  const [calendarRegionFilter, setCalendarRegionFilter] = useState<CalendarRegionFilter>('all');
+  const [calendarImpactFilter, setCalendarImpactFilter] = useState<CalendarImpactFilter>('all');
+  const [feeMarket, setFeeMarket] = useState<FeeMarket>('kospi');
   const [feeAmount, setFeeAmount] = useState('1000000');
   const [feeExpectedReturn, setFeeExpectedReturn] = useState('5');
   const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>(() =>
@@ -1773,19 +1841,30 @@ export function App(): JSX.Element {
     () =>
       MACRO_BOARD_GROUPS.map((group) => ({
         ...group,
-        items: group.items.map((item) => {
-          const instrument = item.instrumentId ? terminalInstrumentById.get(item.instrumentId) : undefined;
-          const itemSnapshot = instrument ? getSnapshotForInstrument(instrument) : undefined;
-          return { ...item, instrument, snapshot: itemSnapshot };
-        }),
-      })),
-    [quotesByCode, stream.trades, terminalInstrumentById],
+        items: group.items
+          .filter((item) => macroFilter === 'all' || item.filter === macroFilter)
+          .map((item) => {
+            const instrument = item.instrumentId ? terminalInstrumentById.get(item.instrumentId) : undefined;
+            const itemSnapshot = instrument ? getSnapshotForInstrument(instrument) : undefined;
+            return { ...item, instrument, snapshot: itemSnapshot };
+          }),
+      })).filter((group) => group.items.length > 0),
+    [macroFilter, quotesByCode, stream.trades, terminalInstrumentById],
   );
   const macroCoreItems = macroBoardGroups[0]?.items ?? [];
   const upcomingEvents = useMemo(
     () =>
-      ECONOMIC_EVENTS.filter((event) => new Date(`${event.date}T23:59:59+09:00`).getTime() >= nowMs).slice(0, 6),
-    [nowMs],
+      ECONOMIC_EVENTS.filter((event) => new Date(`${event.date}T23:59:59+09:00`).getTime() >= nowMs)
+        .filter((event) => calendarRegionFilter === 'all' || event.scope === calendarRegionFilter)
+        .filter((event) => calendarImpactFilter === 'all' || event.impact === calendarImpactFilter)
+        .slice(0, 6),
+    [calendarImpactFilter, calendarRegionFilter, nowMs],
+  );
+  const calendarEvents = useMemo(
+    () =>
+      ECONOMIC_EVENTS.filter((event) => calendarRegionFilter === 'all' || event.scope === calendarRegionFilter)
+        .filter((event) => calendarImpactFilter === 'all' || event.impact === calendarImpactFilter),
+    [calendarImpactFilter, calendarRegionFilter],
   );
   const themeBreadth = useMemo(() => {
     const up = THEME_FLOW_ITEMS.filter((item) => item.change > 0).length;
@@ -1816,20 +1895,22 @@ export function App(): JSX.Element {
   }, [snapshot?.accVolume, snapshot?.changeRate]);
   const feeAmountNumber = parseAmountInput(feeAmount, 1_000_000);
   const feeExpectedReturnNumber = Number(feeExpectedReturn);
+  const feeMarketOption = FEE_MARKET_OPTIONS.find((option) => option.key === feeMarket) ?? FEE_MARKET_OPTIONS[0];
   const feeRows = useMemo(() => {
     const returnRate = Number.isFinite(feeExpectedReturnNumber) ? feeExpectedReturnNumber / 100 : 0;
     const grossSellAmount = feeAmountNumber * (1 + returnRate);
-    const taxRate = 0.002;
-    return FEE_BROKERS.map((broker) => {
-      const buyCommission = feeAmountNumber * broker.commissionRate;
-      const sellCommission = grossSellAmount * broker.commissionRate;
+    const isDerivative = feeMarket === 'kospi200_future' || feeMarket === 'kospi200_option';
+    return FEE_BROKERS.filter((broker) => !isDerivative || broker.supportsDerivatives).map((broker) => {
+      const marketMultiplier = feeMarket === 'us_stock' ? 10 : feeMarket === 'kospi200_option' ? 1.4 : 1;
+      const buyCommission = feeAmountNumber * broker.commissionRate * marketMultiplier;
+      const sellCommission = grossSellAmount * broker.commissionRate * marketMultiplier;
       const institutionFee = (feeAmountNumber + grossSellAmount) * broker.institutionRate;
-      const transactionTax = grossSellAmount * taxRate;
+      const transactionTax = grossSellAmount * feeMarketOption.taxRate;
       const totalFee = buyCommission + sellCommission + institutionFee + transactionTax;
       const netPnl = grossSellAmount - feeAmountNumber - totalFee;
       return { broker, totalFee, netPnl };
     }).sort((a, b) => a.totalFee - b.totalFee);
-  }, [feeAmountNumber, feeExpectedReturnNumber]);
+  }, [feeAmountNumber, feeExpectedReturnNumber, feeMarket, feeMarketOption.taxRate]);
   const bestFeeRow = feeRows[0];
   const worstFeeRow = feeRows[feeRows.length - 1];
   const watchlistSummary = useMemo(
@@ -2305,22 +2386,6 @@ export function App(): JSX.Element {
       {error && <div className="app__error">{error}</div>}
 
       <div className={`app__body app__body--${activePage}`}>
-        {activePage === 'market' && <nav className="tool-rail" aria-label="차트 도구">
-          {TOOL_OPTIONS.map((tool) => (
-            <button
-              aria-label={tool.title}
-              aria-pressed={tool.key === activeTool}
-              className="tool-rail__button"
-              key={tool.key}
-              onClick={() => setActiveTool(tool.key)}
-              title={tool.title}
-              type="button"
-            >
-              {tool.label}
-            </button>
-          ))}
-        </nav>}
-
         <main className={`chart-panel chart-panel--${activePage}`}>
           {activePage !== 'portfolio' ? (
           <div className="chart-commandbar">
@@ -2466,6 +2531,20 @@ export function App(): JSX.Element {
               )}
             </div>
             {activePage === 'market' && <div className="chart-commandbar__actions">
+              <div className="chart-tool-strip" role="toolbar" aria-label="차트 도구">
+                {TOOL_OPTIONS.map((tool) => (
+                  <button
+                    aria-label={tool.title}
+                    aria-pressed={tool.key === activeTool}
+                    key={tool.key}
+                    onClick={() => setActiveTool(tool.key)}
+                    title={tool.title}
+                    type="button"
+                  >
+                    {tool.label}
+                  </button>
+                ))}
+              </div>
               <div className="layout-presets" role="tablist" aria-label="레이아웃 프리셋">
                 {LAYOUT_PRESET_OPTIONS.map((option) => (
                   <button
@@ -2763,6 +2842,12 @@ export function App(): JSX.Element {
                     </div>
                     <small>{filteredTerminalNews.length}건 · {selectedInstrument?.name ?? '시장 전체'}</small>
                   </div>
+                  <div className="terminal-news-tools">
+                    <button type="button">알림 대기</button>
+                    <button type="button">음성 읽기</button>
+                    <button type="button">공유 링크</button>
+                    <button onClick={() => setTerminalTab('chat')} type="button">채팅 보기</button>
+                  </div>
                   <div className="terminal-filterbar" role="tablist" aria-label="뉴스 필터">
                     {NEWS_FILTER_OPTIONS.map((option) => (
                       <button
@@ -2806,6 +2891,19 @@ export function App(): JSX.Element {
                       <strong>매크로 대시보드</strong>
                     </div>
                     <small>조회 가능 항목 우선 표시</small>
+                  </div>
+                  <div className="terminal-filterbar" role="tablist" aria-label="매크로 필터">
+                    {MACRO_FILTER_OPTIONS.map((option) => (
+                      <button
+                        aria-selected={macroFilter === option.key}
+                        key={option.key}
+                        onClick={() => setMacroFilter(option.key)}
+                        role="tab"
+                        type="button"
+                      >
+                        {option.label}
+                      </button>
+                    ))}
                   </div>
                   <div className="terminal-kpi-row">
                     {macroCoreItems.map((item) => (
@@ -2858,8 +2956,32 @@ export function App(): JSX.Element {
                     </div>
                     <small>다가오는 일정 {upcomingEvents.length}건</small>
                   </div>
+                  <div className="terminal-filterbar" role="tablist" aria-label="캘린더 필터">
+                    {CALENDAR_REGION_OPTIONS.map((option) => (
+                      <button
+                        aria-selected={calendarRegionFilter === option.key}
+                        key={option.key}
+                        onClick={() => setCalendarRegionFilter(option.key)}
+                        role="tab"
+                        type="button"
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                    {CALENDAR_IMPACT_OPTIONS.map((option) => (
+                      <button
+                        aria-selected={calendarImpactFilter === option.key}
+                        key={option.key}
+                        onClick={() => setCalendarImpactFilter(option.key)}
+                        role="tab"
+                        type="button"
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
                   <div className="terminal-calendar-grid">
-                    {ECONOMIC_EVENTS.map((event) => (
+                    {calendarEvents.map((event) => (
                       <article data-impact={event.impact} key={`${event.date}-${event.title}`}>
                         <span>{formatEventDay(event.date)} · {event.time}</span>
                         <strong>{event.title}</strong>
@@ -3036,7 +3158,20 @@ export function App(): JSX.Element {
                       <span>국내주식 왕복 거래 기준</span>
                       <strong>수수료 비교 계산기</strong>
                     </div>
-                    <small>거래세 0.20% 포함</small>
+                    <small>{feeMarketOption.label} · {feeMarketOption.unit}</small>
+                  </div>
+                  <div className="terminal-filterbar" role="tablist" aria-label="수수료 시장 선택">
+                    {FEE_MARKET_OPTIONS.map((option) => (
+                      <button
+                        aria-selected={feeMarket === option.key}
+                        key={option.key}
+                        onClick={() => setFeeMarket(option.key)}
+                        role="tab"
+                        type="button"
+                      >
+                        {option.label}
+                      </button>
+                    ))}
                   </div>
                   <div className="terminal-fee-controls">
                     <label>
@@ -3112,6 +3247,39 @@ export function App(): JSX.Element {
                         </article>
                       ))}
                     </div>
+                  </div>
+                </section>
+              )}
+
+              {terminalTab === 'chat' && (
+                <section className="terminal-page terminal-page--chat" aria-label="실시간 채팅">
+                  <div className="terminal-page__header">
+                    <div>
+                      <span>라이브 룸 · 읽기 전용</span>
+                      <strong>실시간 채팅</strong>
+                    </div>
+                    <small>인증·신고 도구 연동 전</small>
+                  </div>
+                  <div className="terminal-chat-layout">
+                    <section className="terminal-panel">
+                      <div className="terminal-panel__header">
+                        <strong>운영 상태</strong>
+                        <span>모더레이션 대기</span>
+                      </div>
+                      <p>채팅은 알림, 신고, 금칙어, 계정 제한이 모두 준비된 뒤 쓰기 기능을 엽니다. 현재는 라이브 룸 화면 구조와 읽기 피드만 제공합니다.</p>
+                    </section>
+                    <div className="terminal-chat-feed">
+                      {CHAT_MESSAGES.map((message) => (
+                        <article data-tone={message.tone} key={message.id}>
+                          <span>{message.time} · @{message.author}</span>
+                          <strong>{message.message}</strong>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="terminal-chat-composer">
+                    <input disabled placeholder="로그인과 운영 정책 연동 후 메시지를 보낼 수 있습니다" />
+                    <button disabled type="button">전송</button>
                   </div>
                 </section>
               )}
