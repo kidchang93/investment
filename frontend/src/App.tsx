@@ -549,6 +549,8 @@ export function App(): JSX.Element {
   const [symbolQuery, setSymbolQuery] = useState('');
   const [symbolResults, setSymbolResults] = useState<Instrument[]>([]);
   const [activeSymbolResultIndex, setActiveSymbolResultIndex] = useState(0);
+  const [isSymbolSearching, setIsSymbolSearching] = useState(false);
+  const [hasSymbolSearchCompleted, setHasSymbolSearchCompleted] = useState(false);
   const [range, setRange] = useState<RangeKey>(() =>
     readStoredValue('range', '3M', RANGE_OPTIONS.map((option) => option.key)),
   );
@@ -745,17 +747,34 @@ export function App(): JSX.Element {
     if (q.length < 2) {
       setSymbolResults([]);
       setActiveSymbolResultIndex(0);
+      setIsSymbolSearching(false);
+      setHasSymbolSearchCompleted(false);
       return;
     }
+    setIsSymbolSearching(true);
+    setHasSymbolSearchCompleted(false);
+    setSymbolResults([]);
+    setActiveSymbolResultIndex(0);
+    let disposed = false;
     const timer = window.setTimeout(() => {
       searchInstruments(q)
         .then((items) => {
+          if (disposed) return;
           setSymbolResults(items);
           setActiveSymbolResultIndex(0);
+          setHasSymbolSearchCompleted(true);
         })
-        .catch((e) => setError(String(e)));
+        .catch((e) => {
+          if (!disposed) setError(String(e));
+        })
+        .finally(() => {
+          if (!disposed) setIsSymbolSearching(false);
+        });
     }, 200);
-    return () => window.clearTimeout(timer);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
   }, [symbolQuery]);
 
   useEffect(() => {
@@ -1245,8 +1264,13 @@ export function App(): JSX.Element {
                 type="search"
                 value={symbolQuery}
               />
-              {symbolResults.length > 0 && (
+              {symbolQuery.trim().length >= 2 &&
+                (symbolResults.length > 0 || isSymbolSearching || hasSymbolSearchCompleted) && (
                 <div className="symbol-search__results">
+                  <div className="symbol-search__summary">
+                    <strong>{isSymbolSearching ? '검색중' : `${symbolResults.length}개 결과`}</strong>
+                    <span>{symbolQuery.trim()}</span>
+                  </div>
                   {symbolResults.map((instrument, index) => {
                     const resultSnapshot = toSnapshot(undefined, quotesByCode[instrument.id]);
                     return (
@@ -1290,6 +1314,9 @@ export function App(): JSX.Element {
                       </div>
                     );
                   })}
+                  {!isSymbolSearching && symbolResults.length === 0 && (
+                    <div className="symbol-search__empty">검색 결과 없음</div>
+                  )}
                   <div className="symbol-search__hint">↑↓ 이동 · Enter 선택 · Esc 닫기</div>
                 </div>
               )}

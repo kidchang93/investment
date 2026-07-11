@@ -320,6 +320,38 @@ button {
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.38);
 }
 
+.symbol-search__summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.symbol-search__summary strong,
+.symbol-search__summary span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.symbol-search__summary strong {
+  color: var(--focus);
+  font-weight: 700;
+}
+
+.symbol-search__empty {
+  min-height: 52px;
+  padding: 18px 10px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
 .symbol-search__result {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 32px;
