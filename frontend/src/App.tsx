@@ -1144,6 +1144,16 @@ export function App(): JSX.Element {
         : stream.recentTrades.slice(0, 16),
     [selectedInstrument, stream.recentTrades],
   );
+  const tapeSummary = useMemo(() => {
+    const summary = { up: 0, down: 0, flat: 0 };
+    for (const trade of tapeTrades) {
+      const tone = moveTone(trade.sign);
+      if (tone === 'up') summary.up += 1;
+      else if (tone === 'down') summary.down += 1;
+      else summary.flat += 1;
+    }
+    return summary;
+  }, [tapeTrades]);
   const instrumentNameByProviderSymbol = useMemo(() => {
     const names = new Map<string, string>();
     for (const instrument of [...watchlist, ...categoryItems]) {
@@ -1799,6 +1809,16 @@ export function App(): JSX.Element {
               <div className="trade-tape__header">
                 <strong>최근 체결</strong>
                 <span>{selectedInstrument?.country === 'KR' ? selectedName : '국내 구독 종목'}</span>
+                <div className="trade-tape__summary" aria-label="최근 체결 등락 요약">
+                  <em data-tone="up">상승 {tapeSummary.up}</em>
+                  <em data-tone="down">하락 {tapeSummary.down}</em>
+                  <em>보합 {tapeSummary.flat}</em>
+                </div>
+                {tapeTrades[0] && (
+                  <small style={{ color: signColor(tapeTrades[0].sign) }}>
+                    최신 {formatPrice(tapeTrades[0].price)} · {formatRate(tapeTrades[0].changeRate)}
+                  </small>
+                )}
               </div>
               <div className="trade-tape__rows">
                 {tapeTrades.map((trade, index) => {
