@@ -30,6 +30,7 @@ type MoveFilter = 'all' | 'up' | 'down';
 type WatchSortKey = 'custom' | 'rate' | 'volume' | 'name';
 type SessionTone = 'open' | 'pre' | 'closed';
 type WatchGroup = 'all' | 'kr' | 'global' | 'fund';
+type BottomDockTab = 'volume' | 'trades' | 'news';
 
 interface PriceSnapshot {
   price: number;
@@ -438,6 +439,7 @@ export function App(): JSX.Element {
   const [activeTool, setActiveTool] = useState<ChartTool>('crosshair');
   const [chartCommand, setChartCommand] = useState<ChartCommand | undefined>(undefined);
   const [showMovingAverage, setShowMovingAverage] = useState(false);
+  const [bottomDockTab, setBottomDockTab] = useState<BottomDockTab>('volume');
   const [error, setError] = useState<string | null>(null);
   const [quoteRefreshAt, setQuoteRefreshAt] = useState<number | null>(null);
   const [intradayCandlesByCode, setIntradayCandlesByCode] = useState<Record<string, Candle[]>>({});
@@ -654,6 +656,21 @@ export function App(): JSX.Element {
       ),
     [categoryItems, moveFilter, quotesByCode, stream.trades, watchSort],
   );
+  const tapeTrades = useMemo(
+    () =>
+      selectedInstrument?.country === 'KR'
+        ? stream.recentTrades.filter((trade) => trade.code === selectedInstrument.providerSymbol).slice(0, 16)
+        : stream.recentTrades.slice(0, 16),
+    [selectedInstrument, stream.recentTrades],
+  );
+  const instrumentNameByProviderSymbol = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const instrument of [...watchlist, ...categoryItems]) {
+      names.set(instrument.providerSymbol, instrument.name);
+    }
+    if (selectedInstrument) names.set(selectedInstrument.providerSymbol, selectedInstrument.name);
+    return names;
+  }, [categoryItems, selectedInstrument, watchlist]);
 
   function selectInstrument(instrument: Instrument): void {
     setSelectedInstrument(instrument);
@@ -928,10 +945,33 @@ export function App(): JSX.Element {
             )}
           </div>
 
+          {bottomDockTab === 'trades' && (
+            <section className="trade-tape" aria-label="최근 체결">
+              <div className="trade-tape__header">
+                <strong>최근 체결</strong>
+                <span>{selectedInstrument?.country === 'KR' ? selectedName : '국내 구독 종목'}</span>
+              </div>
+              <div className="trade-tape__rows">
+                {tapeTrades.map((trade, index) => (
+                  <div className="trade-tape__row" key={`${trade.code}-${trade.date}-${trade.time}-${index}`}>
+                    <span>{formatTradeTime(trade.time)}</span>
+                    <strong>{instrumentNameByProviderSymbol.get(trade.code) ?? trade.code}</strong>
+                    <em style={{ color: signColor(trade.sign) }}>{formatPrice(trade.price)}</em>
+                    <span>{formatSignedPrice(trade.change)}</span>
+                    <span>{formatVolume(trade.volume)}</span>
+                  </div>
+                ))}
+                {tapeTrades.length === 0 && (
+                  <div className="trade-tape__empty">체결 수신 대기</div>
+                )}
+              </div>
+            </section>
+          )}
+
           <div className="bottom-dock">
-            <button aria-selected="true" type="button">거래량</button>
-            <button aria-selected="false" type="button">체결</button>
-            <button aria-selected="false" type="button">뉴스</button>
+            <button aria-selected={bottomDockTab === 'volume'} onClick={() => setBottomDockTab('volume')} type="button">거래량</button>
+            <button aria-selected={bottomDockTab === 'trades'} onClick={() => setBottomDockTab('trades')} type="button">체결</button>
+            <button aria-selected={bottomDockTab === 'news'} onClick={() => setBottomDockTab('news')} type="button">뉴스</button>
             <span>조회 전용 세션 · 시세 갱신 {formatClock(quoteRefreshAt)}</span>
           </div>
         </main>

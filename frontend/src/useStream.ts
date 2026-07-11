@@ -3,6 +3,7 @@ import { STREAM_URL } from './config';
 import type { ServerMessage, Trade } from '@invest/shared';
 
 const RECONNECT_MS = 3_000;
+const MAX_RECENT_TRADES = 80;
 
 function assertNever(value: never): never {
   throw new Error(`처리하지 않은 스트림 메시지입니다: ${JSON.stringify(value)}`);
@@ -15,6 +16,8 @@ export interface StreamState {
   socketOpen: boolean;
   /** 종목코드 → 최신 체결. 렌더링은 코드 단위로 최신값만 필요하다. */
   trades: Record<string, Trade>;
+  /** 최근 체결 테이프. 하단 패널에서 최신순으로 보여준다. */
+  recentTrades: Trade[];
   /** 상태/에러 메시지 (있을 때) */
   message?: string;
 }
@@ -28,6 +31,7 @@ export function useStream(): StreamState {
     kisConnected: false,
     socketOpen: false,
     trades: {},
+    recentTrades: [],
   });
   // 재접속·언마운트 사이에서 소켓/타이머를 안전하게 정리하기 위한 ref
   const wsRef = useRef<WebSocket | null>(null);
@@ -56,7 +60,11 @@ export function useStream(): StreamState {
         switch (msg.type) {
           case 'trade': {
             const t = msg.data;
-            setState((s) => ({ ...s, trades: { ...s.trades, [t.code]: t } }));
+            setState((s) => ({
+              ...s,
+              trades: { ...s.trades, [t.code]: t },
+              recentTrades: [t, ...s.recentTrades].slice(0, MAX_RECENT_TRADES),
+            }));
             break;
           }
           case 'status':

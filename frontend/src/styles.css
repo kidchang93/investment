@@ -675,6 +675,75 @@ button {
   color: var(--muted);
 }
 
+.trade-tape {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  min-height: 138px;
+  max-height: 138px;
+  border-top: 1px solid var(--border);
+  background: #0b0f17;
+}
+
+.trade-tape__header {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  padding: 12px 14px;
+  border-right: 1px solid var(--border);
+}
+
+.trade-tape__header strong {
+  font-size: 13px;
+}
+
+.trade-tape__header span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.trade-tape__rows {
+  overflow-y: auto;
+}
+
+.trade-tape__row {
+  display: grid;
+  grid-template-columns: 76px minmax(120px, 1fr) 96px 92px 80px;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 0 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trade-tape__row strong,
+.trade-tape__row em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-style: normal;
+}
+
+.trade-tape__row em,
+.trade-tape__row span:nth-child(n + 4) {
+  justify-self: end;
+}
+
+.trade-tape__empty {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .bottom-dock {
   display: flex;
   align-items: center;
@@ -1033,6 +1102,21 @@ button {
   .chart-toolbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .trade-tape {
+    grid-template-columns: 1fr;
+    max-height: 180px;
+  }
+
+  .trade-tape__header {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .trade-tape__row {
+    grid-template-columns: 64px minmax(90px, 1fr) 78px 70px 64px;
+    gap: 7px;
   }
 
   .symbol-search {
