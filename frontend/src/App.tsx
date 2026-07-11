@@ -1802,6 +1802,10 @@ export function App(): JSX.Element {
               촘촘
             </button>
           </div>
+          <div className="watchlist__section-title">
+            <strong>현재 그룹</strong>
+            <span>{filteredWatchlist.length} / {watchlist.length}</span>
+          </div>
           <div className="watchlist__rows watchlist__rows--saved">
             {filteredWatchlist.map((instrument) => (
               <InstrumentRow
@@ -1822,7 +1826,7 @@ export function App(): JSX.Element {
           <div className="discover">
             <div className="discover__header">
               <strong>추천 리스트</strong>
-              <span>탐색 후 + 추가</span>
+              <span>{visibleCategoryItems.length}개 · 탐색 후 + 추가</span>
             </div>
             <div className="category-tabs">
               {categories.map((category) => (

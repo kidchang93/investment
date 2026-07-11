@@ -1670,6 +1670,24 @@ button {
   color: var(--focus);
 }
 
+.watchlist__section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.watchlist__section-title strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.watchlist__section-title span {
+  font-variant-numeric: tabular-nums;
+}
+
 .watchlist__rows {
   overflow-y: auto;
   min-height: 0;
