@@ -36,6 +36,13 @@ interface CrosshairReadout {
   color: string;
 }
 
+export type ChartCommandType = 'fit' | 'zoomIn' | 'zoomOut';
+
+export interface ChartCommand {
+  type: ChartCommandType;
+  nonce: number;
+}
+
 interface ChartProps {
   /** 초기 일봉 배열 (오름차순) */
   candles: Candle[];
@@ -47,6 +54,8 @@ interface ChartProps {
   updateLastCandle?: boolean;
   /** 분봉 차트는 시간까지 표시한다. */
   timeVisible?: boolean;
+  /** 부모 툴바에서 전달하는 차트 조작 명령 */
+  command?: ChartCommand;
 }
 
 function toCandlestickData(c: Candle): CandlestickData {
@@ -123,6 +132,18 @@ function formatChartTime(time: Time): string {
   return `${time.year}.${String(time.month).padStart(2, '0')}.${String(time.day).padStart(2, '0')}`;
 }
 
+function zoomVisibleRange(chart: IChartApi, factor: number): void {
+  const range = chart.timeScale().getVisibleLogicalRange();
+  if (!range) return;
+
+  const center = (range.from + range.to) / 2;
+  const width = Math.max(8, (range.to - range.from) * factor);
+  chart.timeScale().setVisibleLogicalRange({
+    from: center - width / 2,
+    to: center + width / 2,
+  });
+}
+
 /**
  * lightweight-charts 캔들 차트.
  * 일봉 배열로 초기 렌더 후, 실시간 체결이 오면 "오늘 캔들"을 업데이트한다.
@@ -134,6 +155,7 @@ export function Chart({
   latestPrice,
   updateLastCandle = true,
   timeVisible = false,
+  command,
 }: ChartProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -265,6 +287,17 @@ export function Chart({
       barSpacing: timeVisible ? 10 : 8,
     });
   }, [timeVisible]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !command) return;
+
+    if (command.type === 'fit') {
+      chart.timeScale().fitContent();
+      return;
+    }
+    zoomVisibleRange(chart, command.type === 'zoomIn' ? 0.72 : 1.35);
+  }, [command]);
 
   // 일봉 데이터 세팅 (종목 전환 시)
   useEffect(() => {

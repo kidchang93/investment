@@ -12,7 +12,7 @@ import {
   searchInstruments,
 } from './api';
 import { useStream } from './useStream';
-import { Chart } from './Chart';
+import { Chart, type ChartCommand, type ChartCommandType } from './Chart';
 import type {
   Candle,
   CandlesResponse,
@@ -420,6 +420,7 @@ export function App(): JSX.Element {
   const [moveFilter, setMoveFilter] = useState<MoveFilter>('all');
   const [watchSort, setWatchSort] = useState<WatchSortKey>('custom');
   const [activeTool, setActiveTool] = useState<ChartTool>('crosshair');
+  const [chartCommand, setChartCommand] = useState<ChartCommand | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [quoteRefreshAt, setQuoteRefreshAt] = useState<number | null>(null);
   const [intradayCandlesByCode, setIntradayCandlesByCode] = useState<Record<string, Candle[]>>({});
@@ -652,6 +653,10 @@ export function App(): JSX.Element {
       .catch((e) => setError(String(e)));
   }
 
+  function runChartCommand(type: ChartCommandType): void {
+    setChartCommand({ type, nonce: Date.now() });
+  }
+
   return (
     <div className="app">
       <header className="app__header">
@@ -749,10 +754,11 @@ export function App(): JSX.Element {
               )}
             </div>
             <div className="chart-commandbar__actions">
+              <button onClick={() => runChartCommand('fit')} title="전체 차트 맞춤" type="button">맞춤</button>
+              <button onClick={() => runChartCommand('zoomIn')} title="차트 확대" type="button">+</button>
+              <button onClick={() => runChartCommand('zoomOut')} title="차트 축소" type="button">−</button>
               <button type="button">지표</button>
               <button type="button">비교</button>
-              <button type="button">알림</button>
-              <button type="button">설정</button>
             </div>
           </div>
 
@@ -883,6 +889,7 @@ export function App(): JSX.Element {
                 liveTrade={timeframe === '1D' ? selectedTrade : undefined}
                 timeVisible={timeframe !== '1D'}
                 updateLastCandle={timeframe === '1D'}
+                command={chartCommand}
               />
             ) : (
               <div className="chart-panel__empty">
