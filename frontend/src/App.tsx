@@ -118,6 +118,7 @@ const TOOL_OPTIONS: Array<{ key: ChartTool; label: string; title: string }> = [
 
 const OVERSEAS_REFRESH_MS = 5_000;
 const LIST_QUOTE_REFRESH_MS = 15_000;
+const QUOTE_STALE_MS = LIST_QUOTE_REFRESH_MS * 2;
 const MAX_LIST_QUOTE_TARGETS = 30;
 const CATEGORY_QUOTE_TARGETS = 20;
 const SEARCH_QUOTE_TARGETS = 10;
@@ -579,6 +580,7 @@ export function App(): JSX.Element {
   );
   const [error, setError] = useState<string | null>(null);
   const [quoteRefreshAt, setQuoteRefreshAt] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [intradayCandlesByCode, setIntradayCandlesByCode] = useState<Record<string, Candle[]>>({});
   const stream = useStream();
   const selectedTrade =
@@ -601,6 +603,11 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('activeSavedWatchlistId', activeSavedWatchlistId), [activeSavedWatchlistId]);
   useEffect(() => writeStoredJson('recentInstruments', recentInstruments), [recentInstruments]);
   useEffect(() => setHoveredChartReadout(null), [range, selectedInstrument?.id, timeframe]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
@@ -863,6 +870,10 @@ export function App(): JSX.Element {
   const snapshot = toSnapshot(selectedTrade, selectedQuote);
   const selectedColor = signColor(snapshot?.sign);
   const activeToolOption = TOOL_OPTIONS.find((tool) => tool.key === activeTool) ?? TOOL_OPTIONS[1];
+  const quoteLagMs = quoteRefreshAt ? Math.max(0, nowMs - quoteRefreshAt) : null;
+  const quoteFreshnessTone = quoteLagMs === null ? 'waiting' : quoteLagMs > QUOTE_STALE_MS ? 'stale' : 'fresh';
+  const quoteFreshnessLabel =
+    quoteLagMs === null ? 'REST 대기' : `REST ${Math.floor(quoteLagMs / 1000)}초 전`;
   const activeChartReadout = hoveredChartReadout ?? (
     snapshot
       ? {
@@ -1092,6 +1103,7 @@ export function App(): JSX.Element {
         </div>
         <div className="app__status">
           <span className="mode-chip">실전</span>
+          <span className="freshness-chip" data-tone={quoteFreshnessTone}>{quoteFreshnessLabel}</span>
           <span
             className="status-dot"
             data-connected={stream.kisConnected}
@@ -1601,7 +1613,9 @@ export function App(): JSX.Element {
                 </button>
               ))}
             </div>
-            <span className="bottom-dock__status">조회 전용 세션 · 시세 갱신 {formatClock(quoteRefreshAt)}</span>
+            <span className="bottom-dock__status">
+              조회 전용 세션 · 시세 갱신 {formatClock(quoteRefreshAt)} · {quoteFreshnessLabel}
+            </span>
           </div>
         </main>
 
