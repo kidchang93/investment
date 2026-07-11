@@ -327,11 +327,16 @@ button {
 }
 
 .chart-commandbar__actions button:hover,
+.chart-commandbar__actions button[aria-pressed='true'],
 .bottom-dock button:hover,
 .bottom-dock button[aria-selected='true'] {
   background: var(--panel-2);
   border-color: var(--border-soft);
   color: var(--text);
+}
+
+.chart-commandbar__actions button[aria-pressed='true'] {
+  color: var(--focus);
 }
 
 .quote-header {

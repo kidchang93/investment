@@ -421,6 +421,7 @@ export function App(): JSX.Element {
   const [watchSort, setWatchSort] = useState<WatchSortKey>('custom');
   const [activeTool, setActiveTool] = useState<ChartTool>('crosshair');
   const [chartCommand, setChartCommand] = useState<ChartCommand | undefined>(undefined);
+  const [showMovingAverage, setShowMovingAverage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [quoteRefreshAt, setQuoteRefreshAt] = useState<number | null>(null);
   const [intradayCandlesByCode, setIntradayCandlesByCode] = useState<Record<string, Candle[]>>({});
@@ -757,7 +758,14 @@ export function App(): JSX.Element {
               <button onClick={() => runChartCommand('fit')} title="전체 차트 맞춤" type="button">맞춤</button>
               <button onClick={() => runChartCommand('zoomIn')} title="차트 확대" type="button">+</button>
               <button onClick={() => runChartCommand('zoomOut')} title="차트 축소" type="button">−</button>
-              <button type="button">지표</button>
+              <button
+                aria-pressed={showMovingAverage}
+                onClick={() => setShowMovingAverage((value) => !value)}
+                title="이동평균선 표시"
+                type="button"
+              >
+                MA
+              </button>
               <button type="button">비교</button>
             </div>
           </div>
@@ -890,6 +898,7 @@ export function App(): JSX.Element {
                 timeVisible={timeframe !== '1D'}
                 updateLastCandle={timeframe === '1D'}
                 command={chartCommand}
+                showMovingAverage={showMovingAverage}
               />
             ) : (
               <div className="chart-panel__empty">

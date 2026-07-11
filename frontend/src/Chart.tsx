@@ -8,6 +8,7 @@ import {
   type ISeriesApi,
   type CandlestickData,
   type HistogramData,
+  type LineData,
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts';
@@ -56,6 +57,8 @@ interface ChartProps {
   timeVisible?: boolean;
   /** 부모 툴바에서 전달하는 차트 조작 명령 */
   command?: ChartCommand;
+  /** 이동평균선 표시 여부 */
+  showMovingAverage?: boolean;
 }
 
 function toCandlestickData(c: Candle): CandlestickData {
@@ -78,6 +81,23 @@ function toVolumeData(c: Candle): HistogramData {
     value: c.volume ?? 0,
     color: volumeColor(c.close, c.open),
   };
+}
+
+function toMovingAverageData(candles: Candle[], period: number): LineData[] {
+  const data: LineData[] = [];
+  let sum = 0;
+
+  for (let i = 0; i < candles.length; i += 1) {
+    sum += candles[i].close;
+    if (i >= period) sum -= candles[i - period].close;
+    if (i < period - 1) continue;
+    data.push({
+      time: candles[i].time as UTCTimestamp,
+      value: sum / period,
+    });
+  }
+
+  return data;
 }
 
 function yyyymmddToTimestamp(date: string): UTCTimestamp | null {
@@ -156,11 +176,14 @@ export function Chart({
   updateLastCandle = true,
   timeVisible = false,
   command,
+  showMovingAverage = false,
 }: ChartProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const ma5Ref = useRef<ISeriesApi<'Line'> | null>(null);
+  const ma20Ref = useRef<ISeriesApi<'Line'> | null>(null);
   const priceLineRef = useRef<IPriceLine | null>(null);
   // 실시간 갱신 시 "오늘 캔들"의 time을 알아야 한다. 마지막 일봉 time을 기준으로 잡는다.
   const lastTimeRef = useRef<UTCTimestamp | null>(null);
@@ -226,6 +249,20 @@ export function Chart({
       priceFormat: { type: 'volume' },
       priceScaleId: '',
     });
+    const ma5 = chart.addLineSeries({
+      color: '#f5c451',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      title: 'MA5',
+    });
+    const ma20 = chart.addLineSeries({
+      color: '#22c55e',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      title: 'MA20',
+    });
     chart.priceScale('').applyOptions({
       scaleMargins: {
         top: 0.82,
@@ -236,6 +273,8 @@ export function Chart({
     chartRef.current = chart;
     seriesRef.current = series;
     volumeRef.current = volume;
+    ma5Ref.current = ma5;
+    ma20Ref.current = ma20;
 
     chart.subscribeCrosshairMove((param) => {
       if (!param.point || !param.time || param.point.x < 0 || param.point.y < 0) {
@@ -276,6 +315,8 @@ export function Chart({
       chartRef.current = null;
       seriesRef.current = null;
       volumeRef.current = null;
+      ma5Ref.current = null;
+      ma20Ref.current = null;
       priceLineRef.current = null;
     };
   }, []);
@@ -306,9 +347,11 @@ export function Chart({
     if (!series) return;
     series.setData(candles.map(toCandlestickData));
     volume?.setData(candles.map(toVolumeData));
+    ma5Ref.current?.setData(showMovingAverage ? toMovingAverageData(candles, 5) : []);
+    ma20Ref.current?.setData(showMovingAverage ? toMovingAverageData(candles, 20) : []);
     lastTimeRef.current = candles.length ? (candles[candles.length - 1].time as UTCTimestamp) : null;
     chartRef.current?.timeScale().fitContent();
-  }, [candles]);
+  }, [candles, showMovingAverage]);
 
   useEffect(() => {
     const series = seriesRef.current;
