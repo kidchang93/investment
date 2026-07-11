@@ -916,6 +916,15 @@ button {
   background: #0d121a;
   flex-shrink: 0;
   min-height: 0;
+  transition: width 0.18s ease, height 0.18s ease;
+}
+
+.watchlist.is-collapsed {
+  width: 48px;
+}
+
+.watchlist.is-collapsed > :not(.watchlist__header) {
+  display: none;
 }
 
 .watchlist__header {
@@ -927,13 +936,62 @@ button {
   border-bottom: 1px solid var(--border);
 }
 
+.watchlist.is-collapsed .watchlist__header {
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 12px 6px;
+  border-bottom: 0;
+}
+
 .watchlist__header strong {
   font-size: 14px;
+}
+
+.watchlist.is-collapsed .watchlist__header strong {
+  overflow: hidden;
+  max-height: 96px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
 }
 
 .watchlist__header span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.watchlist.is-collapsed .watchlist__header span {
+  padding: 2px 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: #090d14;
+  font-variant-numeric: tabular-nums;
+}
+
+.watchlist__collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: #090d14;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.watchlist__collapse:hover {
+  border-color: rgba(245, 196, 81, 0.65);
+  color: var(--text);
+}
+
+.watchlist.is-collapsed .watchlist__collapse {
+  order: -1;
 }
 
 .watchlist__saved-groups {
@@ -1299,6 +1357,10 @@ button {
   .watchlist {
     width: 280px;
   }
+
+  .watchlist.is-collapsed {
+    width: 48px;
+  }
 }
 
 @media (max-width: 820px) {
@@ -1386,5 +1448,24 @@ button {
     height: 280px;
     border-left: 0;
     border-top: 1px solid var(--border);
+  }
+
+  .watchlist.is-collapsed {
+    width: auto;
+    height: 48px;
+  }
+
+  .watchlist.is-collapsed .watchlist__header {
+    min-height: 48px;
+    flex: 0 0 48px;
+    flex-direction: row;
+    justify-content: center;
+    gap: 10px;
+    padding: 0 12px;
+  }
+
+  .watchlist.is-collapsed .watchlist__header strong {
+    max-height: none;
+    writing-mode: horizontal-tb;
   }
 }

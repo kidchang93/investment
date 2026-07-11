@@ -499,6 +499,9 @@ export function App(): JSX.Element {
   const [chartCommand, setChartCommand] = useState<ChartCommand | undefined>(undefined);
   const [showMovingAverage, setShowMovingAverage] = useState(() => readStoredBoolean('showMovingAverage', false));
   const [showRsi, setShowRsi] = useState(() => readStoredBoolean('showRsi', false));
+  const [isWatchlistCollapsed, setIsWatchlistCollapsed] = useState(() =>
+    readStoredBoolean('watchlistCollapsed', false),
+  );
   const [bottomDockTab, setBottomDockTab] = useState<BottomDockTab>(() =>
     readStoredValue('bottomDockTab', 'volume', ['volume', 'trades', 'news']),
   );
@@ -516,6 +519,7 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('watchSort', watchSort), [watchSort]);
   useEffect(() => writeStoredValue('showMovingAverage', showMovingAverage), [showMovingAverage]);
   useEffect(() => writeStoredValue('showRsi', showRsi), [showRsi]);
+  useEffect(() => writeStoredValue('watchlistCollapsed', isWatchlistCollapsed), [isWatchlistCollapsed]);
   useEffect(() => writeStoredValue('bottomDockTab', bottomDockTab), [bottomDockTab]);
   useEffect(() => writeStoredValue('activeSavedWatchlistId', activeSavedWatchlistId), [activeSavedWatchlistId]);
 
@@ -1176,10 +1180,19 @@ export function App(): JSX.Element {
           </div>
         </main>
 
-        <aside className="watchlist">
+        <aside className={`watchlist${isWatchlistCollapsed ? ' is-collapsed' : ''}`}>
           <div className="watchlist__header">
             <strong>관심종목</strong>
             <span>{watchlist.length}</span>
+            <button
+              aria-label={isWatchlistCollapsed ? '관심종목 펼치기' : '관심종목 접기'}
+              className="watchlist__collapse"
+              onClick={() => setIsWatchlistCollapsed((value) => !value)}
+              title={isWatchlistCollapsed ? '관심종목 펼치기' : '관심종목 접기'}
+              type="button"
+            >
+              {isWatchlistCollapsed ? '‹' : '›'}
+            </button>
           </div>
           <div className="watchlist__saved-groups" role="tablist" aria-label="저장 관심그룹">
             {savedWatchlists.map((group) => (
