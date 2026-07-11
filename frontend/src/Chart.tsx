@@ -1,20 +1,52 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   createChart,
   CrosshairMode,
+  LineStyle,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type CandlestickData,
   type HistogramData,
+  type Time,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import type { Candle, Trade } from '@invest/shared';
+import type { Candle, PriceSign, Trade } from '@invest/shared';
+
+interface LatestPrice {
+  price: number;
+  change: number;
+  changeRate: number;
+  sign: PriceSign;
+  open: number;
+  high: number;
+  low: number;
+  accVolume: number;
+}
+
+interface CrosshairReadout {
+  x: number;
+  y: number;
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  color: string;
+}
 
 interface ChartProps {
   /** 초기 일봉 배열 (오름차순) */
   candles: Candle[];
   /** 이 차트가 그리는 종목의 최신 실시간 체결 (없을 수 있음) */
   liveTrade?: Trade;
+  /** 현재가 라인과 가격 배지를 그릴 최신 가격 */
+  latestPrice?: LatestPrice;
+  /** 일봉 차트일 때 최신 가격으로 마지막 캔들을 갱신한다. */
+  updateLastCandle?: boolean;
+  /** 분봉 차트는 시간까지 표시한다. */
+  timeVisible?: boolean;
 }
 
 function toCandlestickData(c: Candle): CandlestickData {
@@ -47,18 +79,71 @@ function yyyymmddToTimestamp(date: string): UTCTimestamp | null {
   return Math.floor(Date.UTC(y, m - 1, d) / 1000) as UTCTimestamp;
 }
 
+function priceColor(sign?: PriceSign): string {
+  if (sign === '1' || sign === '2') return '#e5484d';
+  if (sign === '4' || sign === '5') return '#3b82f6';
+  return '#d1d5db';
+}
+
+function formatChartPrice(value: number): string {
+  if (!Number.isFinite(value)) return '-';
+  return new Intl.NumberFormat('ko-KR', {
+    maximumFractionDigits: value >= 1000 ? 0 : 2,
+  }).format(value);
+}
+
+function formatChartVolume(value: number): string {
+  if (!Number.isFinite(value)) return '-';
+  if (value >= 100_000_000) return `${(value / 100_000_000).toFixed(1)}억`;
+  if (value >= 10_000) return `${Math.floor(value / 10_000).toLocaleString('ko-KR')}만`;
+  return value.toLocaleString('ko-KR');
+}
+
+function formatChartTime(time: Time): string {
+  if (typeof time === 'number') {
+    const date = new Date(time * 1000);
+    if (time % 86_400 === 0) {
+      return new Intl.DateTimeFormat('ko-KR', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        timeZone: 'Asia/Seoul',
+      }).format(date);
+    }
+    return new Intl.DateTimeFormat('ko-KR', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Seoul',
+    }).format(date);
+  }
+  if (typeof time === 'string') return time;
+  return `${time.year}.${String(time.month).padStart(2, '0')}.${String(time.day).padStart(2, '0')}`;
+}
+
 /**
  * lightweight-charts 캔들 차트.
  * 일봉 배열로 초기 렌더 후, 실시간 체결이 오면 "오늘 캔들"을 업데이트한다.
  * 실시간 체결에는 당일 시/고/저/현재가가 모두 담겨 있어 그대로 갱신하면 된다.
  */
-export function Chart({ candles, liveTrade }: ChartProps): JSX.Element {
+export function Chart({
+  candles,
+  liveTrade,
+  latestPrice,
+  updateLastCandle = true,
+  timeVisible = false,
+}: ChartProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const priceLineRef = useRef<IPriceLine | null>(null);
   // 실시간 갱신 시 "오늘 캔들"의 time을 알아야 한다. 마지막 일봉 time을 기준으로 잡는다.
   const lastTimeRef = useRef<UTCTimestamp | null>(null);
+  const [crosshair, setCrosshair] = useState<CrosshairReadout | null>(null);
+  const [lastPriceY, setLastPriceY] = useState<number | null>(null);
 
   // 차트 생성 (마운트 시 1회) + 리사이즈 대응
   useEffect(() => {
@@ -90,7 +175,8 @@ export function Chart({ candles, liveTrade }: ChartProps): JSX.Element {
         borderColor: 'rgba(148, 163, 184, 0.12)',
         rightOffset: 8,
         barSpacing: 8,
-        timeVisible: false,
+        timeVisible,
+        secondsVisible: false,
       },
       handleScale: {
         axisDoubleClickReset: true,
@@ -129,13 +215,56 @@ export function Chart({ candles, liveTrade }: ChartProps): JSX.Element {
     seriesRef.current = series;
     volumeRef.current = volume;
 
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.point || !param.time || param.point.x < 0 || param.point.y < 0) {
+        setCrosshair(null);
+        return;
+      }
+      if (param.point.x > container.clientWidth || param.point.y > container.clientHeight) {
+        setCrosshair(null);
+        return;
+      }
+
+      const candle = param.seriesData.get(series) as CandlestickData | undefined;
+      if (!candle) {
+        setCrosshair(null);
+        return;
+      }
+
+      const volumeData = param.seriesData.get(volume) as HistogramData | undefined;
+      const tooltipWidth = 196;
+      const tooltipHeight = 156;
+      const x = Math.min(param.point.x + 16, Math.max(12, container.clientWidth - tooltipWidth - 12));
+      const y = Math.min(param.point.y + 16, Math.max(12, container.clientHeight - tooltipHeight - 12));
+      setCrosshair({
+        x,
+        y,
+        date: formatChartTime(param.time),
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: Number(volumeData?.value ?? 0),
+        color: candle.close >= candle.open ? '#e5484d' : '#3b82f6',
+      });
+    });
+
     return () => {
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
       volumeRef.current = null;
+      priceLineRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    chartRef.current?.timeScale().applyOptions({
+      timeVisible,
+      secondsVisible: false,
+      barSpacing: timeVisible ? 10 : 8,
+    });
+  }, [timeVisible]);
 
   // 일봉 데이터 세팅 (종목 전환 시)
   useEffect(() => {
@@ -148,28 +277,80 @@ export function Chart({ candles, liveTrade }: ChartProps): JSX.Element {
     chartRef.current?.timeScale().fitContent();
   }, [candles]);
 
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+
+    if (priceLineRef.current) {
+      series.removePriceLine(priceLineRef.current);
+      priceLineRef.current = null;
+    }
+
+    if (!latestPrice) {
+      setLastPriceY(null);
+      return;
+    }
+
+    const color = priceColor(latestPrice.sign);
+    priceLineRef.current = series.createPriceLine({
+      price: latestPrice.price,
+      color,
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: '현재가',
+    });
+    setLastPriceY(series.priceToCoordinate(latestPrice.price));
+  }, [latestPrice]);
+
   // 실시간 체결 반영: 마지막 캔들(오늘)의 OHLC 갱신
   useEffect(() => {
     const series = seriesRef.current;
     const volume = volumeRef.current;
-    const tradeTime = liveTrade ? yyyymmddToTimestamp(liveTrade.date) : null;
+    const latest = liveTrade ?? latestPrice;
+    const tradeTime = liveTrade ? yyyymmddToTimestamp(liveTrade.date) : lastTimeRef.current;
     const lastTime = lastTimeRef.current;
-    if (!series || !liveTrade || tradeTime === null) return;
+    if (!updateLastCandle || !series || !latest || tradeTime === null) return;
     if (lastTime !== null && tradeTime < lastTime) return;
     series.update({
       time: tradeTime,
-      open: liveTrade.open,
-      high: liveTrade.high,
-      low: liveTrade.low,
-      close: liveTrade.price,
+      open: latest.open,
+      high: latest.high,
+      low: latest.low,
+      close: latest.price,
     });
     volume?.update({
       time: tradeTime,
-      value: liveTrade.accVolume,
-      color: volumeColor(liveTrade.price, liveTrade.open),
+      value: latest.accVolume,
+      color: volumeColor(latest.price, latest.open),
     });
     lastTimeRef.current = tradeTime;
-  }, [liveTrade]);
+  }, [latestPrice, liveTrade, updateLastCandle]);
 
-  return <div ref={containerRef} className="chart" />;
+  return (
+    <div className="chart">
+      <div ref={containerRef} className="chart__canvas" />
+      {latestPrice && lastPriceY !== null && (
+        <div
+          className="chart__last-price"
+          style={{ top: lastPriceY, color: priceColor(latestPrice.sign), borderColor: priceColor(latestPrice.sign) }}
+        >
+          {formatChartPrice(latestPrice.price)}
+        </div>
+      )}
+      {crosshair && (
+        <div
+          className="chart__tooltip"
+          style={{ left: crosshair.x, top: crosshair.y }}
+        >
+          <strong>{crosshair.date}</strong>
+          <span>시가 <b>{formatChartPrice(crosshair.open)}</b></span>
+          <span>고가 <b>{formatChartPrice(crosshair.high)}</b></span>
+          <span>저가 <b>{formatChartPrice(crosshair.low)}</b></span>
+          <span style={{ color: crosshair.color }}>종가 <b>{formatChartPrice(crosshair.close)}</b></span>
+          <span>거래량 <b>{formatChartVolume(crosshair.volume)}</b></span>
+        </div>
+      )}
+    </div>
+  );
 }

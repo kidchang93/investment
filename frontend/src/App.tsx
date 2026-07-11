@@ -23,6 +23,7 @@ import type {
 } from '@invest/shared';
 
 type RangeKey = '1M' | '3M' | '6M' | '1Y' | 'ALL';
+type TimeframeKey = '1' | '5' | '15' | '1D';
 type ChartTool = 'cursor' | 'crosshair' | 'trend' | 'measure' | 'text' | 'lock';
 
 interface PriceSnapshot {
@@ -43,6 +44,13 @@ const RANGE_OPTIONS: Array<{ key: RangeKey; label: string; days?: number }> = [
   { key: '6M', label: '6개월', days: 186 },
   { key: '1Y', label: '1년', days: 366 },
   { key: 'ALL', label: '전체' },
+];
+
+const TIMEFRAME_OPTIONS: Array<{ key: TimeframeKey; label: string; minutes?: number }> = [
+  { key: '1', label: '1분', minutes: 1 },
+  { key: '5', label: '5분', minutes: 5 },
+  { key: '15', label: '15분', minutes: 15 },
+  { key: '1D', label: '일봉' },
 ];
 
 const TOOL_OPTIONS: Array<{ key: ChartTool; label: string; title: string }> = [
@@ -114,6 +122,64 @@ function filterCandles(candles: Candle[], range: RangeKey): Candle[] {
   const lastTime = candles[candles.length - 1].time;
   const cutoff = lastTime - option.days * 86_400;
   return candles.filter((candle) => candle.time >= cutoff);
+}
+
+function tradeToMinuteCandle(trade: Trade): Candle | null {
+  if (!/^\d{8}$/.test(trade.date) || !/^\d{6}$/.test(trade.time)) return null;
+  const y = Number(trade.date.slice(0, 4));
+  const m = Number(trade.date.slice(4, 6));
+  const d = Number(trade.date.slice(6, 8));
+  const hh = Number(trade.time.slice(0, 2));
+  const mm = Number(trade.time.slice(2, 4));
+  const bucket = Math.floor(Date.UTC(y, m - 1, d, hh - 9, mm, 0) / 1000);
+  return {
+    time: bucket,
+    open: trade.price,
+    high: trade.price,
+    low: trade.price,
+    close: trade.price,
+    volume: trade.volume,
+  };
+}
+
+function upsertMinuteCandle(candles: Candle[], trade: Trade): Candle[] {
+  const nextCandle = tradeToMinuteCandle(trade);
+  if (!nextCandle) return candles;
+  const last = candles[candles.length - 1];
+  if (!last || nextCandle.time > last.time) return [...candles, nextCandle].slice(-360);
+  if (nextCandle.time < last.time) return candles;
+  return [
+    ...candles.slice(0, -1),
+    {
+      time: last.time,
+      open: last.open,
+      high: Math.max(last.high, trade.price),
+      low: Math.min(last.low, trade.price),
+      close: trade.price,
+      volume: (last.volume ?? 0) + trade.volume,
+    },
+  ];
+}
+
+function aggregateCandles(candles: Candle[], minutes: number): Candle[] {
+  if (minutes <= 1) return candles;
+  const bucketSeconds = minutes * 60;
+  const aggregated: Candle[] = [];
+
+  for (const candle of candles) {
+    const bucketTime = Math.floor(candle.time / bucketSeconds) * bucketSeconds;
+    const last = aggregated[aggregated.length - 1];
+    if (!last || last.time !== bucketTime) {
+      aggregated.push({ ...candle, time: bucketTime });
+      continue;
+    }
+    last.high = Math.max(last.high, candle.high);
+    last.low = Math.min(last.low, candle.low);
+    last.close = candle.close;
+    last.volume = (last.volume ?? 0) + (candle.volume ?? 0);
+  }
+
+  return aggregated;
 }
 
 function marketLabel(instrument: Instrument): string {
@@ -188,10 +254,14 @@ export function App(): JSX.Element {
   const [symbolQuery, setSymbolQuery] = useState('');
   const [symbolResults, setSymbolResults] = useState<Instrument[]>([]);
   const [range, setRange] = useState<RangeKey>('3M');
+  const [timeframe, setTimeframe] = useState<TimeframeKey>('1D');
   const [activeTool, setActiveTool] = useState<ChartTool>('crosshair');
   const [error, setError] = useState<string | null>(null);
   const [quoteRefreshAt, setQuoteRefreshAt] = useState<number | null>(null);
+  const [intradayCandlesByCode, setIntradayCandlesByCode] = useState<Record<string, Candle[]>>({});
   const stream = useStream();
+  const selectedTrade =
+    selectedInstrument?.country === 'KR' ? stream.trades[selectedInstrument.providerSymbol] : undefined;
 
   // 관심종목 로드 → 첫 종목 자동 선택
   useEffect(() => {
@@ -260,6 +330,14 @@ export function App(): JSX.Element {
     return () => window.clearTimeout(timer);
   }, [symbolQuery]);
 
+  useEffect(() => {
+    if (!selectedInstrument || selectedInstrument.country !== 'KR' || !selectedTrade) return;
+    setIntradayCandlesByCode((items) => ({
+      ...items,
+      [selectedInstrument.id]: upsertMinuteCandle(items[selectedInstrument.id] ?? [], selectedTrade),
+    }));
+  }, [selectedInstrument, selectedTrade]);
+
   const quoteTargetIds = useMemo(() => {
     const ids = new Set<string>();
     const selectedOverseasId = selectedInstrument?.country !== 'KR' ? selectedInstrument?.id : undefined;
@@ -314,6 +392,18 @@ export function App(): JSX.Element {
     () => (selectedCandles ? filterCandles(selectedCandles.candles, range) : []),
     [range, selectedCandles],
   );
+  const selectedIntradayCandles = useMemo(
+    () => (selectedInstrument ? (intradayCandlesByCode[selectedInstrument.id] ?? []) : []),
+    [intradayCandlesByCode, selectedInstrument],
+  );
+  const activeTimeframe = TIMEFRAME_OPTIONS.find((option) => option.key === timeframe) ?? TIMEFRAME_OPTIONS[3];
+  const chartCandles = useMemo(
+    () =>
+      timeframe === '1D'
+        ? visibleCandles
+        : aggregateCandles(selectedIntradayCandles, activeTimeframe.minutes ?? 1),
+    [activeTimeframe.minutes, timeframe, selectedIntradayCandles, visibleCandles],
+  );
   const selectedName = selectedInstrument?.name ?? '';
   const filteredWatchlist = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -325,8 +415,6 @@ export function App(): JSX.Element {
         (item.englishName?.toLowerCase().includes(q) ?? false),
     );
   }, [query, watchlist]);
-  const selectedTrade =
-    selectedInstrument?.country === 'KR' ? stream.trades[selectedInstrument.providerSymbol] : undefined;
   const selectedQuote = selectedInstrument ? quotesByCode[selectedInstrument.id] : undefined;
   const snapshot = toSnapshot(selectedTrade, selectedQuote);
   const selectedColor = signColor(snapshot?.sign);
@@ -468,8 +556,22 @@ export function App(): JSX.Element {
           </section>
 
           <div className="chart-toolbar">
-            <div className="range-tabs" role="tablist" aria-label="차트 기간">
-              {RANGE_OPTIONS.map((item) => (
+            <div className="chart-toolbar__group">
+              <div className="timeframe-tabs" role="tablist" aria-label="봉 종류">
+                {TIMEFRAME_OPTIONS.map((item) => (
+                  <button
+                    aria-selected={item.key === timeframe}
+                    className="timeframe-tabs__button"
+                    key={item.key}
+                    onClick={() => setTimeframe(item.key)}
+                    role="tab"
+                    type="button"
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              {timeframe === '1D' && RANGE_OPTIONS.map((item) => (
                 <button
                   aria-selected={item.key === range}
                   className="range-tabs__button"
@@ -483,7 +585,11 @@ export function App(): JSX.Element {
               ))}
             </div>
             <span className="chart-toolbar__meta">
-              {visibleCandles.length ? `${visibleCandles.length}개 일봉` : '데이터 대기'}
+              {chartCandles.length
+                ? `${chartCandles.length}개 ${activeTimeframe.label}`
+                : timeframe === '1D'
+                  ? '데이터 대기'
+                  : '실시간 분봉 대기'}
             </span>
           </div>
 
@@ -496,14 +602,21 @@ export function App(): JSX.Element {
               <span>C {snapshot ? formatPrice(snapshot.price) : '-'}</span>
               <span>{TOOL_OPTIONS.find((tool) => tool.key === activeTool)?.title}</span>
             </div>
-            {selectedCandles ? (
+            {selectedInstrument && chartCandles.length > 0 ? (
               <Chart
-                candles={visibleCandles}
-                liveTrade={selectedTrade}
+                candles={chartCandles}
+                latestPrice={snapshot}
+                liveTrade={timeframe === '1D' ? selectedTrade : undefined}
+                timeVisible={timeframe !== '1D'}
+                updateLastCandle={timeframe === '1D'}
               />
             ) : (
               <div className="chart-panel__empty">
-                {selectedInstrument ? '차트 로딩 중' : '종목을 선택하세요'}
+                {selectedInstrument
+                  ? timeframe === '1D'
+                    ? '차트 로딩 중'
+                    : '실시간 분봉 대기'
+                  : '종목을 선택하세요'}
               </div>
             )}
           </div>

@@ -388,6 +388,13 @@ button {
   gap: 12px;
 }
 
+.chart-toolbar__group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+}
+
 .range-tabs {
   display: flex;
   align-items: center;
@@ -395,7 +402,16 @@ button {
   overflow-x: auto;
 }
 
-.range-tabs__button {
+.timeframe-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+  border-right: 1px solid var(--border);
+}
+
+.range-tabs__button,
+.timeframe-tabs__button {
   height: 28px;
   min-width: 52px;
   padding: 0 10px;
@@ -409,10 +425,16 @@ button {
 }
 
 .range-tabs__button:hover,
-.range-tabs__button[aria-selected='true'] {
+.range-tabs__button[aria-selected='true'],
+.timeframe-tabs__button:hover,
+.timeframe-tabs__button[aria-selected='true'] {
   color: var(--text);
   background: var(--panel-2);
   border-color: var(--border-soft);
+}
+
+.timeframe-tabs__button[aria-selected='true'] {
+  color: #f5c451;
 }
 
 .chart-toolbar__meta {
@@ -454,8 +476,63 @@ button {
 }
 
 .chart {
+  position: relative;
   flex: 1;
   min-height: 0;
+}
+
+.chart__canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.chart__last-price {
+  position: absolute;
+  right: 68px;
+  z-index: 3;
+  max-width: 108px;
+  transform: translateY(-50%);
+  padding: 3px 7px;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  background: rgba(11, 15, 23, 0.92);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.chart__tooltip {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  width: 196px;
+  gap: 5px;
+  padding: 9px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 6px;
+  background: rgba(9, 13, 20, 0.94);
+  color: var(--muted);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.32);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.chart__tooltip strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.chart__tooltip span {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chart__tooltip b {
+  color: inherit;
+  font-weight: 700;
 }
 
 .chart-panel__empty {
