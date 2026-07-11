@@ -662,7 +662,22 @@ button {
   justify-items: end;
   gap: 2px;
   min-width: 160px;
+  padding: 6px 8px;
+  border-radius: 6px;
   font-variant-numeric: tabular-nums;
+  transition: background-color 0.18s ease;
+}
+
+.quote-header__price.is-flashing[data-move='up'] {
+  background: rgba(229, 72, 77, 0.16);
+}
+
+.quote-header__price.is-flashing[data-move='down'] {
+  background: rgba(59, 130, 246, 0.16);
+}
+
+.quote-header__price.is-flashing[data-move='flat'] {
+  background: rgba(148, 163, 184, 0.12);
 }
 
 .quote-header__price strong {

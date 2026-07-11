@@ -583,6 +583,8 @@ export function App(): JSX.Element {
   const [isQuoteRefreshing, setIsQuoteRefreshing] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [intradayCandlesByCode, setIntradayCandlesByCode] = useState<Record<string, Candle[]>>({});
+  const selectedPriceRef = useRef<{ id?: string; price?: number }>({});
+  const [isSelectedPriceFlashing, setIsSelectedPriceFlashing] = useState(false);
   const stream = useStream();
   const selectedTrade =
     selectedInstrument?.country === 'KR' ? stream.trades[selectedInstrument.providerSymbol] : undefined;
@@ -881,6 +883,7 @@ export function App(): JSX.Element {
   const selectedQuote = selectedInstrument ? quotesByCode[selectedInstrument.id] : undefined;
   const snapshot = toSnapshot(selectedTrade, selectedQuote);
   const selectedColor = signColor(snapshot?.sign);
+  const selectedTone = moveTone(snapshot?.sign);
   const activeToolOption = TOOL_OPTIONS.find((tool) => tool.key === activeTool) ?? TOOL_OPTIONS[1];
   const quoteLagMs = quoteRefreshAt ? Math.max(0, nowMs - quoteRefreshAt) : null;
   const quoteFreshnessTone = quoteLagMs === null ? 'waiting' : quoteLagMs > QUOTE_STALE_MS ? 'stale' : 'fresh';
@@ -899,6 +902,30 @@ export function App(): JSX.Element {
         }
       : null
   );
+
+  useEffect(() => {
+    if (!selectedInstrument || !snapshot) {
+      selectedPriceRef.current = {};
+      setIsSelectedPriceFlashing(false);
+      return;
+    }
+
+    const previous = selectedPriceRef.current;
+    if (previous.id !== selectedInstrument.id) {
+      selectedPriceRef.current = { id: selectedInstrument.id, price: snapshot.price };
+      setIsSelectedPriceFlashing(false);
+      return;
+    }
+
+    if (previous.price !== undefined && previous.price !== snapshot.price) {
+      setIsSelectedPriceFlashing(true);
+      const timer = window.setTimeout(() => setIsSelectedPriceFlashing(false), 420);
+      selectedPriceRef.current = { id: selectedInstrument.id, price: snapshot.price };
+      return () => window.clearTimeout(timer);
+    }
+
+    selectedPriceRef.current = { id: selectedInstrument.id, price: snapshot.price };
+  }, [selectedInstrument?.id, snapshot?.price]);
   const marketSession = useMemo(() => getMarketSession(selectedInstrument), [quoteRefreshAt, selectedInstrument]);
   const previousClose = snapshot ? snapshot.price - snapshot.change : undefined;
   const dayRangePosition =
@@ -1370,7 +1397,11 @@ export function App(): JSX.Element {
               <h2>{selectedName || '종목을 선택하세요'}</h2>
               <span className="quote-header__time">{formatTradeTime(snapshot?.time)}</span>
             </div>
-            <div className="quote-header__price" style={{ color: selectedColor }}>
+            <div
+              className={`quote-header__price${isSelectedPriceFlashing ? ' is-flashing' : ''}`}
+              data-move={selectedTone}
+              style={{ color: selectedColor }}
+            >
               <strong>{snapshot ? formatPrice(snapshot.price) : '-'}</strong>
               {snapshot && (
                 <span>
