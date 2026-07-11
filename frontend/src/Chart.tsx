@@ -258,6 +258,14 @@ export function Chart({
   const rsiPoints = useMemo(() => calculateRsiPoints(candles), [candles]);
   const rsiPath = rsiPoints.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ');
   const latestRsi = rsiPoints.at(-1)?.value;
+  const rsiState =
+    latestRsi === undefined
+      ? undefined
+      : latestRsi >= 70
+        ? { tone: 'hot', label: '과매수' }
+        : latestRsi <= 30
+          ? { tone: 'cold', label: '과매도' }
+          : { tone: 'neutral', label: '중립' };
   latestPriceRef.current = latestPrice;
 
   const refreshLastPriceY = useCallback((): void => {
@@ -613,7 +621,10 @@ export function Chart({
         <div className="chart__rsi">
           <div className="chart__rsi-header">
             <strong>RSI 14</strong>
-            <span>{latestRsi?.toFixed(1)}</span>
+            <span>
+              {rsiState && <em data-tone={rsiState.tone}>{rsiState.label}</em>}
+              {latestRsi?.toFixed(1)}
+            </span>
           </div>
           <svg aria-hidden="true" preserveAspectRatio="none" viewBox="0 0 100 100">
             <line className="chart__rsi-band" x1="0" x2="100" y1="30" y2="30" />
