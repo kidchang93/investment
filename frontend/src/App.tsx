@@ -28,6 +28,7 @@ type TimeframeKey = '1' | '5' | '15' | '1D';
 type ChartTool = 'cursor' | 'crosshair' | 'trend' | 'measure' | 'text' | 'lock';
 type MoveFilter = 'all' | 'up' | 'down';
 type WatchSortKey = 'custom' | 'rate' | 'volume' | 'name';
+type SessionTone = 'open' | 'pre' | 'closed';
 
 interface PriceSnapshot {
   price: number;
@@ -39,6 +40,14 @@ interface PriceSnapshot {
   low: number;
   accVolume: number;
   time?: string;
+}
+
+interface MarketSession {
+  tone: SessionTone;
+  label: string;
+  detail: string;
+  hours: string;
+  localTime: string;
 }
 
 const RANGE_OPTIONS: Array<{ key: RangeKey; label: string; days?: number }> = [
@@ -130,6 +139,88 @@ function formatClock(ms: number | null): string {
     second: '2-digit',
     hour12: false,
   }).format(new Date(ms));
+}
+
+function formatNumber(n: number | undefined): string {
+  return n !== undefined && Number.isFinite(n) ? n.toLocaleString('ko-KR') : '-';
+}
+
+function assetTypeLabel(assetType: Instrument['assetType']): string {
+  switch (assetType) {
+    case 'stock':
+      return '주식';
+    case 'etf':
+      return 'ETF';
+    case 'etn':
+      return 'ETN';
+    case 'index':
+      return '지수';
+    case 'other':
+      return '기타';
+  }
+}
+
+function countryLabel(country: Instrument['country']): string {
+  switch (country) {
+    case 'KR':
+      return '한국';
+    case 'US':
+      return '미국';
+    case 'CN':
+      return '중국';
+    case 'JP':
+      return '일본';
+    case 'HK':
+      return '홍콩';
+    case 'VN':
+      return '베트남';
+  }
+}
+
+function getZonedParts(timeZone: string): { weekday: string; hour: number; minute: number; label: string } {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = Object.fromEntries(formatter.formatToParts(new Date()).map((part) => [part.type, part.value]));
+  return {
+    weekday: parts.weekday,
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+    label: `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`,
+  };
+}
+
+function getMarketSession(instrument: Instrument | null): MarketSession {
+  if (!instrument) {
+    return { tone: 'closed', label: '-', detail: '종목 미선택', hours: '-', localTime: '-' };
+  }
+
+  const sessions: Record<Instrument['country'], { open: number; close: number; hours: string; pre?: number }> = {
+    KR: { open: 9 * 60, close: 15 * 60 + 30, hours: '09:00-15:30' },
+    US: { pre: 4 * 60, open: 9 * 60 + 30, close: 16 * 60, hours: '09:30-16:00' },
+    CN: { open: 9 * 60 + 30, close: 15 * 60, hours: '09:30-15:00' },
+    JP: { open: 9 * 60, close: 15 * 60 + 30, hours: '09:00-15:30' },
+    HK: { open: 9 * 60 + 30, close: 16 * 60, hours: '09:30-16:00' },
+    VN: { open: 9 * 60, close: 15 * 60, hours: '09:00-15:00' },
+  };
+  const parts = getZonedParts(instrument.timezone);
+  const weekdayClosed = parts.weekday === 'Sat' || parts.weekday === 'Sun';
+  const now = parts.hour * 60 + parts.minute;
+  const session = sessions[instrument.country];
+  const localTime = `${parts.label} ${instrument.timezone}`;
+
+  if (weekdayClosed) return { tone: 'closed', label: '휴장', detail: '주말', hours: session.hours, localTime };
+  if (session.pre !== undefined && now >= session.pre && now < session.open) {
+    return { tone: 'pre', label: '프리마켓', detail: '정규장 전', hours: session.hours, localTime };
+  }
+  if (now >= session.open && now <= session.close) {
+    return { tone: 'open', label: '정규장', detail: '거래 중', hours: session.hours, localTime };
+  }
+  return { tone: 'closed', label: '장외', detail: now < session.open ? '개장 전' : '마감 후', hours: session.hours, localTime };
 }
 
 function toSnapshot(trade: Trade | undefined, quote: Quote | undefined): PriceSnapshot | undefined {
@@ -507,6 +598,12 @@ export function App(): JSX.Element {
   const selectedQuote = selectedInstrument ? quotesByCode[selectedInstrument.id] : undefined;
   const snapshot = toSnapshot(selectedTrade, selectedQuote);
   const selectedColor = signColor(snapshot?.sign);
+  const marketSession = useMemo(() => getMarketSession(selectedInstrument), [quoteRefreshAt, selectedInstrument]);
+  const previousClose = snapshot ? snapshot.price - snapshot.change : undefined;
+  const dayRangePosition =
+    snapshot && snapshot.high > snapshot.low
+      ? Math.min(100, Math.max(0, ((snapshot.price - snapshot.low) / (snapshot.high - snapshot.low)) * 100))
+      : 50;
   const watchedIds = useMemo(() => new Set(watchlist.map((item) => item.id)), [watchlist]);
   const getSnapshotForInstrument = (instrument: Instrument): PriceSnapshot | undefined =>
     toSnapshot(
@@ -690,6 +787,45 @@ export function App(): JSX.Element {
                 <span>거래량</span>
                 <strong>{snapshot ? formatVolume(snapshot.accVolume) : '-'}</strong>
               </div>
+            </div>
+          </section>
+
+          <section className="market-strip" aria-label="종목 상세 정보">
+            <div className="market-strip__status" data-tone={marketSession.tone}>
+              <span>장 상태</span>
+              <strong>{marketSession.label}</strong>
+              <small>{marketSession.detail}</small>
+            </div>
+            <div className="market-strip__item">
+              <span>거래소</span>
+              <strong>{selectedInstrument ? selectedInstrument.market : '-'}</strong>
+              <small>{selectedInstrument ? `${countryLabel(selectedInstrument.country)} · ${selectedInstrument.currency}` : '-'}</small>
+            </div>
+            <div className="market-strip__item">
+              <span>종류</span>
+              <strong>{selectedInstrument ? assetTypeLabel(selectedInstrument.assetType) : '-'}</strong>
+              <small>{selectedInstrument?.providerSymbol ?? '-'}</small>
+            </div>
+            <div className="market-strip__item">
+              <span>전일종가</span>
+              <strong>{formatNumber(previousClose)}</strong>
+              <small>정규장 {marketSession.hours}</small>
+            </div>
+            <div className="market-strip__range">
+              <div>
+                <span>당일 범위</span>
+                <strong>
+                  {snapshot ? `${formatPrice(snapshot.low)} - ${formatPrice(snapshot.high)}` : '-'}
+                </strong>
+              </div>
+              <div className="market-strip__range-track">
+                <span style={{ left: `${dayRangePosition}%` }} />
+              </div>
+            </div>
+            <div className="market-strip__item">
+              <span>현지시간</span>
+              <strong>{marketSession.localTime}</strong>
+              <small>{quoteRefreshAt ? `갱신 ${formatClock(quoteRefreshAt)}` : '갱신 대기'}</small>
             </div>
           </section>
 
