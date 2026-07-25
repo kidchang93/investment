@@ -4772,10 +4772,27 @@ button {
     gap: 10px;
   }
 
-  .app__nav,
-  .app__status {
+  .app__nav {
     width: 100%;
     overflow-x: auto;
+  }
+
+  /*
+   * 좁은 폭에서 헤더가 화면의 20%를 넘게 먹는다.
+   * 이 문구는 앱 설명일 뿐이라 제목·탭만 남기고 접는다.
+   */
+  .app__eyebrow {
+    display: none;
+  }
+
+  /*
+   * 상태 줄을 가로 스크롤로 두면 "실시간 시세 연결됨"이 화면 밖으로 밀린다.
+   * 연결 여부를 보려고 상태 바를 굴리는 사람은 없다. 줄바꿈해서 항상 보이게 한다.
+   */
+  .app__status {
+    width: 100%;
+    flex-wrap: wrap;
+    row-gap: 6px;
   }
 
   .app__body {
