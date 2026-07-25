@@ -2723,6 +2723,83 @@ button {
   grid-template-columns: minmax(84px, 0.9fr) minmax(96px, 1.2fr) minmax(88px, 1fr) repeat(2, minmax(72px, 0.8fr)) minmax(150px, 1.1fr);
 }
 
+/* ── 실주문 리스크 룰 편집 ───────────────────────────────── */
+.risk-rules {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.risk-rules label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.risk-rules__wide {
+  grid-column: span 2;
+}
+
+.risk-rules label span {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.risk-rules input[type='number'],
+.risk-rules input[type='text'] {
+  height: 29px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  outline: none;
+  background: #090d14;
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* `.risk-rules label`(클래스+타입)이 더 명시적이라 클래스 하나로는 grid를 못 이긴다. */
+.risk-rules label.risk-rules__toggle {
+  display: flex;
+  align-items: center;
+  align-self: end;
+  gap: 6px;
+  min-height: 29px;
+}
+
+.risk-rules__toggle input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--focus);
+}
+
+.risk-rules label.risk-rules__toggle span {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.risk-rules__footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+  padding: 0 12px 10px;
+}
+
+.risk-rules__footer em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.risk-rules__footer strong {
+  color: var(--focus);
+  font-size: 11px;
+}
+
 .portfolio-table--notices .portfolio-table__head,
 .portfolio-table--notices .portfolio-table__row {
   grid-template-columns: minmax(70px, 0.8fr) minmax(96px, 1.2fr) minmax(56px, 0.6fr) minmax(110px, 1.1fr) minmax(84px, 0.9fr) minmax(56px, 0.6fr);

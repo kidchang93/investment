@@ -10,6 +10,7 @@ import type {
   LiveOrderGate,
   PlaceLiveOrderRequest,
   PlaceLiveOrderResult,
+  RiskRuleSet,
   BrokerExecutionSnapshot,
   BrokerOrderability,
   CandlesResponse,
@@ -122,6 +123,27 @@ export async function fetchKisOrderLog(accountId?: string): Promise<BrokerOrderR
   const res = await fetch(`${API_BASE}/api/broker/kis/order-log${accountQuery(accountId)}`);
   if (!res.ok) throw new Error(`실주문 기록 조회 실패: ${res.status}`);
   return res.json();
+}
+
+export async function fetchKisRiskRules(accountId?: string): Promise<RiskRuleSet> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/risk-rules${accountQuery(accountId)}`);
+  if (!res.ok) throw new Error(`리스크 룰 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+/** 부분 수정. 서버가 현재 값과 병합한 뒤 유효성을 다시 본다. */
+export async function updateKisRiskRules(
+  rules: Partial<RiskRuleSet>,
+  accountId?: string,
+): Promise<RiskRuleSet> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/risk-rules${accountQuery(accountId)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(rules),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(String((body as { message?: string }).message ?? `리스크 룰 저장 실패: ${res.status}`));
+  return body as RiskRuleSet;
 }
 
 export async function fetchKisLiveOrderGate(): Promise<LiveOrderGate> {

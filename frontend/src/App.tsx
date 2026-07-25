@@ -13,8 +13,10 @@ import {
   fetchKisOrderLog,
   fetchKisOrderability,
   fetchKisReservedOrders,
+  fetchKisRiskRules,
   fetchKisSellability,
   placeKisLiveOrder,
+  updateKisRiskRules,
   fetchCategoryInstruments,
   fetchInstrumentCandles,
   fetchInstrumentCategories,
@@ -44,6 +46,7 @@ import type {
   BrokerSellability,
   Candle,
   LiveOrderGate,
+  RiskRuleSet,
   CandlesResponse,
   ClientSubscribeInstrument,
   ExchangeRate,
@@ -1487,6 +1490,12 @@ export function App(): JSX.Element {
   const [isKisOpenOrdersRefreshing, setIsKisOpenOrdersRefreshing] = useState(false);
   const [kisReservedOrders, setKisReservedOrders] = useState<BrokerReservedOrder[]>([]);
   const [kisOrderLog, setKisOrderLog] = useState<BrokerOrderRecord[]>([]);
+  /** 서버에 저장된 리스크 룰과, 편집 중인 사본. 저장 성공 시에만 둘을 맞춘다. */
+  const [riskRules, setRiskRules] = useState<RiskRuleSet | null>(null);
+  const [riskDraft, setRiskDraft] = useState<RiskRuleSet | null>(null);
+  const [riskSymbolText, setRiskSymbolText] = useState({ allow: '', block: '' });
+  const [isRiskSaving, setIsRiskSaving] = useState(false);
+  const [riskMessage, setRiskMessage] = useState<string | null>(null);
   const [liveOrderGate, setLiveOrderGate] = useState<LiveOrderGate | null>(null);
   /** 실주문 확인 문구. 서버가 값 자체를 검증하므로 프런트도 같은 문구를 요구한다. */
   const [liveOrderPhrase, setLiveOrderPhrase] = useState('');
@@ -1782,6 +1791,26 @@ export function App(): JSX.Element {
     fetchKisReservedOrders(kisAccountId ?? undefined)
       .then(setKisReservedOrders)
       .catch(() => setKisReservedOrders([]));
+  }, [activePage, kisAccountId]);
+
+  // 리스크 룰은 서버 DB 조회라 KIS 호출이 없다. 포트폴리오에서 계좌별로 받는다.
+  useEffect(() => {
+    if (activePage !== 'portfolio') return;
+    let disposed = false;
+    fetchKisRiskRules(kisAccountId ?? undefined)
+      .then((rules) => {
+        if (disposed) return;
+        setRiskRules(rules);
+        setRiskDraft(rules);
+        setRiskSymbolText({ allow: rules.symbolAllowlist.join(', '), block: rules.symbolBlocklist.join(', ') });
+        setRiskMessage(null);
+      })
+      .catch(() => {
+        if (!disposed) setRiskRules(null);
+      });
+    return () => {
+      disposed = true;
+    };
   }, [activePage, kisAccountId]);
 
   const refreshKisOrderLog = useCallback((): void => {
@@ -2821,6 +2850,38 @@ export function App(): JSX.Element {
       setLiveOrderMessage(String(e instanceof Error ? e.message : e));
     } finally {
       setIsLiveOrderSubmitting(false);
+    }
+  }
+
+  /** 쉼표로 구분된 종목코드 입력을 배열로. 서버가 다시 정규화하므로 여기선 느슨하게 자른다. */
+  function parseSymbolText(text: string): string[] {
+    return text
+      .split(/[,\s]+/)
+      .map((item) => item.trim().toUpperCase())
+      .filter(Boolean);
+  }
+
+  async function saveRiskRules(): Promise<void> {
+    if (!riskDraft) return;
+    setIsRiskSaving(true);
+    setRiskMessage(null);
+    try {
+      const saved = await updateKisRiskRules(
+        {
+          ...riskDraft,
+          symbolAllowlist: parseSymbolText(riskSymbolText.allow),
+          symbolBlocklist: parseSymbolText(riskSymbolText.block),
+        },
+        kisAccountId ?? undefined,
+      );
+      setRiskRules(saved);
+      setRiskDraft(saved);
+      setRiskSymbolText({ allow: saved.symbolAllowlist.join(', '), block: saved.symbolBlocklist.join(', ') });
+      setRiskMessage('저장했습니다.');
+    } catch (e) {
+      setRiskMessage(String(e instanceof Error ? e.message : e));
+    } finally {
+      setIsRiskSaving(false);
     }
   }
 
@@ -4996,6 +5057,135 @@ export function App(): JSX.Element {
                   <div className="portfolio-table__empty">
                     {kisExecutionSnapshot?.message ?? 'KIS 체결내역을 조회하는 중입니다'}
                   </div>
+                )}
+              </section>
+
+              <section className="portfolio-card portfolio-card--wide" aria-label="실주문 리스크 룰">
+                <div className="portfolio-card__header">
+                  <div>
+                    <strong>실주문 리스크 룰</strong>
+                    <span>
+                      게이트를 통과해도 이 룰에 걸리면 주문이 나가지 않습니다
+                      {riskRules ? '' : ' · 불러오는 중'}
+                    </span>
+                  </div>
+                  <div className="portfolio-card__actions">
+                    <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
+                    <button
+                      className="portfolio-card__refresh"
+                      disabled={!riskDraft || isRiskSaving}
+                      onClick={() => void saveRiskRules()}
+                      type="button"
+                    >
+                      {isRiskSaving ? '저장 중' : '저장'}
+                    </button>
+                  </div>
+                </div>
+                {riskDraft && (
+                  <>
+                    <div className="risk-rules">
+                      <label className="risk-rules__toggle">
+                        <input
+                          checked={riskDraft.enabled}
+                          onChange={(event) => setRiskDraft({ ...riskDraft, enabled: event.target.checked })}
+                          type="checkbox"
+                        />
+                        <span>이 계좌 실주문 허용</span>
+                      </label>
+                      <label className="risk-rules__toggle">
+                        <input
+                          checked={riskDraft.allowMarketOrder}
+                          onChange={(event) => setRiskDraft({ ...riskDraft, allowMarketOrder: event.target.checked })}
+                          type="checkbox"
+                        />
+                        <span>시장가 주문 허용</span>
+                      </label>
+                      <label>
+                        <span>1회 수량 한도</span>
+                        <input
+                          min="1"
+                          onChange={(event) =>
+                            setRiskDraft({ ...riskDraft, maxOrderQuantity: Number(event.target.value) })
+                          }
+                          type="number"
+                          value={riskDraft.maxOrderQuantity}
+                        />
+                      </label>
+                      <label>
+                        <span>1회 금액 한도</span>
+                        <input
+                          min="1"
+                          onChange={(event) =>
+                            setRiskDraft({ ...riskDraft, maxOrderNotional: Number(event.target.value) })
+                          }
+                          type="number"
+                          value={riskDraft.maxOrderNotional}
+                        />
+                      </label>
+                      <label>
+                        <span>일일 건수 한도</span>
+                        <input
+                          min="1"
+                          onChange={(event) =>
+                            setRiskDraft({ ...riskDraft, dailyOrderCountLimit: Number(event.target.value) })
+                          }
+                          type="number"
+                          value={riskDraft.dailyOrderCountLimit}
+                        />
+                      </label>
+                      <label>
+                        <span>일일 금액 한도</span>
+                        <input
+                          min="1"
+                          onChange={(event) =>
+                            setRiskDraft({ ...riskDraft, dailyNotionalLimit: Number(event.target.value) })
+                          }
+                          type="number"
+                          value={riskDraft.dailyNotionalLimit}
+                        />
+                      </label>
+                      <label>
+                        <span>시작 시각</span>
+                        <input
+                          onChange={(event) => setRiskDraft({ ...riskDraft, sessionStart: event.target.value })}
+                          placeholder="09:00"
+                          type="text"
+                          value={riskDraft.sessionStart}
+                        />
+                      </label>
+                      <label>
+                        <span>종료 시각</span>
+                        <input
+                          onChange={(event) => setRiskDraft({ ...riskDraft, sessionEnd: event.target.value })}
+                          placeholder="15:30"
+                          type="text"
+                          value={riskDraft.sessionEnd}
+                        />
+                      </label>
+                      <label className="risk-rules__wide">
+                        <span>허용 종목 (비우면 전체 허용)</span>
+                        <input
+                          onChange={(event) => setRiskSymbolText({ ...riskSymbolText, allow: event.target.value })}
+                          placeholder="005930, 000660"
+                          type="text"
+                          value={riskSymbolText.allow}
+                        />
+                      </label>
+                      <label className="risk-rules__wide">
+                        <span>차단 종목</span>
+                        <input
+                          onChange={(event) => setRiskSymbolText({ ...riskSymbolText, block: event.target.value })}
+                          placeholder="005930"
+                          type="text"
+                          value={riskSymbolText.block}
+                        />
+                      </label>
+                    </div>
+                    <div className="risk-rules__footer">
+                      <em>주말·공휴일은 시간대와 무관하게 항상 차단됩니다.</em>
+                      {riskMessage && <strong>{riskMessage}</strong>}
+                    </div>
+                  </>
                 )}
               </section>
 
