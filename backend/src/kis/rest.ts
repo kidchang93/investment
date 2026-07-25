@@ -1131,6 +1131,93 @@ export async function getKisDomesticTradeProfit(
   };
 }
 
+/**
+ * 국내주식 예약주문 등록 (tr_id: CTSC0008U, 모의투자 미지원).
+ *
+ * **접수 가능 시간이 15:40 ~ 다음 영업일 07:30이다.** 장 마감 후에 다음 영업일 주문을
+ * 미리 걸어두는 기능이라, 현금주문과 달리 장이 닫혀 있어도 접수된다.
+ *
+ * 등록 응답은 `RSVN_ORD_SEQ`(예약주문순번) 하나뿐이다. 취소에 필요한
+ * `RSVN_ORD_ORGNO`는 등록·조회 어느 응답에도 없다(`cancelKisDomesticReservedOrder` 주석 참고).
+ */
+export async function placeKisDomesticReservedOrder(
+  account: KisAccountConfig,
+  params: {
+    symbol: string;
+    side: OrderSide;
+    quantity: number;
+    limitPrice: number;
+    /** 예약 종료일자 YYYYMMDD. 생략하면 익영업일 1회만 */
+    endDate?: string;
+  },
+): Promise<{ reservationSeq: string; message: string }> {
+  const body = await kisPost(
+    '/uapi/domestic-stock/v1/trading/order-resv',
+    'CTSC0008U',
+    {
+      CANO: account.cano,
+      ACNT_PRDT_CD: account.productCode,
+      PDNO: params.symbol,
+      ORD_QTY: String(Math.floor(params.quantity)),
+      ORD_UNPR: String(Math.floor(params.limitPrice)),
+      // 매도매수구분코드: 01 매도, 02 매수 (현금주문의 SLL_BUY_DVSN_CD와 같은 규약)
+      SLL_BUY_DVSN_CD: params.side === 'sell' ? '01' : '02',
+      ORD_DVSN_CD: '00', // 지정가
+      ORD_OBJT_CBLC_DVSN_CD: '10', // 현금
+      LOAN_DT: '',
+      RSVN_ORD_END_DT: params.endDate ?? '',
+      LDNG_DT: '',
+    },
+    toCredentials(account),
+  );
+
+  if (body.rt_cd !== '0') {
+    throw new Error(`KIS 예약주문 등록 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
+  }
+
+  const output = (body.output ?? {}) as Record<string, string>;
+  return {
+    reservationSeq: output.RSVN_ORD_SEQ ?? '',
+    message: String(body.msg1 ?? '예약주문이 등록되었습니다.').trim(),
+  };
+}
+
+/**
+ * 국내주식 예약주문 취소 (tr_id: CTSC0009U, 모의투자 미지원).
+ *
+ * ⚠ `RSVN_ORD_ORGNO`(예약주문조직번호)가 필수인데 **등록 응답에도, 예약주문 조회 응답에도 없다.**
+ * KIS 공식 예제조차 `"123"` / `"001"`처럼 서로 다른 임의값을 쓴다.
+ * 그래서 호출부가 값을 넘길 수 있게 열어두고, 없으면 빈 값으로 보낸다.
+ * **이 경로로 취소가 실패하면 KIS HTS/MTS 앱에서 직접 취소해야 한다.**
+ */
+export async function cancelKisDomesticReservedOrder(
+  account: KisAccountConfig,
+  params: { reservationSeq: string; reservationOrderDate: string; reservationOrgNo?: string },
+): Promise<{ processed: boolean; message: string }> {
+  const body = await kisPost(
+    '/uapi/domestic-stock/v1/trading/order-resv-rvsecncl',
+    'CTSC0009U',
+    {
+      CANO: account.cano,
+      ACNT_PRDT_CD: account.productCode,
+      RSVN_ORD_SEQ: params.reservationSeq,
+      RSVN_ORD_ORGNO: params.reservationOrgNo ?? '',
+      RSVN_ORD_ORD_DT: params.reservationOrderDate,
+    },
+    toCredentials(account),
+  );
+
+  if (body.rt_cd !== '0') {
+    throw new Error(`KIS 예약주문 취소 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
+  }
+
+  const output = (body.output ?? {}) as Record<string, string>;
+  return {
+    processed: output.nrml_prcs_yn === 'Y' || output.NRML_PRCS_YN === 'Y',
+    message: String(body.msg1 ?? '예약주문 취소가 접수되었습니다.').trim(),
+  };
+}
+
 /** 개장일 판정 캐시. 같은 날짜를 주문마다 다시 묻지 않는다. */
 const marketOpenCache = new Map<string, boolean>();
 

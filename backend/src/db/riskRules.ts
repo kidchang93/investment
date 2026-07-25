@@ -169,6 +169,12 @@ export interface RiskCheckInput {
   quantity: number;
   /** 지정가면 단가, 시장가면 현재가 추정치 */
   price: number;
+  /**
+   * 거래 시간대·개장일 검사를 건너뛴다.
+   * 예약주문은 장 마감 후(15:40~다음 영업일 07:30)에 넣는 게 정상이라
+   * 같은 잣대를 대면 정상 사용을 막는다. 금액·수량·종목 제한은 그대로 적용된다.
+   */
+  skipSessionCheck?: boolean;
 }
 
 /**
@@ -201,28 +207,30 @@ export async function checkRiskRules(input: RiskCheckInput): Promise<RiskVerdict
     violations.push(`${input.symbol}은 허용 종목 목록에 없습니다.`);
   }
 
-  const start = toMinutes(rules.sessionStart);
-  const end = toMinutes(rules.sessionEnd);
-  if (start === null || end === null) {
-    violations.push('거래 시간 설정이 올바르지 않습니다 (HH:MM).');
-  } else {
-    const now = kstNowMinutes();
-    if (now < start || now > end) {
-      violations.push(`허용 시간(${rules.sessionStart}~${rules.sessionEnd}, KST) 밖입니다.`);
+  if (!input.skipSessionCheck) {
+    const start = toMinutes(rules.sessionStart);
+    const end = toMinutes(rules.sessionEnd);
+    if (start === null || end === null) {
+      violations.push('거래 시간 설정이 올바르지 않습니다 (HH:MM).');
+    } else {
+      const now = kstNowMinutes();
+      if (now < start || now > end) {
+        violations.push(`허용 시간(${rules.sessionStart}~${rules.sessionEnd}, KST) 밖입니다.`);
+      }
     }
-  }
 
-  /*
-   * 시각만 보면 주말·공휴일 주문이 그대로 나간다. 실제로 토요일 13시 주문이 룰을 통과해
-   * KIS까지 갔다가 "장운영일자가 주문일과 상이합니다"로 거부된 적이 있다.
-   * 개장일 판정은 KIS에 묻되, 조회가 실패하면 보내지 않는 쪽으로 막는다.
-   */
-  try {
-    if (!(await isDomesticMarketOpenDay())) {
-      violations.push('오늘은 국내 증시 휴장일입니다.');
+    /*
+     * 시각만 보면 주말·공휴일 주문이 그대로 나간다. 실제로 토요일 13시 주문이 룰을 통과해
+     * KIS까지 갔다가 "장운영일자가 주문일과 상이합니다"로 거부된 적이 있다.
+     * 개장일 판정은 KIS에 묻되, 조회가 실패하면 보내지 않는 쪽으로 막는다.
+     */
+    try {
+      if (!(await isDomesticMarketOpenDay())) {
+        violations.push('오늘은 국내 증시 휴장일입니다.');
+      }
+    } catch {
+      violations.push('개장일을 확인할 수 없어 주문을 보류합니다.');
     }
-  } catch {
-    violations.push('개장일을 확인할 수 없어 주문을 보류합니다.');
   }
 
   const usage = await getTodayUsage(input.accountId);

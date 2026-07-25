@@ -52,8 +52,9 @@ KIS가 주문/계좌 TR_ID를 개편했다. 구 ID도 아직 응답하지만 **�
 |------|------|------|------|------|
 | 현금 매수·매도 | `trading/order-cash` | 매수 `TTTC0012U`/`VTTC0012U`, 매도 `TTTC0011U`/`VTTC0011U` | `POST /api/broker/kis/orders` | 🟡 |
 | 주문 정정·취소 | `trading/order-rvsecncl` | `TTTC0013U` / `VTTC0013U` | `POST /api/broker/kis/orders/amend` | 🟡 |
-| 예약주문 등록 | `trading/order-resv` | `CTSC0008U` / 모의 없음 | ⛔ | ⛔ |
-| 예약주문 정정·취소 | `trading/order-resv-rvsecncl` | 취소 `CTSC0009U`, 정정 `CTSC0013U` | ⛔ | ⛔ |
+| 예약주문 등록 | `trading/order-resv` | `CTSC0008U` / 모의 없음 | `POST /api/broker/kis/reserved-orders` | 🟡 |
+| 예약주문 취소 | `trading/order-resv-rvsecncl` | `CTSC0009U` / 모의 없음 | `POST /api/broker/kis/reserved-orders/cancel` | 🟡 |
+| 예약주문 정정 | `trading/order-resv-rvsecncl` | `CTSC0013U` | ⛔ | ⛔ |
 | 신용 주문 | `trading/order-credit` | — | ⛔ | ⛔ |
 
 ### 주문 전송 시 실수하기 쉬운 지점
@@ -147,6 +148,39 @@ curl -X POST http://localhost:4000/api/broker/kis/orders/amend \
 
 > 확인 후 반드시 취소하고 `KIS_LIVE_ORDER_ENABLED` 없이 서버를 다시 띄운다.
 > 하한가 근처라도 시장이 급락하면 체결될 수 있다. 감당 가능한 금액으로만 한다.
+
+### 1-1. 장 마감 후에 유일하게 테스트할 수 있는 경로 — 예약주문
+
+**예약주문 접수 가능 시간은 15:40 ~ 다음 영업일 07:30이다.** 현금주문과 달리 장이 닫혀
+있어도 접수되므로, 주말·야간에 주문 전송 경로를 확인할 수 있는 유일한 수단이다.
+
+리스크 룰은 **시간대·개장일 검사만 건너뛰고** 금액·수량·종목 제한은 그대로 적용한다.
+장 마감 후에 넣는 게 정상인 기능에 장중 잣대를 대면 정상 사용을 막기 때문이다.
+
+```bash
+KIS_LIVE_ORDER_ENABLED=true npm run dev:api
+
+# 등록 → 응답의 reservationSeq를 보관한다
+curl -X POST http://localhost:4000/api/broker/kis/reserved-orders \
+  -H 'content-type: application/json' \
+  -d '{"accountId":"21","instrumentId":"KR:KOSPI:005930","side":"buy",
+       "quantity":1,"limitPrice":<지정가>,"confirmationPhrase":"실주문 전송"}'
+
+# 목록 확인
+curl "http://localhost:4000/api/broker/kis/reserved-orders?accountId=21"
+
+# 취소 (주문일자는 등록한 날짜 YYYYMMDD)
+curl -X POST http://localhost:4000/api/broker/kis/reserved-orders/cancel \
+  -H 'content-type: application/json' \
+  -d '{"accountId":"21","reservationSeq":"<SEQ>","reservationOrderDate":"<YYYYMMDD>",
+       "confirmationPhrase":"실주문 전송"}'
+```
+
+> ⚠ **예약주문은 취소하지 않으면 다음 개장일에 실제로 주문이 나간다.** 반드시 취소한다.
+>
+> ⚠ 취소에 필요한 `RSVN_ORD_ORGNO`(예약주문조직번호)가 **등록 응답에도 조회 응답에도 없다.**
+> KIS 공식 예제조차 `"123"` / `"001"`처럼 임의값을 쓴다. 우리는 빈 값으로 보낸다.
+> **이 경로로 취소가 실패하면 KIS HTS/MTS 앱에서 직접 취소해야 한다.**
 
 ### 2. 일부 API는 모의투자(vts)를 지원하지 않는다
 

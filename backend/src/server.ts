@@ -38,6 +38,8 @@ import {
   getKisDomesticReservedOrders,
   getKisDomesticSellability,
   getKisDomesticTradeProfit,
+  placeKisDomesticReservedOrder,
+  cancelKisDomesticReservedOrder,
   placeKisDomesticOrder,
   getQuote,
   getUsdKrwExchangeRate,
@@ -53,6 +55,8 @@ import type {
   LiveOrderGate,
   RiskRuleSet,
   PlaceLiveOrderRequest,
+  PlaceReservedOrderRequest,
+  CancelReservedOrderRequest,
   PlaceLiveOrderResult,
   OrderNotice,
   ServerMessage,
@@ -301,6 +305,167 @@ async function main(): Promise<void> {
       } catch (err) {
         req.log.warn({ err, accountId: req.query.accountId }, 'KIS 기간별 매매손익 조회 실패');
         return reply.code(502).send({ message: 'KIS 기간별 매매손익을 조회할 수 없습니다.' });
+      }
+    },
+  );
+
+  /*
+   * 예약주문 등록. 접수 가능 시간이 15:40~다음 영업일 07:30이라 장이 닫혀 있어도 들어간다.
+   * 그래서 리스크 룰의 시간대·개장일 검사만 건너뛰고 금액·수량·종목 제한은 그대로 적용한다.
+   */
+  app.post<{ Body: Partial<PlaceReservedOrderRequest> }>(
+    '/api/broker/kis/reserved-orders',
+    async (req, reply) => {
+      const { accountId, instrumentId, side, quantity, limitPrice, endDate, confirmationPhrase } = req.body;
+      const auditBase = {
+        accountId: accountId ?? '(미지정)',
+        action: 'place' as const,
+        requestedInstrumentId: instrumentId,
+        side: side === 'buy' || side === 'sell' ? side : undefined,
+        orderType: 'limit' as const,
+        quantity: typeof quantity === 'number' && Number.isFinite(quantity) ? quantity : undefined,
+        limitPrice: typeof limitPrice === 'number' && Number.isFinite(limitPrice) ? limitPrice : undefined,
+      };
+      const block = async (message: string, blockers: string[], extra: Record<string, unknown> = {}) => {
+        await recordBrokerOrderAttempt({ ...auditBase, ...extra, status: 'blocked', message, blockers });
+      };
+
+      const gate = evaluateLiveOrderGate();
+      if (!gate.enabled) {
+        await block('실주문이 차단되어 있습니다.', gate.blockers);
+        return reply.code(403).send({ message: '실주문이 차단되어 있습니다.', gate });
+      }
+      if (confirmationPhrase !== LIVE_ORDER_CONFIRMATION) {
+        const message = `확인 문구가 일치하지 않습니다. '${LIVE_ORDER_CONFIRMATION}'을 입력하세요.`;
+        await block(message, ['확인 문구 불일치']);
+        return reply.code(400).send({ message });
+      }
+      if (!instrumentId || (side !== 'buy' && side !== 'sell')) {
+        const message = '종목과 주문 방향이 필요합니다.';
+        await block(message, ['주문 방향 오류']);
+        return reply.code(400).send({ message });
+      }
+      if (typeof quantity !== 'number' || !Number.isFinite(quantity) || quantity <= 0) {
+        await block('수량은 0보다 커야 합니다.', ['수량 오류']);
+        return reply.code(400).send({ message: '수량은 0보다 커야 합니다.' });
+      }
+      if (typeof limitPrice !== 'number' || !Number.isFinite(limitPrice) || limitPrice <= 0) {
+        await block('예약주문은 지정가만 지원합니다. 단가가 필요합니다.', ['단가 누락']);
+        return reply.code(400).send({ message: '예약주문은 지정가만 지원합니다. 단가가 필요합니다.' });
+      }
+
+      const account = resolveAccount(accountId);
+      if (account === 'unknown' || !account) {
+        const message = account === 'unknown' ? '등록된 KIS 계좌가 아닙니다.' : '등록된 KIS 계좌가 없습니다.';
+        await block(message, ['계좌 확인 실패']);
+        return reply.code(account === 'unknown' ? 404 : 400).send({ message });
+      }
+
+      const instrument = await getInstrument(instrumentId);
+      if (!instrument) {
+        await block('종목을 찾을 수 없습니다.', ['종목 없음'], { accountId: account.id });
+        return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
+      }
+      if (!ORDERABLE_DOMESTIC_ASSET_TYPES.has(instrument.assetType) || instrument.country !== 'KR') {
+        const message = '국내주식·ETF·ETN만 예약주문할 수 있습니다.';
+        await block(message, ['주문 불가 종목'], { accountId: account.id, instrumentId: instrument.id });
+        return reply.code(400).send({ message });
+      }
+
+      const audit = {
+        ...auditBase,
+        accountId: account.id,
+        instrumentId: instrument.id,
+        symbol: instrument.providerSymbol,
+      };
+
+      const verdict = await checkRiskRules({
+        accountId: account.id,
+        symbol: instrument.providerSymbol,
+        side,
+        orderType: 'limit',
+        quantity,
+        price: limitPrice,
+        skipSessionCheck: true,
+      });
+      if (!verdict.allowed) {
+        await recordBrokerOrderAttempt({
+          ...audit,
+          status: 'blocked',
+          message: '리스크 룰에 막혔습니다.',
+          blockers: verdict.violations,
+        });
+        return reply.code(403).send({ message: '리스크 룰에 막혔습니다.', verdict });
+      }
+
+      try {
+        const result = await placeKisDomesticReservedOrder(account, {
+          symbol: instrument.providerSymbol,
+          side,
+          quantity,
+          limitPrice,
+          endDate,
+        });
+        await recordBrokerOrderAttempt({
+          ...audit,
+          status: 'submitted',
+          message: `예약주문 · ${result.message}`,
+          orderNo: result.reservationSeq,
+        });
+        req.log.info(
+          { accountId: account.id, symbol: instrument.providerSymbol, seq: result.reservationSeq },
+          '예약주문 등록',
+        );
+        return { accepted: true, reservationSeq: result.reservationSeq, message: result.message };
+      } catch (err) {
+        const message = String(err instanceof Error ? err.message : err);
+        await recordBrokerOrderAttempt({ ...audit, status: 'rejected', message });
+        req.log.error({ err, accountId: account.id, instrumentId }, '예약주문 등록 실패');
+        return reply.code(502).send({ message });
+      }
+    },
+  );
+
+  app.post<{ Body: Partial<CancelReservedOrderRequest> }>(
+    '/api/broker/kis/reserved-orders/cancel',
+    async (req, reply) => {
+      const { accountId, reservationSeq, reservationOrderDate, reservationOrgNo, confirmationPhrase } = req.body;
+      const gate = evaluateLiveOrderGate();
+      if (!gate.enabled) return reply.code(403).send({ message: '실주문이 차단되어 있습니다.', gate });
+      if (confirmationPhrase !== LIVE_ORDER_CONFIRMATION) {
+        return reply.code(400).send({ message: `확인 문구가 일치하지 않습니다. '${LIVE_ORDER_CONFIRMATION}'을 입력하세요.` });
+      }
+      if (!reservationSeq || !reservationOrderDate) {
+        return reply.code(400).send({ message: '예약주문순번과 주문일자가 필요합니다.' });
+      }
+
+      const account = resolveAccount(accountId);
+      if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+      if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
+
+      const audit = {
+        accountId: account.id,
+        action: 'cancel' as const,
+        originalOrderNo: reservationSeq,
+      };
+
+      try {
+        const result = await cancelKisDomesticReservedOrder(account, {
+          reservationSeq,
+          reservationOrderDate,
+          reservationOrgNo,
+        });
+        await recordBrokerOrderAttempt({
+          ...audit,
+          status: 'submitted',
+          message: `예약주문 취소 · ${result.message}`,
+        });
+        return { accepted: true, ...result };
+      } catch (err) {
+        const message = String(err instanceof Error ? err.message : err);
+        await recordBrokerOrderAttempt({ ...audit, status: 'rejected', message });
+        req.log.error({ err, accountId: account.id, reservationSeq }, '예약주문 취소 실패');
+        return reply.code(502).send({ message });
       }
     },
   );

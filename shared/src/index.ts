@@ -648,6 +648,32 @@ export interface BrokerOrderRecord {
   createdAt: number;
 }
 
+/** 예약주문 등록 요청. 지정가만 지원한다. */
+export interface PlaceReservedOrderRequest {
+  accountId: string;
+  instrumentId: string;
+  side: OrderSide;
+  quantity: number;
+  limitPrice: number;
+  /** 예약 종료일자 YYYYMMDD. 생략하면 익영업일 1회 */
+  endDate?: string;
+  confirmationPhrase: string;
+}
+
+/**
+ * 예약주문 취소 요청.
+ * `reservationOrgNo`는 KIS가 필수로 요구하지만 등록·조회 응답 어디에도 없다.
+ * 비워서 보내고, 실패하면 KIS 앱에서 직접 취소해야 한다.
+ */
+export interface CancelReservedOrderRequest {
+  accountId: string;
+  reservationSeq: string;
+  /** 예약주문 주문일자 YYYYMMDD */
+  reservationOrderDate: string;
+  reservationOrgNo?: string;
+  confirmationPhrase: string;
+}
+
 export interface CreateOrderRequest {
   accountId: string;
   instrumentId: string;
