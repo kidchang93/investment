@@ -1063,12 +1063,23 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--muted);
   font-size: 12px;
   font-style: normal;
 }
 
+/*
+ * 출처명은 짧고 어디서 나온 기사인지 식별하는 값이라 줄어들지 않게 고정한다.
+ * 기본 flex 규칙에서는 제목과 함께 축소돼 `한국경제신문`이 2~4px 모자라
+ * `한국경제...`로 잘렸다 — 말줄임표가 가린 글자보다 넓은 자리를 먹었다.
+ * 남는 폭은 제목이 가져간다.
+ */
 .terminal-news-ticker span {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+/* 읽는 대상은 헤드라인이므로 출처보다 밝게 둔다. */
+.terminal-news-ticker em {
   color: #c7ccd6;
 }
 
