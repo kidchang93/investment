@@ -2342,11 +2342,18 @@ button {
   min-width: 0;
 }
 
+/*
+ * 좁은 카드에서 긴 설명이 제목을 밀어 "실시간 통 / 보"처럼 단어 중간에서 끊겼다.
+ * 제목은 줄이지 않고, 설명이 대신 줄바꿈되게 한다.
+ */
 .live-order__header strong {
+  flex-shrink: 0;
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .live-order__header span {
+  min-width: 0;
   color: var(--faint);
   font-size: 11px;
 }
