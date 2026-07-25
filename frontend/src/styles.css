@@ -150,6 +150,16 @@ button {
   color: var(--focus);
 }
 
+/*
+ * 환율은 신선도 상태가 아니라 읽으라고 두는 값이다.
+ * 초록/노랑 상태색을 입히면 "정상/경고" 신호로 오해된다. 값 자체를 또렷하게 둔다.
+ */
+.freshness-chip[data-kind='data'],
+.freshness-chip[data-kind='data'][data-tone='fresh'] {
+  border-color: var(--border-soft);
+  color: var(--text);
+}
+
 .status-refresh {
   display: inline-flex;
   align-items: center;

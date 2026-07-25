@@ -1045,6 +1045,20 @@ function formatBrokerDate(date: string): string {
   return `${date.slice(2, 4)}.${date.slice(4, 6)}.${date.slice(6, 8)}`;
 }
 
+/**
+ * 경과 시간을 사람이 읽는 단위로. 초로만 쓰면 '1223초 전'처럼 감이 안 온다.
+ * 갱신 여부를 훑어보는 용도라 한 단위까지만 보여준다.
+ */
+function formatElapsed(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}초 전`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}분 전`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  return `${Math.floor(hours / 24)}일 전`;
+}
+
 /** 브로커 통보의 HHMMSS를 'HH:MM:SS'로. 형식이 아니면 null이라 호출부가 대체값을 쓴다. */
 function formatBrokerClock(time: string | undefined): string | null {
   if (!time || !/^\d{6}$/.test(time)) return null;
@@ -2208,14 +2222,12 @@ export function App(): JSX.Element {
   const activeToolOption = TOOL_OPTIONS.find((tool) => tool.key === activeTool) ?? TOOL_OPTIONS[1];
   const quoteLagMs = quoteRefreshAt ? Math.max(0, nowMs - quoteRefreshAt) : null;
   const quoteFreshnessTone = quoteLagMs === null ? 'waiting' : quoteLagMs > QUOTE_STALE_MS ? 'stale' : 'fresh';
-  const quoteFreshnessLabel =
-    quoteLagMs === null ? '조회 대기' : `조회 ${Math.floor(quoteLagMs / 1000)}초 전`;
+  const quoteFreshnessLabel = quoteLagMs === null ? '조회 대기' : `조회 ${formatElapsed(quoteLagMs)}`;
   const latestTradeMs = tradeTimestampMs(stream.recentTrades[0]);
   const tradeLagMs = latestTradeMs ? Math.max(0, nowMs - latestTradeMs) : null;
   const tradeFreshnessTone =
     tradeLagMs === null ? 'waiting' : tradeLagMs > TRADE_STALE_MS ? 'stale' : 'fresh';
-  const tradeFreshnessLabel =
-    tradeLagMs === null ? '체결 대기' : `체결 ${Math.floor(tradeLagMs / 1000)}초 전`;
+  const tradeFreshnessLabel = tradeLagMs === null ? '체결 대기' : `체결 ${formatElapsed(tradeLagMs)}`;
   const activeChartReadout = hoveredChartReadout ?? (
     snapshot
       ? {
@@ -3166,8 +3178,10 @@ export function App(): JSX.Element {
         </nav>
         <div className="app__status">
           <span className="mode-chip">조회 전용</span>
+          {/* 환율은 상태가 아니라 데이터다. 신선도 배지와 같은 급으로 보이면 위계가 뭉개진다. */}
           <span
             className="freshness-chip"
+            data-kind="data"
             data-tone={usdKrwRate ? 'fresh' : 'waiting'}
             title={usdKrwRate ? `갱신 ${formatClock(usdKrwRate.fetchedAt)}` : '환율 조회 대기'}
           >
