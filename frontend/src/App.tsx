@@ -1531,6 +1531,7 @@ export function App(): JSX.Element {
   const [activePage, setActivePage] = useState<AppPage>(() =>
     readStoredValue('activePage', 'terminal', APP_PAGE_OPTIONS.map((option) => option.key)),
   );
+  const terminalTabsRef = useRef<HTMLElement | null>(null);
   const [terminalTab, setTerminalTab] = useState<TerminalTab>(() =>
     readStoredValue('terminalTab', 'overview', TERMINAL_TAB_OPTIONS.map((option) => option.key)),
   );
@@ -1910,6 +1911,22 @@ export function App(): JSX.Element {
       disposed = true;
     };
   }, [activePage, kisAccountId]);
+
+  /*
+   * 탭이 12개라 좁은 폭에서는 가로로 스크롤된다. 스크롤 위치는 0으로 돌아오는데
+   * 선택 탭이 오른쪽 끝에 있으면 화면 밖이라 지금 어느 탭인지 알 수 없다.
+   * 페이지 안에서만 움직이도록 스트립 자체의 스크롤만 옮긴다.
+   */
+  useEffect(() => {
+    if (activePage !== 'terminal') return;
+    const strip = terminalTabsRef.current;
+    const selected = strip?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!strip || !selected) return;
+    // 사용자가 굴린 스크롤이 아니라 위치 보정이라 애니메이션을 쓰지 않는다.
+    // behavior:'smooth'는 탭이 백그라운드일 때 아예 동작하지 않아 보정이 조용히 실패한다.
+    const target = selected.offsetLeft - (strip.clientWidth - selected.offsetWidth) / 2;
+    strip.scrollLeft = Math.max(0, target);
+  }, [activePage, terminalTab]);
 
   const refreshKisOrderLog = useCallback((): void => {
     fetchKisOrderLog(kisAccountId ?? undefined)
@@ -3623,7 +3640,7 @@ export function App(): JSX.Element {
                 </div>
               </section>
 
-              <nav className="terminal-tabs" aria-label="터미널 기능">
+              <nav className="terminal-tabs" aria-label="터미널 기능" ref={terminalTabsRef}>
                 {TERMINAL_TAB_OPTIONS.map((option) => (
                   <button
                     aria-selected={terminalTab === option.key}
