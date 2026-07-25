@@ -2283,6 +2283,196 @@ button {
   color: #93b8f8;
 }
 
+/* ── 실계좌 주문 ──────────────────────────────────────────
+   paper 경로와 색을 확실히 갈라 오발주를 막는다. */
+.live-order,
+.live-order__open {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0 14px 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(229, 72, 77, 0.26);
+  border-radius: 6px;
+  background: rgba(229, 72, 77, 0.04);
+}
+
+.live-order__open {
+  border-color: var(--border-soft);
+  background: rgba(9, 13, 20, 0.6);
+}
+
+.live-order__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.live-order__header strong {
+  font-size: 13px;
+}
+
+.live-order__header span {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.live-order__header em {
+  padding: 2px 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.live-order__header em[data-open='true'] {
+  border-color: rgba(229, 72, 77, 0.44);
+  color: #ff9b9f;
+}
+
+.live-order__header button {
+  height: 24px;
+  margin-left: auto;
+  padding: 0 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: #090d14;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.live-order__body {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.live-order__phrase {
+  display: grid;
+  flex: 1 1 220px;
+  gap: 3px;
+  min-width: 0;
+}
+
+.live-order__phrase span {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.live-order__phrase input {
+  height: 31px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  outline: none;
+  background: #090d14;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.live-order__submit {
+  min-height: 31px;
+  padding: 0 14px;
+  border: 1px solid rgba(229, 72, 77, 0.44);
+  border-radius: 6px;
+  background: rgba(229, 72, 77, 0.14);
+  color: #ff9b9f;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.live-order__submit[data-side='sell'] {
+  border-color: rgba(59, 130, 246, 0.44);
+  background: rgba(59, 130, 246, 0.14);
+  color: #93c5fd;
+}
+
+.live-order__submit:disabled {
+  border-color: var(--border-soft);
+  background: #090d14;
+  color: var(--faint);
+  cursor: not-allowed;
+}
+
+.live-order__messages {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.live-order__messages em {
+  padding: 2px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.25;
+}
+
+.live-order__messages em[data-tone='warn'] {
+  border-color: rgba(229, 72, 77, 0.4);
+  color: #ff9b9f;
+}
+
+.live-order__result {
+  margin: 0;
+  color: var(--text);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.live-order__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.live-order__actions input {
+  width: 74px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  outline: none;
+  background: #090d14;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.live-order__actions button {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: #090d14;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.live-order__actions button:hover:not(:disabled) {
+  border-color: rgba(229, 72, 77, 0.5);
+  color: #ff9b9f;
+}
+
+.live-order__actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .order-ticket__submit {
   align-self: stretch;
   min-width: 108px;
@@ -2524,6 +2714,13 @@ button {
 .portfolio-table--fills .portfolio-table__head,
 .portfolio-table--fills .portfolio-table__row {
   grid-template-columns: minmax(88px, 1fr) repeat(4, minmax(72px, 0.8fr));
+}
+
+.portfolio-table--open-orders .portfolio-table__head,
+.portfolio-table--open-orders .portfolio-table__row,
+.portfolio-table--reserved .portfolio-table__head,
+.portfolio-table--reserved .portfolio-table__row {
+  grid-template-columns: minmax(84px, 0.9fr) minmax(96px, 1.2fr) minmax(88px, 1fr) repeat(2, minmax(72px, 0.8fr)) minmax(150px, 1.1fr);
 }
 
 /* 체결 내역은 주문시각·상태 컬럼이 더 붙어 7열이다. */

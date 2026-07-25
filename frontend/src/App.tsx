@@ -4,10 +4,16 @@ import {
   createOrder,
   createWatchlist,
   deleteWatchlist,
+  amendKisLiveOrder,
   fetchKisAccounts,
   fetchKisAccountSnapshot,
   fetchKisExecutions,
+  fetchKisLiveOrderGate,
+  fetchKisOpenOrders,
   fetchKisOrderability,
+  fetchKisReservedOrders,
+  fetchKisSellability,
+  placeKisLiveOrder,
   fetchCategoryInstruments,
   fetchInstrumentCandles,
   fetchInstrumentCategories,
@@ -28,10 +34,14 @@ import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } fr
 import type {
   BrokerAccountRef,
   BrokerAccountSnapshot,
+  BrokerAmendableOrder,
   BrokerExecutionSnapshot,
   BrokerExecutionStatus,
   BrokerOrderability,
+  BrokerReservedOrder,
+  BrokerSellability,
   Candle,
+  LiveOrderGate,
   CandlesResponse,
   ClientSubscribeInstrument,
   ExchangeRate,
@@ -523,6 +533,8 @@ const SEARCH_QUOTE_TARGETS = 10;
 const RECENT_INSTRUMENT_LIMIT = 8;
 // 매수가능 조회는 실계좌 API라 지정가를 타이핑하는 동안 매 글자마다 호출하지 않는다.
 const ORDERABILITY_DEBOUNCE_MS = 700;
+/** 실주문 확인 문구. 서버(`LIVE_ORDER_CONFIRMATION`)와 반드시 같아야 한다. */
+const LIVE_ORDER_CONFIRMATION = '실주문 전송';
 const ORDERABLE_DOMESTIC_ASSET_TYPES = new Set<Instrument['assetType']>(['stock', 'etf', 'etn']);
 const STORAGE_PREFIX = 'investment-monitor:';
 
@@ -1439,6 +1451,19 @@ export function App(): JSX.Element {
   const [isKisAccountRefreshing, setIsKisAccountRefreshing] = useState(false);
   const [kisOrderability, setKisOrderability] = useState<BrokerOrderability | null>(null);
   const [isKisOrderabilityLoading, setIsKisOrderabilityLoading] = useState(false);
+  const [kisSellability, setKisSellability] = useState<BrokerSellability | null>(null);
+  const [isKisSellabilityLoading, setIsKisSellabilityLoading] = useState(false);
+  const [kisOpenOrders, setKisOpenOrders] = useState<BrokerAmendableOrder[]>([]);
+  const [isKisOpenOrdersRefreshing, setIsKisOpenOrdersRefreshing] = useState(false);
+  const [kisReservedOrders, setKisReservedOrders] = useState<BrokerReservedOrder[]>([]);
+  const [liveOrderGate, setLiveOrderGate] = useState<LiveOrderGate | null>(null);
+  /** 실주문 확인 문구. 서버가 값 자체를 검증하므로 프런트도 같은 문구를 요구한다. */
+  const [liveOrderPhrase, setLiveOrderPhrase] = useState('');
+  const [isLiveOrderSubmitting, setIsLiveOrderSubmitting] = useState(false);
+  const [liveOrderMessage, setLiveOrderMessage] = useState<string | null>(null);
+  /** 정정 중인 주문 id와 새 단가. 취소는 입력이 필요 없다. */
+  const [amendingOrderId, setAmendingOrderId] = useState<string | null>(null);
+  const [amendPrice, setAmendPrice] = useState('');
   const [kisExecutionSnapshot, setKisExecutionSnapshot] = useState<BrokerExecutionSnapshot | null>(null);
   const [isKisExecutionRefreshing, setIsKisExecutionRefreshing] = useState(false);
   /** 체결내역을 이미 받아 둔 계좌. 화면 재진입마다 다시 조회하지 않기 위한 표시. */
@@ -1676,6 +1701,65 @@ export function App(): JSX.Element {
       window.clearTimeout(timer);
     };
   }, [activePage, kisAccountId, orderLimitPrice, orderSide, orderType, selectedInstrument]);
+
+  // 매도가능수량은 종목만 있으면 되지만 매도 탭에서만 의미가 있다.
+  useEffect(() => {
+    const instrument = selectedInstrument;
+    if (!instrument || activePage !== 'trade' || orderSide !== 'sell' || !isOrderableDomesticInstrument(instrument)) {
+      setKisSellability(null);
+      setIsKisSellabilityLoading(false);
+      return;
+    }
+
+    let disposed = false;
+    setIsKisSellabilityLoading(true);
+    const timer = window.setTimeout(() => {
+      fetchKisSellability(instrument.id, kisAccountId ?? undefined)
+        .then((result) => {
+          if (!disposed) setKisSellability(result);
+        })
+        .catch(() => {
+          if (!disposed) setKisSellability(null);
+        })
+        .finally(() => {
+          if (!disposed) setIsKisSellabilityLoading(false);
+        });
+    }, ORDERABILITY_DEBOUNCE_MS);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
+  }, [activePage, kisAccountId, orderSide, selectedInstrument]);
+
+  const refreshKisOpenOrders = useCallback((): void => {
+    setIsKisOpenOrdersRefreshing(true);
+    fetchKisOpenOrders(kisAccountId ?? undefined)
+      .then(setKisOpenOrders)
+      .catch(() => setKisOpenOrders([]))
+      .finally(() => setIsKisOpenOrdersRefreshing(false));
+  }, [kisAccountId]);
+
+  // 미체결 주문은 매매 화면에서 계좌를 바꿀 때마다 다시 받는다.
+  useEffect(() => {
+    if (activePage !== 'trade') return;
+    refreshKisOpenOrders();
+  }, [activePage, refreshKisOpenOrders]);
+
+  // 예약주문은 포트폴리오에서만 쓴다.
+  useEffect(() => {
+    if (activePage !== 'portfolio') return;
+    fetchKisReservedOrders(kisAccountId ?? undefined)
+      .then(setKisReservedOrders)
+      .catch(() => setKisReservedOrders([]));
+  }, [activePage, kisAccountId]);
+
+  // 실주문 게이트는 서버 설정이라 앱 수명 동안 한 번만 확인하면 된다.
+  useEffect(() => {
+    fetchKisLiveOrderGate()
+      .then(setLiveOrderGate)
+      .catch(() => setLiveOrderGate(null));
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -2491,20 +2575,52 @@ export function App(): JSX.Element {
   // 실계좌 한도는 paper 주문을 막지 않는다. 실주문 게이트를 대비한 참고 경고로만 노출한다.
   const orderLiveNotices = useMemo(() => {
     const notices: string[] = [];
-    if (orderSide !== 'buy' || !kisOrderability?.configured || orderEstimatedNotional === undefined) return notices;
-    if (kisOrderability.cashBuyAmount !== undefined && orderEstimatedNotional > kisOrderability.cashBuyAmount) {
-      notices.push(
-        `실계좌 미수 없는 매수금액 ${formatMoney(kisOrderability.cashBuyAmount, kisOrderability.currency)}를 초과합니다.`,
-      );
+    if (orderSide === 'buy') {
+      if (!kisOrderability?.configured || orderEstimatedNotional === undefined) return notices;
+      if (kisOrderability.cashBuyAmount !== undefined && orderEstimatedNotional > kisOrderability.cashBuyAmount) {
+        notices.push(
+          `실계좌 미수 없는 매수금액 ${formatMoney(kisOrderability.cashBuyAmount, kisOrderability.currency)}를 초과합니다.`,
+        );
+      }
+      if (kisOrderability.cashBuyQuantity !== undefined && orderQuantityNumber > kisOrderability.cashBuyQuantity) {
+        notices.push(`실계좌 기준 최대 ${formatNumber(kisOrderability.cashBuyQuantity)}주까지 매수할 수 있습니다.`);
+      }
+      return notices;
     }
-    if (kisOrderability.cashBuyQuantity !== undefined && orderQuantityNumber > kisOrderability.cashBuyQuantity) {
-      notices.push(`실계좌 기준 최대 ${formatNumber(kisOrderability.cashBuyQuantity)}주까지 매수할 수 있습니다.`);
+
+    if (!kisSellability?.configured) return notices;
+    const sellable = kisSellability.sellableQuantity;
+    if (sellable !== undefined && orderQuantityNumber > sellable) {
+      notices.push(`실계좌 매도가능수량은 ${formatNumber(sellable)}주입니다.`);
     }
     return notices;
-  }, [kisOrderability, orderEstimatedNotional, orderQuantityNumber, orderSide]);
+  }, [kisOrderability, kisSellability, orderEstimatedNotional, orderQuantityNumber, orderSide]);
   const orderCanSubmit =
     Boolean(selectedInstrument && activeTradingAccount && orderRiskMessages.length === 0 && orderEstimatedPrice) &&
     !isOrderSubmitting;
+  /**
+   * 실주문 전송 조건. 서버 게이트와 같은 항목을 프런트에서도 막는다.
+   * paper 주문 확인 체크(`orderAcknowledged`)와는 무관하다.
+   */
+  const liveOrderBlockers = useMemo(() => {
+    const blockers: string[] = [...(liveOrderGate?.blockers ?? [])];
+    if (!liveOrderGate) blockers.push('실주문 게이트 상태를 확인하는 중입니다.');
+    if (!isOrderableDomesticInstrument(selectedInstrument)) blockers.push('국내 주식·ETF·ETN만 주문할 수 있습니다.');
+    if (!Number.isFinite(orderQuantityNumber) || orderQuantityNumber <= 0) blockers.push('수량은 0보다 커야 합니다.');
+    if (orderType === 'limit' && (!Number.isFinite(orderLimitPriceNumber) || orderLimitPriceNumber <= 0)) {
+      blockers.push('지정가 주문은 단가가 필요합니다.');
+    }
+    if (liveOrderPhrase !== LIVE_ORDER_CONFIRMATION) blockers.push(`확인 문구 '${LIVE_ORDER_CONFIRMATION}'을 입력하세요.`);
+    return blockers;
+  }, [
+    liveOrderGate,
+    liveOrderPhrase,
+    orderLimitPriceNumber,
+    orderQuantityNumber,
+    orderType,
+    selectedInstrument,
+  ]);
+  const liveOrderCanSubmit = liveOrderBlockers.length === 0 && !isLiveOrderSubmitting;
   const portfolioPositionCount = tradingOverview?.positions.length ?? 0;
   const kisAccountPositionCount = kisAccountSnapshot?.positions.length ?? 0;
   const kisExecutionCount = kisExecutionSnapshot?.executions.length ?? 0;
@@ -2625,6 +2741,74 @@ export function App(): JSX.Element {
     setIsWatchlistCollapsed(false);
     setBottomDockMode('normal');
     setShowComparePanel(false);
+  }
+
+  /**
+   * 실계좌 주문 전송. paper 주문과 완전히 다른 경로다.
+   * 게이트는 서버가 최종 판정하고, 여기서는 같은 조건을 먼저 걸러 오발주를 줄인다.
+   */
+  async function submitLiveOrder(): Promise<void> {
+    if (!selectedInstrument || !kisAccountId || !liveOrderCanSubmit) return;
+    setIsLiveOrderSubmitting(true);
+    setLiveOrderMessage(null);
+    try {
+      const result = await placeKisLiveOrder({
+        accountId: kisAccountId,
+        instrumentId: selectedInstrument.id,
+        side: orderSide,
+        orderType,
+        quantity: orderQuantityNumber,
+        limitPrice: orderType === 'limit' ? orderLimitPriceNumber : undefined,
+        confirmationPhrase: liveOrderPhrase,
+      });
+      setLiveOrderMessage(
+        `접수됨 · 주문번호 ${result.orderNo || '-'} (지점 ${result.orderBranchNo || '-'}) · ${result.message}`,
+      );
+      // 접수 직후 문구를 비워 같은 주문이 연달아 나가지 않게 한다.
+      setLiveOrderPhrase('');
+      refreshKisOpenOrders();
+      refreshKisAccountSnapshot();
+    } catch (e) {
+      setLiveOrderMessage(String(e instanceof Error ? e.message : e));
+    } finally {
+      setIsLiveOrderSubmitting(false);
+    }
+  }
+
+  async function submitAmendOrCancel(order: BrokerAmendableOrder, action: 'amend' | 'cancel'): Promise<void> {
+    if (liveOrderPhrase !== LIVE_ORDER_CONFIRMATION) {
+      setLiveOrderMessage(`정정·취소도 확인 문구 '${LIVE_ORDER_CONFIRMATION}'이 필요합니다.`);
+      return;
+    }
+    const newPrice = Number(amendPrice);
+    if (action === 'amend' && (!Number.isFinite(newPrice) || newPrice <= 0)) {
+      setLiveOrderMessage('정정할 새 단가를 입력하세요.');
+      return;
+    }
+
+    setIsLiveOrderSubmitting(true);
+    setLiveOrderMessage(null);
+    try {
+      const result = await amendKisLiveOrder({
+        accountId: kisAccountId ?? '',
+        action,
+        orderNo: order.orderNo,
+        orderBranchNo: order.orderBranchNo,
+        orderTypeCode: order.orderTypeCode,
+        limitPrice: action === 'amend' ? newPrice : undefined,
+        quantityAll: true,
+        confirmationPhrase: liveOrderPhrase,
+      });
+      setLiveOrderMessage(`${action === 'amend' ? '정정' : '취소'} 접수됨 · ${result.message}`);
+      setAmendingOrderId(null);
+      setAmendPrice('');
+      setLiveOrderPhrase('');
+      refreshKisOpenOrders();
+    } catch (e) {
+      setLiveOrderMessage(String(e instanceof Error ? e.message : e));
+    } finally {
+      setIsLiveOrderSubmitting(false);
+    }
   }
 
   async function submitOrderIntent(): Promise<void> {
@@ -4042,16 +4226,33 @@ export function App(): JSX.Element {
                   <strong>{formatMoney(activeTradingAccount?.buyingPower, activeTradingAccount?.baseCurrency)}</strong>
                 </div>
                 <div>
-                  <span>실계좌 매수가능</span>
-                  <strong>
-                    {isKisOrderabilityLoading
-                      ? '조회 중'
-                      : kisOrderability?.configured
-                        ? formatMoney(kisOrderability.cashBuyAmount, kisOrderability.currency)
-                        : '-'}
-                  </strong>
-                  {kisOrderability?.configured && kisOrderability.cashBuyQuantity !== undefined && (
-                    <small>최대 {formatNumber(kisOrderability.cashBuyQuantity)}주</small>
+                  <span>{orderSide === 'buy' ? '실계좌 매수가능' : '실계좌 매도가능'}</span>
+                  {orderSide === 'buy' ? (
+                    <>
+                      <strong>
+                        {isKisOrderabilityLoading
+                          ? '조회 중'
+                          : kisOrderability?.configured
+                            ? formatMoney(kisOrderability.cashBuyAmount, kisOrderability.currency)
+                            : '-'}
+                      </strong>
+                      {kisOrderability?.configured && kisOrderability.cashBuyQuantity !== undefined && (
+                        <small>최대 {formatNumber(kisOrderability.cashBuyQuantity)}주</small>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <strong>
+                        {isKisSellabilityLoading
+                          ? '조회 중'
+                          : kisSellability?.configured
+                            ? `${formatNumber(kisSellability.sellableQuantity)}주`
+                            : '-'}
+                      </strong>
+                      {kisSellability?.configured && kisSellability.holdingQuantity !== undefined && (
+                        <small>보유 {formatNumber(kisSellability.holdingQuantity)}주</small>
+                      )}
+                    </>
                   )}
                 </div>
                 <div>
@@ -4118,6 +4319,129 @@ export function App(): JSX.Element {
                 {tradingOverview.recentFills.length === 0 && <strong>체결 없음</strong>}
               </div>
             )}
+
+            {/* 실계좌 주문. paper 경로와 시각적으로도 분리해 오발주를 막는다. */}
+            <div className="live-order" aria-label="실계좌 주문 전송">
+              <div className="live-order__header">
+                <strong>실계좌 주문</strong>
+                <em data-open={liveOrderGate?.enabled ? 'true' : 'false'}>
+                  {liveOrderGate ? (liveOrderGate.enabled ? '게이트 열림' : '게이트 차단') : '확인 중'}
+                </em>
+                <span>{liveOrderGate?.isProdEnv ? '실전(prod)' : '모의(vts)'}</span>
+              </div>
+              <div className="live-order__body">
+                <label className="live-order__phrase">
+                  <span>확인 문구</span>
+                  <input
+                    onChange={(event) => setLiveOrderPhrase(event.target.value)}
+                    placeholder={LIVE_ORDER_CONFIRMATION}
+                    type="text"
+                    value={liveOrderPhrase}
+                  />
+                </label>
+                <button
+                  className="live-order__submit"
+                  data-side={orderSide}
+                  disabled={!liveOrderCanSubmit}
+                  onClick={() => void submitLiveOrder()}
+                  type="button"
+                >
+                  {isLiveOrderSubmitting
+                    ? '전송 중'
+                    : `실주문 ${orderSide === 'buy' ? '매수' : '매도'} ${formatNumber(orderQuantityNumber)}주`}
+                </button>
+              </div>
+              <div className="live-order__messages">
+                {liveOrderBlockers.length === 0 ? (
+                  <em data-tone="warn">전송 준비됨. 누르면 실계좌로 주문이 나갑니다.</em>
+                ) : (
+                  liveOrderBlockers.map((blocker) => <em key={blocker}>{blocker}</em>)
+                )}
+              </div>
+              {liveOrderMessage && <p className="live-order__result">{liveOrderMessage}</p>}
+            </div>
+
+            <div className="live-order__open" aria-label="실계좌 미체결 주문">
+              <div className="live-order__header">
+                <strong>미체결 주문</strong>
+                <span>{kisOpenOrders.length}건</span>
+                <button disabled={isKisOpenOrdersRefreshing} onClick={refreshKisOpenOrders} type="button">
+                  {isKisOpenOrdersRefreshing ? '조회 중' : '새로고침'}
+                </button>
+              </div>
+              {kisOpenOrders.length === 0 ? (
+                <div className="portfolio-table__empty">정정·취소할 미체결 주문 없음</div>
+              ) : (
+                <div className="portfolio-table portfolio-table--open-orders">
+                  <div className="portfolio-table__head">
+                    <span>주문번호</span>
+                    <span>종목</span>
+                    <span>구분</span>
+                    <span>잔량/주문</span>
+                    <span>주문단가</span>
+                    <span>정정·취소</span>
+                  </div>
+                  {kisOpenOrders.map((order) => (
+                    <div className="portfolio-table__row" key={order.id}>
+                      <span>{order.orderNo}</span>
+                      <strong>{order.name || order.symbol}</strong>
+                      <span>
+                        {order.side === 'buy' ? '매수' : '매도'}
+                        {order.orderTypeLabel ? ` · ${order.orderTypeLabel}` : ''}
+                      </span>
+                      <span>
+                        {formatNumber(order.remainQuantity)} / {formatNumber(order.orderQuantity)}
+                      </span>
+                      <span>{formatMoney(order.orderPrice, order.currency)}</span>
+                      <span className="live-order__actions">
+                        {amendingOrderId === order.id ? (
+                          <>
+                            <input
+                              aria-label="정정 단가"
+                              min="0"
+                              onChange={(event) => setAmendPrice(event.target.value)}
+                              placeholder="새 단가"
+                              step="1"
+                              type="number"
+                              value={amendPrice}
+                            />
+                            <button
+                              disabled={isLiveOrderSubmitting}
+                              onClick={() => void submitAmendOrCancel(order, 'amend')}
+                              type="button"
+                            >
+                              확정
+                            </button>
+                            <button onClick={() => setAmendingOrderId(null)} type="button">
+                              닫기
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => {
+                                setAmendingOrderId(order.id);
+                                setAmendPrice(String(order.orderPrice || ''));
+                              }}
+                              type="button"
+                            >
+                              정정
+                            </button>
+                            <button
+                              disabled={isLiveOrderSubmitting}
+                              onClick={() => void submitAmendOrCancel(order, 'cancel')}
+                              type="button"
+                            >
+                              취소
+                            </button>
+                          </>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </section>}
 
           {activePage === 'market' && <div className="chart-toolbar">
@@ -4582,6 +4906,41 @@ export function App(): JSX.Element {
                 ) : (
                   <div className="portfolio-table__empty">
                     {kisExecutionSnapshot?.message ?? 'KIS 체결내역을 조회하는 중입니다'}
+                  </div>
+                )}
+              </section>
+
+              <section className="portfolio-card portfolio-card--wide" aria-label="KIS 실계좌 예약주문">
+                <div className="portfolio-card__header">
+                  <div>
+                    <strong>실계좌 예약주문</strong>
+                    <span>{kisReservedOrders.length}건 · 최근 30일</span>
+                  </div>
+                </div>
+                {kisReservedOrders.length === 0 ? (
+                  <div className="portfolio-table__empty">등록된 예약주문 없음</div>
+                ) : (
+                  <div className="portfolio-table portfolio-table--reserved">
+                    <div className="portfolio-table__head">
+                      <span>주문일자</span>
+                      <span>종목</span>
+                      <span>방향</span>
+                      <span>수량</span>
+                      <span>단가</span>
+                      <span>상태</span>
+                    </div>
+                    {kisReservedOrders.slice(0, 20).map((order) => (
+                      <div className="portfolio-table__row" key={order.id}>
+                        <span>{formatBrokerOrderTime(order.orderDate)}</span>
+                        <strong>{order.name || order.symbol}</strong>
+                        <span>{order.side === 'buy' ? '매수' : '매도'}</span>
+                        <span>{formatNumber(order.orderQuantity)}</span>
+                        <span>{formatMoney(order.orderPrice, order.currency)}</span>
+                        <em data-status={order.canceled ? 'canceled' : 'open'}>
+                          {order.canceled ? '취소' : order.statusLabel || '예약'}
+                        </em>
+                      </div>
+                    ))}
                   </div>
                 )}
               </section>
