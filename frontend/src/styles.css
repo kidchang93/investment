@@ -1051,7 +1051,11 @@ button {
   align-items: center;
   gap: 10px;
   min-width: 0;
-  padding: 8px 10px;
+  /*
+   * 세로 패딩을 8 → 4px로 줄인 만큼 링크 자체를 24px로 키웠다(아래).
+   * 클릭 영역은 15 → 24px가 되는데 줄 높이는 33 → 34px로 그대로다.
+   */
+  padding: 4px 10px;
   border: 1px solid var(--border-soft);
   border-radius: 8px;
   background: rgba(8, 11, 17, 0.46);
@@ -1075,10 +1079,12 @@ button {
   display: none;
 }
 
+/* 기사로 나가는 링크다. WCAG 2.2 타깃 최소치(24px)를 지킨다. */
 .terminal-news-ticker a {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
+  min-height: 24px;
   gap: 6px;
   max-width: 360px;
   color: inherit;
@@ -1915,12 +1921,13 @@ button {
   min-width: 0;
 }
 
+/* 관심 토글. 위와 같은 이유로 24px 최소치를 지킨다. */
 .quote-header__watch {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border: 1px solid var(--border-soft);
   border-radius: 5px;
   background: #090d14;
@@ -2769,9 +2776,15 @@ button {
   background: #090d14;
 }
 
+/*
+ * 높이는 WCAG 2.2 타깃 최소치(24px)에 맞춘다. 22px였는데 계좌·기간 전환처럼
+ * 자주 누르는 컨트롤인 데다, 세그먼트 버튼이라 서로 붙어 있어 간격 예외도
+ * 적용되지 않았다. 컨테이너 패딩·테두리를 더하면 알약이 30px가 되어 옆에
+ * 놓이는 28~29px 버튼들과 맞는다.
+ */
 .broker-account-picker button {
   min-width: 52px;
-  height: 22px;
+  height: 24px;
   padding: 0 9px;
   border: 0;
   border-radius: 999px;
