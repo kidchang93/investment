@@ -103,21 +103,38 @@ KIS가 주문/계좌 TR_ID를 개편했다. 구 ID도 아직 응답하지만 **�
 **이유.** AI 에이전트는 주식 매수·매도를 대신 실행하지 않는다. 그래서 `order-cash` /
 `order-rvsecncl`은 코드만 완성돼 있고 실제 전송 검증이 비어 있다(🟡).
 
-**해결 방법.**
+**먼저 만족해야 하는 조건.**
+
+| 조건 | 이유 |
+|------|------|
+| **개장일 09:00~15:30 (KST)** | 리스크 룰이 휴장일·시간대를 막는다. 주말엔 아예 못 보낸다 |
+| **지정가가 ±30% 가격제한폭 안** | 밖이면 KIS가 거부한다. **1원·100원 같은 값은 통하지 않는다** |
+| **지정가 × 수량 ≤ 매수가능금액** | 부족하면 KIS가 거부한다. `GET /api/broker/kis/orderability`로 확인 |
+| `KIS_LIVE_ORDER_ENABLED=true` | 게이트 |
+
+앞의 두 조건이 서로 잡아당긴다. **체결되지 않게 하려면 하한가 근처로 낮춰야 하는데,
+하한가는 현재가의 70%라 예수금이 그만큼 필요하다.** 예수금이 적으면 저가 종목을 골라야 한다.
+
+필요 예수금 ≈ `현재가 × 0.7 × 수량`. 예: 현재가 249,500원짜리를 1주 테스트하려면 약 175,000원이 든다.
+
+**절차.**
 
 ```bash
-# 1) 모의투자 계좌로 먼저 확인하는 것을 권한다 (아래 2번 참고)
-# 2) 서버에서 게이트를 연다
+# 1) 게이트를 연다 (.env를 고치지 말고 이 실행에만 준다)
 KIS_LIVE_ORDER_ENABLED=true npm run dev:api
 
-# 3) 체결 가능성이 낮은 지정가로 1주만 넣어 접수만 확인한다
+# 2) 매수가능금액과 현재가를 확인해 지정가를 정한다
+curl "http://localhost:4000/api/broker/kis/orderability?instrumentId=<ID>&accountId=21&orderType=market"
+curl "http://localhost:4000/api/broker/kis/quote/<ID>"
+
+# 3) 하한가보다 살짝 위 지정가로 1주 (체결되지 않되 가격제한폭 안)
 curl -X POST http://localhost:4000/api/broker/kis/orders \
   -H 'content-type: application/json' \
-  -d '{"accountId":"21","instrumentId":"KR:KOSPI:005930","side":"buy",
-       "orderType":"limit","quantity":1,"limitPrice":100,
+  -d '{"accountId":"21","instrumentId":"<ID>","side":"buy",
+       "orderType":"limit","quantity":1,"limitPrice":<하한가+틱>,
        "confirmationPhrase":"실주문 전송"}'
 
-# 4) 응답의 orderNo / orderBranchNo로 즉시 취소한다
+# 4) 응답의 orderNo / orderBranchNo로 즉시 취소
 curl -X POST http://localhost:4000/api/broker/kis/orders/amend \
   -H 'content-type: application/json' \
   -d '{"accountId":"21","action":"cancel","orderNo":"<ODNO>",
@@ -125,8 +142,11 @@ curl -X POST http://localhost:4000/api/broker/kis/orders/amend \
        "quantityAll":true,"confirmationPhrase":"실주문 전송"}'
 ```
 
-> 지정가 100원처럼 현재가와 크게 떨어진 값은 접수는 되지만 체결되지 않아 접수 경로만 확인할 수 있다.
-> 확인 후 반드시 취소하고 `KIS_LIVE_ORDER_ENABLED`를 다시 내린다.
+화면으로도 같다. 매매 탭 > 실계좌 주문에 확인 문구를 넣고 전송한 뒤,
+바로 옆 **미체결 주문**에서 취소를 누른다.
+
+> 확인 후 반드시 취소하고 `KIS_LIVE_ORDER_ENABLED` 없이 서버를 다시 띄운다.
+> 하한가 근처라도 시장이 급락하면 체결될 수 있다. 감당 가능한 금액으로만 한다.
 
 ### 2. 일부 API는 모의투자(vts)를 지원하지 않는다
 
