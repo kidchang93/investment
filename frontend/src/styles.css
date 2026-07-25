@@ -4932,3 +4932,20 @@ button {
 .live-order__messages--card {
   padding: 0 12px 10px;
 }
+
+/* 접힌 목록을 펼치는 줄. 표의 마지막 행처럼 보이게 둔다. */
+.portfolio-table__more {
+  min-height: 34px;
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.08);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.portfolio-table__more:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}

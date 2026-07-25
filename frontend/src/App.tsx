@@ -578,6 +578,31 @@ function BrokerAccountPicker({
   );
 }
 
+/**
+ * 표 행을 기본 몇 줄까지만 보여주고 나머지는 펼쳐서 본다.
+ * 기록이 쌓이는 카드 하나가 화면을 독점하면 옆 카드를 못 본다.
+ * 카드마다 따로 자르면 기준이 갈리므로 한 곳에서 처리한다.
+ */
+function CollapsibleRows({
+  rows,
+  limit = 8,
+}: {
+  rows: JSX.Element[];
+  limit?: number;
+}): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  if (rows.length <= limit) return <>{rows}</>;
+
+  return (
+    <>
+      {expanded ? rows : rows.slice(0, limit)}
+      <button className="portfolio-table__more" onClick={() => setExpanded((v) => !v)} type="button">
+        {expanded ? '접기' : `${rows.length - limit}건 더 보기`}
+      </button>
+    </>
+  );
+}
+
 /** 국내 현금 주문이 성립하는 종목인지. 지수·선물·야간 프록시는 매수가능 조회 대상이 아니다. */
 function isOrderableDomesticInstrument(instrument: Instrument | null): boolean {
   return Boolean(
@@ -5117,7 +5142,7 @@ export function App(): JSX.Element {
                         <span>현재가</span>
                         <span>평가손익</span>
                       </div>
-                      {kisAccountSnapshot.positions.slice(0, 16).map((position) => (
+                      <CollapsibleRows rows={kisAccountSnapshot.positions.slice(0, 16).map((position) => (
                         <div className="portfolio-table__row" key={position.symbol}>
                           <strong>{position.symbol}</strong>
                           <span>{formatNumber(position.quantity)}</span>
@@ -5125,7 +5150,7 @@ export function App(): JSX.Element {
                           <span>{formatMoney(position.currentPrice, position.currency)}</span>
                           <span>{formatMoney(position.unrealizedPnl, position.currency)}</span>
                         </div>
-                      ))}
+                      ))} />
                       {kisAccountPositionCount === 0 && <div className="portfolio-table__empty">실계좌 보유 종목 없음</div>}
                     </div>
                   </>
@@ -5188,7 +5213,7 @@ export function App(): JSX.Element {
                         <span>체결금액</span>
                         <span>상태</span>
                       </div>
-                      {kisExecutionSnapshot.executions.slice(0, 30).map((execution) => (
+                      <CollapsibleRows rows={kisExecutionSnapshot.executions.slice(0, 30).map((execution) => (
                         <div className="portfolio-table__row" key={execution.id}>
                           <span>{formatBrokerOrderTime(execution.orderDate, execution.orderTime)}</span>
                           <strong>{execution.name || execution.symbol}</strong>
@@ -5208,7 +5233,7 @@ export function App(): JSX.Element {
                           <span>{formatMoney(execution.filledAmount, execution.currency)}</span>
                           <em data-status={execution.status}>{brokerExecutionStatusLabel(execution.status)}</em>
                         </div>
-                      ))}
+                      ))} />
                       {kisExecutionCount === 0 && (
                         <div className="portfolio-table__empty">조회 구간에 실계좌 주문 없음</div>
                       )}
@@ -5288,7 +5313,7 @@ export function App(): JSX.Element {
                           <span>실현손익</span>
                           <span>손익률</span>
                         </div>
-                        {kisTradeProfit.rows.slice(0, 30).map((row) => (
+                        <CollapsibleRows rows={kisTradeProfit.rows.slice(0, 30).map((row) => (
                           <div className="portfolio-table__row" key={row.id}>
                             <span>{formatBrokerOrderTime(row.tradeDate)}</span>
                             <strong>{row.name || row.symbol}</strong>
@@ -5302,7 +5327,7 @@ export function App(): JSX.Element {
                             </span>
                             <span data-tone={profitTone(row.profitRate)}>{formatPercent(row.profitRate)}</span>
                           </div>
-                        ))}
+                        ))} />
                       </div>
                     )}
                   </>
@@ -5465,7 +5490,7 @@ export function App(): JSX.Element {
                       <span>사유</span>
                       <span>상태</span>
                     </div>
-                    {kisOrderLog.slice(0, 30).map((record) => (
+                    <CollapsibleRows rows={kisOrderLog.slice(0, 30).map((record) => (
                       <div className="portfolio-table__row" key={record.id}>
                         <span>{formatClock(record.createdAt)}</span>
                         <span>
@@ -5487,7 +5512,7 @@ export function App(): JSX.Element {
                           {brokerOrderRecordStatusLabel(record.status)}
                         </em>
                       </div>
-                    ))}
+                    ))} />
                   </div>
                 )}
               </section>
@@ -5592,7 +5617,7 @@ export function App(): JSX.Element {
                       <span>단가</span>
                       <span>상태·취소</span>
                     </div>
-                    {kisReservedOrders.slice(0, 20).map((order) => (
+                    <CollapsibleRows rows={kisReservedOrders.slice(0, 20).map((order) => (
                       <div className="portfolio-table__row" key={order.id}>
                         <span>{formatBrokerOrderTime(order.orderDate)}</span>
                         <strong>{order.name || order.symbol}</strong>
@@ -5614,7 +5639,7 @@ export function App(): JSX.Element {
                           )}
                         </span>
                       </div>
-                    ))}
+                    ))} />
                   </div>
                 )}
                 {reservedCancelMessage && <p className="live-order__result">{reservedCancelMessage}</p>}
