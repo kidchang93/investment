@@ -611,11 +611,6 @@ button {
   color: var(--text);
 }
 
-.symbol-search__watch:focus-visible {
-  outline: 1px solid rgba(245, 196, 81, 0.65);
-  outline-offset: 2px;
-}
-
 .symbol-search__watch[data-watched='true'] {
   border-color: rgba(245, 196, 81, 0.4);
   color: var(--focus);
@@ -3797,9 +3792,9 @@ button {
   text-decoration: none;
 }
 
+/* 배경 틴트만 준다. 포커스 링은 파일 끝의 공통 :focus-visible 규칙이 맡는다. */
 .news-panel__row:hover,
 .news-panel__row:focus-visible {
-  outline: none;
   background: rgba(148, 163, 184, 0.08);
 }
 
@@ -5099,4 +5094,28 @@ button {
 .portfolio-table__more:hover {
   background: var(--panel-2);
   color: var(--text);
+}
+
+/*
+ * 키보드 포커스 표시를 한 곳에서 정의한다.
+ *
+ * 이전에는 크롬 기본 링(#005fcc)에 맡겨져 있었는데, 이 어두운 배경에서
+ * 대비가 2.88~3.29:1이라 WCAG 2.2가 포커스 표시에 요구하는 3:1을 패널
+ * 위에서 넘지 못했다. `.news-panel__row`처럼 outline: none으로 아예 지우고
+ * 8% 배경 틴트만 남긴 곳도 있었다. 키보드로 다루는 화면이라 어디에 있는지
+ * 확실히 보여야 한다. --focus(앰버)는 같은 배경에서 10.6~12.1:1이다.
+ *
+ * `.app` 접두사는 장식이 아니라 특이도용이다. 입력 기본 상태의
+ * outline: none 중에 `.risk-rules input[type='text']`처럼 (0,2,1)짜리가
+ * 있어, 그보다 높아야 실제로 적용된다.
+ */
+/*
+ * 링을 안쪽에 그린다(음수 offset). 바깥에 그리면 도구 줄·탭 줄처럼
+ * overflow가 걸린 줄에서 위아래가 잘려 나갔다 — overflow-x: auto는 세로도
+ * 함께 클리핑하고, 그런 줄의 버튼은 높이를 꽉 채우고 있어 여유가 0px였다.
+ * 세 페이지에서 40곳 넘게 걸렸다.
+ */
+.app :is(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
