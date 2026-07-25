@@ -22,6 +22,7 @@ import {
   seedDefaultWatchlist,
 } from './db/instruments.js';
 import { createOrderIntent, ensureTradingSchema, getFillByOrderId, getTradingOverview } from './db/trading.js';
+import { ensureBrokerOrderSchema, getBrokerOrderRecords, recordBrokerOrderAttempt } from './db/brokerOrders.js';
 import {
   getDailyCandles,
   getInstrumentCandles,
@@ -123,6 +124,7 @@ async function main(): Promise<void> {
   await ensureInstrumentSchema();
   await ensureDomesticAssetTypes();
   await ensureTradingSchema();
+  await ensureBrokerOrderSchema();
   await seedDefaultWatchlist(WATCHLIST);
 
   // ── REST ────────────────────────────────────────────────
@@ -252,35 +254,99 @@ async function main(): Promise<void> {
 
   app.get('/api/broker/kis/live-order-gate', async () => evaluateLiveOrderGate());
 
+  app.get<{ Querystring: { accountId?: string; limit?: string } }>(
+    '/api/broker/kis/order-log',
+    async (req, reply) => {
+      // accountId를 생략하면 전체를 준다. 미등록 계좌로 시도한 기록도 감사 대상이라
+      // 기본 계좌로 좁히면 그 기록에 영영 접근할 수 없다.
+      const { accountId } = req.query;
+      if (accountId && resolveAccount(accountId) === 'unknown') {
+        return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+      }
+      const limit = Number(req.query.limit ?? 50);
+      return getBrokerOrderRecords(accountId, Number.isFinite(limit) ? limit : 50);
+    },
+  );
+
   // ── 실주문 전송 ─────────────────────────────────────────
   // 게이트가 열려 있어야만 동작한다. 기본값은 항상 차단이다.
+  // 보내지 못한 시도도 trading_broker_orders에 blocked로 남긴다.
   app.post<{ Body: Partial<PlaceLiveOrderRequest> }>('/api/broker/kis/orders', async (req, reply) => {
-    const gate = evaluateLiveOrderGate();
-    if (!gate.enabled) return reply.code(403).send({ message: '실주문이 차단되어 있습니다.', gate });
-
     const { accountId, instrumentId, side, orderType, quantity, limitPrice, confirmationPhrase } = req.body;
+    const auditBase = {
+      accountId: accountId ?? '(미지정)',
+      action: 'place' as const,
+      requestedInstrumentId: instrumentId,
+      side: side === 'buy' || side === 'sell' ? side : undefined,
+      orderType: orderType === 'market' || orderType === 'limit' ? orderType : undefined,
+      quantity: typeof quantity === 'number' && Number.isFinite(quantity) ? quantity : undefined,
+      limitPrice: typeof limitPrice === 'number' && Number.isFinite(limitPrice) ? limitPrice : undefined,
+    };
+
+    async function audit(attempt: Parameters<typeof recordBrokerOrderAttempt>[0]): Promise<void> {
+      if (!(await recordBrokerOrderAttempt(attempt))) {
+        req.log.warn({ attempt }, '실주문 감사 기록 저장 실패');
+      }
+    }
+
+    async function block(message: string, blockers: string[], extra: Record<string, unknown> = {}) {
+      await audit({ ...auditBase, ...extra, status: 'blocked', message, blockers });
+    }
+
+    const gate = evaluateLiveOrderGate();
+    if (!gate.enabled) {
+      await block('실주문이 차단되어 있습니다.', gate.blockers);
+      return reply.code(403).send({ message: '실주문이 차단되어 있습니다.', gate });
+    }
     if (confirmationPhrase !== LIVE_ORDER_CONFIRMATION) {
-      return reply.code(400).send({ message: `확인 문구가 일치하지 않습니다. '${LIVE_ORDER_CONFIRMATION}'을 입력하세요.` });
+      const message = `확인 문구가 일치하지 않습니다. '${LIVE_ORDER_CONFIRMATION}'을 입력하세요.`;
+      await block(message, ['확인 문구 불일치']);
+      return reply.code(400).send({ message });
     }
     if (!instrumentId || (side !== 'buy' && side !== 'sell') || (orderType !== 'market' && orderType !== 'limit')) {
-      return reply.code(400).send({ message: '주문 방향 또는 주문 유형이 올바르지 않습니다.' });
+      const message = '주문 방향 또는 주문 유형이 올바르지 않습니다.';
+      await block(message, ['주문 방향·유형 오류']);
+      return reply.code(400).send({ message });
     }
     if (typeof quantity !== 'number' || !Number.isFinite(quantity) || quantity <= 0) {
-      return reply.code(400).send({ message: '수량은 0보다 커야 합니다.' });
+      const message = '수량은 0보다 커야 합니다.';
+      await block(message, ['수량 오류']);
+      return reply.code(400).send({ message });
     }
     if (orderType === 'limit' && (typeof limitPrice !== 'number' || !Number.isFinite(limitPrice) || limitPrice <= 0)) {
-      return reply.code(400).send({ message: '지정가 주문은 단가가 필요합니다.' });
+      const message = '지정가 주문은 단가가 필요합니다.';
+      await block(message, ['지정가 단가 누락']);
+      return reply.code(400).send({ message });
     }
 
     const account = resolveAccount(accountId);
-    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
-    if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
+    if (account === 'unknown' || !account) {
+      const message = account === 'unknown' ? '등록된 KIS 계좌가 아닙니다.' : '등록된 KIS 계좌가 없습니다.';
+      await block(message, ['계좌 확인 실패']);
+      return reply.code(account === 'unknown' ? 404 : 400).send({ message });
+    }
 
     const instrument = await getInstrument(instrumentId);
-    if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
-    if (!ORDERABLE_DOMESTIC_ASSET_TYPES.has(instrument.assetType) || instrument.country !== 'KR') {
-      return reply.code(400).send({ message: '국내주식·ETF·ETN만 주문할 수 있습니다.' });
+    if (!instrument) {
+      await block('종목을 찾을 수 없습니다.', ['종목 없음'], { accountId: account.id });
+      return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
     }
+    if (!ORDERABLE_DOMESTIC_ASSET_TYPES.has(instrument.assetType) || instrument.country !== 'KR') {
+      const message = '국내주식·ETF·ETN만 주문할 수 있습니다.';
+      await block(message, ['주문 불가 종목'], {
+        accountId: account.id,
+        instrumentId: instrument.id,
+        symbol: instrument.providerSymbol,
+      });
+      return reply.code(400).send({ message });
+    }
+
+    const placeAudit = {
+      ...auditBase,
+      accountId: account.id,
+      instrumentId: instrument.id,
+      symbol: instrument.providerSymbol,
+    };
 
     try {
       const result = await placeKisDomesticOrder(account, {
@@ -289,6 +355,13 @@ async function main(): Promise<void> {
         orderType,
         quantity,
         limitPrice,
+      });
+      await audit({
+        ...placeAudit,
+        status: 'submitted',
+        message: result.message,
+        orderNo: result.orderNo,
+        orderBranchNo: result.orderBranchNo,
       });
       req.log.info(
         { accountId: account.id, symbol: instrument.providerSymbol, side, quantity, orderNo: result.orderNo },
@@ -306,32 +379,62 @@ async function main(): Promise<void> {
         message: result.message,
       } satisfies PlaceLiveOrderResult;
     } catch (err) {
+      const message = String(err instanceof Error ? err.message : err);
+      await audit({ ...placeAudit, status: 'rejected', message });
       req.log.error({ err, accountId: account.id, instrumentId }, '실주문 전송 실패');
-      return reply.code(502).send({ message: String(err instanceof Error ? err.message : err) });
+      return reply.code(502).send({ message });
     }
   });
 
   app.post<{ Body: Partial<AmendLiveOrderRequest> }>('/api/broker/kis/orders/amend', async (req, reply) => {
-    const gate = evaluateLiveOrderGate();
-    if (!gate.enabled) return reply.code(403).send({ message: '실주문이 차단되어 있습니다.', gate });
-
     const { accountId, action, orderNo, orderBranchNo, orderTypeCode, quantity, limitPrice, quantityAll } = req.body;
+    const auditBase = {
+      accountId: accountId ?? '(미지정)',
+      action: action === 'amend' || action === 'cancel' ? action : ('cancel' as const),
+      originalOrderNo: orderNo,
+      orderBranchNo,
+      quantity: typeof quantity === 'number' && Number.isFinite(quantity) ? quantity : undefined,
+      limitPrice: typeof limitPrice === 'number' && Number.isFinite(limitPrice) ? limitPrice : undefined,
+    };
+
+    async function block(message: string, blockers: string[]) {
+      await recordBrokerOrderAttempt({ ...auditBase, status: 'blocked', message, blockers });
+    }
+
+    const gate = evaluateLiveOrderGate();
+    if (!gate.enabled) {
+      await block('실주문이 차단되어 있습니다.', gate.blockers);
+      return reply.code(403).send({ message: '실주문이 차단되어 있습니다.', gate });
+    }
     if (req.body.confirmationPhrase !== LIVE_ORDER_CONFIRMATION) {
-      return reply.code(400).send({ message: `확인 문구가 일치하지 않습니다. '${LIVE_ORDER_CONFIRMATION}'을 입력하세요.` });
+      const message = `확인 문구가 일치하지 않습니다. '${LIVE_ORDER_CONFIRMATION}'을 입력하세요.`;
+      await block(message, ['확인 문구 불일치']);
+      return reply.code(400).send({ message });
     }
     if (action !== 'amend' && action !== 'cancel') {
-      return reply.code(400).send({ message: 'action은 amend 또는 cancel이어야 합니다.' });
+      const message = 'action은 amend 또는 cancel이어야 합니다.';
+      await block(message, ['action 오류']);
+      return reply.code(400).send({ message });
     }
     if (!orderNo || !orderBranchNo || !orderTypeCode) {
-      return reply.code(400).send({ message: '주문번호·주문채번지점번호·주문구분코드가 모두 필요합니다.' });
+      const message = '주문번호·주문채번지점번호·주문구분코드가 모두 필요합니다.';
+      await block(message, ['주문 식별자 누락']);
+      return reply.code(400).send({ message });
     }
     if (action === 'amend' && (typeof limitPrice !== 'number' || !Number.isFinite(limitPrice) || limitPrice <= 0)) {
-      return reply.code(400).send({ message: '정정에는 새 단가가 필요합니다.' });
+      const message = '정정에는 새 단가가 필요합니다.';
+      await block(message, ['정정 단가 누락']);
+      return reply.code(400).send({ message });
     }
 
     const account = resolveAccount(accountId);
-    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
-    if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
+    if (account === 'unknown' || !account) {
+      const message = account === 'unknown' ? '등록된 KIS 계좌가 아닙니다.' : '등록된 KIS 계좌가 없습니다.';
+      await block(message, ['계좌 확인 실패']);
+      return reply.code(account === 'unknown' ? 404 : 400).send({ message });
+    }
+
+    const audit = { ...auditBase, accountId: account.id, action };
 
     try {
       const result = await amendKisDomesticOrder(account, {
@@ -343,11 +446,19 @@ async function main(): Promise<void> {
         limitPrice,
         quantityAll: quantityAll === true,
       });
+      await recordBrokerOrderAttempt({
+        ...audit,
+        status: 'submitted',
+        message: result.message,
+        orderNo: result.orderNo,
+      });
       req.log.info({ accountId: account.id, action, orderNo }, '실주문 정정·취소 접수');
       return { accepted: true, ...result };
     } catch (err) {
+      const message = String(err instanceof Error ? err.message : err);
+      await recordBrokerOrderAttempt({ ...audit, status: 'rejected', message });
       req.log.error({ err, accountId: account.id, action, orderNo }, '실주문 정정·취소 실패');
-      return reply.code(502).send({ message: String(err instanceof Error ? err.message : err) });
+      return reply.code(502).send({ message });
     }
   });
 

@@ -4,6 +4,7 @@ import type {
   BrokerAccountRef,
   BrokerAccountSnapshot,
   BrokerAmendableOrder,
+  BrokerOrderRecord,
   BrokerReservedOrder,
   BrokerSellability,
   LiveOrderGate,
@@ -113,6 +114,13 @@ export async function fetchKisOpenOrders(accountId?: string): Promise<BrokerAmen
 export async function fetchKisReservedOrders(accountId?: string): Promise<BrokerReservedOrder[]> {
   const res = await fetch(`${API_BASE}/api/broker/kis/reserved-orders${accountQuery(accountId)}`);
   if (!res.ok) throw new Error(`KIS 예약주문 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+/** 실계좌 주문 전송 시도 기록. 게이트에 막힌 시도(blocked)도 함께 온다. */
+export async function fetchKisOrderLog(accountId?: string): Promise<BrokerOrderRecord[]> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/order-log${accountQuery(accountId)}`);
+  if (!res.ok) throw new Error(`실주문 기록 조회 실패: ${res.status}`);
   return res.json();
 }
 

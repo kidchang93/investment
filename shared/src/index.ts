@@ -487,6 +487,37 @@ export interface AmendLiveOrderRequest {
   confirmationPhrase: string;
 }
 
+export type BrokerOrderAction = 'place' | 'amend' | 'cancel';
+/** `blocked` 게이트·검증에 막힘 | `submitted` 브로커 접수됨 | `rejected` 브로커가 거부 */
+export type BrokerOrderRecordStatus = 'blocked' | 'submitted' | 'rejected';
+
+/**
+ * 실계좌 주문 전송 시도 1건의 감사 기록.
+ * 보내지 못한 시도(`blocked`)도 같은 목록에 남는다. 계좌번호·확인 문구는 담기지 않는다.
+ */
+export interface BrokerOrderRecord {
+  id: string;
+  broker: 'kis';
+  accountId: string;
+  action: BrokerOrderAction;
+  status: BrokerOrderRecordStatus;
+  side?: OrderSide;
+  symbol?: string;
+  /** 사용자가 보낸 종목 id 원문. 게이트에 먼저 막혀 종목을 확인하기 전이어도 남는다 */
+  requestedInstrumentId?: string;
+  orderType?: OrderType;
+  quantity?: number;
+  limitPrice?: number;
+  orderNo?: string;
+  orderBranchNo?: string;
+  /** 정정·취소 대상 원주문번호 */
+  originalOrderNo?: string;
+  message: string;
+  /** `blocked`일 때 막힌 이유 */
+  blockers: string[];
+  createdAt: number;
+}
+
 export interface CreateOrderRequest {
   accountId: string;
   instrumentId: string;

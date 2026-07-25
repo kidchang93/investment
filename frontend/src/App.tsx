@@ -10,6 +10,7 @@ import {
   fetchKisExecutions,
   fetchKisLiveOrderGate,
   fetchKisOpenOrders,
+  fetchKisOrderLog,
   fetchKisOrderability,
   fetchKisReservedOrders,
   fetchKisSellability,
@@ -37,6 +38,7 @@ import type {
   BrokerAmendableOrder,
   BrokerExecutionSnapshot,
   BrokerExecutionStatus,
+  BrokerOrderRecord,
   BrokerOrderability,
   BrokerReservedOrder,
   BrokerSellability,
@@ -988,6 +990,28 @@ function brokerExecutionStatusLabel(status: BrokerExecutionStatus): string {
   }
 }
 
+function brokerOrderActionLabel(action: BrokerOrderRecord['action']): string {
+  switch (action) {
+    case 'place':
+      return '전송';
+    case 'amend':
+      return '정정';
+    case 'cancel':
+      return '취소';
+  }
+}
+
+function brokerOrderRecordStatusLabel(status: BrokerOrderRecord['status']): string {
+  switch (status) {
+    case 'submitted':
+      return '접수';
+    case 'blocked':
+      return '차단';
+    case 'rejected':
+      return '거부';
+  }
+}
+
 /** 브로커가 내려주는 YYYYMMDD·HHMMSS를 화면용 'MM-DD HH:MM'으로. */
 function formatBrokerOrderTime(date: string, time?: string): string {
   if (!/^\d{8}$/.test(date)) return '-';
@@ -1456,6 +1480,7 @@ export function App(): JSX.Element {
   const [kisOpenOrders, setKisOpenOrders] = useState<BrokerAmendableOrder[]>([]);
   const [isKisOpenOrdersRefreshing, setIsKisOpenOrdersRefreshing] = useState(false);
   const [kisReservedOrders, setKisReservedOrders] = useState<BrokerReservedOrder[]>([]);
+  const [kisOrderLog, setKisOrderLog] = useState<BrokerOrderRecord[]>([]);
   const [liveOrderGate, setLiveOrderGate] = useState<LiveOrderGate | null>(null);
   /** 실주문 확인 문구. 서버가 값 자체를 검증하므로 프런트도 같은 문구를 요구한다. */
   const [liveOrderPhrase, setLiveOrderPhrase] = useState('');
@@ -1753,6 +1778,18 @@ export function App(): JSX.Element {
       .then(setKisReservedOrders)
       .catch(() => setKisReservedOrders([]));
   }, [activePage, kisAccountId]);
+
+  const refreshKisOrderLog = useCallback((): void => {
+    fetchKisOrderLog(kisAccountId ?? undefined)
+      .then(setKisOrderLog)
+      .catch(() => setKisOrderLog([]));
+  }, [kisAccountId]);
+
+  // 주문 로그는 DB 조회라 KIS 호출이 없다. 매매·포트폴리오 양쪽에서 본다.
+  useEffect(() => {
+    if (activePage !== 'portfolio' && activePage !== 'trade') return;
+    refreshKisOrderLog();
+  }, [activePage, refreshKisOrderLog]);
 
   // 실주문 게이트는 서버 설정이라 앱 수명 동안 한 번만 확인하면 된다.
   useEffect(() => {
@@ -2767,6 +2804,7 @@ export function App(): JSX.Element {
       // 접수 직후 문구를 비워 같은 주문이 연달아 나가지 않게 한다.
       setLiveOrderPhrase('');
       refreshKisOpenOrders();
+      refreshKisOrderLog();
       refreshKisAccountSnapshot();
     } catch (e) {
       setLiveOrderMessage(String(e instanceof Error ? e.message : e));
@@ -2804,6 +2842,7 @@ export function App(): JSX.Element {
       setAmendPrice('');
       setLiveOrderPhrase('');
       refreshKisOpenOrders();
+      refreshKisOrderLog();
     } catch (e) {
       setLiveOrderMessage(String(e instanceof Error ? e.message : e));
     } finally {
@@ -4906,6 +4945,56 @@ export function App(): JSX.Element {
                 ) : (
                   <div className="portfolio-table__empty">
                     {kisExecutionSnapshot?.message ?? 'KIS 체결내역을 조회하는 중입니다'}
+                  </div>
+                )}
+              </section>
+
+              <section className="portfolio-card portfolio-card--wide" aria-label="실계좌 주문 전송 기록">
+                <div className="portfolio-card__header">
+                  <div>
+                    <strong>실계좌 주문 기록</strong>
+                    <span>{kisOrderLog.length}건 · 차단된 시도도 남는다</span>
+                  </div>
+                  <button className="portfolio-card__refresh" onClick={refreshKisOrderLog} type="button">
+                    새로고침
+                  </button>
+                </div>
+                {kisOrderLog.length === 0 ? (
+                  <div className="portfolio-table__empty">실계좌 주문 시도 없음</div>
+                ) : (
+                  <div className="portfolio-table portfolio-table--order-log">
+                    <div className="portfolio-table__head">
+                      <span>시각</span>
+                      <span>동작</span>
+                      <span>종목</span>
+                      <span>수량·단가</span>
+                      <span>주문번호</span>
+                      <span>사유</span>
+                      <span>상태</span>
+                    </div>
+                    {kisOrderLog.slice(0, 30).map((record) => (
+                      <div className="portfolio-table__row" key={record.id}>
+                        <span>{formatClock(record.createdAt)}</span>
+                        <span>
+                          {brokerOrderActionLabel(record.action)}
+                          {record.side ? ` · ${record.side === 'buy' ? '매수' : '매도'}` : ''}
+                        </span>
+                        <strong title={record.requestedInstrumentId ?? record.symbol ?? ''}>
+                          {record.symbol ?? record.requestedInstrumentId ?? '-'}
+                        </strong>
+                        <span>
+                          {record.quantity !== undefined ? `${formatNumber(record.quantity)}주` : '-'}
+                          {record.limitPrice !== undefined ? ` · ${formatMoney(record.limitPrice)}` : ''}
+                        </span>
+                        <span>{record.orderNo ?? record.originalOrderNo ?? '-'}</span>
+                        <span title={record.blockers.join(', ') || record.message}>
+                          {record.blockers[0] ?? record.message}
+                        </span>
+                        <em data-status={record.status === 'submitted' ? 'filled' : record.status}>
+                          {brokerOrderRecordStatusLabel(record.status)}
+                        </em>
+                      </div>
+                    ))}
                   </div>
                 )}
               </section>
