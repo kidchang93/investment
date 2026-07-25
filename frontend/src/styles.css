@@ -2103,10 +2103,16 @@ button {
   font-weight: 700;
 }
 
+/*
+ * 4블록을 고정 4열 그리드로 두면, 사이드 패널이 열린 폭(본문 ~880px)에서 컨트롤 열이
+ * 136px까지 눌려 flex 자식들이 열을 넘어 요약 셀 위로 겹쳤다.
+ * flex-wrap으로 바꿔 좁아지면 겹치거나 잘리는 대신 다음 줄로 접히게 한다.
+ * 컨테이너 폭에 반응해야 해서 window 기준 media query로는 잡히지 않는다(사이드 패널이 폭을 먹는다).
+ */
 .order-ticket__body {
-  display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.9fr) minmax(260px, 0.75fr) auto;
+  display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   min-width: 0;
   padding: 10px 14px;
@@ -2115,6 +2121,8 @@ button {
 .order-ticket__controls {
   display: flex;
   align-items: end;
+  flex: 1 1 380px;
+  flex-wrap: wrap;
   min-width: 0;
   gap: 7px;
 }
@@ -2184,19 +2192,25 @@ button {
   opacity: 0.55;
 }
 
-/* 셀이 5개다. minmax(0, 1fr)로 두어 좁아지면 셀이 함께 줄어들게 한다. */
+/*
+ * 셀이 5개다. minmax(0, 1fr)로 두어 좁아지면 줄바꿈 대신 셀이 함께 줄어들게 한다.
+ * 하한(px)을 주면 order-ticket__body의 summary 컬럼 안에서 2열로 접히면서
+ * 옆 컨트롤 영역을 밀어내 겹친다.
+ */
 .order-ticket__summary {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
+  flex: 1 1 470px;
   gap: 6px;
   min-width: 0;
 }
 
+/* 셀이 5개로 늘어 좌우 패딩을 줄였다. 8px면 좁은 폭에서 금액이 잘린다. */
 .order-ticket__summary div {
   display: grid;
   gap: 2px;
   min-width: 0;
-  padding: 7px 8px;
+  padding: 7px 6px;
   border: 1px solid rgba(148, 163, 184, 0.1);
   border-radius: 5px;
   background: rgba(9, 13, 20, 0.72);
@@ -2221,6 +2235,7 @@ button {
 
 .order-ticket__risk {
   display: grid;
+  flex: 1 1 260px;
   gap: 6px;
   min-width: 0;
 }
