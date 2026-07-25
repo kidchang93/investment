@@ -872,6 +872,14 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+/* 종목명이 길면 줄을 늘리는 대신 잘라 큰 숫자의 자리를 지킨다. */
+.terminal-board__hero-metric > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .terminal-board__hero-metric[data-tone='up'] {
   border-color: rgba(229, 72, 77, 0.3);
 }

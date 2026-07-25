@@ -3554,8 +3554,13 @@ export function App(): JSX.Element {
                   <h2>야간 지표 터미널</h2>
                   <p>국내 야간선물, GDR 환산가, 원자재와 관련 뉴스를 한 화면에서 확인합니다.</p>
                 </div>
+                {/*
+                  화면에서 가장 큰 숫자인데 자산 유형만 적혀 있어 어느 종목인지 알 수 없었다.
+                  아래 "지금 시장" 타일과 값이 같아 보여 중복으로 읽히기도 했다. 종목명을 붙인다.
+                */}
                 <div className="terminal-board__hero-metric" data-tone={selectedTone}>
-                  <span>{selectedInstrument ? assetTypeLabel(selectedInstrument.assetType) : '선택 대기'}</span>
+                  {/* 자산 유형을 덧붙이면 "삼성전자 야간 환산가 · 야간 환산가"처럼 겹친다. 이름만 쓴다. */}
+                  <span>{selectedInstrument?.name ?? '선택 대기'}</span>
                   <strong>{snapshot ? formatCurrencyPrice(snapshot.price, selectedCurrency) : '-'}</strong>
                   <em>{snapshot ? `${formatSignedCurrencyPrice(snapshot.change, selectedCurrency)} · ${formatRate(snapshot.changeRate)}` : '탐색에서 지표를 선택하세요'}</em>
                 </div>
