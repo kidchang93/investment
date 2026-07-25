@@ -823,8 +823,14 @@ function formatTradeTime(time: string | undefined): string {
   return `${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4, 6)}`;
 }
 
+/*
+ * 시각만 찍는다. 예전엔 값이 없을 때 `시세 연결 대기`라는 상태 문구를
+ * 돌려줬는데, 부르는 쪽이 `시세 갱신 ${formatClock(...)}`처럼 문장에 끼워
+ * 쓰면 "시세 갱신 시세 연결 대기"가 됐다. 포맷 함수가 상태를 지어내지 않게
+ * 중립 자리표시자만 준다. 없을 때 뭐라고 적을지는 부르는 쪽이 정한다.
+ */
 function formatClock(ms: number | null): string {
-  if (!ms) return '시세 연결 대기';
+  if (!ms) return '-';
   return new Intl.DateTimeFormat('ko-KR', {
     hour: '2-digit',
     minute: '2-digit',
@@ -2321,6 +2327,12 @@ export function App(): JSX.Element {
     : liveOrderArmed
       ? `실주문 가능 · ${liveOrderGate.isProdEnv ? '실전' : '모의'}`
       : '조회 전용';
+  /* 하단 도크용. 헤더 배지와 달리 환경 표기는 빼고 짧게 쓴다. */
+  const sessionModeLabel = !liveOrderGate
+    ? '게이트 확인 중'
+    : liveOrderArmed
+      ? '실주문 세션'
+      : '조회 전용 세션';
   const modeChipTitle = !liveOrderGate
     ? '실주문 게이트 상태를 확인하는 중입니다'
     : liveOrderArmed
@@ -3643,7 +3655,12 @@ export function App(): JSX.Element {
             <section className="terminal-board" aria-label="야간 지표 터미널">
               <div className="terminal-board__hero">
                 <div>
-                  <span>야간 지표 · 조회 전용</span>
+                  {/*
+                    `조회 전용`이라고 적었더니 헤더의 게이트 배지와 같은 문구가 됐다.
+                    이건 게이트 상태가 아니라 이 화면이 주문을 받지 않는다는 뜻이라,
+                    게이트가 열리면 두 표시가 서로 어긋나 읽힌다. 화면 성격만 적는다.
+                  */}
+                  <span>야간 지표 · 시세 조회</span>
                   <h2>야간 지표 터미널</h2>
                   <p>국내 야간선물, GDR 환산가, 원자재와 관련 뉴스를 한 화면에서 확인합니다.</p>
                 </div>
@@ -5174,8 +5191,17 @@ export function App(): JSX.Element {
               <em>{bottomDockMode === 'hidden' ? '하단 숨김' : bottomDockTabLabel}</em>
               <em>{bottomDockModeLabel}</em>
             </div>
+            {/*
+              세션 종류는 게이트에서 가져온다. `조회 전용 세션`이 하드코딩이라
+              게이트가 열려도 그대로였다. 조회 전이면 갱신 시각과 신선도가 둘 다
+              빈 값이라 한 마디로 줄인다 — 예전엔 `시세 갱신 시세 연결 대기 ·
+              조회 대기`처럼 문장이 깨졌다.
+            */}
             <span className="bottom-dock__status">
-              조회 전용 세션 · 시세 갱신 {formatClock(quoteRefreshAt)} · {quoteFreshnessLabel}
+              {sessionModeLabel} ·{' '}
+              {quoteRefreshAt
+                ? `시세 갱신 ${formatClock(quoteRefreshAt)} · ${quoteFreshnessLabel}`
+                : '시세 조회 전'}
             </span>
           </div>}
 
