@@ -1211,6 +1211,18 @@ function getMarketSession(instrument: Instrument | null): MarketSession {
   return { tone: 'closed', label: '장외', detail: now < session.open ? '개장 전' : '마감 후', hours: session.hours, localTime };
 }
 
+/**
+ * 시세 칸이 비어 있을 때 무엇을 기다리는지 적는다.
+ *
+ * 장이 열려 있으면 정말 조회를 기다리는 중이지만, 닫혀 있으면 기다려도 값은
+ * 오지 않는다. 둘 다 `조회 대기`로 적으면 주말·야간 내내 로딩이 끝나지 않는
+ * 화면처럼 보인다. 장 상태는 이미 getMarketSession이 알고 있으니 그대로 쓴다.
+ */
+function pendingQuoteLabel(instrument: Instrument): string {
+  const session = getMarketSession(instrument);
+  return session.tone === 'closed' ? session.label : '조회 대기';
+}
+
 function toSnapshot(trade: Trade | undefined, quote: Quote | undefined): PriceSnapshot | undefined {
   if (trade) return trade;
   if (quote) return quote;
@@ -3618,7 +3630,7 @@ export function App(): JSX.Element {
                         <span>{assetTypeLabel(instrument.assetType)}</span>
                         <strong>{instrument.name}</strong>
                         <em>{itemSnapshot ? formatCurrencyPrice(itemSnapshot.price, instrument.currency) : '-'}</em>
-                        <small>{itemSnapshot ? formatRate(itemSnapshot.changeRate) : '조회 대기'}</small>
+                        <small>{itemSnapshot ? formatRate(itemSnapshot.changeRate) : pendingQuoteLabel(instrument)}</small>
                       </button>
                     );
                   })}
@@ -4037,7 +4049,7 @@ export function App(): JSX.Element {
                         <span>#{index + 1}</span>
                         <strong>{item.instrument.name}</strong>
                         <em>{item.snapshot ? formatCurrencyPrice(item.snapshot.price, item.instrument.currency) : '-'}</em>
-                        <small>{item.snapshot ? formatRate(item.snapshot.changeRate) : '조회 대기'}</small>
+                        <small>{item.snapshot ? formatRate(item.snapshot.changeRate) : pendingQuoteLabel(item.instrument)}</small>
                       </button>
                     ))}
                     {popularInstruments.length === 0 && <p>시세가 쌓이면 인기 종목을 표시합니다</p>}
