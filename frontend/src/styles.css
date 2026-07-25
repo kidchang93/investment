@@ -275,6 +275,37 @@ button {
   font-size: 17px;
 }
 
+/*
+ * 실계좌·모의 잔고를 나란히 둔다. 포트폴리오 섹션과 같은 색 규칙을 써서
+ * 아래 내용과 같은 기준으로 읽히게 한다.
+ */
+.page-heading__balances {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.page-heading__balances b {
+  padding: 2px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.page-heading__balances b[data-account='live'] {
+  border-color: rgba(229, 72, 77, 0.34);
+  color: #ff9b9f;
+}
+
+.page-heading__balances b[data-account='paper'] {
+  border-color: rgba(245, 196, 81, 0.3);
+  color: var(--focus);
+}
+
 .page-heading small {
   overflow: hidden;
   text-overflow: ellipsis;

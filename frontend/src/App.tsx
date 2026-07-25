@@ -3464,7 +3464,21 @@ export function App(): JSX.Element {
                 <span>계좌 현황</span>
                 <strong>포트폴리오</strong>
               </div>
-              <small>{activeTradingAccount?.label ?? '계정 대기'} · {formatMoney(activeTradingAccount?.cashBalance, activeTradingAccount?.baseCurrency)}</small>
+              {/*
+                예전엔 모의 계좌 잔고만 적혀 있었다. 바로 아래가 실계좌 섹션이라
+                페이지 대표 금액이 실계좌 돈으로 읽혔다. 둘 다 이름표와 함께 보여준다.
+              */}
+              <small className="page-heading__balances">
+                <b data-account="live">
+                  실계좌{' '}
+                  {kisAccountSnapshot?.configured
+                    ? formatMoney(kisAccountSnapshot.cashBalance, kisAccountSnapshot.baseCurrency)
+                    : '미설정'}
+                </b>
+                <b data-account="paper">
+                  모의 {formatMoney(activeTradingAccount?.cashBalance, activeTradingAccount?.baseCurrency)}
+                </b>
+              </small>
             </div>
           )}
 
