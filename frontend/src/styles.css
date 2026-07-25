@@ -118,17 +118,32 @@ button {
   gap: 10px;
 }
 
+/*
+ * 실주문 게이트 배지.
+ *
+ * 예전엔 항상 빨간 `조회 전용`이었다. 조회 전용은 사고가 날 수 없는 기본
+ * 상태인데 경고색을 쓰고 있었고, 정작 위험한 상태(게이트 열림)는 헤더에
+ * 아예 나타나지 않았다. 경고색은 열렸을 때로 옮긴다.
+ */
 .mode-chip {
   white-space: nowrap;
   height: 24px;
   padding: 0 9px;
-  border: 1px solid rgba(229, 72, 77, 0.34);
+  border: 1px solid var(--border-soft);
   border-radius: 4px;
-  color: #ff9b9f;
+  background: #090d14;
+  color: var(--muted);
   display: inline-flex;
   align-items: center;
   font-size: 12px;
   font-weight: 700;
+}
+
+/* 실주문이 열려 있다. 헤더에서 가장 눈에 띄어야 하는 상태다. */
+.mode-chip[data-armed='true'] {
+  border-color: rgba(229, 72, 77, 0.55);
+  background: rgba(229, 72, 77, 0.14);
+  color: #ff9b9f;
 }
 
 .freshness-chip {

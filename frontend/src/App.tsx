@@ -1212,15 +1212,20 @@ function getMarketSession(instrument: Instrument | null): MarketSession {
 }
 
 /**
- * 시세 칸이 비어 있을 때 무엇을 기다리는지 적는다.
+ * 장이 닫혀 있으면 그 사유(`휴장`, `장외`, `GDR 장마감`)를, 열려 있으면 null.
  *
- * 장이 열려 있으면 정말 조회를 기다리는 중이지만, 닫혀 있으면 기다려도 값은
- * 오지 않는다. 둘 다 `조회 대기`로 적으면 주말·야간 내내 로딩이 끝나지 않는
- * 화면처럼 보인다. 장 상태는 이미 getMarketSession이 알고 있으니 그대로 쓴다.
+ * 값이 비어 있는 칸에 `대기`라고만 적으면 곧 채워질 상황과, 기다려도 오지 않는
+ * 상황이 구별되지 않는다. 장 상태는 이미 getMarketSession이 알고 있으니 쓴다.
  */
-function pendingQuoteLabel(instrument: Instrument): string {
+function closedSessionLabel(instrument: Instrument | null | undefined): string | null {
+  if (!instrument) return null;
   const session = getMarketSession(instrument);
-  return session.tone === 'closed' ? session.label : '조회 대기';
+  return session.tone === 'closed' ? session.label : null;
+}
+
+/** 시세 칸이 비어 있을 때 무엇을 기다리는지 적는다. */
+function pendingQuoteLabel(instrument: Instrument): string {
+  return closedSessionLabel(instrument) ?? '조회 대기';
 }
 
 function toSnapshot(trade: Trade | undefined, quote: Quote | undefined): PriceSnapshot | undefined {
@@ -1955,10 +1960,13 @@ export function App(): JSX.Element {
   /*
    * 실주문 게이트는 서버 설정이라 KIS 호출이 없다.
    * 서버를 KIS_LIVE_ORDER_ENABLED와 함께 재시작해도 화면이 옛 상태로 남지 않도록
-   * 매매 화면에 들어올 때마다 다시 확인한다.
+   * 화면을 옮길 때마다 다시 확인한다.
+   *
+   * 예전엔 매매 화면에서만 조회했다. 게이트 상태를 알리는 배지가 헤더로
+   * 올라와 모든 화면에 보이므로, 첫 진입에도 조회해야 터미널·차트에서
+   * `게이트 확인 중`에 머물지 않는다.
    */
   useEffect(() => {
-    if (activePage !== 'trade') return;
     fetchKisLiveOrderGate()
       .then(setLiveOrderGate)
       .catch(() => setLiveOrderGate(null));
@@ -2281,7 +2289,43 @@ export function App(): JSX.Element {
   const tradeLagMs = latestTradeMs ? Math.max(0, nowMs - latestTradeMs) : null;
   const tradeFreshnessTone =
     tradeLagMs === null ? 'waiting' : tradeLagMs > TRADE_STALE_MS ? 'stale' : 'fresh';
-  const tradeFreshnessLabel = tradeLagMs === null ? '체결 대기' : `체결 ${formatElapsed(tradeLagMs)}`;
+  /*
+   * 체결이 없을 때 `체결 대기`라고만 두면 장이 닫힌 주말·야간에도 곧 들어올
+   * 것처럼 읽힌다. 헤더에서 장 상태를 알려주는 곳이 여기밖에 없기도 해서,
+   * 닫혀 있으면 사유를 그대로 띄운다.
+   */
+  const selectedSessionClosedLabel = closedSessionLabel(selectedInstrument);
+  const tradeFreshnessLabel =
+    tradeLagMs === null
+      ? selectedSessionClosedLabel ?? '체결 대기'
+      : `체결 ${formatElapsed(tradeLagMs)}`;
+  const tradeFreshnessTitle =
+    tradeLagMs === null
+      ? selectedSessionClosedLabel
+        ? `장이 닫혀 있어 체결이 들어오지 않습니다 (${getMarketSession(selectedInstrument).hours})`
+        : '아직 체결이 들어오지 않았습니다'
+      : `마지막 체결 ${formatClock(latestTradeMs as number)}`;
+  const quoteFreshnessTitle = quoteRefreshAt
+    ? `마지막 조회 ${formatClock(quoteRefreshAt)}`
+    : '아직 시세를 조회하지 않았습니다';
+
+  /*
+   * 이전에는 `조회 전용`이 하드코딩이라 게이트가 열려도 그대로였다. 매매 앱에서
+   * 상단 배지가 사실과 어긋나면 안 된다. 게이트가 열린 쪽이 위험한 상태이므로
+   * 경고 색은 그쪽에 준다(styles.css의 data-armed).
+   */
+  const liveOrderArmed = liveOrderGate?.enabled === true;
+  const modeChipState = liveOrderGate ? (liveOrderArmed ? 'true' : 'false') : 'unknown';
+  const modeChipLabel = !liveOrderGate
+    ? '게이트 확인 중'
+    : liveOrderArmed
+      ? `실주문 가능 · ${liveOrderGate.isProdEnv ? '실전' : '모의'}`
+      : '조회 전용';
+  const modeChipTitle = !liveOrderGate
+    ? '실주문 게이트 상태를 확인하는 중입니다'
+    : liveOrderArmed
+      ? `실주문이 열려 있습니다 · ${liveOrderGate.isProdEnv ? '실전(prod)' : '모의(vts)'}`
+      : `실주문 차단됨 — ${liveOrderGate.blockers.join(' / ')}`;
   const activeChartReadout = hoveredChartReadout ?? (
     snapshot
       ? {
@@ -3231,7 +3275,9 @@ export function App(): JSX.Element {
           ))}
         </nav>
         <div className="app__status">
-          <span className="mode-chip">조회 전용</span>
+          <span className="mode-chip" data-armed={modeChipState} title={modeChipTitle}>
+            {modeChipLabel}
+          </span>
           {/* 환율은 상태가 아니라 데이터다. 신선도 배지와 같은 급으로 보이면 위계가 뭉개진다. */}
           <span
             className="freshness-chip"
@@ -3241,8 +3287,12 @@ export function App(): JSX.Element {
           >
             USD/KRW {usdKrwRate ? formatExchangeRate(usdKrwRate.rate) : '대기'}
           </span>
-          <span className="freshness-chip" data-tone={quoteFreshnessTone}>{quoteFreshnessLabel}</span>
-          <span className="freshness-chip" data-tone={tradeFreshnessTone}>{tradeFreshnessLabel}</span>
+          <span className="freshness-chip" data-tone={quoteFreshnessTone} title={quoteFreshnessTitle}>
+            {quoteFreshnessLabel}
+          </span>
+          <span className="freshness-chip" data-tone={tradeFreshnessTone} title={tradeFreshnessTitle}>
+            {tradeFreshnessLabel}
+          </span>
           <button
             className="status-refresh"
             disabled={quoteTargetIds.length === 0 || isQuoteRefreshing}
