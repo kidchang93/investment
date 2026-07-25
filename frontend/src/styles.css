@@ -2837,6 +2837,14 @@ button {
   font-weight: 700;
 }
 
+/*
+ * 데이터가 없으면 열 이름만 남아 읽을 게 있는 것처럼 보인다.
+ * 빈 메시지를 품은 표는 헤더를 감춘다. 표마다 조건을 따로 달면 한쪽만 고쳐져 어긋난다.
+ */
+.portfolio-table:has(> .portfolio-table__empty) .portfolio-table__head {
+  display: none;
+}
+
 .portfolio-table__row {
   width: 100%;
   border-top: 0;
