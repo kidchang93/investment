@@ -366,6 +366,127 @@ export interface BrokerExecutionSnapshot {
   message?: string;
 }
 
+/** KIS 매도가능수량 조회 결과 */
+export interface BrokerSellability {
+  broker: 'kis';
+  configured: boolean;
+  accountId: string;
+  symbol: string;
+  name: string;
+  currency: string;
+  /** 매도가능수량 */
+  sellableQuantity?: number;
+  /** 보유수량 */
+  holdingQuantity?: number;
+  /** 매도 기준 단가(현재가) */
+  price?: number;
+  fetchedAt?: number;
+  message?: string;
+}
+
+/** 정정·취소가 가능한 미체결 주문 1건 */
+export interface BrokerAmendableOrder {
+  id: string;
+  orderNo: string;
+  originalOrderNo?: string;
+  /** 정정취소 전송 시 필요한 주문채번지점번호 */
+  orderBranchNo: string;
+  symbol: string;
+  name: string;
+  side: OrderSide;
+  orderTypeLabel: string;
+  /** KIS 주문구분 코드. 정정 전송 시 그대로 되돌려준다. */
+  orderTypeCode: string;
+  orderQuantity: number;
+  orderPrice: number;
+  filledQuantity: number;
+  remainQuantity: number;
+  /** 정정 가능 수량 */
+  amendableQuantity: number;
+  /** 취소 가능 수량 */
+  cancelableQuantity: number;
+  orderTime?: string;
+  currency: string;
+}
+
+/** 예약주문 1건 */
+export interface BrokerReservedOrder {
+  id: string;
+  /** 예약주문순번. 정정·취소 전송 시 필요 */
+  reservationSeq: string;
+  /** 예약주문 접수 지점번호 */
+  reservationBranchNo: string;
+  /** 예약주문 주문일자 YYYYMMDD */
+  orderDate: string;
+  symbol: string;
+  name: string;
+  side: OrderSide;
+  orderQuantity: number;
+  orderPrice: number;
+  /** 처리 상태 표시용 문자열 */
+  statusLabel: string;
+  canceled: boolean;
+  currency: string;
+}
+
+/** 실주문 전송 가능 여부. 게이트가 왜 닫혀 있는지 프런트가 그대로 보여줄 수 있게 이유를 담는다. */
+export interface LiveOrderGate {
+  /** 전송 가능 여부 (모든 조건 통과) */
+  enabled: boolean;
+  /** `prod` 환경인지 */
+  isProdEnv: boolean;
+  /** 서버 환경 변수로 실주문을 허용했는지 */
+  serverEnabled: boolean;
+  /** 닫혀 있는 이유. enabled=true면 빈 배열 */
+  blockers: string[];
+}
+
+/** 실주문 전송 요청. paper 주문(`CreateOrderRequest`)과 의도적으로 분리한다. */
+export interface PlaceLiveOrderRequest {
+  accountId: string;
+  instrumentId: string;
+  side: OrderSide;
+  orderType: OrderType;
+  quantity: number;
+  /** 지정가일 때 필수 */
+  limitPrice?: number;
+  /** 사용자 2단계 확인. 서버가 값 자체를 검증한다. */
+  confirmationPhrase: string;
+}
+
+/** 실주문 전송 결과 */
+export interface PlaceLiveOrderResult {
+  accepted: boolean;
+  accountId: string;
+  symbol: string;
+  side: OrderSide;
+  quantity: number;
+  /** 브로커가 부여한 주문번호 */
+  orderNo?: string;
+  /** 주문채번지점번호. 정정·취소에 필요 */
+  orderBranchNo?: string;
+  /** 브로커 접수 시각 HHMMSS */
+  acceptedAt?: string;
+  message: string;
+}
+
+/** 정정·취소 전송 요청 */
+export interface AmendLiveOrderRequest {
+  accountId: string;
+  /** 'amend' 정정 | 'cancel' 취소 */
+  action: 'amend' | 'cancel';
+  orderNo: string;
+  orderBranchNo: string;
+  /** KIS 주문구분 코드. 정정취소가능주문조회 결과를 그대로 넘긴다. */
+  orderTypeCode: string;
+  /** 정정 시 새 수량. 전량이면 quantityAll=true로 두고 생략 가능 */
+  quantity?: number;
+  /** 정정 시 새 단가. 취소는 무시된다 */
+  limitPrice?: number;
+  quantityAll: boolean;
+  confirmationPhrase: string;
+}
+
 export interface CreateOrderRequest {
   accountId: string;
   instrumentId: string;

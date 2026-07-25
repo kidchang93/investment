@@ -68,10 +68,18 @@
    - 체결내역(`BrokerExecutionSnapshot`)을 포트폴리오 감사 기록과 연결.
      미체결·취소·거부도 버리지 않고 같은 목록에 담는다.
 
-4. **다음: 실주문 게이트**
-   - `APP_ENV=prod`, 계정 `live_enabled=true`, 사용자 2단계 확인, 서버 리스크 룰 통과 시에만 전송
-   - 최초 지원 범위는 국내주식 현금 매수/매도, 지정가/DAY로 제한
-   - 주문 전송/응답/체결/정정취소를 모두 이벤트로 기록
+4. **진행 중: 실주문 게이트**
+   - 완료: 매매 조회 3종 추가 (매도가능수량, 정정취소가능주문, 예약주문 조회)
+   - 완료: `POST /api/broker/kis/orders`(현금 매수·매도), `POST /api/broker/kis/orders/amend`(정정·취소)
+   - 완료: 게이트 기본 차단. `KIS_LIVE_ORDER_ENABLED=true` + 확인 문구 `실주문 전송` + 국내
+     주식·ETF·ETN + 수량/단가 검증을 모두 통과해야 전송된다. `GET /api/broker/kis/live-order-gate`가
+     막힌 이유를 그대로 알려준다.
+   - **다음: 주문 접수·취소 경로를 사람이 직접 검증** (절차는 `docs/TRADING_API.md` 1번)
+   - 다음: 미체결 주문 목록과 정정·취소 UI를 주문 티켓 아래에 붙이기
+   - 다음: 주문 전송/응답/체결/정정취소를 `trading_order_events`에 기록
+   - 다음: 실시간 주문체결통보(H0STCNI0) 복호화 — AES256이라 기존 평문 파서로는 안 읽힌다
+
+> 매매 API 전체 현황, TR_ID 개편 대응표, 막힌 항목의 이유·해결 방법은 `docs/TRADING_API.md`에 있다.
 
 ## 안전 기준
 

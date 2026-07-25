@@ -5,8 +5,12 @@ import type {
   BrokerExecution,
   BrokerExecutionSnapshot,
   BrokerExecutionStatus,
+  BrokerAmendableOrder,
   BrokerOrderability,
   BrokerPosition,
+  BrokerReservedOrder,
+  BrokerSellability,
+  OrderSide,
   Candle,
   CandlesResponse,
   ExchangeRate,
@@ -16,6 +20,35 @@ import type {
   PriceSign,
   Quote,
 } from '@invest/shared';
+
+/**
+ * KIS REST POST 공통 헬퍼. 주문 계열은 전부 POST이고 파라미터를 body로 보낸다.
+ * GET과 달리 `hashkey` 헤더는 필수가 아니며, 생략해도 정상 접수된다.
+ */
+async function kisPost(
+  path: string,
+  trId: string,
+  body: Record<string, string>,
+  credentials: KisCredentials,
+): Promise<Record<string, unknown>> {
+  const token = await getAccessToken(credentials);
+  const res = await fetch(config.restBase + path, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      authorization: `Bearer ${token}`,
+      appkey: credentials.appKey,
+      appsecret: credentials.appSecret,
+      tr_id: trId,
+      custtype: config.custType,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`KIS POST ${path} 실패 (${res.status}): ${await res.text()}`);
+  }
+  return (await res.json()) as Record<string, unknown>;
+}
 
 /** KIS REST GET 공통 헬퍼. tr_id별로 헤더/인증을 채워 호출한다. */
 async function kisGet(
@@ -948,6 +981,278 @@ export async function getKisDomesticExecutions(
     totalFilledQuantity: firstNumber(summary, ['tot_ccld_qty']),
     totalFilledAmount: firstNumber(summary, ['tot_ccld_amt']),
     updatedAt: Date.now(),
+  };
+}
+
+/** 국내주식 매도가능수량 조회 (tr_id: TTTC8408R, 모의투자 미지원). */
+export async function getKisDomesticSellability(
+  account: KisAccountConfig | null,
+  symbol: string,
+): Promise<BrokerSellability> {
+  if (!account) {
+    return {
+      broker: 'kis',
+      configured: false,
+      accountId: '',
+      symbol,
+      name: '',
+      currency: 'KRW',
+      message: MISSING_ACCOUNT_MESSAGE,
+    };
+  }
+
+  const { body } = await kisGetWithHeaders(
+    '/uapi/domestic-stock/v1/trading/inquire-psbl-sell',
+    'TTTC8408R',
+    { CANO: account.cano, ACNT_PRDT_CD: account.productCode, PDNO: symbol },
+    '',
+    toCredentials(account),
+  );
+
+  if (body.rt_cd && body.rt_cd !== '0') {
+    throw new Error(`KIS 매도가능수량조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
+  }
+
+  const rows = Array.isArray(body.output)
+    ? (body.output as Array<Record<string, string>>)
+    : body.output && typeof body.output === 'object'
+      ? [body.output as Record<string, string>]
+      : [];
+  const output = rows[0] ?? {};
+
+  return {
+    broker: 'kis',
+    configured: true,
+    accountId: account.id,
+    symbol,
+    name: output.prdt_name ?? '',
+    currency: 'KRW',
+    sellableQuantity: firstNumber(output, ['ord_psbl_qty', 'psbl_qty']),
+    holdingQuantity: firstNumber(output, ['hldg_qty']),
+    price: firstNumber(output, ['pdno_prpr', 'prpr']),
+    fetchedAt: Date.now(),
+  };
+}
+
+/**
+ * 국내주식 정정취소가능주문 조회 (tr_id: TTTC0084R, 모의투자 미지원).
+ * 정정·취소 전송에는 주문번호(odno)와 **주문채번지점번호(ord_gno_brno)** 가 함께 필요하다.
+ */
+export async function getKisDomesticAmendableOrders(
+  account: KisAccountConfig | null,
+): Promise<BrokerAmendableOrder[]> {
+  if (!account) return [];
+
+  const orders: BrokerAmendableOrder[] = [];
+  let fk100 = '';
+  let nk100 = '';
+  let trCont = '';
+
+  for (let depth = 0; depth < 10; depth += 1) {
+    const { body, headers } = await kisGetWithHeaders(
+      '/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl',
+      'TTTC0084R',
+      {
+        CANO: account.cano,
+        ACNT_PRDT_CD: account.productCode,
+        // 조회구분1: 0 주문 / 1 종목, 조회구분2: 0 전체 / 1 매도 / 2 매수
+        INQR_DVSN_1: '1',
+        INQR_DVSN_2: '0',
+        CTX_AREA_FK100: fk100,
+        CTX_AREA_NK100: nk100,
+      },
+      trCont,
+      toCredentials(account),
+    );
+
+    if (body.rt_cd && body.rt_cd !== '0') {
+      throw new Error(`KIS 정정취소가능주문조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
+    }
+
+    const rows = Array.isArray(body.output) ? (body.output as Array<Record<string, string>>) : [];
+    const offset = orders.length;
+    rows.forEach((row, index) => {
+      orders.push({
+        id: `${row.ord_gno_brno ?? ''}-${row.odno ?? ''}-${offset + index}`,
+        orderNo: row.odno ?? '',
+        originalOrderNo: /^0*$/.test(row.orgn_odno ?? '') ? undefined : row.orgn_odno,
+        orderBranchNo: row.ord_gno_brno ?? '',
+        symbol: row.pdno ?? '',
+        name: row.prdt_name ?? row.pdno ?? '',
+        side: row.sll_buy_dvsn_cd === '01' ? 'sell' : 'buy',
+        orderTypeLabel: row.ord_dvsn_name ?? '',
+        orderTypeCode: row.ord_dvsn_cd ?? '00',
+        orderQuantity: optionalNumber(row.ord_qty) ?? 0,
+        orderPrice: optionalNumber(row.ord_unpr) ?? 0,
+        filledQuantity: optionalNumber(row.tot_ccld_qty) ?? 0,
+        remainQuantity: optionalNumber(row.rmn_qty) ?? 0,
+        amendableQuantity: optionalNumber(row.psbl_qty) ?? 0,
+        cancelableQuantity: optionalNumber(row.psbl_qty) ?? 0,
+        orderTime: /^\d{6}$/.test(row.ord_tmd ?? '') ? row.ord_tmd : undefined,
+        currency: 'KRW',
+      });
+    });
+
+    trCont = headers.get('tr_cont') ?? '';
+    fk100 = String(body.ctx_area_fk100 ?? '');
+    nk100 = String(body.ctx_area_nk100 ?? '');
+    if (trCont !== 'M' && trCont !== 'F') break;
+  }
+
+  return orders;
+}
+
+/** 국내주식 예약주문 조회 (tr_id: CTSC0004R, 모의투자 미지원). */
+export async function getKisDomesticReservedOrders(
+  account: KisAccountConfig | null,
+  days = 30,
+): Promise<BrokerReservedOrder[]> {
+  if (!account) return [];
+
+  const { body } = await kisGetWithHeaders(
+    '/uapi/domestic-stock/v1/trading/order-resv-ccnl',
+    'CTSC0004R',
+    {
+      RSVN_ORD_ORD_DT: kstDaysAgo(Number.isFinite(days) ? Math.min(Math.max(Math.floor(days), 1), 90) : 30),
+      RSVN_ORD_END_DT: kstToday(),
+      TMNL_MDIA_KIND_CD: '00',
+      CANO: account.cano,
+      ACNT_PRDT_CD: account.productCode,
+      PRCS_DVSN_CD: '0',
+      CNCL_YN: '',
+      RSVN_ORD_SEQ: '',
+      PDNO: '',
+      SLL_BUY_DVSN_CD: '',
+    },
+    '',
+    toCredentials(account),
+  );
+
+  if (body.rt_cd && body.rt_cd !== '0') {
+    throw new Error(`KIS 예약주문조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
+  }
+
+  const rows = Array.isArray(body.output) ? (body.output as Array<Record<string, string>>) : [];
+  return rows.map((row, index) => ({
+    id: `${row.rsvn_ord_seq ?? ''}-${index}`,
+    reservationSeq: row.rsvn_ord_seq ?? '',
+    reservationBranchNo: row.rsvn_ord_orgno ?? '',
+    orderDate: row.rsvn_ord_ord_dt ?? row.rsvn_ord_rcit_dt ?? '',
+    symbol: row.pdno ?? '',
+    name: row.prdt_name ?? row.pdno ?? '',
+    side: row.sll_buy_dvsn_cd === '01' ? 'sell' : 'buy',
+    orderQuantity: optionalNumber(row.ord_qty) ?? 0,
+    orderPrice: optionalNumber(row.ord_unpr) ?? 0,
+    statusLabel: row.rsvn_ord_rcit_dvsn_name ?? row.prcs_rslt ?? '',
+    canceled: row.cncl_yn === 'Y',
+    currency: 'KRW',
+  }));
+}
+
+/**
+ * 국내주식 현금 주문 전송 (tr_id: 실전 TTTC0012U 매수 / TTTC0011U 매도, 모의 VTTC0012U / VTTC0011U).
+ *
+ * 주의할 점:
+ * - `EXCG_ID_DVSN_CD`(거래소ID구분코드)가 필수다. 국내 정규장은 'KRX'.
+ * - 시장가는 `ORD_DVSN='01'` + `ORD_UNPR='0'`, 지정가는 `'00'` + 실제 단가.
+ * - `SLL_TYPE`은 매도에만 쓴다(01 일반매도). 매수에는 빈 값을 넣는다.
+ * - 응답 output의 `ODNO`(주문번호)와 `KRX_FWDG_ORD_ORGNO`(주문채번지점번호)를 반드시 보관해야
+ *   이후 정정·취소를 보낼 수 있다.
+ */
+export async function placeKisDomesticOrder(
+  account: KisAccountConfig,
+  params: {
+    symbol: string;
+    side: OrderSide;
+    orderType: OrderType;
+    quantity: number;
+    limitPrice?: number;
+  },
+): Promise<{ orderNo: string; orderBranchNo: string; acceptedAt: string; message: string }> {
+  const isBuy = params.side === 'buy';
+  const trId = config.env === 'prod' ? (isBuy ? 'TTTC0012U' : 'TTTC0011U') : isBuy ? 'VTTC0012U' : 'VTTC0011U';
+  const isLimit = params.orderType === 'limit';
+
+  const body = await kisPost(
+    '/uapi/domestic-stock/v1/trading/order-cash',
+    trId,
+    {
+      CANO: account.cano,
+      ACNT_PRDT_CD: account.productCode,
+      PDNO: params.symbol,
+      ORD_DVSN: isLimit ? '00' : '01',
+      ORD_QTY: String(Math.floor(params.quantity)),
+      ORD_UNPR: isLimit ? String(Math.floor(params.limitPrice ?? 0)) : '0',
+      EXCG_ID_DVSN_CD: 'KRX',
+      SLL_TYPE: isBuy ? '' : '01',
+      CNDT_PRIC: '',
+    },
+    toCredentials(account),
+  );
+
+  if (body.rt_cd !== '0') {
+    throw new Error(`KIS 주문 전송 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
+  }
+
+  const output = (body.output ?? {}) as Record<string, string>;
+  return {
+    orderNo: output.ODNO ?? '',
+    orderBranchNo: output.KRX_FWDG_ORD_ORGNO ?? '',
+    acceptedAt: output.ORD_TMD ?? '',
+    message: String(body.msg1 ?? '주문이 접수되었습니다.').trim(),
+  };
+}
+
+/**
+ * 국내주식 주문 정정·취소 (tr_id: 실전 TTTC0013U / 모의 VTTC0013U).
+ *
+ * - `RVSE_CNCL_DVSN_CD`: 01 정정, 02 취소.
+ * - 취소는 단가를 보지 않으므로 `ORD_UNPR='0'`으로 보낸다.
+ * - `QTY_ALL_ORD_YN='Y'`면 잔량 전부를 대상으로 하고 `ORD_QTY`는 무시된다.
+ * - `ORD_DVSN`은 원주문의 주문구분 코드를 그대로 되돌려줘야 한다.
+ */
+export async function amendKisDomesticOrder(
+  account: KisAccountConfig,
+  params: {
+    action: 'amend' | 'cancel';
+    orderNo: string;
+    orderBranchNo: string;
+    orderTypeCode: string;
+    quantity?: number;
+    limitPrice?: number;
+    quantityAll: boolean;
+  },
+): Promise<{ orderNo: string; acceptedAt: string; message: string }> {
+  const trId = config.env === 'prod' ? 'TTTC0013U' : 'VTTC0013U';
+  const isCancel = params.action === 'cancel';
+
+  const body = await kisPost(
+    '/uapi/domestic-stock/v1/trading/order-rvsecncl',
+    trId,
+    {
+      CANO: account.cano,
+      ACNT_PRDT_CD: account.productCode,
+      KRX_FWDG_ORD_ORGNO: params.orderBranchNo,
+      ORGN_ODNO: params.orderNo,
+      ORD_DVSN: params.orderTypeCode,
+      RVSE_CNCL_DVSN_CD: isCancel ? '02' : '01',
+      ORD_QTY: params.quantityAll ? '0' : String(Math.floor(params.quantity ?? 0)),
+      ORD_UNPR: isCancel ? '0' : String(Math.floor(params.limitPrice ?? 0)),
+      QTY_ALL_ORD_YN: params.quantityAll ? 'Y' : 'N',
+      EXCG_ID_DVSN_CD: 'KRX',
+    },
+    toCredentials(account),
+  );
+
+  if (body.rt_cd !== '0') {
+    throw new Error(`KIS 주문 ${isCancel ? '취소' : '정정'} 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
+  }
+
+  const output = (body.output ?? {}) as Record<string, string>;
+  return {
+    orderNo: output.ODNO ?? params.orderNo,
+    acceptedAt: output.ORD_TMD ?? '',
+    message: String(body.msg1 ?? '요청이 접수되었습니다.').trim(),
   };
 }
 

@@ -134,6 +134,11 @@ export const config = {
   port: parsePort(process.env.PORT),
   databaseUrl: process.env.DATABASE_URL ?? 'postgresql://kis:kis_local@localhost:55432/kis',
   kisAccounts,
+  /**
+   * 실주문 전송 허용 여부. **기본값은 항상 false**다.
+   * 명시적으로 `KIS_LIVE_ORDER_ENABLED=true`를 넣어야 열린다.
+   */
+  liveOrderEnabled: process.env.KIS_LIVE_ORDER_ENABLED === 'true',
   /** 개인(P) / 법인(B). 개인 계정은 'P' */
   custType: 'P' as const,
 } as const;

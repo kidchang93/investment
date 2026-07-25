@@ -1,7 +1,14 @@
 import { API_BASE } from './config';
 import type {
+  AmendLiveOrderRequest,
   BrokerAccountRef,
   BrokerAccountSnapshot,
+  BrokerAmendableOrder,
+  BrokerReservedOrder,
+  BrokerSellability,
+  LiveOrderGate,
+  PlaceLiveOrderRequest,
+  PlaceLiveOrderResult,
   BrokerExecutionSnapshot,
   BrokerOrderability,
   CandlesResponse,
@@ -84,6 +91,61 @@ export async function fetchKisOrderability(
   const res = await fetch(`${API_BASE}/api/broker/kis/orderability?${params.toString()}`);
   if (!res.ok) throw new Error(`KIS 매수가능금액 조회 실패: ${res.status}`);
   return res.json();
+}
+
+export async function fetchKisSellability(
+  instrumentId: string,
+  accountId?: string,
+): Promise<BrokerSellability> {
+  const params = new URLSearchParams({ instrumentId });
+  if (accountId) params.set('accountId', accountId);
+  const res = await fetch(`${API_BASE}/api/broker/kis/sellability?${params.toString()}`);
+  if (!res.ok) throw new Error(`KIS 매도가능수량 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchKisOpenOrders(accountId?: string): Promise<BrokerAmendableOrder[]> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/open-orders${accountQuery(accountId)}`);
+  if (!res.ok) throw new Error(`KIS 미체결 주문 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchKisReservedOrders(accountId?: string): Promise<BrokerReservedOrder[]> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/reserved-orders${accountQuery(accountId)}`);
+  if (!res.ok) throw new Error(`KIS 예약주문 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchKisLiveOrderGate(): Promise<LiveOrderGate> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/live-order-gate`);
+  if (!res.ok) throw new Error(`실주문 게이트 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * 실계좌 주문 전송. 서버 게이트가 열려 있어야 하고 확인 문구가 정확히 일치해야 한다.
+ * paper 주문(`createOrder`)과 의도적으로 분리된 경로다.
+ */
+export async function placeKisLiveOrder(request: PlaceLiveOrderRequest): Promise<PlaceLiveOrderResult> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/orders`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(String((body as { message?: string }).message ?? `실주문 전송 실패: ${res.status}`));
+  return body as PlaceLiveOrderResult;
+}
+
+export async function amendKisLiveOrder(request: AmendLiveOrderRequest): Promise<{ accepted: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/orders/amend`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(String((body as { message?: string }).message ?? `정정·취소 실패: ${res.status}`));
+  return body as { accepted: boolean; message: string };
 }
 
 export async function fetchUsdKrwExchangeRate(): Promise<ExchangeRate> {

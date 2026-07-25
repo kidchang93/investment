@@ -91,6 +91,14 @@ KisRealtime open/close → 'status' 이벤트 → broadcast({type:'status'})
 | 국내주식 잔고 | REST GET | `inquire-balance` / `TTTC8434R`(실전) · `VTTC8434R`(모의) |
 | 매수가능 조회 | REST GET | `inquire-psbl-order` / `TTTC8908R`(실전) · `VTTC8908R`(모의) |
 | 일별 주문체결 | REST GET | `inquire-daily-ccld` / `TTTC0081R`(실전) · `VTTC0081R`(모의) |
+| 매도가능수량 | REST GET | `inquire-psbl-sell` / `TTTC8408R` (모의 미지원) |
+| 정정취소가능주문 | REST GET | `inquire-psbl-rvsecncl` / `TTTC0084R` (모의 미지원) |
+| 예약주문 조회 | REST GET | `order-resv-ccnl` / `CTSC0004R` (모의 미지원) |
+| 현금 주문 | REST POST | `order-cash` / 매수 `TTTC0012U` · 매도 `TTTC0011U` |
+| 주문 정정·취소 | REST POST | `order-rvsecncl` / `TTTC0013U` |
+
+> KIS가 주문/계좌 TR_ID를 개편했다. 구 ID(`TTTC8001R`, `TTTC0802U` 등)도 아직 응답하지만
+> 현행 ID만 쓴다. 전체 대응표와 막힌 항목은 `docs/TRADING_API.md` 참고.
 
 도메인은 `config.ts`에서 `vts`(모의) / `prod`(실전)로 분기한다.
 **계좌 관련 TR_ID는 실전/모의 접두어(`TTTC`/`VTTC`)가 다르므로 `config.env` 분기로만 고른다.**

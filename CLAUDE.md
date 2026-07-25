@@ -65,6 +65,7 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 | `KIS_<id>_ACCOUNT_NO` | | 계좌 `<id>`의 계좌번호. `12345678-01` 통합 표기 또는 앞 8자리 |
 | `KIS_<id>_ACCOUNT_PRODUCT_CODE` | | 상품코드 2자리. 생략하면 `01`(종합위탁) |
 | `KIS_PRIMARY_ACCOUNT_ID` | | 시세·실시간 WS에 쓸 기본 계좌 id. 생략하면 id 오름차순 첫 계좌 |
+| `KIS_LIVE_ORDER_ENABLED` | | `true`면 실주문 전송 허용. **기본값은 항상 차단**이다 |
 | `KIS_ACCOUNT_NO` | | 구버전 단일 계좌 방식. `KIS_APP_KEY`/`KIS_APP_SECRET`와 함께 쓴다 |
 | `KIS_ACCOUNT_PRODUCT_CODE` | | 구버전 단일 계좌의 상품코드 2자리 |
 | `APP_ENV` | | `vts`(모의, 기본) \| `prod`(실전) |
@@ -84,6 +85,8 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 | 코드 작성 (네이밍/패턴) | `docs/CODE_STYLE.md` |
 | 리뷰·머지 전 점검 | `docs/REVIEW.md` |
 | 서브에이전트로 작업 분배 | `docs/SUBAGENTS.md` |
+| 매매 API 추가·주문 전송·차단 사유 확인 | `docs/TRADING_API.md` |
+| 매매 기능 로드맵·DB 설계 | `docs/TRADING_ROADMAP.md` |
 
 ---
 

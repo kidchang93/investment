@@ -28,19 +28,28 @@ import {
   getInstrumentIntradayCandles,
   getInstrumentNews,
   getInstrumentQuote,
+  amendKisDomesticOrder,
   getKisDomesticAccountSnapshot,
+  getKisDomesticAmendableOrders,
   getKisDomesticExecutions,
   getKisDomesticOrderability,
+  getKisDomesticReservedOrders,
+  getKisDomesticSellability,
+  placeKisDomesticOrder,
   getQuote,
   getUsdKrwExchangeRate,
 } from './kis/rest.js';
 import { KisRealtime } from './kis/realtime.js';
 import { WATCHLIST } from './watchlist.js';
 import type {
+  AmendLiveOrderRequest,
   ClientMessage,
   ClientSubscribeInstrument,
   CreateOrderRequest,
   InstrumentAssetType,
+  LiveOrderGate,
+  PlaceLiveOrderRequest,
+  PlaceLiveOrderResult,
   ServerMessage,
   Trade,
   ConnectionStatus,
@@ -54,6 +63,21 @@ const STREAM_SUBSCRIBE_LIMIT = 80;
 /** 매수가능 조회가 성립하는 국내 자산 유형. 지수·선물·야간 프록시는 주문 대상이 아니다. */
 const ORDERABLE_DOMESTIC_ASSET_TYPES = new Set<InstrumentAssetType>(['stock', 'etf', 'etn']);
 const DEFAULT_EXECUTION_DAYS = 30;
+/**
+ * 실주문 전송 시 사용자가 그대로 입력해야 하는 확인 문구.
+ * UI 체크박스만으로는 오발주를 막지 못하므로 서버가 문구 자체를 검증한다.
+ */
+const LIVE_ORDER_CONFIRMATION = '실주문 전송';
+
+/** 실주문 게이트. 하나라도 막히면 이유를 그대로 프런트에 알려준다. */
+function evaluateLiveOrderGate(): LiveOrderGate {
+  const isProdEnv = config.env === 'prod';
+  const serverEnabled = config.liveOrderEnabled;
+  const blockers: string[] = [];
+  if (!serverEnabled) blockers.push('서버에서 실주문이 비활성화되어 있습니다 (KIS_LIVE_ORDER_ENABLED).');
+  if (config.kisAccounts.length === 0) blockers.push('등록된 KIS 계좌가 없습니다.');
+  return { enabled: blockers.length === 0, isProdEnv, serverEnabled, blockers };
+}
 
 /**
  * accountId를 계좌 설정으로 바꾼다.
@@ -175,6 +199,157 @@ async function main(): Promise<void> {
       }
     },
   );
+
+  app.get<{ Querystring: { instrumentId?: string; accountId?: string } }>(
+    '/api/broker/kis/sellability',
+    async (req, reply) => {
+      const { instrumentId, accountId } = req.query;
+      if (!instrumentId) return reply.code(400).send({ message: 'instrumentId가 필요합니다.' });
+
+      const account = resolveAccount(accountId);
+      if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+
+      const instrument = await getInstrument(instrumentId);
+      if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
+      if (!ORDERABLE_DOMESTIC_ASSET_TYPES.has(instrument.assetType) || instrument.country !== 'KR') {
+        return reply.code(400).send({ message: '국내주식·ETF·ETN만 매도가능수량을 조회할 수 있습니다.' });
+      }
+
+      try {
+        return await getKisDomesticSellability(account, instrument.providerSymbol);
+      } catch (err) {
+        req.log.warn({ err, instrumentId, accountId }, 'KIS 매도가능수량 조회 실패');
+        return reply.code(502).send({ message: 'KIS 매도가능수량을 조회할 수 없습니다.' });
+      }
+    },
+  );
+
+  app.get<{ Querystring: { accountId?: string } }>('/api/broker/kis/open-orders', async (req, reply) => {
+    const account = resolveAccount(req.query.accountId);
+    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+    try {
+      return await getKisDomesticAmendableOrders(account);
+    } catch (err) {
+      req.log.warn({ err, accountId: req.query.accountId }, 'KIS 정정취소가능주문 조회 실패');
+      return reply.code(502).send({ message: 'KIS 정정취소가능주문을 조회할 수 없습니다.' });
+    }
+  });
+
+  app.get<{ Querystring: { accountId?: string; days?: string } }>(
+    '/api/broker/kis/reserved-orders',
+    async (req, reply) => {
+      const account = resolveAccount(req.query.accountId);
+      if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+      const days = Number(req.query.days ?? DEFAULT_EXECUTION_DAYS);
+      try {
+        return await getKisDomesticReservedOrders(account, Number.isFinite(days) ? days : DEFAULT_EXECUTION_DAYS);
+      } catch (err) {
+        req.log.warn({ err, accountId: req.query.accountId }, 'KIS 예약주문 조회 실패');
+        return reply.code(502).send({ message: 'KIS 예약주문을 조회할 수 없습니다.' });
+      }
+    },
+  );
+
+  app.get('/api/broker/kis/live-order-gate', async () => evaluateLiveOrderGate());
+
+  // ── 실주문 전송 ─────────────────────────────────────────
+  // 게이트가 열려 있어야만 동작한다. 기본값은 항상 차단이다.
+  app.post<{ Body: Partial<PlaceLiveOrderRequest> }>('/api/broker/kis/orders', async (req, reply) => {
+    const gate = evaluateLiveOrderGate();
+    if (!gate.enabled) return reply.code(403).send({ message: '실주문이 차단되어 있습니다.', gate });
+
+    const { accountId, instrumentId, side, orderType, quantity, limitPrice, confirmationPhrase } = req.body;
+    if (confirmationPhrase !== LIVE_ORDER_CONFIRMATION) {
+      return reply.code(400).send({ message: `확인 문구가 일치하지 않습니다. '${LIVE_ORDER_CONFIRMATION}'을 입력하세요.` });
+    }
+    if (!instrumentId || (side !== 'buy' && side !== 'sell') || (orderType !== 'market' && orderType !== 'limit')) {
+      return reply.code(400).send({ message: '주문 방향 또는 주문 유형이 올바르지 않습니다.' });
+    }
+    if (typeof quantity !== 'number' || !Number.isFinite(quantity) || quantity <= 0) {
+      return reply.code(400).send({ message: '수량은 0보다 커야 합니다.' });
+    }
+    if (orderType === 'limit' && (typeof limitPrice !== 'number' || !Number.isFinite(limitPrice) || limitPrice <= 0)) {
+      return reply.code(400).send({ message: '지정가 주문은 단가가 필요합니다.' });
+    }
+
+    const account = resolveAccount(accountId);
+    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+    if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
+
+    const instrument = await getInstrument(instrumentId);
+    if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
+    if (!ORDERABLE_DOMESTIC_ASSET_TYPES.has(instrument.assetType) || instrument.country !== 'KR') {
+      return reply.code(400).send({ message: '국내주식·ETF·ETN만 주문할 수 있습니다.' });
+    }
+
+    try {
+      const result = await placeKisDomesticOrder(account, {
+        symbol: instrument.providerSymbol,
+        side,
+        orderType,
+        quantity,
+        limitPrice,
+      });
+      req.log.info(
+        { accountId: account.id, symbol: instrument.providerSymbol, side, quantity, orderNo: result.orderNo },
+        '실주문 접수',
+      );
+      return {
+        accepted: true,
+        accountId: account.id,
+        symbol: instrument.providerSymbol,
+        side,
+        quantity,
+        orderNo: result.orderNo,
+        orderBranchNo: result.orderBranchNo,
+        acceptedAt: result.acceptedAt,
+        message: result.message,
+      } satisfies PlaceLiveOrderResult;
+    } catch (err) {
+      req.log.error({ err, accountId: account.id, instrumentId }, '실주문 전송 실패');
+      return reply.code(502).send({ message: String(err instanceof Error ? err.message : err) });
+    }
+  });
+
+  app.post<{ Body: Partial<AmendLiveOrderRequest> }>('/api/broker/kis/orders/amend', async (req, reply) => {
+    const gate = evaluateLiveOrderGate();
+    if (!gate.enabled) return reply.code(403).send({ message: '실주문이 차단되어 있습니다.', gate });
+
+    const { accountId, action, orderNo, orderBranchNo, orderTypeCode, quantity, limitPrice, quantityAll } = req.body;
+    if (req.body.confirmationPhrase !== LIVE_ORDER_CONFIRMATION) {
+      return reply.code(400).send({ message: `확인 문구가 일치하지 않습니다. '${LIVE_ORDER_CONFIRMATION}'을 입력하세요.` });
+    }
+    if (action !== 'amend' && action !== 'cancel') {
+      return reply.code(400).send({ message: 'action은 amend 또는 cancel이어야 합니다.' });
+    }
+    if (!orderNo || !orderBranchNo || !orderTypeCode) {
+      return reply.code(400).send({ message: '주문번호·주문채번지점번호·주문구분코드가 모두 필요합니다.' });
+    }
+    if (action === 'amend' && (typeof limitPrice !== 'number' || !Number.isFinite(limitPrice) || limitPrice <= 0)) {
+      return reply.code(400).send({ message: '정정에는 새 단가가 필요합니다.' });
+    }
+
+    const account = resolveAccount(accountId);
+    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+    if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
+
+    try {
+      const result = await amendKisDomesticOrder(account, {
+        action,
+        orderNo,
+        orderBranchNo,
+        orderTypeCode,
+        quantity,
+        limitPrice,
+        quantityAll: quantityAll === true,
+      });
+      req.log.info({ accountId: account.id, action, orderNo }, '실주문 정정·취소 접수');
+      return { accepted: true, ...result };
+    } catch (err) {
+      req.log.error({ err, accountId: account.id, action, orderNo }, '실주문 정정·취소 실패');
+      return reply.code(502).send({ message: String(err instanceof Error ? err.message : err) });
+    }
+  });
 
   app.get('/api/exchange-rates/usd-krw', async (_req, reply) => {
     try {
