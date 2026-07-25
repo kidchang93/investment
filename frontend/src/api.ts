@@ -2,6 +2,7 @@ import { API_BASE } from './config';
 import type {
   AmendLiveOrderRequest,
   CancelReservedOrderRequest,
+  PlaceReservedOrderRequest,
   BrokerAccountRef,
   BrokerAccountSnapshot,
   BrokerAmendableOrder,
@@ -142,6 +143,19 @@ export async function cancelKisReservedOrder(
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(String((body as { message?: string }).message ?? `예약주문 취소 실패: ${res.status}`));
   return body as { accepted: boolean; processed: boolean; message: string };
+}
+
+export async function placeKisReservedOrder(
+  request: PlaceReservedOrderRequest,
+): Promise<{ accepted: boolean; reservationSeq: string; message: string }> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/reserved-orders`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(String((body as { message?: string }).message ?? `예약주문 등록 실패: ${res.status}`));
+  return body as { accepted: boolean; reservationSeq: string; message: string };
 }
 
 export async function fetchKisTradeProfit(accountId?: string, days?: number): Promise<BrokerTradeProfitSnapshot> {

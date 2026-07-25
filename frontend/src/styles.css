@@ -4860,3 +4860,19 @@ button {
   height: 28px;
   font-size: 11px;
 }
+
+/* 예약주문 등록 폼의 select도 입력칸과 같은 높이로 */
+.risk-rules select {
+  height: 29px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  outline: none;
+  background: #090d14;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.risk-rules input[readonly] {
+  color: var(--muted);
+}

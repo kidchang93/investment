@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addWatchlistItem,
   cancelKisReservedOrder,
+  placeKisReservedOrder,
   createOrder,
   createWatchlist,
   deleteWatchlist,
@@ -1521,6 +1522,9 @@ export function App(): JSX.Element {
   /** 예약주문 취소도 확인 문구를 요구한다. 매매 탭 입력과 분리해 포트폴리오에서 따로 받는다. */
   const [reservedCancelPhrase, setReservedCancelPhrase] = useState('');
   const [isReservedCancelling, setIsReservedCancelling] = useState(false);
+  const [reservedSide, setReservedSide] = useState<OrderSide>('buy');
+  const [reservedQuantity, setReservedQuantity] = useState('1');
+  const [reservedPrice, setReservedPrice] = useState('');
   const [reservedCancelMessage, setReservedCancelMessage] = useState<string | null>(null);
   const [kisOrderLog, setKisOrderLog] = useState<BrokerOrderRecord[]>([]);
   const [kisTradeProfit, setKisTradeProfit] = useState<BrokerTradeProfitSnapshot | null>(null);
@@ -2937,6 +2941,41 @@ export function App(): JSX.Element {
       setRiskMessage(String(e instanceof Error ? e.message : e));
     } finally {
       setIsRiskSaving(false);
+    }
+  }
+
+  async function submitReservedOrder(): Promise<void> {
+    if (!selectedInstrument || reservedCancelPhrase !== LIVE_ORDER_CONFIRMATION) return;
+    const quantity = Number(reservedQuantity);
+    const limitPrice = Number(reservedPrice);
+    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(limitPrice) || limitPrice <= 0) {
+      setReservedCancelMessage('수량과 지정가를 확인하세요.');
+      return;
+    }
+
+    setIsReservedCancelling(true);
+    setReservedCancelMessage(null);
+    try {
+      const result = await placeKisReservedOrder({
+        accountId: kisAccountId ?? '',
+        instrumentId: selectedInstrument.id,
+        side: reservedSide,
+        quantity,
+        limitPrice,
+        confirmationPhrase: reservedCancelPhrase,
+      });
+      // 목록 조회가 못 잡아도 취소하려면 순번이 필요하다. 응답값을 화면에 남긴다.
+      setReservedCancelMessage(
+        `등록됨 · 예약주문순번 ${result.reservationSeq || '(응답에 없음)'} · ${result.message}` +
+          ' — 이 순번을 메모해 두세요. 취소에 필요합니다.',
+      );
+      setReservedCancelPhrase('');
+      refreshKisReservedOrders();
+      refreshKisOrderLog();
+    } catch (e) {
+      setReservedCancelMessage(String(e instanceof Error ? e.message : e));
+    } finally {
+      setIsReservedCancelling(false);
     }
   }
 
@@ -5435,6 +5474,64 @@ export function App(): JSX.Element {
                       새로고침
                     </button>
                   </div>
+                </div>
+                <div className="risk-rules">
+                  <label className="risk-rules__wide">
+                    <span>종목 (차트에서 선택한 종목)</span>
+                    <input
+                      readOnly
+                      type="text"
+                      value={
+                        !selectedInstrument
+                          ? '차트에서 종목을 먼저 선택하세요'
+                          : isOrderableDomesticInstrument(selectedInstrument)
+                            ? `${selectedInstrument.symbol} · ${selectedInstrument.name}`
+                            : `${selectedInstrument.name} — 주문 대상이 아닙니다 (국내 주식·ETF·ETN만)`
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>방향</span>
+                    <select onChange={(event) => setReservedSide(event.target.value as OrderSide)} value={reservedSide}>
+                      <option value="buy">매수</option>
+                      <option value="sell">매도</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>수량</span>
+                    <input
+                      min="1"
+                      onChange={(event) => setReservedQuantity(event.target.value)}
+                      step="1"
+                      type="number"
+                      value={reservedQuantity}
+                    />
+                  </label>
+                  <label>
+                    <span>지정가 (예약주문은 지정가만)</span>
+                    <input
+                      min="1"
+                      onChange={(event) => setReservedPrice(event.target.value)}
+                      placeholder={snapshot ? formatPrice(snapshot.price) : '현재가 대기'}
+                      step="1"
+                      type="number"
+                      value={reservedPrice}
+                    />
+                  </label>
+                  <label className="risk-rules__toggle">
+                    <button
+                      className="live-order__submit"
+                      disabled={
+                        !isOrderableDomesticInstrument(selectedInstrument) ||
+                        isReservedCancelling ||
+                        reservedCancelPhrase !== LIVE_ORDER_CONFIRMATION
+                      }
+                      onClick={() => void submitReservedOrder()}
+                      type="button"
+                    >
+                      {isReservedCancelling ? '처리 중' : '예약주문 등록'}
+                    </button>
+                  </label>
                 </div>
                 {kisReservedOrders.length === 0 ? (
                   <div className="portfolio-table__empty">등록된 예약주문 없음</div>
