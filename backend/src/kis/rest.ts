@@ -2,6 +2,9 @@ import { config, type KisAccountConfig } from '../config.js';
 import { getAccessToken, primaryCredentials, type KisCredentials } from './auth.js';
 import type {
   BrokerAccountSnapshot,
+  BrokerExecution,
+  BrokerExecutionSnapshot,
+  BrokerExecutionStatus,
   BrokerOrderability,
   BrokerPosition,
   Candle,
@@ -791,6 +794,158 @@ export async function getKisDomesticOrderability(
     maxBuyQuantity: firstNumber(output, ['max_buy_qty']),
     calculatedUnitPrice: firstNumber(output, ['psbl_qty_calc_unpr']),
     fetchedAt: Date.now(),
+  };
+}
+
+/**
+ * KST 기준 오늘에서 days일 전 날짜를 YYYYMMDD로. 조회 구간 시작일 계산용.
+ * 서버 타임존과 무관해야 하므로 UTC 게터로만 다시 포맷한다 (`yyyymmdd`는 로컬 기준이라 쓰지 않는다).
+ */
+function kstDaysAgo(days: number): string {
+  const today = kstToday();
+  const base = Date.UTC(Number(today.slice(0, 4)), Number(today.slice(4, 6)) - 1, Number(today.slice(6, 8)));
+  const past = new Date(base - days * 86_400_000);
+  const month = String(past.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(past.getUTCDate()).padStart(2, '0');
+  return `${past.getUTCFullYear()}${month}${day}`;
+}
+
+/** KIS 체결 진행 상태를 감사용 상태로 정규화한다. 취소·거부도 기록으로 남긴다. */
+function toBrokerExecutionStatus(row: Record<string, string>): BrokerExecutionStatus {
+  if (row.cncl_yn === 'Y') return 'canceled';
+
+  const orderQuantity = optionalNumber(row.ord_qty) ?? 0;
+  const filledQuantity = optionalNumber(row.tot_ccld_qty) ?? 0;
+  const rejectedQuantity = optionalNumber(row.rjct_qty) ?? 0;
+
+  if (rejectedQuantity > 0 && filledQuantity === 0) return 'rejected';
+  if (filledQuantity > 0 && filledQuantity >= orderQuantity) return 'filled';
+  if (filledQuantity > 0) return 'partial';
+  return 'open';
+}
+
+function rowToBrokerExecution(row: Record<string, string>, index: number): BrokerExecution {
+  const orderNo = row.odno ?? '';
+  const orderDate = row.ord_dt ?? '';
+  // 정정·취소가 아닌 주문의 원주문번호는 전부 0으로 채워져 내려온다. 값 자체는 자르지 않는다.
+  const originalOrderNo = row.orgn_odno ?? '';
+
+  return {
+    id: `${orderDate}-${orderNo}-${index}`,
+    orderNo,
+    originalOrderNo: /^0*$/.test(originalOrderNo) ? undefined : originalOrderNo,
+    orderDate,
+    orderTime: /^\d{6}$/.test(row.ord_tmd ?? '') ? row.ord_tmd : undefined,
+    symbol: row.pdno ?? '',
+    name: row.prdt_name ?? row.pdno ?? '',
+    // 매도매수구분코드: 01=매도, 02=매수
+    side: row.sll_buy_dvsn_cd === '01' ? 'sell' : 'buy',
+    orderTypeLabel: row.ord_dvsn_name ?? '',
+    orderQuantity: optionalNumber(row.ord_qty) ?? 0,
+    orderPrice: optionalNumber(row.ord_unpr) ?? 0,
+    filledQuantity: optionalNumber(row.tot_ccld_qty) ?? 0,
+    filledAmount: optionalNumber(row.tot_ccld_amt) ?? 0,
+    // avg_prvs는 체결 평균가다. 미체결이면 0으로 내려온다.
+    averageFilledPrice: optionalNumber(row.avg_prvs) ?? 0,
+    remainQuantity: optionalNumber(row.rmn_qty) ?? 0,
+    rejectedQuantity: optionalNumber(row.rjct_qty) ?? 0,
+    status: toBrokerExecutionStatus(row),
+    currency: 'KRW',
+  };
+}
+
+/**
+ * 국내주식 일별 주문체결 조회 (tr_id: TTTC8001R 실전 / VTTC8001R 모의).
+ *
+ * KIS는 3개월 이내만 이 tr_id로 조회할 수 있고, 응답이 페이지 단위라
+ * tr_cont가 M/F인 동안 CTX_AREA_* 키를 물려 이어 받아야 한다.
+ */
+export async function getKisDomesticExecutions(
+  account: KisAccountConfig | null,
+  days = 30,
+): Promise<BrokerExecutionSnapshot> {
+  const to = kstToday();
+  // KIS는 이 tr_id로 3개월 이내만 조회할 수 있어 상한을 90일로 자른다.
+  const from = kstDaysAgo(Number.isFinite(days) ? Math.min(Math.max(Math.floor(days), 1), 90) : 30);
+
+  if (!account) {
+    return {
+      broker: 'kis',
+      configured: false,
+      accountId: '',
+      accountLabel: 'KIS 계좌 미설정',
+      from,
+      to,
+      executions: [],
+      message: MISSING_ACCOUNT_MESSAGE,
+    };
+  }
+
+  const trId = config.env === 'prod' ? 'TTTC8001R' : 'VTTC8001R';
+  const executions: BrokerExecution[] = [];
+  let summary: Record<string, string> = {};
+  let fk100 = '';
+  let nk100 = '';
+  let trCont = '';
+
+  for (let depth = 0; depth < 10; depth += 1) {
+    const { body, headers } = await kisGetWithHeaders(
+      '/uapi/domestic-stock/v1/trading/inquire-daily-ccld',
+      trId,
+      {
+        CANO: account.cano,
+        ACNT_PRDT_CD: account.productCode,
+        INQR_STRT_DT: from,
+        INQR_END_DT: to,
+        SLL_BUY_DVSN_CD: '00',
+        INQR_DVSN: '00',
+        PDNO: '',
+        CCLD_DVSN: '00',
+        ORD_GNO_BRNO: '',
+        ODNO: '',
+        INQR_DVSN_3: '00',
+        INQR_DVSN_1: '',
+        CTX_AREA_FK100: fk100,
+        CTX_AREA_NK100: nk100,
+      },
+      trCont,
+      toCredentials(account),
+    );
+
+    if (body.rt_cd && body.rt_cd !== '0') {
+      throw new Error(`KIS 주문체결조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
+    }
+
+    const output1 = Array.isArray(body.output1) ? (body.output1 as Array<Record<string, string>>) : [];
+    const output2 = Array.isArray(body.output2)
+      ? (body.output2[0] as Record<string, string> | undefined)
+      : body.output2 && typeof body.output2 === 'object'
+        ? (body.output2 as Record<string, string>)
+        : undefined;
+
+    // 페이지가 이어지므로 id 인덱스는 누적 개수를 기준으로 잡는다.
+    const offset = executions.length;
+    output1.forEach((row, index) => executions.push(rowToBrokerExecution(row, offset + index)));
+    summary = output2 ?? summary;
+
+    trCont = headers.get('tr_cont') ?? '';
+    fk100 = String(body.ctx_area_fk100 ?? '');
+    nk100 = String(body.ctx_area_nk100 ?? '');
+    if (trCont !== 'M' && trCont !== 'F') break;
+  }
+
+  return {
+    broker: 'kis',
+    configured: true,
+    accountId: account.id,
+    accountLabel: `${account.label} · ${maskKisAccount(account.cano, account.productCode)}`,
+    from,
+    to,
+    executions,
+    totalOrderQuantity: firstNumber(summary, ['tot_ord_qty']),
+    totalFilledQuantity: firstNumber(summary, ['tot_ccld_qty']),
+    totalFilledAmount: firstNumber(summary, ['tot_ccld_amt']),
+    updatedAt: Date.now(),
   };
 }
 

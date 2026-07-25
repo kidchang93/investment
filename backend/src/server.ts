@@ -29,6 +29,7 @@ import {
   getInstrumentNews,
   getInstrumentQuote,
   getKisDomesticAccountSnapshot,
+  getKisDomesticExecutions,
   getKisDomesticOrderability,
   getQuote,
   getUsdKrwExchangeRate,
@@ -52,6 +53,7 @@ const QUOTE_CACHE_TTL_MS = 45_000;
 const STREAM_SUBSCRIBE_LIMIT = 80;
 /** 매수가능 조회가 성립하는 국내 자산 유형. 지수·선물·야간 프록시는 주문 대상이 아니다. */
 const ORDERABLE_DOMESTIC_ASSET_TYPES = new Set<InstrumentAssetType>(['stock', 'etf', 'etn']);
+const DEFAULT_EXECUTION_DAYS = 30;
 
 /**
  * accountId를 계좌 설정으로 바꾼다.
@@ -125,6 +127,22 @@ async function main(): Promise<void> {
       return reply.code(502).send({ message: 'KIS 계좌를 조회할 수 없습니다.' });
     }
   });
+
+  app.get<{ Querystring: { days?: string; accountId?: string } }>(
+    '/api/broker/kis/executions',
+    async (req, reply) => {
+      const account = resolveAccount(req.query.accountId);
+      if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+
+      const days = Number(req.query.days ?? DEFAULT_EXECUTION_DAYS);
+      try {
+        return await getKisDomesticExecutions(account, Number.isFinite(days) ? days : DEFAULT_EXECUTION_DAYS);
+      } catch (err) {
+        req.log.warn({ err, accountId: req.query.accountId }, 'KIS 체결내역 조회 실패');
+        return reply.code(502).send({ message: 'KIS 체결내역을 조회할 수 없습니다.' });
+      }
+    },
+  );
 
   app.get<{ Querystring: { instrumentId?: string; orderType?: string; price?: string; accountId?: string } }>(
     '/api/broker/kis/orderability',

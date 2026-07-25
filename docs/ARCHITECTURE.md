@@ -90,6 +90,7 @@ KisRealtime open/close → 'status' 이벤트 → broadcast({type:'status'})
 | 실시간 체결 | WebSocket | `H0STCNT0` |
 | 국내주식 잔고 | REST GET | `inquire-balance` / `TTTC8434R`(실전) · `VTTC8434R`(모의) |
 | 매수가능 조회 | REST GET | `inquire-psbl-order` / `TTTC8908R`(실전) · `VTTC8908R`(모의) |
+| 일별 주문체결 | REST GET | `inquire-daily-ccld` / `TTTC8001R`(실전) · `VTTC8001R`(모의) |
 
 도메인은 `config.ts`에서 `vts`(모의) / `prod`(실전)로 분기한다.
 **계좌 관련 TR_ID는 실전/모의 접두어(`TTTC`/`VTTC`)가 다르므로 `config.env` 분기로만 고른다.**

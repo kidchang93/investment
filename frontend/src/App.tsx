@@ -6,6 +6,7 @@ import {
   deleteWatchlist,
   fetchKisAccounts,
   fetchKisAccountSnapshot,
+  fetchKisExecutions,
   fetchKisOrderability,
   fetchCategoryInstruments,
   fetchInstrumentCandles,
@@ -27,6 +28,8 @@ import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } fr
 import type {
   BrokerAccountRef,
   BrokerAccountSnapshot,
+  BrokerExecutionSnapshot,
+  BrokerExecutionStatus,
   BrokerOrderability,
   Candle,
   CandlesResponse,
@@ -958,6 +961,29 @@ function orderStatusLabel(status: string): string {
   }
 }
 
+function brokerExecutionStatusLabel(status: BrokerExecutionStatus): string {
+  switch (status) {
+    case 'filled':
+      return '체결';
+    case 'partial':
+      return '부분체결';
+    case 'open':
+      return '미체결';
+    case 'canceled':
+      return '취소';
+    case 'rejected':
+      return '거부';
+  }
+}
+
+/** 브로커가 내려주는 YYYYMMDD·HHMMSS를 화면용 'MM-DD HH:MM'으로. */
+function formatBrokerOrderTime(date: string, time?: string): string {
+  if (!/^\d{8}$/.test(date)) return '-';
+  const day = `${date.slice(4, 6)}-${date.slice(6, 8)}`;
+  if (!time || !/^\d{6}$/.test(time)) return day;
+  return `${day} ${time.slice(0, 2)}:${time.slice(2, 4)}`;
+}
+
 function assetTypeLabel(assetType: Instrument['assetType']): string {
   switch (assetType) {
     case 'stock':
@@ -1413,6 +1439,10 @@ export function App(): JSX.Element {
   const [isKisAccountRefreshing, setIsKisAccountRefreshing] = useState(false);
   const [kisOrderability, setKisOrderability] = useState<BrokerOrderability | null>(null);
   const [isKisOrderabilityLoading, setIsKisOrderabilityLoading] = useState(false);
+  const [kisExecutionSnapshot, setKisExecutionSnapshot] = useState<BrokerExecutionSnapshot | null>(null);
+  const [isKisExecutionRefreshing, setIsKisExecutionRefreshing] = useState(false);
+  /** 체결내역을 이미 받아 둔 계좌. 화면 재진입마다 다시 조회하지 않기 위한 표시. */
+  const loadedExecutionAccountRef = useRef<string | null>(null);
   const [orderSide, setOrderSide] = useState<OrderSide>('buy');
   const [orderType, setOrderType] = useState<OrderType>('market');
   const [orderTimeInForce, setOrderTimeInForce] = useState<OrderTimeInForce>('day');
@@ -1586,6 +1616,23 @@ export function App(): JSX.Element {
   useEffect(() => {
     refreshKisAccountSnapshot();
   }, [refreshKisAccountSnapshot]);
+
+  const refreshKisExecutions = useCallback((): void => {
+    setIsKisExecutionRefreshing(true);
+    fetchKisExecutions(undefined, kisAccountId ?? undefined)
+      .then(setKisExecutionSnapshot)
+      .catch((e) => setError(String(e)))
+      .finally(() => setIsKisExecutionRefreshing(false));
+  }, [kisAccountId]);
+
+  // 체결내역은 포트폴리오 화면에서만 쓰는 실계좌 조회라, 그 화면을 열 때 계좌별로 한 번씩만 부른다.
+  useEffect(() => {
+    if (activePage !== 'portfolio') return;
+    const key = kisAccountId ?? 'default';
+    if (loadedExecutionAccountRef.current === key) return;
+    loadedExecutionAccountRef.current = key;
+    refreshKisExecutions();
+  }, [activePage, kisAccountId, refreshKisExecutions]);
 
   // 매수가능금액은 종목·단가에 따라 달라지므로 매수 탭에서 국내 주문 가능 종목일 때만 조회한다.
   useEffect(() => {
@@ -2460,6 +2507,11 @@ export function App(): JSX.Element {
     !isOrderSubmitting;
   const portfolioPositionCount = tradingOverview?.positions.length ?? 0;
   const kisAccountPositionCount = kisAccountSnapshot?.positions.length ?? 0;
+  const kisExecutionCount = kisExecutionSnapshot?.executions.length ?? 0;
+  const kisOpenExecutionCount =
+    kisExecutionSnapshot?.executions.filter(
+      (execution) => execution.status === 'open' || execution.status === 'partial',
+    ).length ?? 0;
   const kisAccountPnlTone =
     kisAccountSnapshot?.unrealizedPnl === undefined
       ? 'flat'
@@ -4445,6 +4497,91 @@ export function App(): JSX.Element {
                 ) : (
                   <div className="portfolio-table__empty">
                     {kisAccountSnapshot?.message ?? 'KIS 계좌 조회 설정을 확인하는 중입니다'}
+                  </div>
+                )}
+              </section>
+
+              <section className="portfolio-card portfolio-card--wide" aria-label="KIS 실계좌 체결 내역">
+                <div className="portfolio-card__header">
+                  <div>
+                    <strong>실계좌 주문·체결</strong>
+                    <span>
+                      {kisExecutionSnapshot
+                        ? `${formatBrokerOrderTime(kisExecutionSnapshot.from)} ~ ${formatBrokerOrderTime(kisExecutionSnapshot.to)} · ${kisExecutionCount}건`
+                        : '조회 대기'}
+                    </span>
+                  </div>
+                  <div className="portfolio-card__actions">
+                    <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
+                    <button
+                      className="portfolio-card__refresh"
+                      disabled={isKisExecutionRefreshing}
+                      onClick={refreshKisExecutions}
+                      type="button"
+                    >
+                      {isKisExecutionRefreshing ? '조회 중' : '새로고침'}
+                    </button>
+                  </div>
+                </div>
+                {kisExecutionSnapshot?.configured ? (
+                  <>
+                    <div className="portfolio-page__metrics portfolio-page__metrics--broker">
+                      <div>
+                        <span>총 주문수량</span>
+                        <strong>{formatNumber(kisExecutionSnapshot.totalOrderQuantity)}</strong>
+                      </div>
+                      <div>
+                        <span>총 체결수량</span>
+                        <strong>{formatNumber(kisExecutionSnapshot.totalFilledQuantity)}</strong>
+                      </div>
+                      <div>
+                        <span>총 체결금액</span>
+                        <strong>{formatMoney(kisExecutionSnapshot.totalFilledAmount)}</strong>
+                      </div>
+                      <div>
+                        <span>미체결</span>
+                        <strong>{kisOpenExecutionCount}건</strong>
+                      </div>
+                    </div>
+                    <div className="portfolio-table portfolio-table--executions">
+                      <div className="portfolio-table__head">
+                        <span>주문시각</span>
+                        <span>종목</span>
+                        <span>구분</span>
+                        <span>체결/주문</span>
+                        <span>체결단가</span>
+                        <span>체결금액</span>
+                        <span>상태</span>
+                      </div>
+                      {kisExecutionSnapshot.executions.slice(0, 30).map((execution) => (
+                        <div className="portfolio-table__row" key={execution.id}>
+                          <span>{formatBrokerOrderTime(execution.orderDate, execution.orderTime)}</span>
+                          <strong>{execution.name || execution.symbol}</strong>
+                          <span>
+                            {execution.side === 'buy' ? '매수' : '매도'}
+                            {execution.orderTypeLabel ? ` · ${execution.orderTypeLabel}` : ''}
+                          </span>
+                          <span>
+                            {formatNumber(execution.filledQuantity)} / {formatNumber(execution.orderQuantity)}
+                          </span>
+                          <span>
+                            {formatMoney(
+                              execution.averageFilledPrice || execution.orderPrice,
+                              execution.currency,
+                            )}
+                          </span>
+                          <span>{formatMoney(execution.filledAmount, execution.currency)}</span>
+                          <em data-status={execution.status}>{brokerExecutionStatusLabel(execution.status)}</em>
+                        </div>
+                      ))}
+                      {kisExecutionCount === 0 && (
+                        <div className="portfolio-table__empty">조회 구간에 실계좌 주문 없음</div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="portfolio-table__empty">
+                    {kisExecutionSnapshot?.message ?? 'KIS 체결내역을 조회하는 중입니다'}
                   </div>
                 )}
               </section>

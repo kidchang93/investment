@@ -314,6 +314,58 @@ export interface BrokerPosition {
   currency: string;
 }
 
+/** KIS 실계좌 주문 1건의 체결 진행 상태 */
+export type BrokerExecutionStatus = 'filled' | 'partial' | 'open' | 'canceled' | 'rejected';
+
+/**
+ * KIS 실계좌 주문·체결 1건. 감사 기록이므로 미체결·취소·거부도 버리지 않고 함께 담는다.
+ * 원본 KIS 필드는 backend/src/kis에서만 해석한다.
+ */
+export interface BrokerExecution {
+  id: string;
+  /** 브로커 주문번호 */
+  orderNo: string;
+  /** 정정·취소 주문이면 원주문번호 */
+  originalOrderNo?: string;
+  /** 주문일자 YYYYMMDD */
+  orderDate: string;
+  /** 주문시각 HHMMSS */
+  orderTime?: string;
+  symbol: string;
+  name: string;
+  side: OrderSide;
+  /** 브로커가 내려주는 주문구분 명칭 (지정가/시장가 등) */
+  orderTypeLabel: string;
+  orderQuantity: number;
+  orderPrice: number;
+  filledQuantity: number;
+  filledAmount: number;
+  averageFilledPrice: number;
+  remainQuantity: number;
+  rejectedQuantity: number;
+  status: BrokerExecutionStatus;
+  currency: string;
+}
+
+/** KIS 실계좌 체결 내역 스냅샷. 계좌번호 원문은 서버 밖으로 내보내지 않는다. */
+export interface BrokerExecutionSnapshot {
+  broker: 'kis';
+  configured: boolean;
+  /** 어느 계좌의 기록인지. 미설정이면 빈 문자열 */
+  accountId: string;
+  accountLabel: string;
+  /** 조회 시작일 YYYYMMDD */
+  from: string;
+  /** 조회 종료일 YYYYMMDD */
+  to: string;
+  executions: BrokerExecution[];
+  totalOrderQuantity?: number;
+  totalFilledQuantity?: number;
+  totalFilledAmount?: number;
+  updatedAt?: number;
+  message?: string;
+}
+
 export interface CreateOrderRequest {
   accountId: string;
   instrumentId: string;

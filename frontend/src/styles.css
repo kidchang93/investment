@@ -2511,6 +2511,12 @@ button {
   grid-template-columns: minmax(88px, 1fr) repeat(4, minmax(72px, 0.8fr));
 }
 
+/* 체결 내역은 주문시각·상태 컬럼이 더 붙어 7열이다. */
+.portfolio-table--executions .portfolio-table__head,
+.portfolio-table--executions .portfolio-table__row {
+  grid-template-columns: minmax(84px, 0.9fr) minmax(96px, 1.2fr) minmax(88px, 1fr) repeat(3, minmax(72px, 0.8fr)) minmax(64px, 0.7fr);
+}
+
 .portfolio-table__head {
   color: var(--faint);
   font-size: 11px;
@@ -2572,6 +2578,16 @@ button {
 .portfolio-table__row em[data-status='rejected'] {
   border-color: rgba(245, 196, 81, 0.28);
   color: var(--focus);
+}
+
+.portfolio-table__row em[data-status='partial'] {
+  border-color: rgba(134, 239, 172, 0.24);
+  color: #b9e7c6;
+}
+
+.portfolio-table__row em[data-status='open'] {
+  border-color: rgba(96, 165, 250, 0.3);
+  color: #93b8f8;
 }
 
 .portfolio-table__empty {

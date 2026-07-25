@@ -2,6 +2,7 @@ import { API_BASE } from './config';
 import type {
   BrokerAccountRef,
   BrokerAccountSnapshot,
+  BrokerExecutionSnapshot,
   BrokerOrderability,
   CandlesResponse,
   CreateOrderRequest,
@@ -56,6 +57,16 @@ export async function fetchKisAccountSnapshot(accountId?: string): Promise<Broke
 /** accountId를 생략하면 서버 기본 계좌를 쓴다. */
 function accountQuery(accountId?: string): string {
   return accountId ? `?accountId=${encodeURIComponent(accountId)}` : '';
+}
+
+export async function fetchKisExecutions(days?: number, accountId?: string): Promise<BrokerExecutionSnapshot> {
+  const params = new URLSearchParams();
+  if (days !== undefined && Number.isFinite(days)) params.set('days', String(days));
+  if (accountId) params.set('accountId', accountId);
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  const res = await fetch(`${API_BASE}/api/broker/kis/executions${suffix}`);
+  if (!res.ok) throw new Error(`KIS 체결내역 조회 실패: ${res.status}`);
+  return res.json();
 }
 
 export async function fetchKisOrderability(
