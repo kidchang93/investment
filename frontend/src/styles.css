@@ -662,10 +662,19 @@ button {
   font-weight: 700;
 }
 
+/*
+ * 이름 칸에 하한을 둔다. 이전 minmax(0, 1fr)에서는 이름만 줄어드는 칸이라
+ * 폭이 모자라면 0px까지 눌려 `SK하이닉스`가 통째로 사라졌다. 가격은 숫자라
+ * 잘리면 다른 값으로 읽히므로 auto로 두어 줄이지 않는다.
+ *
+ * flex-shrink: 0으로 칩이 눌리는 것도 막는다. 행은 이미 overflow-x: auto라
+ * 넘치면 가로로 스크롤되니, 눌러서 이름을 지울 이유가 없다.
+ */
 .recent-symbols button {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(72px, 1fr) auto auto;
   align-items: center;
+  flex-shrink: 0;
   gap: 7px;
   min-width: 176px;
   max-width: 258px;
