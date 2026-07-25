@@ -881,7 +881,9 @@ export async function getKisDomesticExecutions(
     };
   }
 
-  const trId = config.env === 'prod' ? 'TTTC8001R' : 'VTTC8001R';
+  // 3개월 이내 조회용 현행 tr_id. 구 TTTC8001R도 아직 응답하지만 문서상 현행은 이쪽이다.
+  // 3개월 이전 구간은 CTSC9215R / VTSC9215R로 갈라진다.
+  const trId = config.env === 'prod' ? 'TTTC0081R' : 'VTTC0081R';
   const executions: BrokerExecution[] = [];
   let summary: Record<string, string> = {};
   let fk100 = '';
