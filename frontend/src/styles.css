@@ -4876,3 +4876,8 @@ button {
 .risk-rules input[readonly] {
   color: var(--muted);
 }
+
+/* 카드 안에 들어가는 안내 메시지는 좌우 패딩을 카드에 맞춘다. */
+.live-order__messages--card {
+  padding: 0 12px 10px;
+}

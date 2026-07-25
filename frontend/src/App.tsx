@@ -2756,6 +2756,23 @@ export function App(): JSX.Element {
     selectedInstrument,
   ]);
   const liveOrderCanSubmit = liveOrderBlockers.length === 0 && !isLiveOrderSubmitting;
+
+  /** 예약주문 등록 버튼이 잠긴 이유. 화면에 그대로 보여준다. */
+  const reservedOrderBlockers = useMemo(() => {
+    const blockers: string[] = [];
+    if (!selectedInstrument) blockers.push('차트에서 종목을 먼저 선택하세요.');
+    else if (!isOrderableDomesticInstrument(selectedInstrument)) {
+      blockers.push('국내 주식·ETF·ETN만 예약주문할 수 있습니다.');
+    }
+    const quantity = Number(reservedQuantity);
+    const price = Number(reservedPrice);
+    if (!Number.isFinite(quantity) || quantity <= 0) blockers.push('수량은 0보다 커야 합니다.');
+    if (!Number.isFinite(price) || price <= 0) blockers.push('지정가를 입력하세요.');
+    if (reservedCancelPhrase !== LIVE_ORDER_CONFIRMATION) {
+      blockers.push(`확인 문구 '${LIVE_ORDER_CONFIRMATION}'을 입력하세요 (등록·취소 공통).`);
+    }
+    return blockers;
+  }, [reservedCancelPhrase, reservedPrice, reservedQuantity, selectedInstrument]);
   const portfolioPositionCount = tradingOverview?.positions.length ?? 0;
   const kisAccountPositionCount = kisAccountSnapshot?.positions.length ?? 0;
   const kisExecutionCount = kisExecutionSnapshot?.executions.length ?? 0;
@@ -5465,7 +5482,7 @@ export function App(): JSX.Element {
                     <label className="live-order__phrase live-order__phrase--inline">
                       <input
                         onChange={(event) => setReservedCancelPhrase(event.target.value)}
-                        placeholder={`취소하려면 '${LIVE_ORDER_CONFIRMATION}'`}
+                        placeholder={`등록·취소하려면 '${LIVE_ORDER_CONFIRMATION}' 입력`}
                         type="text"
                         value={reservedCancelPhrase}
                       />
@@ -5533,6 +5550,14 @@ export function App(): JSX.Element {
                     </button>
                   </label>
                 </div>
+                {/* 버튼이 왜 잠겼는지 보이지 않으면 사용자가 원인을 추측해야 한다. */}
+                {reservedOrderBlockers.length > 0 && (
+                  <div className="live-order__messages live-order__messages--card">
+                    {reservedOrderBlockers.map((blocker) => (
+                      <em key={blocker}>{blocker}</em>
+                    ))}
+                  </div>
+                )}
                 {kisReservedOrders.length === 0 ? (
                   <div className="portfolio-table__empty">등록된 예약주문 없음</div>
                 ) : (
