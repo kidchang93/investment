@@ -2184,9 +2184,10 @@ button {
   opacity: 0.55;
 }
 
+/* 셀이 5개다. minmax(0, 1fr)로 두어 좁아지면 셀이 함께 줄어들게 한다. */
 .order-ticket__summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
   min-width: 0;
 }
@@ -2259,6 +2260,12 @@ button {
 .order-ticket__messages em[data-tone='ok'] {
   border-color: rgba(34, 197, 94, 0.28);
   color: #8ee59e;
+}
+
+/* 실계좌 한도 안내는 paper 주문을 막지 않으므로 차단 메시지와 색을 구분한다. */
+.order-ticket__messages em[data-tone='live'] {
+  border-color: rgba(96, 165, 250, 0.3);
+  color: #93b8f8;
 }
 
 .order-ticket__submit {

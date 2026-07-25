@@ -29,6 +29,7 @@ import {
   getInstrumentNews,
   getInstrumentQuote,
   getKisDomesticAccountSnapshot,
+  getKisDomesticOrderability,
   getQuote,
   getUsdKrwExchangeRate,
 } from './kis/rest.js';
@@ -38,6 +39,7 @@ import type {
   ClientMessage,
   ClientSubscribeInstrument,
   CreateOrderRequest,
+  InstrumentAssetType,
   ServerMessage,
   Trade,
   ConnectionStatus,
@@ -48,6 +50,8 @@ const BATCH_QUOTE_LIMIT = 360;
 const BATCH_QUOTE_DELAY_MS = 120;
 const QUOTE_CACHE_TTL_MS = 45_000;
 const STREAM_SUBSCRIBE_LIMIT = 80;
+/** 매수가능 조회가 성립하는 국내 자산 유형. 지수·선물·야간 프록시는 주문 대상이 아니다. */
+const ORDERABLE_DOMESTIC_ASSET_TYPES = new Set<InstrumentAssetType>(['stock', 'etf', 'etn']);
 
 /**
  * accountId를 계좌 설정으로 바꾼다.
@@ -121,6 +125,38 @@ async function main(): Promise<void> {
       return reply.code(502).send({ message: 'KIS 계좌를 조회할 수 없습니다.' });
     }
   });
+
+  app.get<{ Querystring: { instrumentId?: string; orderType?: string; price?: string; accountId?: string } }>(
+    '/api/broker/kis/orderability',
+    async (req, reply) => {
+      const { instrumentId, orderType, price, accountId } = req.query;
+      if (!instrumentId) return reply.code(400).send({ message: 'instrumentId가 필요합니다.' });
+      if (orderType !== undefined && orderType !== 'market' && orderType !== 'limit') {
+        return reply.code(400).send({ message: '주문 유형이 올바르지 않습니다.' });
+      }
+
+      const account = resolveAccount(accountId);
+      if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+
+      const instrument = await getInstrument(instrumentId);
+      if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
+      if (!ORDERABLE_DOMESTIC_ASSET_TYPES.has(instrument.assetType) || instrument.country !== 'KR') {
+        return reply.code(400).send({ message: '국내주식·ETF·ETN만 매수가능금액을 조회할 수 있습니다.' });
+      }
+
+      try {
+        return await getKisDomesticOrderability(
+          account,
+          instrument.providerSymbol,
+          orderType === 'limit' ? 'limit' : 'market',
+          Number(price ?? 0),
+        );
+      } catch (err) {
+        req.log.warn({ err, instrumentId, accountId }, 'KIS 매수가능금액 조회 실패');
+        return reply.code(502).send({ message: 'KIS 매수가능금액을 조회할 수 없습니다.' });
+      }
+    },
+  );
 
   app.get('/api/exchange-rates/usd-krw', async (_req, reply) => {
     try {

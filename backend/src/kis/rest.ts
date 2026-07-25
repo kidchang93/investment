@@ -2,12 +2,14 @@ import { config, type KisAccountConfig } from '../config.js';
 import { getAccessToken, primaryCredentials, type KisCredentials } from './auth.js';
 import type {
   BrokerAccountSnapshot,
+  BrokerOrderability,
   BrokerPosition,
   Candle,
   CandlesResponse,
   ExchangeRate,
   Instrument,
   NewsItem,
+  OrderType,
   PriceSign,
   Quote,
 } from '@invest/shared';
@@ -717,6 +719,78 @@ export async function getKisDomesticAccountSnapshot(
     unrealizedPnlRate: firstNumber(summary, ['asst_icdc_erng_rt', 'evlu_erng_rt']),
     positions,
     updatedAt: Date.now(),
+  };
+}
+
+/**
+ * 국내주식 매수가능 조회 (tr_id: TTTC8908R 실전 / VTTC8908R 모의).
+ *
+ * KIS는 주문구분에 따라 계산 근거가 달라진다.
+ * - 시장가: ORD_DVSN='01' + ORD_UNPR='0'. 단가를 넣으면 응답이 왜곡된다.
+ * - 지정가: ORD_DVSN='00' + 실제 단가. 단가가 없으면 수량이 0으로 내려온다.
+ *
+ * `nrcvb_*`는 미수(외상) 없는 값, `max_*`는 미수를 포함한 값이라 서로 다르다.
+ * 주문 게이트는 보수적으로 미수 없는 값을 기준 삼도록 둘 다 노출한다.
+ */
+export async function getKisDomesticOrderability(
+  account: KisAccountConfig | null,
+  symbol: string,
+  orderType: OrderType,
+  price: number,
+): Promise<BrokerOrderability> {
+  const requestedPrice = orderType === 'limit' && isPositiveFinite(price) ? Math.floor(price) : 0;
+
+  if (!account) {
+    return {
+      broker: 'kis',
+      configured: false,
+      accountId: '',
+      symbol,
+      currency: 'KRW',
+      orderType,
+      requestedPrice,
+      message: MISSING_ACCOUNT_MESSAGE,
+    };
+  }
+
+  const trId = config.env === 'prod' ? 'TTTC8908R' : 'VTTC8908R';
+  const { body } = await kisGetWithHeaders(
+    '/uapi/domestic-stock/v1/trading/inquire-psbl-order',
+    trId,
+    {
+      CANO: account.cano,
+      ACNT_PRDT_CD: account.productCode,
+      PDNO: symbol,
+      ORD_UNPR: String(requestedPrice),
+      ORD_DVSN: orderType === 'limit' ? '00' : '01',
+      CMA_EVLU_AMT_ICLD_YN: 'N',
+      OVRS_ICLD_YN: 'N',
+    },
+    '',
+    toCredentials(account),
+  );
+
+  if (body.rt_cd && body.rt_cd !== '0') {
+    throw new Error(`KIS 매수가능조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
+  }
+
+  const output = (body.output ?? {}) as Record<string, string>;
+  return {
+    broker: 'kis',
+    configured: true,
+    accountId: account.id,
+    symbol,
+    currency: 'KRW',
+    orderType,
+    requestedPrice,
+    cashAvailable: firstNumber(output, ['ord_psbl_cash']),
+    reusableAmount: firstNumber(output, ['ruse_psbl_amt']),
+    cashBuyAmount: firstNumber(output, ['nrcvb_buy_amt']),
+    cashBuyQuantity: firstNumber(output, ['nrcvb_buy_qty']),
+    maxBuyAmount: firstNumber(output, ['max_buy_amt']),
+    maxBuyQuantity: firstNumber(output, ['max_buy_qty']),
+    calculatedUnitPrice: firstNumber(output, ['psbl_qty_calc_unpr']),
+    fetchedAt: Date.now(),
   };
 }
 

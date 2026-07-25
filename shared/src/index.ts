@@ -268,6 +268,38 @@ export interface BrokerAccountSnapshot {
   message?: string;
 }
 
+/**
+ * KIS 실계좌 매수가능 조회 결과. 종목·단가 기준으로 서버가 산출하며
+ * 계좌번호는 여기에도 담기지 않는다.
+ */
+export interface BrokerOrderability {
+  broker: 'kis';
+  configured: boolean;
+  /** 어느 계좌 기준인지. 미설정이면 빈 문자열 */
+  accountId: string;
+  symbol: string;
+  currency: string;
+  orderType: OrderType;
+  /** 조회에 사용한 주문 단가. 시장가 조회는 0 */
+  requestedPrice: number;
+  /** 주문가능현금 */
+  cashAvailable?: number;
+  /** 재사용가능금액 */
+  reusableAmount?: number;
+  /** 미수 없는 매수금액 */
+  cashBuyAmount?: number;
+  /** 미수 없는 매수수량 */
+  cashBuyQuantity?: number;
+  /** 최대 매수금액 (미수 포함) */
+  maxBuyAmount?: number;
+  /** 최대 매수수량 (미수 포함) */
+  maxBuyQuantity?: number;
+  /** 브로커가 가능수량 계산에 사용한 단가 */
+  calculatedUnitPrice?: number;
+  fetchedAt?: number;
+  message?: string;
+}
+
 /** KIS 실계좌 보유 종목. 원본 KIS 필드는 backend/src/kis에서만 해석한다. */
 export interface BrokerPosition {
   symbol: string;

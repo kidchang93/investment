@@ -2,6 +2,7 @@ import { API_BASE } from './config';
 import type {
   BrokerAccountRef,
   BrokerAccountSnapshot,
+  BrokerOrderability,
   CandlesResponse,
   CreateOrderRequest,
   CreateOrderResponse,
@@ -9,6 +10,7 @@ import type {
   Instrument,
   InstrumentCategory,
   NewsItem,
+  OrderType,
   Quote,
   TradingOverview,
   WatchItem,
@@ -54,6 +56,23 @@ export async function fetchKisAccountSnapshot(accountId?: string): Promise<Broke
 /** accountId를 생략하면 서버 기본 계좌를 쓴다. */
 function accountQuery(accountId?: string): string {
   return accountId ? `?accountId=${encodeURIComponent(accountId)}` : '';
+}
+
+export async function fetchKisOrderability(
+  instrumentId: string,
+  orderType: OrderType,
+  price?: number,
+  accountId?: string,
+): Promise<BrokerOrderability> {
+  const params = new URLSearchParams({ instrumentId, orderType });
+  // 시장가는 단가 없이 조회해야 브로커가 최대 수량을 제대로 계산한다.
+  if (orderType === 'limit' && price !== undefined && Number.isFinite(price) && price > 0) {
+    params.set('price', String(Math.floor(price)));
+  }
+  if (accountId) params.set('accountId', accountId);
+  const res = await fetch(`${API_BASE}/api/broker/kis/orderability?${params.toString()}`);
+  if (!res.ok) throw new Error(`KIS 매수가능금액 조회 실패: ${res.status}`);
+  return res.json();
 }
 
 export async function fetchUsdKrwExchangeRate(): Promise<ExchangeRate> {

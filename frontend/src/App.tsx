@@ -6,6 +6,7 @@ import {
   deleteWatchlist,
   fetchKisAccounts,
   fetchKisAccountSnapshot,
+  fetchKisOrderability,
   fetchCategoryInstruments,
   fetchInstrumentCandles,
   fetchInstrumentCategories,
@@ -26,6 +27,7 @@ import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } fr
 import type {
   BrokerAccountRef,
   BrokerAccountSnapshot,
+  BrokerOrderability,
   Candle,
   CandlesResponse,
   ClientSubscribeInstrument,
@@ -516,6 +518,9 @@ const LIST_QUOTE_REQUEST_CHUNK_SIZE = 8;
 const DISCOVER_INITIAL_QUOTE_TARGETS = 24;
 const SEARCH_QUOTE_TARGETS = 10;
 const RECENT_INSTRUMENT_LIMIT = 8;
+// 매수가능 조회는 실계좌 API라 지정가를 타이핑하는 동안 매 글자마다 호출하지 않는다.
+const ORDERABILITY_DEBOUNCE_MS = 700;
+const ORDERABLE_DOMESTIC_ASSET_TYPES = new Set<Instrument['assetType']>(['stock', 'etf', 'etn']);
 const STORAGE_PREFIX = 'investment-monitor:';
 
 /**
@@ -546,6 +551,13 @@ function BrokerAccountPicker({
         </button>
       ))}
     </div>
+  );
+}
+
+/** 국내 현금 주문이 성립하는 종목인지. 지수·선물·야간 프록시는 매수가능 조회 대상이 아니다. */
+function isOrderableDomesticInstrument(instrument: Instrument | null): boolean {
+  return Boolean(
+    instrument && instrument.country === 'KR' && ORDERABLE_DOMESTIC_ASSET_TYPES.has(instrument.assetType),
   );
 }
 
@@ -1399,6 +1411,8 @@ export function App(): JSX.Element {
   const [kisAccountSnapshot, setKisAccountSnapshot] = useState<BrokerAccountSnapshot | null>(null);
   const [usdKrwRate, setUsdKrwRate] = useState<ExchangeRate | null>(null);
   const [isKisAccountRefreshing, setIsKisAccountRefreshing] = useState(false);
+  const [kisOrderability, setKisOrderability] = useState<BrokerOrderability | null>(null);
+  const [isKisOrderabilityLoading, setIsKisOrderabilityLoading] = useState(false);
   const [orderSide, setOrderSide] = useState<OrderSide>('buy');
   const [orderType, setOrderType] = useState<OrderType>('market');
   const [orderTimeInForce, setOrderTimeInForce] = useState<OrderTimeInForce>('day');
@@ -1572,6 +1586,49 @@ export function App(): JSX.Element {
   useEffect(() => {
     refreshKisAccountSnapshot();
   }, [refreshKisAccountSnapshot]);
+
+  // 매수가능금액은 종목·단가에 따라 달라지므로 매수 탭에서 국내 주문 가능 종목일 때만 조회한다.
+  useEffect(() => {
+    const instrument = selectedInstrument;
+    const limitPrice = Number(orderLimitPrice);
+    const needsLimitPrice = orderType === 'limit' && (!Number.isFinite(limitPrice) || limitPrice <= 0);
+    if (
+      !instrument ||
+      activePage !== 'trade' ||
+      orderSide !== 'buy' ||
+      needsLimitPrice ||
+      !isOrderableDomesticInstrument(instrument)
+    ) {
+      setKisOrderability(null);
+      setIsKisOrderabilityLoading(false);
+      return;
+    }
+
+    let disposed = false;
+    setIsKisOrderabilityLoading(true);
+    const timer = window.setTimeout(() => {
+      fetchKisOrderability(
+        instrument.id,
+        orderType,
+        orderType === 'limit' ? limitPrice : undefined,
+        kisAccountId ?? undefined,
+      )
+        .then((result) => {
+          if (!disposed) setKisOrderability(result);
+        })
+        .catch(() => {
+          if (!disposed) setKisOrderability(null);
+        })
+        .finally(() => {
+          if (!disposed) setIsKisOrderabilityLoading(false);
+        });
+    }, ORDERABILITY_DEBOUNCE_MS);
+
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
+  }, [activePage, kisAccountId, orderLimitPrice, orderSide, orderType, selectedInstrument]);
 
   useEffect(() => {
     let disposed = false;
@@ -2384,6 +2441,20 @@ export function App(): JSX.Element {
     selectedInstrument?.currency,
     selectedPosition?.quantity,
   ]);
+  // 실계좌 한도는 paper 주문을 막지 않는다. 실주문 게이트를 대비한 참고 경고로만 노출한다.
+  const orderLiveNotices = useMemo(() => {
+    const notices: string[] = [];
+    if (orderSide !== 'buy' || !kisOrderability?.configured || orderEstimatedNotional === undefined) return notices;
+    if (kisOrderability.cashBuyAmount !== undefined && orderEstimatedNotional > kisOrderability.cashBuyAmount) {
+      notices.push(
+        `실계좌 미수 없는 매수금액 ${formatMoney(kisOrderability.cashBuyAmount, kisOrderability.currency)}를 초과합니다.`,
+      );
+    }
+    if (kisOrderability.cashBuyQuantity !== undefined && orderQuantityNumber > kisOrderability.cashBuyQuantity) {
+      notices.push(`실계좌 기준 최대 ${formatNumber(kisOrderability.cashBuyQuantity)}주까지 매수할 수 있습니다.`);
+    }
+    return notices;
+  }, [kisOrderability, orderEstimatedNotional, orderQuantityNumber, orderSide]);
   const orderCanSubmit =
     Boolean(selectedInstrument && activeTradingAccount && orderRiskMessages.length === 0 && orderEstimatedPrice) &&
     !isOrderSubmitting;
@@ -3919,6 +3990,19 @@ export function App(): JSX.Element {
                   <strong>{formatMoney(activeTradingAccount?.buyingPower, activeTradingAccount?.baseCurrency)}</strong>
                 </div>
                 <div>
+                  <span>실계좌 매수가능</span>
+                  <strong>
+                    {isKisOrderabilityLoading
+                      ? '조회 중'
+                      : kisOrderability?.configured
+                        ? formatMoney(kisOrderability.cashBuyAmount, kisOrderability.currency)
+                        : '-'}
+                  </strong>
+                  {kisOrderability?.configured && kisOrderability.cashBuyQuantity !== undefined && (
+                    <small>최대 {formatNumber(kisOrderability.cashBuyQuantity)}주</small>
+                  )}
+                </div>
+                <div>
                   <span>보유 수량</span>
                   <strong>{selectedPosition ? formatNumber(selectedPosition.quantity) : '-'}</strong>
                 </div>
@@ -3938,6 +4022,11 @@ export function App(): JSX.Element {
                   ) : (
                     orderRiskMessages.map((message) => <em key={message}>{message}</em>)
                   )}
+                  {orderLiveNotices.map((notice) => (
+                    <em data-tone="live" key={notice}>
+                      {notice}
+                    </em>
+                  ))}
                 </div>
               </div>
               <button
