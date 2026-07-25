@@ -2249,6 +2249,18 @@ button {
   background: rgba(9, 13, 20, 0.72);
 }
 
+/*
+ * 같은 줄에 모의 계좌 금액과 실계좌 금액이 함께 놓인다.
+ * 포트폴리오 섹션과 같은 색 규칙(실계좌 붉은 계열, 모의 노란 계열)으로 갈라 둔다.
+ */
+.order-ticket__summary div[data-account='live'] {
+  border-color: rgba(229, 72, 77, 0.26);
+}
+
+.order-ticket__summary div[data-account='paper'] {
+  border-color: rgba(245, 196, 81, 0.22);
+}
+
 .order-ticket__summary strong {
   overflow: hidden;
   text-overflow: ellipsis;

@@ -4515,11 +4515,15 @@ export function App(): JSX.Element {
                   <strong>{formatMoney(orderEstimatedNotional, selectedInstrument?.currency)}</strong>
                   {orderEstimatedNotionalKrw && <small>{orderEstimatedNotionalKrw}</small>}
                 </div>
-                <div>
-                  <span>주문 가능</span>
+                {/*
+                  모의 주문가능(971만)과 실계좌 매수가능(5만)이 나란히 놓인다.
+                  둘 다 "얼마까지 살 수 있나"라서 표시를 안 갈라두면 어느 계좌 돈인지 오해한다.
+                */}
+                <div data-account="paper">
+                  <span>모의 주문가능</span>
                   <strong>{formatMoney(activeTradingAccount?.buyingPower, activeTradingAccount?.baseCurrency)}</strong>
                 </div>
-                <div>
+                <div data-account="live">
                   <span>{orderSide === 'buy' ? '실계좌 매수가능' : '실계좌 매도가능'}</span>
                   {orderSide === 'buy' ? (
                     <>
