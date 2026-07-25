@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addWatchlistItem,
+  cancelKisReservedOrder,
   createOrder,
   createWatchlist,
   deleteWatchlist,
@@ -1517,6 +1518,10 @@ export function App(): JSX.Element {
   const [kisOpenOrders, setKisOpenOrders] = useState<BrokerAmendableOrder[]>([]);
   const [isKisOpenOrdersRefreshing, setIsKisOpenOrdersRefreshing] = useState(false);
   const [kisReservedOrders, setKisReservedOrders] = useState<BrokerReservedOrder[]>([]);
+  /** 예약주문 취소도 확인 문구를 요구한다. 매매 탭 입력과 분리해 포트폴리오에서 따로 받는다. */
+  const [reservedCancelPhrase, setReservedCancelPhrase] = useState('');
+  const [isReservedCancelling, setIsReservedCancelling] = useState(false);
+  const [reservedCancelMessage, setReservedCancelMessage] = useState<string | null>(null);
   const [kisOrderLog, setKisOrderLog] = useState<BrokerOrderRecord[]>([]);
   const [kisTradeProfit, setKisTradeProfit] = useState<BrokerTradeProfitSnapshot | null>(null);
   const [tradeProfitDays, setTradeProfitDays] = useState(30);
@@ -1815,13 +1820,17 @@ export function App(): JSX.Element {
     refreshKisOpenOrders();
   }, [activePage, refreshKisOpenOrders]);
 
-  // 예약주문은 포트폴리오에서만 쓴다.
-  useEffect(() => {
-    if (activePage !== 'portfolio') return;
+  const refreshKisReservedOrders = useCallback((): void => {
     fetchKisReservedOrders(kisAccountId ?? undefined)
       .then(setKisReservedOrders)
       .catch(() => setKisReservedOrders([]));
-  }, [activePage, kisAccountId]);
+  }, [kisAccountId]);
+
+  // 예약주문은 포트폴리오에서만 쓴다.
+  useEffect(() => {
+    if (activePage !== 'portfolio') return;
+    refreshKisReservedOrders();
+  }, [activePage, refreshKisReservedOrders]);
 
   // 기간별 매매손익은 포트폴리오에서 계좌·구간별로 받는다.
   useEffect(() => {
@@ -2928,6 +2937,34 @@ export function App(): JSX.Element {
       setRiskMessage(String(e instanceof Error ? e.message : e));
     } finally {
       setIsRiskSaving(false);
+    }
+  }
+
+  async function cancelReservedOrder(order: BrokerReservedOrder): Promise<void> {
+    if (reservedCancelPhrase !== LIVE_ORDER_CONFIRMATION) return;
+    setIsReservedCancelling(true);
+    setReservedCancelMessage(null);
+    try {
+      const result = await cancelKisReservedOrder({
+        accountId: kisAccountId ?? '',
+        reservationSeq: order.reservationSeq,
+        reservationOrderDate: order.orderDate,
+        confirmationPhrase: reservedCancelPhrase,
+      });
+      setReservedCancelMessage(
+        result.processed
+          ? `취소됨 · ${result.message}`
+          : `접수됐지만 정상처리 여부가 확인되지 않았습니다 · ${result.message}`,
+      );
+      setReservedCancelPhrase('');
+      refreshKisReservedOrders();
+      refreshKisOrderLog();
+    } catch (e) {
+      setReservedCancelMessage(
+        `${String(e instanceof Error ? e.message : e)} — 실패하면 KIS 앱에서 직접 취소하세요.`,
+      );
+    } finally {
+      setIsReservedCancelling(false);
     }
   }
 
@@ -5381,7 +5418,22 @@ export function App(): JSX.Element {
                 <div className="portfolio-card__header">
                   <div>
                     <strong>실계좌 예약주문</strong>
-                    <span>{kisReservedOrders.length}건 · 최근 30일</span>
+                    <span>
+                      {kisReservedOrders.length}건 · 최근 30일 · 취소하지 않으면 다음 개장일에 주문이 나갑니다
+                    </span>
+                  </div>
+                  <div className="portfolio-card__actions">
+                    <label className="live-order__phrase live-order__phrase--inline">
+                      <input
+                        onChange={(event) => setReservedCancelPhrase(event.target.value)}
+                        placeholder={`취소하려면 '${LIVE_ORDER_CONFIRMATION}'`}
+                        type="text"
+                        value={reservedCancelPhrase}
+                      />
+                    </label>
+                    <button className="portfolio-card__refresh" onClick={refreshKisReservedOrders} type="button">
+                      새로고침
+                    </button>
                   </div>
                 </div>
                 {kisReservedOrders.length === 0 ? (
@@ -5394,7 +5446,7 @@ export function App(): JSX.Element {
                       <span>방향</span>
                       <span>수량</span>
                       <span>단가</span>
-                      <span>상태</span>
+                      <span>상태·취소</span>
                     </div>
                     {kisReservedOrders.slice(0, 20).map((order) => (
                       <div className="portfolio-table__row" key={order.id}>
@@ -5403,13 +5455,25 @@ export function App(): JSX.Element {
                         <span>{order.side === 'buy' ? '매수' : '매도'}</span>
                         <span>{formatNumber(order.orderQuantity)}</span>
                         <span>{formatMoney(order.orderPrice, order.currency)}</span>
-                        <em data-status={order.canceled ? 'canceled' : 'open'}>
-                          {order.canceled ? '취소' : order.statusLabel || '예약'}
-                        </em>
+                        <span className="live-order__actions">
+                          <em data-status={order.canceled ? 'canceled' : 'open'}>
+                            {order.canceled ? '취소됨' : order.statusLabel || '예약'}
+                          </em>
+                          {!order.canceled && (
+                            <button
+                              disabled={isReservedCancelling || reservedCancelPhrase !== LIVE_ORDER_CONFIRMATION}
+                              onClick={() => void cancelReservedOrder(order)}
+                              type="button"
+                            >
+                              취소
+                            </button>
+                          )}
+                        </span>
                       </div>
                     ))}
                   </div>
                 )}
+                {reservedCancelMessage && <p className="live-order__result">{reservedCancelMessage}</p>}
               </section>
 
               <div className="portfolio-page__metrics">

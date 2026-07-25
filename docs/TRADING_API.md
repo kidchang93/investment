@@ -169,7 +169,10 @@ curl -X POST http://localhost:4000/api/broker/kis/reserved-orders \
 # 목록 확인
 curl "http://localhost:4000/api/broker/kis/reserved-orders?accountId=21"
 
-# 취소 (주문일자는 등록한 날짜 YYYYMMDD)
+# 취소 — 화면에서도 된다.
+#   포트폴리오 > 실계좌 예약주문 카드 헤더에 '실주문 전송'을 입력하면
+#   각 행의 [취소] 버튼이 활성화된다.
+# (주문일자는 등록한 날짜 YYYYMMDD)
 curl -X POST http://localhost:4000/api/broker/kis/reserved-orders/cancel \
   -H 'content-type: application/json' \
   -d '{"accountId":"21","reservationSeq":"<SEQ>","reservationOrderDate":"<YYYYMMDD>",
@@ -292,7 +295,7 @@ WS를 하나 더 열어야 한다.
 | 주문 티켓 · 실계좌 주문 | 게이트 상태 배지, 확인 문구 입력, 전송 버튼 |
 | 주문 티켓 · 미체결 주문 | 목록 + 정정(단가 입력) / 취소 |
 | 주문 티켓 · 실시간 통보 | 접수·체결·거부가 실시간으로 쌓임 (HTS ID 필요) |
-| 포트폴리오 | 실계좌 잔고, 주문·체결 감사 기록, 기간별 매매손익, 리스크 룰 편집, 주문 전송 기록, 예약주문 목록 |
+| 포트폴리오 | 실계좌 잔고, 주문·체결 감사 기록, 기간별 매매손익, 리스크 룰 편집, 주문 전송 기록, 예약주문 목록·취소 |
 
 전송 버튼은 **서버 게이트와 프런트 검증을 모두 통과해야** 열린다. 확인 문구를 정확히
 입력해도 `KIS_LIVE_ORDER_ENABLED`가 꺼져 있으면 잠긴 채로 남는 것을 확인했다.

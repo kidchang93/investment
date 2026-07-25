@@ -1,6 +1,7 @@
 import { API_BASE } from './config';
 import type {
   AmendLiveOrderRequest,
+  CancelReservedOrderRequest,
   BrokerAccountRef,
   BrokerAccountSnapshot,
   BrokerAmendableOrder,
@@ -124,6 +125,23 @@ export async function fetchKisOrderLog(accountId?: string): Promise<BrokerOrderR
   const res = await fetch(`${API_BASE}/api/broker/kis/order-log${accountQuery(accountId)}`);
   if (!res.ok) throw new Error(`실주문 기록 조회 실패: ${res.status}`);
   return res.json();
+}
+
+/**
+ * 예약주문 취소. KIS가 요구하는 예약주문조직번호는 등록·조회 응답에 없어 비워 보낸다.
+ * 실패하면 KIS HTS/MTS 앱에서 직접 취소해야 한다.
+ */
+export async function cancelKisReservedOrder(
+  request: CancelReservedOrderRequest,
+): Promise<{ accepted: boolean; processed: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/reserved-orders/cancel`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(String((body as { message?: string }).message ?? `예약주문 취소 실패: ${res.status}`));
+  return body as { accepted: boolean; processed: boolean; message: string };
 }
 
 export async function fetchKisTradeProfit(accountId?: string, days?: number): Promise<BrokerTradeProfitSnapshot> {

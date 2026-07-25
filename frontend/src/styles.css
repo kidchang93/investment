@@ -4850,3 +4850,13 @@ button {
     writing-mode: horizontal-tb;
   }
 }
+
+/* 예약주문 카드 헤더의 확인 문구 입력. 표 안이 아니라 헤더에 있어 폭을 줄인다. */
+.live-order__phrase--inline {
+  flex: 0 1 220px;
+}
+
+.live-order__phrase--inline input {
+  height: 28px;
+  font-size: 11px;
+}
