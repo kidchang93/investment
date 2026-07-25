@@ -399,6 +399,52 @@ export interface BrokerExecutionSnapshot {
   message?: string;
 }
 
+/** 기간별 매매손익 1건. 매도 체결 기준으로 실현손익이 확정된 건이다. */
+export interface BrokerTradeProfitRow {
+  id: string;
+  /** 매매일자 YYYYMMDD */
+  tradeDate: string;
+  symbol: string;
+  name: string;
+  /** 매매구분 명칭 (현금매도 등) */
+  tradeTypeLabel: string;
+  sellQuantity: number;
+  sellPrice: number;
+  sellAmount: number;
+  buyQuantity: number;
+  /** 매입단가 */
+  buyPrice: number;
+  buyAmount: number;
+  /** 실현손익 (수수료·세금 반영) */
+  realizedProfit: number;
+  /** 손익률(%) */
+  profitRate: number;
+  fee: number;
+  tax: number;
+  loanInterest: number;
+  currency: string;
+}
+
+/** 기간별 매매손익 스냅샷. 합계는 브로커가 계산해 준 값을 그대로 쓴다. */
+export interface BrokerTradeProfitSnapshot {
+  broker: 'kis';
+  configured: boolean;
+  accountId: string;
+  /** 조회 시작일 YYYYMMDD */
+  from: string;
+  /** 조회 종료일 YYYYMMDD */
+  to: string;
+  rows: BrokerTradeProfitRow[];
+  totalRealizedProfit?: number;
+  /** 총 손익률(%) */
+  totalProfitRate?: number;
+  totalFee?: number;
+  totalTax?: number;
+  totalTradeAmount?: number;
+  updatedAt?: number;
+  message?: string;
+}
+
 /**
  * KIS 매도가능수량 조회 결과.
  * 이 응답에는 종목명이 없다(상품번호만 온다). 이름은 화면이 이미 아는 `Instrument`를 쓴다.

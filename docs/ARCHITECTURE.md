@@ -95,6 +95,8 @@ KisRealtime open/close → 'status' 이벤트 → broadcast({type:'status'})
 | 매도가능수량 | REST GET | `inquire-psbl-sell` / `TTTC8408R` (모의 미지원) |
 | 정정취소가능주문 | REST GET | `inquire-psbl-rvsecncl` / `TTTC0084R` (모의 미지원) |
 | 예약주문 조회 | REST GET | `order-resv-ccnl` / `CTSC0004R` (모의 미지원) |
+| 기간별 매매손익 | REST GET | `inquire-period-trade-profit` / `TTTC8715R` (모의 미지원) |
+| 국내 개장일 | REST GET | `chk-holiday` / `CTCA0903R` |
 | 현금 주문 | REST POST | `order-cash` / 매수 `TTTC0012U` · 매도 `TTTC0011U` |
 | 주문 정정·취소 | REST POST | `order-rvsecncl` / `TTTC0013U` |
 

@@ -10,6 +10,8 @@ import type {
   BrokerPosition,
   BrokerReservedOrder,
   BrokerSellability,
+  BrokerTradeProfitRow,
+  BrokerTradeProfitSnapshot,
   OrderSide,
   Candle,
   CandlesResponse,
@@ -32,22 +34,56 @@ async function kisPost(
   credentials: KisCredentials,
 ): Promise<Record<string, unknown>> {
   const token = await getAccessToken(credentials);
-  const res = await fetch(config.restBase + path, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-      authorization: `Bearer ${token}`,
-      appkey: credentials.appKey,
-      appsecret: credentials.appSecret,
-      tr_id: trId,
-      custtype: config.custType,
-    },
-    body: JSON.stringify(body),
+  // 주문은 재시도하지 않는다. 중복 접수 위험이 조회 실패보다 훨씬 크다.
+  return scheduleKisCall(async () => {
+    const res = await fetch(config.restBase + path, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        authorization: `Bearer ${token}`,
+        appkey: credentials.appKey,
+        appsecret: credentials.appSecret,
+        tr_id: trId,
+        custtype: config.custType,
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      throw new Error(`KIS POST ${path} 실패 (${res.status}): ${await res.text()}`);
+    }
+    return (await res.json()) as Record<string, unknown>;
   });
-  if (!res.ok) {
-    throw new Error(`KIS POST ${path} 실패 (${res.status}): ${await res.text()}`);
-  }
-  return (await res.json()) as Record<string, unknown>;
+}
+
+/** KIS 초당 호출 한도 초과 코드. 잔고·체결·손익을 한 화면에서 동시에 부르면 쉽게 걸린다. */
+const KIS_RATE_LIMIT_CODE = 'EGW00201';
+const KIS_MIN_CALL_GAP_MS = 70;
+const KIS_RATE_LIMIT_BACKOFF_MS = 400;
+
+let kisCallChain: Promise<unknown> = Promise.resolve();
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/**
+ * KIS REST 호출을 한 줄로 세워 최소 간격을 둔다.
+ * 포트폴리오 화면이 계좌·체결·예약주문·매매손익을 동시에 띄우면 초당 한도에 걸려
+ * 일부 카드만 502로 비는 일이 생긴다. 순서를 지키는 대신 조금 느리게 간다.
+ */
+function scheduleKisCall<T>(run: () => Promise<T>): Promise<T> {
+  const result = kisCallChain.then(run, run);
+  kisCallChain = result.then(
+    () => delay(KIS_MIN_CALL_GAP_MS),
+    () => delay(KIS_MIN_CALL_GAP_MS),
+  );
+  return result;
+}
+
+function isRateLimited(body: Record<string, unknown>): boolean {
+  return String(body.msg_cd ?? '') === KIS_RATE_LIMIT_CODE;
 }
 
 /** KIS REST GET 공통 헬퍼. tr_id별로 헤더/인증을 채워 호출한다. */
@@ -79,15 +115,19 @@ async function kisGetWithHeaders(
   };
   if (trCont) headers.tr_cont = trCont;
 
-  const res = await fetch(url, {
-    headers: {
-      ...headers,
-    },
-  });
-  if (!res.ok) {
-    throw new Error(`KIS GET ${path} 실패 (${res.status}): ${await res.text()}`);
+  async function callOnce(): Promise<{ body: Record<string, unknown>; headers: Headers }> {
+    const res = await fetch(url, { headers: { ...headers } });
+    if (!res.ok) {
+      throw new Error(`KIS GET ${path} 실패 (${res.status}): ${await res.text()}`);
+    }
+    return { body: (await res.json()) as Record<string, unknown>, headers: res.headers };
   }
-  return { body: (await res.json()) as Record<string, unknown>, headers: res.headers };
+
+  const first = await scheduleKisCall(callOnce);
+  // 한도에 걸리면 잠시 쉬고 한 번만 더 시도한다. 계속 두드리면 더 오래 막힌다.
+  if (!isRateLimited(first.body)) return first;
+  await delay(KIS_RATE_LIMIT_BACKOFF_MS);
+  return scheduleKisCall(callOnce);
 }
 
 function yyyymmdd(d: Date): string {
@@ -980,6 +1020,113 @@ export async function getKisDomesticExecutions(
     totalOrderQuantity: firstNumber(summary, ['tot_ord_qty']),
     totalFilledQuantity: firstNumber(summary, ['tot_ccld_qty']),
     totalFilledAmount: firstNumber(summary, ['tot_ccld_amt']),
+    updatedAt: Date.now(),
+  };
+}
+
+/**
+ * 국내주식 기간별 매매손익 조회 (tr_id: TTTC8715R, 모의투자 미지원).
+ *
+ * 체결내역(`inquire-daily-ccld`)과 달리 **매도로 확정된 실현손익**과 수수료·세금을 준다.
+ * 합계(output2)는 브로커가 계산해 준 값을 그대로 쓴다. 우리가 다시 더하면 어긋난다.
+ */
+export async function getKisDomesticTradeProfit(
+  account: KisAccountConfig | null,
+  days = 30,
+): Promise<BrokerTradeProfitSnapshot> {
+  const to = kstToday();
+  const from = kstDaysAgo(Number.isFinite(days) ? Math.min(Math.max(Math.floor(days), 1), 365) : 30);
+
+  if (!account) {
+    return {
+      broker: 'kis',
+      configured: false,
+      accountId: '',
+      from,
+      to,
+      rows: [],
+      message: MISSING_ACCOUNT_MESSAGE,
+    };
+  }
+
+  const rows: BrokerTradeProfitRow[] = [];
+  let summary: Record<string, string> = {};
+  let fk100 = '';
+  let nk100 = '';
+  let trCont = '';
+
+  for (let depth = 0; depth < 10; depth += 1) {
+    const { body, headers } = await kisGetWithHeaders(
+      '/uapi/domestic-stock/v1/trading/inquire-period-trade-profit',
+      'TTTC8715R',
+      {
+        CANO: account.cano,
+        ACNT_PRDT_CD: account.productCode,
+        SORT_DVSN: '00',
+        INQR_STRT_DT: from,
+        INQR_END_DT: to,
+        CBLC_DVSN: '00',
+        PDNO: '',
+        CTX_AREA_FK100: fk100,
+        CTX_AREA_NK100: nk100,
+      },
+      trCont,
+      toCredentials(account),
+    );
+
+    if (body.rt_cd && body.rt_cd !== '0') {
+      throw new Error(`KIS 기간별매매손익조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
+    }
+
+    const output1 = Array.isArray(body.output1) ? (body.output1 as Array<Record<string, string>>) : [];
+    const output2 = Array.isArray(body.output2)
+      ? (body.output2[0] as Record<string, string> | undefined)
+      : body.output2 && typeof body.output2 === 'object'
+        ? (body.output2 as Record<string, string>)
+        : undefined;
+
+    const offset = rows.length;
+    output1.forEach((row, index) => {
+      rows.push({
+        id: `${row.trad_dt ?? ''}-${row.pdno ?? ''}-${offset + index}`,
+        tradeDate: row.trad_dt ?? '',
+        symbol: row.pdno ?? '',
+        name: row.prdt_name ?? row.pdno ?? '',
+        tradeTypeLabel: row.trad_dvsn_name ?? '',
+        sellQuantity: optionalNumber(row.sll_qty) ?? 0,
+        sellPrice: optionalNumber(row.sll_pric) ?? 0,
+        sellAmount: optionalNumber(row.sll_amt) ?? 0,
+        buyQuantity: optionalNumber(row.buy_qty) ?? 0,
+        buyPrice: optionalNumber(row.pchs_unpr) ?? 0,
+        buyAmount: optionalNumber(row.buy_amt) ?? 0,
+        realizedProfit: optionalNumber(row.rlzt_pfls) ?? 0,
+        profitRate: optionalNumber(row.pfls_rt) ?? 0,
+        fee: optionalNumber(row.fee) ?? 0,
+        tax: optionalNumber(row.tl_tax) ?? 0,
+        loanInterest: optionalNumber(row.loan_int) ?? 0,
+        currency: 'KRW',
+      });
+    });
+    summary = output2 ?? summary;
+
+    trCont = headers.get('tr_cont') ?? '';
+    fk100 = String(body.ctx_area_fk100 ?? '');
+    nk100 = String(body.ctx_area_nk100 ?? '');
+    if (trCont !== 'M' && trCont !== 'F') break;
+  }
+
+  return {
+    broker: 'kis',
+    configured: true,
+    accountId: account.id,
+    from,
+    to,
+    rows,
+    totalRealizedProfit: firstNumber(summary, ['tot_rlzt_pfls']),
+    totalProfitRate: firstNumber(summary, ['tot_pftrt']),
+    totalFee: firstNumber(summary, ['tot_fee']),
+    totalTax: firstNumber(summary, ['tot_tltx']),
+    totalTradeAmount: firstNumber(summary, ['tot_tr_amt']),
     updatedAt: Date.now(),
   };
 }

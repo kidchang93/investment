@@ -37,6 +37,7 @@ import {
   getKisDomesticOrderability,
   getKisDomesticReservedOrders,
   getKisDomesticSellability,
+  getKisDomesticTradeProfit,
   placeKisDomesticOrder,
   getQuote,
   getUsdKrwExchangeRate,
@@ -285,6 +286,21 @@ async function main(): Promise<void> {
       } catch (err) {
         req.log.warn({ err, accountId: req.query.accountId }, 'KIS 예약주문 조회 실패');
         return reply.code(502).send({ message: 'KIS 예약주문을 조회할 수 없습니다.' });
+      }
+    },
+  );
+
+  app.get<{ Querystring: { accountId?: string; days?: string } }>(
+    '/api/broker/kis/trade-profit',
+    async (req, reply) => {
+      const account = resolveAccount(req.query.accountId);
+      if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+      const days = Number(req.query.days ?? DEFAULT_EXECUTION_DAYS);
+      try {
+        return await getKisDomesticTradeProfit(account, Number.isFinite(days) ? days : DEFAULT_EXECUTION_DAYS);
+      } catch (err) {
+        req.log.warn({ err, accountId: req.query.accountId }, 'KIS 기간별 매매손익 조회 실패');
+        return reply.code(502).send({ message: 'KIS 기간별 매매손익을 조회할 수 없습니다.' });
       }
     },
   );

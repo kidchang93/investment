@@ -7,6 +7,7 @@ import type {
   BrokerOrderRecord,
   BrokerReservedOrder,
   BrokerSellability,
+  BrokerTradeProfitSnapshot,
   LiveOrderGate,
   PlaceLiveOrderRequest,
   PlaceLiveOrderResult,
@@ -122,6 +123,16 @@ export async function fetchKisReservedOrders(accountId?: string): Promise<Broker
 export async function fetchKisOrderLog(accountId?: string): Promise<BrokerOrderRecord[]> {
   const res = await fetch(`${API_BASE}/api/broker/kis/order-log${accountQuery(accountId)}`);
   if (!res.ok) throw new Error(`실주문 기록 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchKisTradeProfit(accountId?: string, days?: number): Promise<BrokerTradeProfitSnapshot> {
+  const params = new URLSearchParams();
+  if (accountId) params.set('accountId', accountId);
+  if (days !== undefined && Number.isFinite(days)) params.set('days', String(days));
+  const suffix = params.size > 0 ? `?${params.toString()}` : '';
+  const res = await fetch(`${API_BASE}/api/broker/kis/trade-profit${suffix}`);
+  if (!res.ok) throw new Error(`기간별 매매손익 조회 실패: ${res.status}`);
   return res.json();
 }
 

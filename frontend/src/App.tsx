@@ -15,6 +15,7 @@ import {
   fetchKisReservedOrders,
   fetchKisRiskRules,
   fetchKisSellability,
+  fetchKisTradeProfit,
   placeKisLiveOrder,
   updateKisRiskRules,
   fetchCategoryInstruments,
@@ -44,6 +45,7 @@ import type {
   BrokerOrderability,
   BrokerReservedOrder,
   BrokerSellability,
+  BrokerTradeProfitSnapshot,
   Candle,
   LiveOrderGate,
   RiskRuleSet,
@@ -1015,6 +1017,32 @@ function brokerOrderRecordStatusLabel(status: BrokerOrderRecord['status']): stri
   }
 }
 
+const TRADE_PROFIT_RANGES = [
+  { days: 30, label: '1개월' },
+  { days: 90, label: '3개월' },
+  { days: 365, label: '1년' },
+] as const;
+
+/** 손익 색상. 한국 관례대로 이익이 빨강, 손실이 파랑이다. */
+function profitTone(value: number | undefined): 'up' | 'down' | 'flat' {
+  if (value === undefined || !Number.isFinite(value) || value === 0) return 'flat';
+  return value > 0 ? 'up' : 'down';
+}
+
+function formatPercent(value: number | undefined): string {
+  return value !== undefined && Number.isFinite(value) ? `${value.toFixed(2)}%` : '-';
+}
+
+/**
+ * 조회 구간 표시용 'YY.MM.DD'.
+ * 행 단위는 MM-DD로 충분하지만, 구간은 연도를 버리면 1년 범위가
+ * '07-25 ~ 07-25'처럼 하루로 보인다.
+ */
+function formatBrokerDate(date: string): string {
+  if (!/^\d{8}$/.test(date)) return '-';
+  return `${date.slice(2, 4)}.${date.slice(4, 6)}.${date.slice(6, 8)}`;
+}
+
 /** 브로커 통보의 HHMMSS를 'HH:MM:SS'로. 형식이 아니면 null이라 호출부가 대체값을 쓴다. */
 function formatBrokerClock(time: string | undefined): string | null {
   if (!time || !/^\d{6}$/.test(time)) return null;
@@ -1490,6 +1518,8 @@ export function App(): JSX.Element {
   const [isKisOpenOrdersRefreshing, setIsKisOpenOrdersRefreshing] = useState(false);
   const [kisReservedOrders, setKisReservedOrders] = useState<BrokerReservedOrder[]>([]);
   const [kisOrderLog, setKisOrderLog] = useState<BrokerOrderRecord[]>([]);
+  const [kisTradeProfit, setKisTradeProfit] = useState<BrokerTradeProfitSnapshot | null>(null);
+  const [tradeProfitDays, setTradeProfitDays] = useState(30);
   /** 서버에 저장된 리스크 룰과, 편집 중인 사본. 저장 성공 시에만 둘을 맞춘다. */
   const [riskRules, setRiskRules] = useState<RiskRuleSet | null>(null);
   const [riskDraft, setRiskDraft] = useState<RiskRuleSet | null>(null);
@@ -1792,6 +1822,22 @@ export function App(): JSX.Element {
       .then(setKisReservedOrders)
       .catch(() => setKisReservedOrders([]));
   }, [activePage, kisAccountId]);
+
+  // 기간별 매매손익은 포트폴리오에서 계좌·구간별로 받는다.
+  useEffect(() => {
+    if (activePage !== 'portfolio') return;
+    let disposed = false;
+    fetchKisTradeProfit(kisAccountId ?? undefined, tradeProfitDays)
+      .then((snapshot) => {
+        if (!disposed) setKisTradeProfit(snapshot);
+      })
+      .catch(() => {
+        if (!disposed) setKisTradeProfit(null);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [activePage, kisAccountId, tradeProfitDays]);
 
   // 리스크 룰은 서버 DB 조회라 KIS 호출이 없다. 포트폴리오에서 계좌별로 받는다.
   useEffect(() => {
@@ -4981,7 +5027,7 @@ export function App(): JSX.Element {
                     <strong>실계좌 주문·체결</strong>
                     <span>
                       {kisExecutionSnapshot
-                        ? `${formatBrokerOrderTime(kisExecutionSnapshot.from)} ~ ${formatBrokerOrderTime(kisExecutionSnapshot.to)} · ${kisExecutionCount}건`
+                        ? `${formatBrokerDate(kisExecutionSnapshot.from)} ~ ${formatBrokerDate(kisExecutionSnapshot.to)} · ${kisExecutionCount}건`
                         : '조회 대기'}
                     </span>
                   </div>
@@ -5056,6 +5102,98 @@ export function App(): JSX.Element {
                 ) : (
                   <div className="portfolio-table__empty">
                     {kisExecutionSnapshot?.message ?? 'KIS 체결내역을 조회하는 중입니다'}
+                  </div>
+                )}
+              </section>
+
+              <section className="portfolio-card portfolio-card--wide" aria-label="기간별 매매손익">
+                <div className="portfolio-card__header">
+                  <div>
+                    <strong>기간별 매매손익</strong>
+                    <span>
+                      {kisTradeProfit
+                        ? `${formatBrokerDate(kisTradeProfit.from)} ~ ${formatBrokerDate(kisTradeProfit.to)} · 매도 확정 ${kisTradeProfit.rows.length}건`
+                        : '조회 대기'}
+                    </span>
+                  </div>
+                  <div className="portfolio-card__actions">
+                    <div className="broker-account-picker" role="tablist" aria-label="조회 기간">
+                      {TRADE_PROFIT_RANGES.map((range) => (
+                        <button
+                          aria-selected={tradeProfitDays === range.days}
+                          key={range.days}
+                          onClick={() => setTradeProfitDays(range.days)}
+                          role="tab"
+                          type="button"
+                        >
+                          {range.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                {kisTradeProfit?.configured ? (
+                  <>
+                    <div className="portfolio-page__metrics portfolio-page__metrics--broker">
+                      <div>
+                        <span>실현손익</span>
+                        <strong data-tone={profitTone(kisTradeProfit.totalRealizedProfit)}>
+                          {formatMoney(kisTradeProfit.totalRealizedProfit)}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>손익률</span>
+                        <strong data-tone={profitTone(kisTradeProfit.totalProfitRate)}>
+                          {formatPercent(kisTradeProfit.totalProfitRate)}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>수수료</span>
+                        <strong>{formatMoney(kisTradeProfit.totalFee)}</strong>
+                      </div>
+                      <div>
+                        <span>세금</span>
+                        <strong>{formatMoney(kisTradeProfit.totalTax)}</strong>
+                      </div>
+                      <div>
+                        <span>거래대금</span>
+                        <strong>{formatMoney(kisTradeProfit.totalTradeAmount)}</strong>
+                      </div>
+                    </div>
+                    {kisTradeProfit.rows.length === 0 ? (
+                      <div className="portfolio-table__empty">조회 구간에 매도로 확정된 손익 없음</div>
+                    ) : (
+                      <div className="portfolio-table portfolio-table--trade-profit">
+                        <div className="portfolio-table__head">
+                          <span>매매일</span>
+                          <span>종목</span>
+                          <span>매도</span>
+                          <span>매입단가</span>
+                          <span>수수료·세금</span>
+                          <span>실현손익</span>
+                          <span>손익률</span>
+                        </div>
+                        {kisTradeProfit.rows.slice(0, 30).map((row) => (
+                          <div className="portfolio-table__row" key={row.id}>
+                            <span>{formatBrokerOrderTime(row.tradeDate)}</span>
+                            <strong>{row.name || row.symbol}</strong>
+                            <span>
+                              {formatNumber(row.sellQuantity)}주 · {formatMoney(row.sellPrice, row.currency)}
+                            </span>
+                            <span>{formatMoney(row.buyPrice, row.currency)}</span>
+                            <span>{formatMoney(row.fee + row.tax, row.currency)}</span>
+                            <span data-tone={profitTone(row.realizedProfit)}>
+                              {formatMoney(row.realizedProfit, row.currency)}
+                            </span>
+                            <span data-tone={profitTone(row.profitRate)}>{formatPercent(row.profitRate)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="portfolio-table__empty">
+                    {kisTradeProfit?.message ?? '기간별 매매손익을 조회하는 중입니다'}
                   </div>
                 )}
               </section>
