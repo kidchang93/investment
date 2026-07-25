@@ -135,9 +135,42 @@ export interface ExchangeRate {
   fetchedAt: number;
 }
 
+/** `accepted` 주문·정정·취소·거부 접수 통보 | `filled` 체결 통보 */
+export type OrderNoticeKind = 'accepted' | 'filled';
+
+/**
+ * 실시간 주문·체결 통보 1건 (H0STCNI0 정규화).
+ *
+ * 원본 프레임에는 고객ID와 계좌번호가 들어 있다. **둘 다 프런트로 내보내지 않는다.**
+ * 계좌는 서버가 화면용 `accountId`로 바꿔서만 알려준다.
+ */
+export interface OrderNotice {
+  kind: OrderNoticeKind;
+  /** 화면용 계좌 id. 매칭되는 계좌가 없으면 빈 문자열 */
+  accountId: string;
+  orderNo: string;
+  originalOrderNo?: string;
+  /** 지점번호. 정정·취소 전송에 필요하다 */
+  branchNo: string;
+  symbol: string;
+  name: string;
+  side: OrderSide;
+  /** 접수 통보면 주문수량, 체결 통보면 체결수량 */
+  quantity: number;
+  /** 접수 통보면 주문단가, 체결 통보면 체결단가 */
+  price: number;
+  orderQuantity: number;
+  /** 체결시각 HHMMSS */
+  time: string;
+  /** 거부 통보 여부 */
+  rejected: boolean;
+  receivedAt: number;
+}
+
 /** 백엔드 → 프론트 WebSocket 스트림 메시지 (판별 유니언) */
 export type ServerMessage =
   | { type: 'trade'; data: Trade }
+  | { type: 'orderNotice'; data: OrderNotice }
   | { type: 'status'; data: ConnectionStatus };
 
 export interface ClientSubscribeInstrument {

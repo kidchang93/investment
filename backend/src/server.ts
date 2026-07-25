@@ -53,6 +53,7 @@ import type {
   RiskRuleSet,
   PlaceLiveOrderRequest,
   PlaceLiveOrderResult,
+  OrderNotice,
   ServerMessage,
   Trade,
   ConnectionStatus,
@@ -785,12 +786,29 @@ async function main(): Promise<void> {
   });
 
   kis.on('trade', (t: Trade) => broadcast({ type: 'trade', data: t }));
-  kis.on('status', (s: ConnectionStatus) => broadcast({ type: 'status', data: s }));
+  kis.on('noticeReady', () => app.log.info('주문·체결 통보 복호화 키 수신'));
+  kis.on('orderNotice', (notice: OrderNotice) => {
+    app.log.info(
+      { accountId: notice.accountId, orderNo: notice.orderNo, kind: notice.kind, symbol: notice.symbol },
+      '실시간 주문·체결 통보',
+    );
+    broadcast({ type: 'orderNotice', data: notice });
+  });
+  kis.on('status', (s: ConnectionStatus) => {
+    // 구독 실패 같은 메시지는 접속 중인 프런트가 없으면 그대로 사라진다. 서버에도 남긴다.
+    if (s.message) app.log.warn({ kisConnected: s.kisConnected }, `KIS 실시간: ${s.message}`);
+    broadcast({ type: 'status', data: s });
+  });
 
   await kis.start(WATCHLIST.map((w) => w.code));
 
   app.log.info(
     `KIS env=${config.env} · 구독 ${WATCHLIST.length}종목: ${WATCHLIST.map((w) => `${w.name}(${w.code})`).join(', ')}`,
+  );
+  app.log.info(
+    kis.isOrderNoticeEnabled
+      ? '실시간 주문·체결 통보 구독함'
+      : '실시간 주문·체결 통보 미구독 (KIS_HTS_ID 또는 KIS_<id>_HTS_ID 미설정)',
   );
 }
 

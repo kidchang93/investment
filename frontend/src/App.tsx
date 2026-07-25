@@ -1012,6 +1012,12 @@ function brokerOrderRecordStatusLabel(status: BrokerOrderRecord['status']): stri
   }
 }
 
+/** 브로커 통보의 HHMMSS를 'HH:MM:SS'로. 형식이 아니면 null이라 호출부가 대체값을 쓴다. */
+function formatBrokerClock(time: string | undefined): string | null {
+  if (!time || !/^\d{6}$/.test(time)) return null;
+  return `${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4, 6)}`;
+}
+
 /** 브로커가 내려주는 YYYYMMDD·HHMMSS를 화면용 'MM-DD HH:MM'으로. */
 function formatBrokerOrderTime(date: string, time?: string): string {
   if (!/^\d{8}$/.test(date)) return '-';
@@ -4403,6 +4409,45 @@ export function App(): JSX.Element {
                 )}
               </div>
               {liveOrderMessage && <p className="live-order__result">{liveOrderMessage}</p>}
+            </div>
+
+            <div className="live-order__open" aria-label="실시간 주문·체결 통보">
+              <div className="live-order__header">
+                <strong>실시간 통보</strong>
+                <span>
+                  {stream.orderNotices.length > 0
+                    ? `${stream.orderNotices.length}건`
+                    : 'HTS ID를 설정하면 접수·체결이 실시간으로 들어옵니다'}
+                </span>
+              </div>
+              {stream.orderNotices.length === 0 ? (
+                <div className="portfolio-table__empty">수신된 통보 없음</div>
+              ) : (
+                <div className="portfolio-table portfolio-table--notices">
+                  <div className="portfolio-table__head">
+                    <span>시각</span>
+                    <span>종목</span>
+                    <span>구분</span>
+                    <span>수량·단가</span>
+                    <span>주문번호</span>
+                    <span>상태</span>
+                  </div>
+                  {stream.orderNotices.slice(0, 20).map((notice) => (
+                    <div className="portfolio-table__row" key={`${notice.orderNo}-${notice.receivedAt}`}>
+                      <span>{formatBrokerClock(notice.time) ?? formatClock(notice.receivedAt)}</span>
+                      <strong>{notice.name || notice.symbol}</strong>
+                      <span>{notice.side === 'buy' ? '매수' : '매도'}</span>
+                      <span>
+                        {formatNumber(notice.quantity)}주 · {formatMoney(notice.price)}
+                      </span>
+                      <span>{notice.orderNo}</span>
+                      <em data-status={notice.rejected ? 'rejected' : notice.kind === 'filled' ? 'filled' : 'open'}>
+                        {notice.rejected ? '거부' : notice.kind === 'filled' ? '체결' : '접수'}
+                      </em>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="live-order__open" aria-label="실계좌 미체결 주문">

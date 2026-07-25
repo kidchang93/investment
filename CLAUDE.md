@@ -66,6 +66,7 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 | `KIS_<id>_ACCOUNT_PRODUCT_CODE` | | 상품코드 2자리. 생략하면 `01`(종합위탁) |
 | `KIS_PRIMARY_ACCOUNT_ID` | | 시세·실시간 WS에 쓸 기본 계좌 id. 생략하면 id 오름차순 첫 계좌 |
 | `KIS_LIVE_ORDER_ENABLED` | | `true`면 실주문 전송 허용. **기본값은 항상 차단**이다 |
+| `KIS_<id>_HTS_ID` / `KIS_HTS_ID` | | HTS/MTS 로그인 ID. 실시간 주문·체결 통보(`H0STCNI0`) 구독의 `tr_key`. 종목코드가 아니다. 없으면 통보만 비활성화된다 |
 | `KIS_ACCOUNT_NO` | | 구버전 단일 계좌 방식. `KIS_APP_KEY`/`KIS_APP_SECRET`와 함께 쓴다 |
 | `KIS_ACCOUNT_PRODUCT_CODE` | | 구버전 단일 계좌의 상품코드 2자리 |
 | `APP_ENV` | | `vts`(모의, 기본) \| `prod`(실전) |

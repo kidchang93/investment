@@ -27,6 +27,11 @@ export interface KisAccountConfig {
   cano: string;
   /** 상품코드 2자리 */
   productCode: string;
+  /**
+   * HTS 로그인 ID. 실시간 주문·체결 통보(H0STCNI0) 구독의 `tr_key`로 쓴다.
+   * 종목코드가 아니라 사람의 로그인 ID다. 없으면 통보를 구독하지 않는다.
+   */
+  htsId?: string;
 }
 
 function parsePort(raw: string | undefined): number {
@@ -72,7 +77,9 @@ function parseKisAccounts(): KisAccountConfig[] {
     const appSecret = process.env[`KIS_APP_SECRET_${id}`] ?? '';
     if (!parsed || !appKey || !appSecret) continue;
 
-    accounts.push({ id, label: `KIS ${id}`, appKey, appSecret, ...parsed });
+    // HTS ID는 계좌별로 두되, 사람이 하나만 쓰는 경우가 흔해 전역값도 허용한다.
+    const htsId = (process.env[`KIS_${id}_HTS_ID`] ?? process.env.KIS_HTS_ID ?? '').trim();
+    accounts.push({ id, label: `KIS ${id}`, appKey, appSecret, htsId: htsId || undefined, ...parsed });
   }
 
   // env 순회 순서에 의존하지 않도록 정렬한다. 기본 계좌가 실행마다 바뀌면 안 된다.
@@ -86,6 +93,7 @@ function parseKisAccounts(): KisAccountConfig[] {
       label: 'KIS 계좌',
       appKey: process.env.KIS_APP_KEY,
       appSecret: process.env.KIS_APP_SECRET,
+      htsId: process.env.KIS_HTS_ID?.trim() || undefined,
       ...legacy,
     });
   }

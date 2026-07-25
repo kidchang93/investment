@@ -1,11 +1,46 @@
+import { createDecipheriv } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 import { config } from '../config.js';
 import { getApprovalKey } from './auth.js';
-import type { ClientSubscribeInstrument, Trade, ConnectionStatus, PriceSign } from '@invest/shared';
+import type {
+  ClientSubscribeInstrument,
+  OrderNotice,
+  Trade,
+  ConnectionStatus,
+  PriceSign,
+} from '@invest/shared';
 
 /** 실시간 주식체결가 TR */
 const TR_TRADE = 'H0STCNT0';
+/** 실시간 주문·체결 통보 TR. 모의투자는 H0STCNI9로 갈린다. */
+const TR_ORDER_NOTICE = config.env === 'prod' ? 'H0STCNI0' : 'H0STCNI9';
+/**
+ * H0STCNI0 필드 순서 (KIS 공식 예제 ccnl_notice.py 기준).
+ * 0 CUST_ID · 1 ACNT_NO · 2 ODER_NO · 3 OODER_NO · 4 SELN_BYOV_CLS · 5 RCTF_CLS ·
+ * 6 ODER_KIND · 7 ODER_COND · 8 STCK_SHRN_ISCD · 9 CNTG_QTY · 10 CNTG_UNPR ·
+ * 11 STCK_CNTG_HOUR · 12 RFUS_YN · 13 CNTG_YN · 14 ACPT_YN · 15 BRNC_NO ·
+ * 16 ODER_QTY · 17 ACNT_NAME · 18 ORD_COND_PRC · 19 ORD_EXG_GB · 20 POPUP_YN ·
+ * 21 FILLER · 22 CRDT_CLS · 23 CRDT_LOAN_DATE · 24 CNTG_ISNM40 · 25 ODER_PRC
+ */
+const NOTICE_FIELD = {
+  accountNo: 1,
+  orderNo: 2,
+  originalOrderNo: 3,
+  sideCode: 4,
+  symbol: 8,
+  filledQuantity: 9,
+  filledPrice: 10,
+  time: 11,
+  rejectedYn: 12,
+  /** '2'면 체결, '1'이면 주문·정정·취소·거부 접수 */
+  filledYn: 13,
+  branchNo: 15,
+  orderQuantity: 16,
+  name: 24,
+  orderPrice: 25,
+} as const;
+const NOTICE_MIN_FIELDS = 26;
 /** KRX 야간선물 실시간종목체결 TR */
 const TR_KRX_NIGHT_FUTURES_TRADE = 'H0MFCNT0';
 /** H0STCNT0 레코드당 필드 수 (여러 체결이 한 프레임에 붙어올 때 분할 기준) */
@@ -52,6 +87,9 @@ export class KisRealtime extends EventEmitter {
   private readonly subscriptions = new Map<string, { trId: string; code: string }>();
   private connected = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  /** 체결통보 복호화 키. 구독 등록 응답으로만 받을 수 있다. */
+  private noticeAesKey = '';
+  private noticeAesIv = '';
 
   get isConnected(): boolean {
     return this.connected;
@@ -59,8 +97,21 @@ export class KisRealtime extends EventEmitter {
 
   async start(codes: string[]): Promise<void> {
     for (const code of codes) this.addSubscription(TR_TRADE, code);
+    /*
+     * 주문·체결 통보는 approval_key가 발급된 앱키 기준으로만 온다.
+     * 우리 WS는 기본 계좌의 앱키 하나로 연결하므로 통보도 기본 계좌 것만 수신된다.
+     * 다른 계좌까지 받으려면 그 계좌 앱키로 WS를 하나 더 열어야 한다.
+     */
+    const htsId = config.kisAccounts.find((account) => account.id === config.primaryCredentialId)?.htsId;
+    if (htsId) this.addSubscription(TR_ORDER_NOTICE, htsId);
+
     this.approvalKey = await getApprovalKey();
     this.connect();
+  }
+
+  /** 기본 계좌에 HTS ID가 설정돼 통보를 구독하는지. */
+  get isOrderNoticeEnabled(): boolean {
+    return [...this.subscriptions.values()].some((item) => item.trId === TR_ORDER_NOTICE);
   }
 
   /** 실행 중 종목 추가 구독 (매매 기능 확장 시 사용). */
@@ -120,7 +171,8 @@ export class KisRealtime extends EventEmitter {
   }
 
   private addSubscription(trId: string, code: string): boolean {
-    const normalized = code.trim().toUpperCase();
+    // 종목코드는 대문자로 정규화하지만, 통보의 tr_key는 HTS 로그인 ID라 원문을 지켜야 한다.
+    const normalized = trId === TR_ORDER_NOTICE ? code.trim() : code.trim().toUpperCase();
     const key = `${trId}:${normalized}`;
     if (this.subscriptions.has(key)) return false;
     this.subscriptions.set(key, { trId, code: normalized });
@@ -143,9 +195,32 @@ export class KisRealtime extends EventEmitter {
     // JSON 프레임: PINGPONG(하트비트) 또는 구독 등록 응답
     if (raw.startsWith('{')) {
       try {
-        const json = JSON.parse(raw) as { header?: { tr_id?: string } };
+        const json = JSON.parse(raw) as {
+          header?: { tr_id?: string };
+          body?: { rt_cd?: string; msg1?: string; output?: { key?: string; iv?: string } };
+        };
         if (json.header?.tr_id === 'PINGPONG') {
           this.ws?.send(raw); // 받은 그대로 되돌려 하트비트 응답
+          return;
+        }
+        /*
+         * 구독 거부 응답은 tr_id로 거를 수 없다.
+         * 잘못된 HTS ID면 KIS가 header.tr_id를 "(null)"로 채워 보내기 때문에
+         * tr_id를 먼저 확인하면 오류가 통째로 묻힌다. rt_cd를 먼저 본다.
+         *   예: {"header":{"tr_id":"(null)"},"body":{"rt_cd":"9","msg1":"ERROR : htsid가잘못되었습니다"}}
+         */
+        if (json.body?.rt_cd && json.body.rt_cd !== '0') {
+          this.emitStatus({
+            kisConnected: this.connected,
+            message: `실시간 구독 실패: ${(json.body.msg1 ?? json.body.rt_cd).trim()}`,
+          });
+          return;
+        }
+        // 체결통보 구독 응답에만 복호화 키가 실려 온다. 이 한 번을 놓치면 통보를 읽을 수 없다.
+        if (json.header?.tr_id === TR_ORDER_NOTICE && json.body?.output?.key && json.body.output.iv) {
+          this.noticeAesKey = json.body.output.key;
+          this.noticeAesIv = json.body.output.iv;
+          this.emit('noticeReady');
         }
       } catch {
         /* 무시 */
@@ -162,7 +237,68 @@ export class KisRealtime extends EventEmitter {
     }
     if (parts[1] === TR_KRX_NIGHT_FUTURES_TRADE) {
       this.onNightFuturesTradeFrame(parts);
+      return;
     }
+    if (parts[1] === TR_ORDER_NOTICE) {
+      this.onOrderNoticeFrame(parts);
+    }
+  }
+
+  /** 체결통보 payload는 AES-256-CBC로 암호화되어 온다. 시세 프레임과 달리 평문이 아니다. */
+  private decryptNotice(payload: string): string | null {
+    if (!this.noticeAesKey || !this.noticeAesIv) return null;
+    try {
+      const decipher = createDecipheriv(
+        'aes-256-cbc',
+        Buffer.from(this.noticeAesKey, 'utf8'),
+        Buffer.from(this.noticeAesIv, 'utf8'),
+      );
+      return decipher.update(payload, 'base64', 'utf8') + decipher.final('utf8');
+    } catch {
+      return null;
+    }
+  }
+
+  private onOrderNoticeFrame(parts: string[]): void {
+    // parts[0]이 '1'이면 암호화된 payload다.
+    const payload = parts.slice(3).join('|');
+    const plain = parts[0] === '1' ? this.decryptNotice(payload) : payload;
+    if (!plain) return;
+
+    const f = plain.split('^');
+    if (f.length < NOTICE_MIN_FIELDS) return;
+
+    const quantityField = f[NOTICE_FIELD.filledYn] === '2' ? NOTICE_FIELD.filledQuantity : NOTICE_FIELD.orderQuantity;
+    const priceField = f[NOTICE_FIELD.filledYn] === '2' ? NOTICE_FIELD.filledPrice : NOTICE_FIELD.orderPrice;
+    const originalOrderNo = f[NOTICE_FIELD.originalOrderNo] ?? '';
+
+    const notice: OrderNotice = {
+      kind: f[NOTICE_FIELD.filledYn] === '2' ? 'filled' : 'accepted',
+      // 원본 계좌번호는 밖으로 내보내지 않고 화면용 id로만 바꾼다.
+      accountId: this.resolveAccountId(f[NOTICE_FIELD.accountNo] ?? ''),
+      orderNo: f[NOTICE_FIELD.orderNo] ?? '',
+      originalOrderNo: /^0*$/.test(originalOrderNo) ? undefined : originalOrderNo,
+      branchNo: f[NOTICE_FIELD.branchNo] ?? '',
+      symbol: (f[NOTICE_FIELD.symbol] ?? '').trim(),
+      name: (f[NOTICE_FIELD.name] ?? '').trim(),
+      // 매도매수구분코드: 01 매도, 02 매수
+      side: f[NOTICE_FIELD.sideCode] === '01' ? 'sell' : 'buy',
+      quantity: Number(f[quantityField]) || 0,
+      price: Number(f[priceField]) || 0,
+      orderQuantity: Number(f[NOTICE_FIELD.orderQuantity]) || 0,
+      time: f[NOTICE_FIELD.time] ?? '',
+      rejected: f[NOTICE_FIELD.rejectedYn] === '1',
+      receivedAt: Date.now(),
+    };
+    this.emit('orderNotice', notice);
+  }
+
+  /** 통보의 계좌번호를 설정된 계좌의 화면용 id로 바꾼다. 원문은 어디에도 남기지 않는다. */
+  private resolveAccountId(rawAccountNo: string): string {
+    const digits = rawAccountNo.replace(/[^0-9]/g, '');
+    if (!digits) return '';
+    const matched = config.kisAccounts.find((account) => digits.startsWith(account.cano));
+    return matched?.id ?? '';
   }
 
   private onStockTradeFrame(parts: string[]): void {

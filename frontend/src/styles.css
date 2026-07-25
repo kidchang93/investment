@@ -2723,6 +2723,11 @@ button {
   grid-template-columns: minmax(84px, 0.9fr) minmax(96px, 1.2fr) minmax(88px, 1fr) repeat(2, minmax(72px, 0.8fr)) minmax(150px, 1.1fr);
 }
 
+.portfolio-table--notices .portfolio-table__head,
+.portfolio-table--notices .portfolio-table__row {
+  grid-template-columns: minmax(70px, 0.8fr) minmax(96px, 1.2fr) minmax(56px, 0.6fr) minmax(110px, 1.1fr) minmax(84px, 0.9fr) minmax(56px, 0.6fr);
+}
+
 /* 주문 기록은 사유 컬럼이 더 붙어 7열이다. */
 .portfolio-table--order-log .portfolio-table__head,
 .portfolio-table--order-log .portfolio-table__row {

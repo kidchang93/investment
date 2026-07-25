@@ -88,6 +88,7 @@ KisRealtime open/close → 'status' 이벤트 → broadcast({type:'status'})
 | 일봉 시세 | REST GET | `inquire-daily-itemchartprice` / `FHKST03010100` |
 | 현재가 | REST GET | `inquire-price` / `FHKST01010100` |
 | 실시간 체결 | WebSocket | `H0STCNT0` |
+| 실시간 주문·체결 통보 | WebSocket | `H0STCNI0`(실전) · `H0STCNI9`(모의). payload가 AES-256-CBC 암호화 |
 | 국내주식 잔고 | REST GET | `inquire-balance` / `TTTC8434R`(실전) · `VTTC8434R`(모의) |
 | 매수가능 조회 | REST GET | `inquire-psbl-order` / `TTTC8908R`(실전) · `VTTC8908R`(모의) |
 | 일별 주문체결 | REST GET | `inquire-daily-ccld` / `TTTC0081R`(실전) · `VTTC0081R`(모의) |
