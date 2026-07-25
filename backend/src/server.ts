@@ -23,6 +23,7 @@ import {
 } from './db/instruments.js';
 import { createOrderIntent, ensureTradingSchema, getFillByOrderId, getTradingOverview } from './db/trading.js';
 import { ensureBrokerOrderSchema, getBrokerOrderRecords, recordBrokerOrderAttempt } from './db/brokerOrders.js';
+import { checkRiskRules, ensureRiskRuleSchema, getRiskRules, upsertRiskRules } from './db/riskRules.js';
 import {
   getDailyCandles,
   getInstrumentCandles,
@@ -49,6 +50,7 @@ import type {
   CreateOrderRequest,
   InstrumentAssetType,
   LiveOrderGate,
+  RiskRuleSet,
   PlaceLiveOrderRequest,
   PlaceLiveOrderResult,
   ServerMessage,
@@ -69,6 +71,39 @@ const DEFAULT_EXECUTION_DAYS = 30;
  * UI 체크박스만으로는 오발주를 막지 못하므로 서버가 문구 자체를 검증한다.
  */
 const LIVE_ORDER_CONFIRMATION = '실주문 전송';
+
+function normalizeSymbolList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const symbols = value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim().toUpperCase())
+    .filter((item) => /^[0-9A-Z]{5,9}$/.test(item));
+  return [...new Set(symbols)].slice(0, 200);
+}
+
+/** 저장 전에 룰 자체가 말이 되는지 본다. 음수 한도나 뒤집힌 시간대는 받지 않는다. */
+function validateRiskRules(rules: RiskRuleSet): string | null {
+  const positives: Array<[string, number]> = [
+    ['1회 주문 금액 한도', rules.maxOrderNotional],
+    ['1회 주문 수량 한도', rules.maxOrderQuantity],
+    ['일일 주문 금액 한도', rules.dailyNotionalLimit],
+    ['일일 주문 건수 한도', rules.dailyOrderCountLimit],
+  ];
+  for (const [label, value] of positives) {
+    if (!Number.isFinite(value) || value <= 0) return `${label}는 0보다 커야 합니다.`;
+  }
+  if (rules.maxOrderNotional > rules.dailyNotionalLimit) {
+    return '1회 주문 금액 한도가 일일 한도보다 큽니다.';
+  }
+  const time = /^\d{1,2}:\d{2}$/;
+  if (!time.test(rules.sessionStart) || !time.test(rules.sessionEnd)) {
+    return '거래 시간은 HH:MM 형식이어야 합니다.';
+  }
+  if (rules.sessionStart >= rules.sessionEnd) {
+    return '거래 시작 시각이 종료 시각보다 늦습니다.';
+  }
+  return null;
+}
 
 /** 실주문 게이트. 하나라도 막히면 이유를 그대로 프런트에 알려준다. */
 function evaluateLiveOrderGate(): LiveOrderGate {
@@ -125,6 +160,7 @@ async function main(): Promise<void> {
   await ensureDomesticAssetTypes();
   await ensureTradingSchema();
   await ensureBrokerOrderSchema();
+  await ensureRiskRuleSchema();
   await seedDefaultWatchlist(WATCHLIST);
 
   // ── REST ────────────────────────────────────────────────
@@ -254,6 +290,35 @@ async function main(): Promise<void> {
 
   app.get('/api/broker/kis/live-order-gate', async () => evaluateLiveOrderGate());
 
+  app.get<{ Querystring: { accountId?: string } }>('/api/broker/kis/risk-rules', async (req, reply) => {
+    const account = resolveAccount(req.query.accountId);
+    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+    if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
+    return getRiskRules(account.id);
+  });
+
+  app.put<{ Body: Partial<RiskRuleSet>; Querystring: { accountId?: string } }>(
+    '/api/broker/kis/risk-rules',
+    async (req, reply) => {
+      const account = resolveAccount(req.query.accountId ?? req.body.accountId);
+      if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+      if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
+
+      const current = await getRiskRules(account.id);
+      const merged: RiskRuleSet = {
+        ...current,
+        ...req.body,
+        accountId: account.id,
+        symbolAllowlist: normalizeSymbolList(req.body.symbolAllowlist ?? current.symbolAllowlist),
+        symbolBlocklist: normalizeSymbolList(req.body.symbolBlocklist ?? current.symbolBlocklist),
+      };
+
+      const invalid = validateRiskRules(merged);
+      if (invalid) return reply.code(400).send({ message: invalid });
+      return upsertRiskRules(merged);
+    },
+  );
+
   app.get<{ Querystring: { accountId?: string; limit?: string } }>(
     '/api/broker/kis/order-log',
     async (req, reply) => {
@@ -347,6 +412,34 @@ async function main(): Promise<void> {
       instrumentId: instrument.id,
       symbol: instrument.providerSymbol,
     };
+
+    // 시장가는 단가가 없으므로 현재가로 금액을 추정해 한도를 본다.
+    let riskPrice = limitPrice ?? 0;
+    if (orderType === 'market') {
+      try {
+        riskPrice = (await getInstrumentQuote(instrument)).price;
+      } catch (err) {
+        req.log.warn({ err, instrumentId }, '리스크 판정용 현재가 조회 실패');
+      }
+    }
+
+    const verdict = await checkRiskRules({
+      accountId: account.id,
+      symbol: instrument.providerSymbol,
+      side,
+      orderType,
+      quantity,
+      price: riskPrice,
+    });
+    if (!verdict.allowed) {
+      await audit({
+        ...placeAudit,
+        status: 'blocked',
+        message: '리스크 룰에 막혔습니다.',
+        blockers: verdict.violations,
+      });
+      return reply.code(403).send({ message: '리스크 룰에 막혔습니다.', verdict });
+    }
 
     try {
       const result = await placeKisDomesticOrder(account, {

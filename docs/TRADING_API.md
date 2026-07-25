@@ -193,8 +193,14 @@ curl -X POST http://localhost:4000/api/broker/kis/orders/amend \
 **이유.** 정규장(09:00~15:30) 밖에서 `order-cash`를 보내면 KIS가 거부한다. 시간외단일가·
 장전시간외는 `ORD_DVSN` 코드가 따로 있다.
 
-**해결 방법.** 주문 전송 전에 `chk_holiday`(국내휴장일조회)로 영업일을 확인하고, 세션에 맞는
-`ORD_DVSN`을 고른다. 현재는 정규장 지정가(`00`)/시장가(`01`)만 지원한다.
+**해결 방법.** 리스크 룰이 시간대와 개장일을 함께 본다(`chk-holiday` / `CTCA0903R`).
+**시각만 검사하면 주말·공휴일 주문이 그대로 나간다** — 실제로 토요일 13시 지정가 주문이
+룰을 통과해 KIS까지 갔다가 `장운영일자가 주문일과 상이합니다`로 거부된 적이 있다.
+개장일 판정은 `opnd_yn`을 쓴다. `bzdy_yn`(영업일)이나 `tr_day_yn`(거래일)이 아니다 —
+토요일도 `tr_day_yn=Y`로 내려온다.
+조회가 실패하면 "보류"로 막는다. 확인 못 한 채 내보내지 않는다.
+
+시간외 세션은 아직 지원하지 않는다. 정규장 지정가(`00`)/시장가(`01`)만 쓴다.
 
 ---
 
@@ -209,6 +215,32 @@ curl -X POST http://localhost:4000/api/broker/kis/orders/amend \
 
 전송 버튼은 **서버 게이트와 프런트 검증을 모두 통과해야** 열린다. 확인 문구를 정확히
 입력해도 `KIS_LIVE_ORDER_ENABLED`가 꺼져 있으면 잠긴 채로 남는 것을 확인했다.
+
+## 리스크 룰 (`trading_risk_rules`)
+
+게이트가 "실주문을 켰는가"라면, 리스크 룰은 "이 주문을 내도 되는가"를 본다.
+계좌별로 저장하고, 행이 없으면 보수적인 기본값을 쓴다.
+
+| 룰 | 기본값 | 막는 것 |
+|------|------|------|
+| `enabled` | `true` | false면 이 계좌 실주문 전부 |
+| `maxOrderQuantity` | 1,000주 | 1회 주문 수량 |
+| `maxOrderNotional` | 1,000,000원 | 1회 주문 금액 |
+| `dailyOrderCountLimit` | 20건 | 오늘(KST) 접수 건수 |
+| `dailyNotionalLimit` | 5,000,000원 | 오늘(KST) 접수 금액 합 |
+| `allowMarketOrder` | `false` | 시장가 주문 |
+| `sessionStart`~`sessionEnd` | 09:00~15:30 | 허용 시간대 (KST) |
+| 개장일 | — | 주말·공휴일 (`chk-holiday`) |
+| `symbolAllowlist` | `[]` | 비어 있지 않으면 목록 밖 종목 |
+| `symbolBlocklist` | `[]` | 목록에 있는 종목 |
+
+- `GET /api/broker/kis/risk-rules?accountId=` — 현재 룰
+- `PUT /api/broker/kis/risk-rules?accountId=` — 부분 수정(merge). 음수 한도, 1회>일일,
+  뒤집힌 시간대는 저장 자체를 거부한다.
+
+위반 사유는 **전부 모아서** 돌려준다. 하나씩 알려주면 고칠 때마다 새 사유를 만난다.
+일일 사용량은 `trading_broker_orders`에서 오늘 `submitted`된 `place` 건만 센다.
+시장가는 단가가 없어 현재가로 금액을 추정해 한도를 본다.
 
 ## 주문 전송 감사 기록
 

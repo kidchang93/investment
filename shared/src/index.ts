@@ -498,6 +498,46 @@ export interface AmendLiveOrderRequest {
   confirmationPhrase: string;
 }
 
+/**
+ * 계좌별 실주문 리스크 룰.
+ * 게이트가 "실주문을 켰는가"라면, 이쪽은 "이 주문을 내도 되는가"를 본다.
+ */
+export interface RiskRuleSet {
+  accountId: string;
+  /** false면 이 계좌의 실주문을 전부 막는다 */
+  enabled: boolean;
+  /** 1회 주문 금액 한도 */
+  maxOrderNotional: number;
+  /** 1회 주문 수량 한도 */
+  maxOrderQuantity: number;
+  /** 일일 누적 주문 금액 한도 */
+  dailyNotionalLimit: number;
+  /** 일일 주문 건수 한도 */
+  dailyOrderCountLimit: number;
+  /** 시장가 주문 허용 여부 */
+  allowMarketOrder: boolean;
+  /** 주문 허용 시작 시각 'HH:MM' (KST) */
+  sessionStart: string;
+  /** 주문 허용 종료 시각 'HH:MM' (KST) */
+  sessionEnd: string;
+  /** 비어 있지 않으면 이 목록의 종목만 주문할 수 있다 */
+  symbolAllowlist: string[];
+  /** 항상 차단할 종목 */
+  symbolBlocklist: string[];
+}
+
+/** 주문 1건에 대한 리스크 판정 결과 */
+export interface RiskVerdict {
+  allowed: boolean;
+  /** 위반 사유 전부. 하나씩 알려주면 고칠 때마다 새 사유를 만난다 */
+  violations: string[];
+  rules: RiskRuleSet;
+  /** 오늘(KST) 접수된 주문 건수 */
+  todayOrderCount?: number;
+  /** 오늘(KST) 접수된 주문 금액 합 */
+  todayNotional?: number;
+}
+
 export type BrokerOrderAction = 'place' | 'amend' | 'cancel';
 /** `blocked` 게이트·검증에 막힘 | `submitted` 브로커 접수됨 | `rejected` 브로커가 거부 */
 export type BrokerOrderRecordStatus = 'blocked' | 'submitted' | 'rejected';

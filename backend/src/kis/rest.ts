@@ -984,6 +984,39 @@ export async function getKisDomesticExecutions(
   };
 }
 
+/** 개장일 판정 캐시. 같은 날짜를 주문마다 다시 묻지 않는다. */
+const marketOpenCache = new Map<string, boolean>();
+
+/**
+ * 국내 개장일 여부 (국내휴장일조회, tr_id: CTCA0903R).
+ *
+ * 시각만 보는 검증으로는 주말·공휴일 주문을 막지 못한다. KIS가
+ * "장운영일자가 주문일과 상이합니다"로 거부하기 전에 우리가 먼저 걸러야 한다.
+ * `opnd_yn`이 개장일 여부다(영업일 `bzdy_yn`과 다르다 — 영업일이어도 휴장일 수 있다).
+ */
+export async function isDomesticMarketOpenDay(date = kstToday()): Promise<boolean> {
+  const cached = marketOpenCache.get(date);
+  if (cached !== undefined) return cached;
+
+  const { body } = await kisGetWithHeaders(
+    '/uapi/domestic-stock/v1/quotations/chk-holiday',
+    'CTCA0903R',
+    { BASS_DT: date, CTX_AREA_FK: '', CTX_AREA_NK: '' },
+  );
+
+  if (body.rt_cd && body.rt_cd !== '0') {
+    throw new Error(`KIS 휴장일조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
+  }
+
+  const rows = Array.isArray(body.output) ? (body.output as Array<Record<string, string>>) : [];
+  const today = rows.find((row) => row.bass_dt === date);
+  if (!today) throw new Error(`KIS 휴장일조회에 ${date} 항목이 없습니다.`);
+
+  const open = today.opnd_yn === 'Y';
+  marketOpenCache.set(date, open);
+  return open;
+}
+
 /** 국내주식 매도가능수량 조회 (tr_id: TTTC8408R, 모의투자 미지원). */
 export async function getKisDomesticSellability(
   account: KisAccountConfig | null,
