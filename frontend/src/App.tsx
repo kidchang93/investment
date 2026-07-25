@@ -5054,6 +5054,14 @@ export function App(): JSX.Element {
 
           {activePage === 'portfolio' && (
             <section className="portfolio-page" aria-label="포트폴리오">
+              {/*
+                실계좌와 모의 계좌 금액이 구분 없이 이어지면 어느 돈인지 헷갈린다.
+                실제로 실계좌 예수금 5만원 바로 아래 모의 현금 971만원이 나온다.
+              */}
+              <h2 className="portfolio-section" data-kind="live">
+                <span>실계좌</span>
+                <em>{kisAccountSnapshot?.accountLabel ?? 'KIS'} · 실제 자금</em>
+              </h2>
               <section className="portfolio-card portfolio-card--wide" aria-label="KIS 실계좌 조회">
                 <div className="portfolio-card__header">
                   <div>
@@ -5612,6 +5620,10 @@ export function App(): JSX.Element {
                 {reservedCancelMessage && <p className="live-order__result">{reservedCancelMessage}</p>}
               </section>
 
+              <h2 className="portfolio-section" data-kind="paper">
+                <span>모의 계좌</span>
+                <em>{activeTradingAccount?.label ?? 'paper'} · 실제 주문이 나가지 않습니다</em>
+              </h2>
               <div className="portfolio-page__metrics">
                 <div>
                   <span>현금</span>

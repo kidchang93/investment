@@ -2701,6 +2701,39 @@ button {
   color: #93c5fd;
 }
 
+/*
+ * 실계좌 / 모의 계좌 구분선.
+ * 금액 단위가 비슷해 섹션 표시가 없으면 어느 계좌 돈인지 오해한다.
+ * 실계좌는 붉은 계열로 두어 실제 자금임을 먼저 알아채게 한다.
+ */
+.portfolio-section {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+  margin: 4px 0 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--border-soft);
+  font-size: 14px;
+}
+
+.portfolio-section[data-kind='live'] {
+  border-left-color: rgba(229, 72, 77, 0.55);
+}
+
+.portfolio-section[data-kind='paper'] {
+  border-left-color: rgba(245, 196, 81, 0.45);
+  margin-top: 10px;
+}
+
+.portfolio-section em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 400;
+}
+
 .portfolio-table {
   display: grid;
   min-width: 0;
