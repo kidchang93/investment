@@ -995,7 +995,6 @@ export async function getKisDomesticSellability(
       configured: false,
       accountId: '',
       symbol,
-      name: '',
       currency: 'KRW',
       message: MISSING_ACCOUNT_MESSAGE,
     };
@@ -1020,16 +1019,20 @@ export async function getKisDomesticSellability(
       : [];
   const output = rows[0] ?? {};
 
+  // 응답 필드는 잔고조회와 이름이 다르다. 잔고수량은 cblc_qty, 현재가는 now_pric다.
+  // 종목명은 아예 내려오지 않으므로(pdno만 온다) 화면이 이미 아는 이름을 쓰게 둔다.
   return {
     broker: 'kis',
     configured: true,
     accountId: account.id,
     symbol,
-    name: output.prdt_name ?? '',
     currency: 'KRW',
-    sellableQuantity: firstNumber(output, ['ord_psbl_qty', 'psbl_qty']),
-    holdingQuantity: firstNumber(output, ['hldg_qty']),
-    price: firstNumber(output, ['pdno_prpr', 'prpr']),
+    sellableQuantity: firstNumber(output, ['ord_psbl_qty']),
+    holdingQuantity: firstNumber(output, ['cblc_qty']),
+    /** 미수(외상) 수량. 결제 전이라 매도가 막힐 수 있는 양 */
+    unsettledQuantity: firstNumber(output, ['nsvg_qty']),
+    price: firstNumber(output, ['now_pric']),
+    averagePrice: firstNumber(output, ['pchs_avg_pric']),
     fetchedAt: Date.now(),
   };
 }
@@ -1085,9 +1088,8 @@ export async function getKisDomesticAmendableOrders(
         orderQuantity: optionalNumber(row.ord_qty) ?? 0,
         orderPrice: optionalNumber(row.ord_unpr) ?? 0,
         filledQuantity: optionalNumber(row.tot_ccld_qty) ?? 0,
-        remainQuantity: optionalNumber(row.rmn_qty) ?? 0,
+        // 이 응답에는 잔여수량(rmn_qty)이 없다. psbl_qty(가능수량)가 정정·취소 대상 수량이다.
         amendableQuantity: optionalNumber(row.psbl_qty) ?? 0,
-        cancelableQuantity: optionalNumber(row.psbl_qty) ?? 0,
         orderTime: /^\d{6}$/.test(row.ord_tmd ?? '') ? row.ord_tmd : undefined,
         currency: 'KRW',
       });
@@ -1132,19 +1134,23 @@ export async function getKisDomesticReservedOrders(
     throw new Error(`KIS 예약주문조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
   }
 
+  // 예약주문 응답은 일반 주문과 필드명이 다르다.
+  // 수량·단가에 rsvn 접두어가 붙고(ord_rsvn_qty / ord_rsvn_unpr), 종목명은 kor_item_shtn_name,
+  // 취소 여부는 cncl_yn이 아니라 취소주문일자(cncl_ord_dt) 유무로 판단한다.
   const rows = Array.isArray(body.output) ? (body.output as Array<Record<string, string>>) : [];
   return rows.map((row, index) => ({
     id: `${row.rsvn_ord_seq ?? ''}-${index}`,
     reservationSeq: row.rsvn_ord_seq ?? '',
-    reservationBranchNo: row.rsvn_ord_orgno ?? '',
-    orderDate: row.rsvn_ord_ord_dt ?? row.rsvn_ord_rcit_dt ?? '',
+    orderDate: row.rsvn_ord_ord_dt || row.rsvn_ord_rcit_dt || '',
+    endDate: row.rsvn_end_dt || undefined,
     symbol: row.pdno ?? '',
-    name: row.prdt_name ?? row.pdno ?? '',
+    name: row.kor_item_shtn_name ?? row.pdno ?? '',
     side: row.sll_buy_dvsn_cd === '01' ? 'sell' : 'buy',
-    orderQuantity: optionalNumber(row.ord_qty) ?? 0,
-    orderPrice: optionalNumber(row.ord_unpr) ?? 0,
-    statusLabel: row.rsvn_ord_rcit_dvsn_name ?? row.prcs_rslt ?? '',
-    canceled: row.cncl_yn === 'Y',
+    orderQuantity: optionalNumber(row.ord_rsvn_qty) ?? 0,
+    orderPrice: optionalNumber(row.ord_rsvn_unpr) ?? 0,
+    filledQuantity: optionalNumber(row.tot_ccld_qty) ?? 0,
+    statusLabel: row.prcs_rslt || row.ord_dvsn_name || '',
+    canceled: Boolean(row.cncl_ord_dt && !/^0*$/.test(row.cncl_ord_dt)),
     currency: 'KRW',
   }));
 }

@@ -366,20 +366,26 @@ export interface BrokerExecutionSnapshot {
   message?: string;
 }
 
-/** KIS 매도가능수량 조회 결과 */
+/**
+ * KIS 매도가능수량 조회 결과.
+ * 이 응답에는 종목명이 없다(상품번호만 온다). 이름은 화면이 이미 아는 `Instrument`를 쓴다.
+ */
 export interface BrokerSellability {
   broker: 'kis';
   configured: boolean;
   accountId: string;
   symbol: string;
-  name: string;
   currency: string;
   /** 매도가능수량 */
   sellableQuantity?: number;
-  /** 보유수량 */
+  /** 잔고수량 */
   holdingQuantity?: number;
-  /** 매도 기준 단가(현재가) */
+  /** 미수 수량. 결제 전이라 매도가 막힐 수 있는 양 */
+  unsettledQuantity?: number;
+  /** 현재가 */
   price?: number;
+  /** 매입평균가 */
+  averagePrice?: number;
   fetchedAt?: number;
   message?: string;
 }
@@ -400,30 +406,35 @@ export interface BrokerAmendableOrder {
   orderQuantity: number;
   orderPrice: number;
   filledQuantity: number;
-  remainQuantity: number;
-  /** 정정 가능 수량 */
+  /**
+   * 정정·취소 대상 수량(KIS `psbl_qty`).
+   * 이 응답에는 잔여수량 필드가 따로 없어 이 값이 사실상 잔량이다.
+   */
   amendableQuantity: number;
-  /** 취소 가능 수량 */
-  cancelableQuantity: number;
   orderTime?: string;
   currency: string;
 }
 
-/** 예약주문 1건 */
+/**
+ * 예약주문 1건.
+ * 정정·취소 전송에 필요한 예약주문 지점번호(`RSVN_ORD_ORGNO`)는 이 조회 응답에 없다.
+ * 예약주문 정정·취소를 구현할 때 별도 경로로 확보해야 한다.
+ */
 export interface BrokerReservedOrder {
   id: string;
   /** 예약주문순번. 정정·취소 전송 시 필요 */
   reservationSeq: string;
-  /** 예약주문 접수 지점번호 */
-  reservationBranchNo: string;
   /** 예약주문 주문일자 YYYYMMDD */
   orderDate: string;
+  /** 예약 종료일자 YYYYMMDD */
+  endDate?: string;
   symbol: string;
   name: string;
   side: OrderSide;
   orderQuantity: number;
   orderPrice: number;
-  /** 처리 상태 표시용 문자열 */
+  filledQuantity: number;
+  /** 처리 결과 표시용 문자열 */
   statusLabel: string;
   canceled: boolean;
   currency: string;

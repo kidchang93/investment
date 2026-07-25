@@ -390,7 +390,9 @@ async function main(): Promise<void> {
     const { accountId, action, orderNo, orderBranchNo, orderTypeCode, quantity, limitPrice, quantityAll } = req.body;
     const auditBase = {
       accountId: accountId ?? '(미지정)',
-      action: action === 'amend' || action === 'cancel' ? action : ('cancel' as const),
+      // action이 잘못 와도 임의로 cancel로 적으면 기록이 사실과 달라진다. amend로 두고
+      // 아래 검증에서 'action 오류'로 차단된 사실을 blockers에 남긴다.
+      action: action === 'amend' || action === 'cancel' ? action : ('amend' as const),
       originalOrderNo: orderNo,
       orderBranchNo,
       quantity: typeof quantity === 'number' && Number.isFinite(quantity) ? quantity : undefined,

@@ -1491,8 +1491,6 @@ export function App(): JSX.Element {
   const [amendPrice, setAmendPrice] = useState('');
   const [kisExecutionSnapshot, setKisExecutionSnapshot] = useState<BrokerExecutionSnapshot | null>(null);
   const [isKisExecutionRefreshing, setIsKisExecutionRefreshing] = useState(false);
-  /** 체결내역을 이미 받아 둔 계좌. 화면 재진입마다 다시 조회하지 않기 위한 표시. */
-  const loadedExecutionAccountRef = useRef<string | null>(null);
   const [orderSide, setOrderSide] = useState<OrderSide>('buy');
   const [orderType, setOrderType] = useState<OrderType>('market');
   const [orderTimeInForce, setOrderTimeInForce] = useState<OrderTimeInForce>('day');
@@ -1675,14 +1673,15 @@ export function App(): JSX.Element {
       .finally(() => setIsKisExecutionRefreshing(false));
   }, [kisAccountId]);
 
-  // 체결내역은 포트폴리오 화면에서만 쓰는 실계좌 조회라, 그 화면을 열 때 계좌별로 한 번씩만 부른다.
+  /*
+   * 체결내역은 포트폴리오를 열 때마다 다시 받는다.
+   * 계좌별로 한 번만 받게 두면 실주문을 넣고 돌아와도 옛 목록이 그대로 남아
+   * 감사 기록이 사실과 어긋난다. 실계좌 호출 1회보다 최신성이 중요하다.
+   */
   useEffect(() => {
     if (activePage !== 'portfolio') return;
-    const key = kisAccountId ?? 'default';
-    if (loadedExecutionAccountRef.current === key) return;
-    loadedExecutionAccountRef.current = key;
     refreshKisExecutions();
-  }, [activePage, kisAccountId, refreshKisExecutions]);
+  }, [activePage, refreshKisExecutions]);
 
   // 매수가능금액은 종목·단가에 따라 달라지므로 매수 탭에서 국내 주문 가능 종목일 때만 조회한다.
   useEffect(() => {
@@ -1791,12 +1790,17 @@ export function App(): JSX.Element {
     refreshKisOrderLog();
   }, [activePage, refreshKisOrderLog]);
 
-  // 실주문 게이트는 서버 설정이라 앱 수명 동안 한 번만 확인하면 된다.
+  /*
+   * 실주문 게이트는 서버 설정이라 KIS 호출이 없다.
+   * 서버를 KIS_LIVE_ORDER_ENABLED와 함께 재시작해도 화면이 옛 상태로 남지 않도록
+   * 매매 화면에 들어올 때마다 다시 확인한다.
+   */
   useEffect(() => {
+    if (activePage !== 'trade') return;
     fetchKisLiveOrderGate()
       .then(setLiveOrderGate)
       .catch(() => setLiveOrderGate(null));
-  }, []);
+  }, [activePage]);
 
   useEffect(() => {
     let disposed = false;
@@ -2806,6 +2810,7 @@ export function App(): JSX.Element {
       refreshKisOpenOrders();
       refreshKisOrderLog();
       refreshKisAccountSnapshot();
+      refreshKisExecutions();
     } catch (e) {
       setLiveOrderMessage(String(e instanceof Error ? e.message : e));
     } finally {
@@ -4416,7 +4421,7 @@ export function App(): JSX.Element {
                     <span>주문번호</span>
                     <span>종목</span>
                     <span>구분</span>
-                    <span>잔량/주문</span>
+                    <span>가능/주문</span>
                     <span>주문단가</span>
                     <span>정정·취소</span>
                   </div>
@@ -4429,7 +4434,7 @@ export function App(): JSX.Element {
                         {order.orderTypeLabel ? ` · ${order.orderTypeLabel}` : ''}
                       </span>
                       <span>
-                        {formatNumber(order.remainQuantity)} / {formatNumber(order.orderQuantity)}
+                        {formatNumber(order.amendableQuantity)} / {formatNumber(order.orderQuantity)}
                       </span>
                       <span>{formatMoney(order.orderPrice, order.currency)}</span>
                       <span className="live-order__actions">
