@@ -60,8 +60,16 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 |------|------|------|
 | `KIS_APP_KEY` | ✅ | KIS Developers 발급 appkey |
 | `KIS_APP_SECRET` | ✅ | KIS Developers 발급 appsecret |
+| `KIS_APP_KEY_<id>` | | 계좌 `<id>`용 appkey (다계좌 방식) |
+| `KIS_APP_SECRET_<id>` | | 계좌 `<id>`용 appsecret (다계좌 방식) |
+| `KIS_<id>_ACCOUNT_NO` | | 계좌 `<id>`의 계좌번호. `12345678-01` 통합 표기 또는 앞 8자리 |
+| `KIS_<id>_ACCOUNT_PRODUCT_CODE` | | 상품코드 2자리. 생략하면 `01`(종합위탁) |
+| `KIS_PRIMARY_ACCOUNT_ID` | | 시세·실시간 WS에 쓸 기본 계좌 id. 생략하면 id 오름차순 첫 계좌 |
+| `KIS_ACCOUNT_NO` | | 구버전 단일 계좌 방식. `KIS_APP_KEY`/`KIS_APP_SECRET`와 함께 쓴다 |
+| `KIS_ACCOUNT_PRODUCT_CODE` | | 구버전 단일 계좌의 상품코드 2자리 |
 | `APP_ENV` | | `vts`(모의, 기본) \| `prod`(실전) |
 | `PORT` | | 백엔드 포트 (기본 4000) |
+| `DATABASE_URL` | | 종목 마스터·매매 기록용 Postgres (기본 `postgresql://kis:kis_local@localhost:55432/kis`) |
 | `WATCHLIST` | | `005930:삼성전자,000660:SK하이닉스` 형식. 비우면 기본 감시목록 사용 |
 | `VITE_API_BASE` | | 프론트가 바라볼 백엔드 주소 (기본 `http://localhost:4000`) |
 
@@ -82,7 +90,9 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 ## 절대 하지 말아야 할 것
 
 1. **KIS 원본 필드명(약어)을 프론트로 노출하지 말 것.** `stck_prpr`, `prdy_ctrt` 같은 약어는 반드시 `backend/src/kis/`에서 `@invest/shared` 타입으로 정규화한 뒤 넘긴다. 프론트는 KIS 스펙을 몰라야 한다.
-2. **인증 토큰 발급을 남발하지 말 것.** `access_token`은 발급 횟수 제한이 있어 `.cache/token-{env}.json`으로 캐시한다. 인증 로직을 바꿀 때 캐시 재사용을 깨지 않는다.
+2. **인증 토큰 발급을 남발하지 말 것.** `access_token`은 발급 횟수 제한이 있어 `.cache/token-{env}-{계좌id}.json`으로 **앱키별로** 캐시한다 (구버전 단일 계좌는 `token-{env}.json`). 인증 로직을 바꿀 때 캐시 재사용을 깨지 않는다. 캐시는 백엔드 실행 디렉터리 기준이라 실제 경로는 `backend/.cache/`다.
+
+2-1. **계좌 조회에 다른 계좌의 앱키를 쓰지 말 것.** KIS는 앱키에 등록된 계좌만 허용하고, 아니면 `INVALID_CHECK_ACNO`로 거부한다. 앱키/시크릿은 전역 값이 아니라 `KisAccountConfig`로 계좌와 함께 다닌다. 계좌 API를 추가할 때 `toCredentials(account)`를 `kisGetWithHeaders`에 넘겨야 한다.
 3. **두 인증 엔드포인트의 시크릿 필드명 혼동 금지.** `/oauth2/tokenP` → `appsecret`, `/oauth2/Approval` → `secretkey`. 서로 다르다.
 4. **실시간 프레임 파서의 상수를 임의로 바꾸지 말 것.** `H0STCNT0`의 `FIELDS_PER_RECORD = 46`, 필드 인덱스 매핑은 KIS 스펙에 고정돼 있다.
 5. **`.env`와 `.cache/`를 커밋하지 말 것.** (자격증명·토큰 포함)

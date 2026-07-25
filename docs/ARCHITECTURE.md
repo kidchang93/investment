@@ -88,5 +88,26 @@ KisRealtime open/close → 'status' 이벤트 → broadcast({type:'status'})
 | 일봉 시세 | REST GET | `inquire-daily-itemchartprice` / `FHKST03010100` |
 | 현재가 | REST GET | `inquire-price` / `FHKST01010100` |
 | 실시간 체결 | WebSocket | `H0STCNT0` |
+| 국내주식 잔고 | REST GET | `inquire-balance` / `TTTC8434R`(실전) · `VTTC8434R`(모의) |
 
 도메인은 `config.ts`에서 `vts`(모의) / `prod`(실전)로 분기한다.
+**계좌 관련 TR_ID는 실전/모의 접두어(`TTTC`/`VTTC`)가 다르므로 `config.env` 분기로만 고른다.**
+
+## 다계좌 자격증명 모델
+
+KIS는 **앱키에 등록된 계좌만** 조회를 허용한다 (다른 계좌를 넣으면 `INVALID_CHECK_ACNO`).
+그래서 앱키/시크릿은 전역 값이 아니라 계좌와 1:1로 묶인다.
+
+```
+config.kisAccounts: KisAccountConfig[]   # {id, label, appKey, appSecret, cano, productCode}
+        │
+        ├─ 계좌 API (잔고·매수가능·체결) → toCredentials(account) → 그 계좌의 앱키로 호출
+        └─ config.appKey/appSecret       → 기본 계좌 1개의 앱키 (시세·종목마스터·실시간 WS 전용)
+```
+
+- env 규칙: `KIS_<id>_ACCOUNT_NO` + `KIS_APP_KEY_<id>` + `KIS_APP_SECRET_<id>` **3종이 모두 있어야** 한 계좌로 인정한다.
+- 기본 계좌는 `KIS_PRIMARY_ACCOUNT_ID`, 없으면 id 오름차순 첫 계좌. 실행마다 바뀌지 않도록 정렬한다.
+- 시세·실시간은 계좌와 무관하므로 기본 계좌의 앱키로 고정해 호출 한도를 한곳에 모은다.
+- `access_token`·`approval_key`는 **앱키별로** 캐시한다 (`auth.ts`). 한 캐시를 공유하면 다른 앱키의 토큰으로 호출해 계좌 조회가 조용히 실패한다.
+- 계좌번호(`CANO`)·상품코드(`ACNT_PRDT_CD`)는 서버 환경 변수에서만 읽고, 프론트로는 `maskKisAccount()`로 마스킹한 표시용 문자열과 `accountId`/`label`만 나간다.
+- 라우트는 `?accountId=`로 계좌를 고른다. 생략하면 기본 계좌, 등록되지 않은 id면 404다.

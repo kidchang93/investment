@@ -1,5 +1,6 @@
 import { API_BASE } from './config';
 import type {
+  BrokerAccountRef,
   BrokerAccountSnapshot,
   CandlesResponse,
   CreateOrderRequest,
@@ -38,10 +39,21 @@ export async function fetchTradingOverview(): Promise<TradingOverview> {
   return res.json();
 }
 
-export async function fetchKisAccountSnapshot(): Promise<BrokerAccountSnapshot> {
-  const res = await fetch(`${API_BASE}/api/broker/kis/account`);
+export async function fetchKisAccounts(): Promise<BrokerAccountRef[]> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/accounts`);
+  if (!res.ok) throw new Error(`KIS 계좌 목록 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchKisAccountSnapshot(accountId?: string): Promise<BrokerAccountSnapshot> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/account${accountQuery(accountId)}`);
   if (!res.ok) throw new Error(`KIS 계좌 조회 실패: ${res.status}`);
   return res.json();
+}
+
+/** accountId를 생략하면 서버 기본 계좌를 쓴다. */
+function accountQuery(accountId?: string): string {
+  return accountId ? `?accountId=${encodeURIComponent(accountId)}` : '';
 }
 
 export async function fetchUsdKrwExchangeRate(): Promise<ExchangeRate> {

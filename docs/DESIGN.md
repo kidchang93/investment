@@ -12,8 +12,11 @@
 | 결정 | 이유 |
 |------|------|
 | `shared`를 빌드 없이 소스(`src/index.ts`) 직접 참조 | 타입 전용 패키지라 컴파일 산출물이 불필요. tsx/vite가 소스를 그대로 소비 |
-| `access_token`을 파일 캐시(`.cache/token-{env}.json`) | KIS 발급 횟수 제한. 24h 유효, 만료 1분 전까지 재사용 |
-| `approval_key`는 메모리 캐시 | WS 접속용, 프로세스 수명 동안만 유효하면 충분 |
+| `access_token`을 파일 캐시(`.cache/token-{env}-{계좌id}.json`) | KIS 발급 횟수 제한. 24h 유효, 만료 1분 전까지 재사용. 계좌마다 앱키가 달라 **앱키별로** 분리한다 |
+| 토큰 발급에 in-flight Promise 공유 | 계좌 API 3개가 동시에 뜨면 같은 앱키로 토큰을 중복 발급한다. 발급 중인 Promise를 재사용해 1회로 묶는다 |
+| `approval_key`는 메모리 캐시 (앱키별 Map) | WS 접속용, 프로세스 수명 동안만 유효하면 충분 |
+| 앱키/시크릿을 전역 값이 아니라 `KisAccountConfig`로 계좌와 묶음 | KIS는 앱키에 등록된 계좌만 조회를 허용한다(`INVALID_CHECK_ACNO`). 전역 앱키로는 두 번째 계좌를 절대 못 본다 |
+| 시세·실시간 WS는 기본 계좌 앱키로 고정 | 시세는 계좌와 무관하다. 계좌를 바꿀 때마다 앱키를 갈아타면 호출 한도가 흩어지고 실시간 WS를 재접속해야 한다 |
 | REST 헬퍼 `kisGet(path, trId, params)` 공통화 | 모든 조회가 동일한 인증 헤더 + tr_id 패턴. 중복 제거 |
 | `KisRealtime`을 `EventEmitter`로 | 파싱(체결/상태)과 중계(broadcast)를 느슨하게 분리. 서버는 `'trade'`/`'status'`만 구독 |
 | 실시간 체결로 "오늘 캔들"을 `update` | H0STCNT0 프레임에 당일 시/고/저/현재가가 모두 담겨 있어 추가 조회 없이 마지막 캔들 갱신 가능 |
@@ -31,6 +34,7 @@
 | `Quote` | 현재가 스냅샷 (inquire-price 정규화) | `rest.ts` |
 | `ServerMessage` | WS 스트림 판별 유니언 `trade \| status` | `server.ts` broadcast |
 | `ConnectionStatus` | KIS 연결 상태 | `realtime.ts` |
+| `BrokerAccountSnapshot` | KIS 실계좌 잔고·평가 스냅샷 (계좌명은 마스킹) | `rest.ts` |
 
 ### 부호(sign) 규약 (KIS 공통)
 `1`=상한, `2`=상승, `3`=보합, `4`=하한, `5`=하락. 색상 매핑은 상승계열(1/2) 빨강, 하락계열(4/5) 파랑 — **한국 관례(상승=적색)** 를 따른다.

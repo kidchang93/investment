@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { WebSocketServer, WebSocket } from 'ws';
-import { config, assertCredentials } from './config.js';
+import { config, assertCredentials, getKisAccount, type KisAccountConfig } from './config.js';
 import {
   addDefaultWatchlistItem,
   addWatchlistItem,
@@ -49,6 +49,17 @@ const BATCH_QUOTE_DELAY_MS = 120;
 const QUOTE_CACHE_TTL_MS = 45_000;
 const STREAM_SUBSCRIBE_LIMIT = 80;
 
+/**
+ * accountId를 계좌 설정으로 바꾼다.
+ * `null`은 "설정된 계좌가 아예 없음"(조회 함수가 `configured:false`로 응답),
+ * `'unknown'`은 "요청한 id가 등록된 계좌가 아님"(404)으로 구분한다.
+ */
+function resolveAccount(accountId?: string): KisAccountConfig | null | 'unknown' {
+  const account = getKisAccount(accountId);
+  if (accountId && !account) return 'unknown';
+  return account;
+}
+
 const quoteCache = new Map<string, { quote: Quote; fetchedAt: number }>();
 
 function sleep(ms: number): Promise<void> {
@@ -92,8 +103,23 @@ async function main(): Promise<void> {
     return getTradingOverview();
   });
 
-  app.get('/api/broker/kis/account', async () => {
-    return getKisDomesticAccountSnapshot();
+  app.get('/api/broker/kis/accounts', async () => {
+    return config.kisAccounts.map((account) => ({
+      id: account.id,
+      label: account.label,
+      primary: account.id === config.primaryCredentialId,
+    }));
+  });
+
+  app.get<{ Querystring: { accountId?: string } }>('/api/broker/kis/account', async (req, reply) => {
+    const account = resolveAccount(req.query.accountId);
+    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+    try {
+      return await getKisDomesticAccountSnapshot(account);
+    } catch (err) {
+      req.log.warn({ err, accountId: req.query.accountId }, 'KIS 계좌 조회 실패');
+      return reply.code(502).send({ message: 'KIS 계좌를 조회할 수 없습니다.' });
+    }
   });
 
   app.get('/api/exchange-rates/usd-krw', async (_req, reply) => {

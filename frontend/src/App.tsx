@@ -4,6 +4,7 @@ import {
   createOrder,
   createWatchlist,
   deleteWatchlist,
+  fetchKisAccounts,
   fetchKisAccountSnapshot,
   fetchCategoryInstruments,
   fetchInstrumentCandles,
@@ -23,6 +24,7 @@ import {
 import { useStream } from './useStream';
 import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } from './Chart';
 import type {
+  BrokerAccountRef,
   BrokerAccountSnapshot,
   Candle,
   CandlesResponse,
@@ -515,6 +517,37 @@ const DISCOVER_INITIAL_QUOTE_TARGETS = 24;
 const SEARCH_QUOTE_TARGETS = 10;
 const RECENT_INSTRUMENT_LIMIT = 8;
 const STORAGE_PREFIX = 'investment-monitor:';
+
+/**
+ * KIS 계좌 전환 탭. 계좌가 하나뿐이면 아무것도 그리지 않아 단일 계좌 화면은 그대로 유지된다.
+ * KIS는 앱키에 등록된 계좌만 조회를 허용하므로 목록은 서버가 짝지어 준 것만 온다.
+ */
+function BrokerAccountPicker({
+  accounts,
+  value,
+  onChange,
+}: {
+  accounts: BrokerAccountRef[];
+  value: string | null;
+  onChange: (accountId: string) => void;
+}): JSX.Element | null {
+  if (accounts.length < 2) return null;
+  return (
+    <div className="broker-account-picker" role="tablist" aria-label="KIS 계좌 선택">
+      {accounts.map((account) => (
+        <button
+          aria-selected={value === account.id}
+          key={account.id}
+          onClick={() => onChange(account.id)}
+          role="tab"
+          type="button"
+        >
+          {account.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function readStoredValue<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
   const value = window.localStorage.getItem(`${STORAGE_PREFIX}${key}`);
@@ -1361,6 +1394,8 @@ export function App(): JSX.Element {
     readStoredValue('sidePanelTab', 'discover', SIDE_PANEL_OPTIONS.map((option) => option.key)),
   );
   const [tradingOverview, setTradingOverview] = useState<TradingOverview | null>(null);
+  const [kisAccounts, setKisAccounts] = useState<BrokerAccountRef[]>([]);
+  const [kisAccountId, setKisAccountId] = useState<string | null>(null);
   const [kisAccountSnapshot, setKisAccountSnapshot] = useState<BrokerAccountSnapshot | null>(null);
   const [usdKrwRate, setUsdKrwRate] = useState<ExchangeRate | null>(null);
   const [isKisAccountRefreshing, setIsKisAccountRefreshing] = useState(false);
@@ -1516,13 +1551,23 @@ export function App(): JSX.Element {
       .catch((e) => setError(String(e)));
   }, []);
 
+  // 계좌 목록을 먼저 받아 기본 계좌(시세 앱키와 같은 계좌)를 선택해 둔다.
+  useEffect(() => {
+    fetchKisAccounts()
+      .then((accounts) => {
+        setKisAccounts(accounts);
+        setKisAccountId((current) => current ?? accounts.find((a) => a.primary)?.id ?? accounts[0]?.id ?? null);
+      })
+      .catch((e) => setError(String(e)));
+  }, []);
+
   const refreshKisAccountSnapshot = useCallback((): void => {
     setIsKisAccountRefreshing(true);
-    fetchKisAccountSnapshot()
+    fetchKisAccountSnapshot(kisAccountId ?? undefined)
       .then(setKisAccountSnapshot)
       .catch((e) => setError(String(e)))
       .finally(() => setIsKisAccountRefreshing(false));
-  }, []);
+  }, [kisAccountId]);
 
   useEffect(() => {
     refreshKisAccountSnapshot();
@@ -3792,6 +3837,7 @@ export function App(): JSX.Element {
                 <strong>{selectedInstrument ? `${selectedInstrument.symbol} · ${selectedInstrument.name}` : '종목 미선택'}</strong>
               </div>
               <div className="order-ticket__account">
+                <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
                 <em>{activeTradingAccount?.label ?? '계정 대기'}</em>
                 <span>{activeTradingAccount?.mode === 'paper' ? 'PAPER' : 'LIVE 잠금'}</span>
               </div>
@@ -4249,14 +4295,17 @@ export function App(): JSX.Element {
                       {kisAccountSnapshot?.updatedAt ? `갱신 ${formatClock(kisAccountSnapshot.updatedAt)}` : '미갱신'}
                     </span>
                   </div>
-                  <button
-                    className="portfolio-card__refresh"
-                    disabled={isKisAccountRefreshing}
-                    onClick={refreshKisAccountSnapshot}
-                    type="button"
-                  >
-                    {isKisAccountRefreshing ? '조회 중' : '새로고침'}
-                  </button>
+                  <div className="portfolio-card__actions">
+                    <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
+                    <button
+                      className="portfolio-card__refresh"
+                      disabled={isKisAccountRefreshing}
+                      onClick={refreshKisAccountSnapshot}
+                      type="button"
+                    >
+                      {isKisAccountRefreshing ? '조회 중' : '새로고침'}
+                    </button>
+                  </div>
                 </div>
                 {kisAccountSnapshot?.configured ? (
                   <>

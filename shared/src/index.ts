@@ -238,10 +238,23 @@ export interface TradingOverview {
   recentFills: TradingFill[];
 }
 
+/**
+ * 조회 가능한 KIS 계좌 하나. KIS는 앱키에 등록된 계좌만 허용하므로
+ * 서버가 자격증명과 짝지어 둔 계좌 목록만 프런트에 내려준다.
+ */
+export interface BrokerAccountRef {
+  id: string;
+  label: string;
+  /** 기본 계좌 여부. 시세·실시간 호출도 이 계좌의 자격증명을 쓴다. */
+  primary: boolean;
+}
+
 /** KIS 실계좌 조회 상태. 계좌번호 원문은 서버 밖으로 내보내지 않는다. */
 export interface BrokerAccountSnapshot {
   broker: 'kis';
   configured: boolean;
+  /** 어느 계좌의 스냅샷인지. 미설정이면 빈 문자열 */
+  accountId: string;
   accountLabel: string;
   baseCurrency: string;
   cashBalance?: number;

@@ -1,5 +1,5 @@
-import { config } from '../config.js';
-import { getAccessToken } from './auth.js';
+import { config, type KisAccountConfig } from '../config.js';
+import { getAccessToken, primaryCredentials, type KisCredentials } from './auth.js';
 import type {
   BrokerAccountSnapshot,
   BrokerPosition,
@@ -26,15 +26,16 @@ async function kisGetWithHeaders(
   trId: string,
   params: Record<string, string>,
   trCont = '',
+  credentials: KisCredentials = primaryCredentials,
 ): Promise<{ body: Record<string, unknown>; headers: Headers }> {
-  const token = await getAccessToken();
+  const token = await getAccessToken(credentials);
   const url = new URL(config.restBase + path);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 
   const headers: Record<string, string> = {
     authorization: `Bearer ${token}`,
-    appkey: config.appKey,
-    appsecret: config.appSecret,
+    appkey: credentials.appKey,
+    appsecret: credentials.appSecret,
     tr_id: trId,
     custtype: config.custType,
   };
@@ -98,6 +99,14 @@ function optionalNumber(value: string | undefined): number | null {
 
 function maskKisAccount(cano: string, productCode: string): string {
   return `****${cano.slice(-4)}-${productCode}`;
+}
+
+const MISSING_ACCOUNT_MESSAGE =
+  'KIS 계좌 설정이 없습니다. KIS_<id>_ACCOUNT_NO / KIS_APP_KEY_<id> / KIS_APP_SECRET_<id>를 함께 채워주세요.';
+
+/** 계좌 조회는 그 계좌가 등록된 앱키로만 가능하다. 계좌 설정에서 자격증명만 뽑아 쓴다. */
+function toCredentials(account: KisAccountConfig): KisCredentials {
+  return { id: account.id, appKey: account.appKey, appSecret: account.appSecret };
 }
 
 /**
@@ -631,16 +640,18 @@ async function getOverseasFutureDailyCandles(instrument: Instrument): Promise<Ca
   return { code: instrument.id, name: instrument.name, candles };
 }
 
-export async function getKisDomesticAccountSnapshot(): Promise<BrokerAccountSnapshot> {
-  const account = config.kisAccount;
+export async function getKisDomesticAccountSnapshot(
+  account: KisAccountConfig | null,
+): Promise<BrokerAccountSnapshot> {
   if (!account) {
     return {
       broker: 'kis',
       configured: false,
+      accountId: '',
       accountLabel: 'KIS 계좌 미설정',
       baseCurrency: 'KRW',
       positions: [],
-      message: 'KIS_ACCOUNT_NO 또는 KIS_ACCOUNT_NO/KIS_ACCOUNT_PRODUCT_CODE 환경 변수가 필요합니다.',
+      message: MISSING_ACCOUNT_MESSAGE,
     };
   }
 
@@ -669,6 +680,7 @@ export async function getKisDomesticAccountSnapshot(): Promise<BrokerAccountSnap
         CTX_AREA_NK100: nk100,
       },
       trCont,
+      toCredentials(account),
     );
 
     if (body.rt_cd && body.rt_cd !== '0') {
@@ -694,7 +706,8 @@ export async function getKisDomesticAccountSnapshot(): Promise<BrokerAccountSnap
   return {
     broker: 'kis',
     configured: true,
-    accountLabel: maskKisAccount(account.cano, account.productCode),
+    accountId: account.id,
+    accountLabel: `${account.label} · ${maskKisAccount(account.cano, account.productCode)}`,
     baseCurrency: 'KRW',
     cashBalance: firstNumber(summary, ['dnca_tot_amt', 'nxdy_excc_amt']) ?? 0,
     totalEvaluation: firstNumber(summary, ['tot_evlu_amt']),
