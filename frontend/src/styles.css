@@ -2560,9 +2560,14 @@ button {
   padding: 16px;
 }
 
+/*
+ * 지표 타일은 카드마다 4~5개다. 열 수를 고정하면 값이 4개인 카드에 빈칸이 남고,
+ * 좁은 화면에서는 1열로 쌓여 "0원" 타일 다섯 개가 카드를 400px 가까이 늘린다.
+ * 폭에 맞춰 들어갈 만큼만 놓는다.
+ */
 .portfolio-page__metrics {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
   gap: 8px;
 }
 
@@ -4863,9 +4868,6 @@ button {
     padding: 10px;
   }
 
-  .portfolio-page__metrics {
-    grid-template-columns: 1fr;
-  }
 
   .portfolio-card {
     overflow-x: auto;
