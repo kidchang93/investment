@@ -1446,6 +1446,8 @@ function InstrumentRow({
       className={`instrument-row${active ? ' active' : ''}${flashing ? ' is-flashing' : ''}`}
       onClick={() => onSelect(instrument)}
       data-move={tone}
+      /* 좁은 사이드바라 이름도 부제도 말줄임된다. 전체는 여기서 본다. */
+      title={`${instrument.name} · ${instrument.symbol} · ${marketLabel(instrument)}`}
       type="button"
     >
       <div className="instrument-row__name">

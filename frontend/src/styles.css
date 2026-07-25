@@ -4699,7 +4699,15 @@ button {
   line-height: 1.25;
 }
 
+/*
+ * 부제는 한 줄로 둔다. 예전엔 접혀서 `005930-NIGHT · NIGHT_PROXY ·` / `KRW`로
+ * 갈라졌고, 통화만 셋째 줄에 홀로 남아 행 높이를 46 → 54px로 키웠다.
+ * 앞쪽 종목코드가 식별값이라 뒤에서 잘려도 된다. 전체는 행의 title로 본다.
+ */
 .instrument-row__code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--muted);
   font-size: 11px;
 }
