@@ -5245,3 +5245,31 @@ button {
 .live-order__confirm-actions > button:first-child:hover {
   color: var(--text);
 }
+
+/* 오류 배너. 닫기 버튼을 오른쪽 끝에 붙인다. */
+.app__error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.app__error > span {
+  min-width: 0;
+}
+
+.app__error > button {
+  flex-shrink: 0;
+  min-height: 24px;
+  padding: 0 10px;
+  border: 1px solid rgba(229, 72, 77, 0.4);
+  border-radius: 4px;
+  background: transparent;
+  color: #ffb4b4;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.app__error > button:hover {
+  background: rgba(229, 72, 77, 0.16);
+}

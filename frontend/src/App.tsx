@@ -845,6 +845,21 @@ function formatTradeTime(time: string | undefined): string {
  * 쓰면 "시세 갱신 시세 연결 대기"가 됐다. 포맷 함수가 상태를 지어내지 않게
  * 중립 자리표시자만 준다. 없을 때 뭐라고 적을지는 부르는 쪽이 정한다.
  */
+/**
+ * 화면 위쪽 오류 배너에 쓸 문구.
+ *
+ * fetch가 실패하면 브라우저는 `TypeError: Failed to fetch`만 준다. 무엇이
+ * 잘못됐는지 알려주지 못하니 사람이 읽을 문장으로 바꾼다. 그 밖의 오류는
+ * 서버가 보낸 메시지가 그대로 유용하므로 손대지 않는다.
+ */
+function toErrorMessage(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  if (/Failed to fetch|NetworkError|ERR_NETWORK|ERR_CONNECTION/i.test(raw)) {
+    return '서버에 연결하지 못했습니다. 백엔드가 실행 중인지 확인하세요.';
+  }
+  return raw;
+}
+
 function formatClock(ms: number | null): string {
   if (!ms) return '-';
   return new Intl.DateTimeFormat('ko-KR', {
@@ -1638,6 +1653,17 @@ export function App(): JSX.Element {
   const [simulationPositions, setSimulationPositions] = useState<SimulationPosition[]>(readStoredSimulationPositions);
   const [simulationQuantity, setSimulationQuantity] = useState('1');
   const [error, setError] = useState<string | null>(null);
+
+  /*
+   * 오류 배너를 스스로 걷는다. 지우는 코드가 아예 없어서 한 번 실패하면
+   * `TypeError: Failed to fetch`가 화면 맨 위에 영구히 붙어 있었다. 서버가
+   * 돌아온 뒤에도 고장 난 것처럼 보인다.
+   */
+  useEffect(() => {
+    if (!error) return undefined;
+    const timer = window.setTimeout(() => setError(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [error]);
   const [quoteRefreshAt, setQuoteRefreshAt] = useState<number | null>(null);
   const [isQuoteRefreshing, setIsQuoteRefreshing] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -1751,7 +1777,7 @@ export function App(): JSX.Element {
           setActiveSavedWatchlistId(groups[0]?.id ?? 'default');
         }
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => setError(toErrorMessage(e)));
   }, [activeSavedWatchlistId]);
 
   useEffect(() => {
@@ -1760,7 +1786,7 @@ export function App(): JSX.Element {
         setWatchlist(items);
         if (items.length) setSelectedInstrument((current) => current ?? items[0]);
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => setError(toErrorMessage(e)));
   }, [activeSavedWatchlistId]);
 
   useEffect(() => {
@@ -1769,19 +1795,19 @@ export function App(): JSX.Element {
         setTerminalItems(items);
         if (items.length) setSelectedInstrument((current) => current ?? items[0]);
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => setError(toErrorMessage(e)));
   }, []);
 
   useEffect(() => {
     fetchInstrumentCategories()
       .then(setCategories)
-      .catch((e) => setError(String(e)));
+      .catch((e) => setError(toErrorMessage(e)));
   }, []);
 
   useEffect(() => {
     fetchTradingOverview()
       .then(setTradingOverview)
-      .catch((e) => setError(String(e)));
+      .catch((e) => setError(toErrorMessage(e)));
   }, []);
 
   // 계좌 목록을 먼저 받아 기본 계좌(시세 앱키와 같은 계좌)를 선택해 둔다.
@@ -1791,14 +1817,14 @@ export function App(): JSX.Element {
         setKisAccounts(accounts);
         setKisAccountId((current) => current ?? accounts.find((a) => a.primary)?.id ?? accounts[0]?.id ?? null);
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => setError(toErrorMessage(e)));
   }, []);
 
   const refreshKisAccountSnapshot = useCallback((): void => {
     setIsKisAccountRefreshing(true);
     fetchKisAccountSnapshot(kisAccountId ?? undefined)
       .then(setKisAccountSnapshot)
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(toErrorMessage(e)))
       .finally(() => setIsKisAccountRefreshing(false));
   }, [kisAccountId]);
 
@@ -1810,7 +1836,7 @@ export function App(): JSX.Element {
     setIsKisExecutionRefreshing(true);
     fetchKisExecutions(undefined, kisAccountId ?? undefined)
       .then(setKisExecutionSnapshot)
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(toErrorMessage(e)))
       .finally(() => setIsKisExecutionRefreshing(false));
   }, [kisAccountId]);
 
@@ -2031,7 +2057,7 @@ export function App(): JSX.Element {
           if (!disposed) setCategoryItems(items);
         })
         .catch((e) => {
-          if (!disposed) setError(String(e));
+          if (!disposed) setError(toErrorMessage(e));
         });
     }, serverQuery ? 180 : 0);
     return () => {
@@ -2049,7 +2075,7 @@ export function App(): JSX.Element {
     if (!selectedInstrument || candlesByCode[selectedInstrument.id]) return;
     fetchInstrumentCandles(selectedInstrument.id)
       .then((res) => setCandlesByCode((m) => ({ ...m, [selectedInstrument.id]: res })))
-      .catch((e) => setError(String(e)));
+      .catch((e) => setError(toErrorMessage(e)));
   }, [selectedInstrument, candlesByCode]);
 
   // 선택 종목의 현재가 스냅샷. 실시간 체결이 오기 전 가격 헤더를 채운다.
@@ -2057,7 +2083,7 @@ export function App(): JSX.Element {
     if (!selectedInstrument) return;
     fetchInstrumentQuote(selectedInstrument.id)
       .then((res) => setQuotesByCode((m) => ({ ...m, [selectedInstrument.id]: res })))
-      .catch((e) => setError(String(e)));
+      .catch((e) => setError(toErrorMessage(e)));
   }, [selectedInstrument]);
 
   // 해외 실시간 WS는 별도 TR이라, 우선 선택 해외 종목은 짧은 폴링으로 차트와 헤더를 갱신한다.
@@ -2066,10 +2092,10 @@ export function App(): JSX.Element {
     const refresh = (): void => {
       void fetchInstrumentQuote(selectedInstrument.id)
         .then((res) => setQuotesByCode((m) => ({ ...m, [selectedInstrument.id]: res })))
-        .catch((e) => setError(String(e)));
+        .catch((e) => setError(toErrorMessage(e)));
       void fetchInstrumentCandles(selectedInstrument.id)
         .then((res) => setCandlesByCode((m) => ({ ...m, [selectedInstrument.id]: res })))
-        .catch((e) => setError(String(e)));
+        .catch((e) => setError(toErrorMessage(e)));
     };
     const timer = window.setInterval(refresh, OVERSEAS_REFRESH_MS);
     return () => window.clearInterval(timer);
@@ -2098,7 +2124,7 @@ export function App(): JSX.Element {
           setHasSymbolSearchCompleted(true);
         })
         .catch((e) => {
-          if (!disposed) setError(String(e));
+          if (!disposed) setError(toErrorMessage(e));
         })
         .finally(() => {
           if (!disposed) setIsSymbolSearching(false);
@@ -2132,7 +2158,7 @@ export function App(): JSX.Element {
           }));
         })
         .catch((e) => {
-          if (!disposed) setError(String(e));
+          if (!disposed) setError(toErrorMessage(e));
         });
     };
 
@@ -2149,7 +2175,7 @@ export function App(): JSX.Element {
     if (!selectedInstrument || !shouldLoadNews || newsByCode[selectedInstrument.id]) return;
     fetchInstrumentNews(selectedInstrument.id)
       .then((items) => setNewsByCode((current) => ({ ...current, [selectedInstrument.id]: items })))
-      .catch((e) => setError(String(e)));
+      .catch((e) => setError(toErrorMessage(e)));
   }, [activePage, bottomDockTab, newsByCode, selectedInstrument]);
 
   const discoverFilteredCategoryItems = useMemo(() => {
@@ -2221,7 +2247,7 @@ export function App(): JSX.Element {
             setQuoteRefreshAt(Date.now());
           }
         } catch (e) {
-          if (shouldApply()) setError(String(e));
+          if (shouldApply()) setError(toErrorMessage(e));
         } finally {
           setIsQuoteRefreshing(false);
         }
@@ -2967,7 +2993,7 @@ export function App(): JSX.Element {
           setWatchlist((items) => items.filter((item) => item.id !== instrument.id));
           updateActiveGroupCount(-1);
         })
-        .catch((e) => setError(String(e)));
+        .catch((e) => setError(toErrorMessage(e)));
       return;
     }
     addWatchlistItem(activeSavedWatchlistId, instrument.id)
@@ -2978,7 +3004,7 @@ export function App(): JSX.Element {
           return [...items, item];
         }),
       )
-      .catch((e) => setError(String(e)));
+      .catch((e) => setError(toErrorMessage(e)));
   }
 
   function createSavedWatchlist(): void {
@@ -2989,7 +3015,7 @@ export function App(): JSX.Element {
         setSavedWatchlists((groups) => [...groups, group]);
         setActiveSavedWatchlistId(group.id);
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => setError(toErrorMessage(e)));
   }
 
   function deleteSavedWatchlist(id: string): void {
@@ -2999,7 +3025,7 @@ export function App(): JSX.Element {
         setSavedWatchlists((groups) => groups.filter((group) => group.id !== id));
         if (activeSavedWatchlistId === id) setActiveSavedWatchlistId('default');
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => setError(toErrorMessage(e)));
   }
 
   function runChartCommand(type: ChartCommandType): void {
@@ -3209,7 +3235,7 @@ export function App(): JSX.Element {
       const overview = await fetchTradingOverview();
       setTradingOverview(overview);
     } catch (e) {
-      setError(String(e));
+      setError(toErrorMessage(e));
     } finally {
       setIsOrderSubmitting(false);
     }
@@ -3335,7 +3361,14 @@ export function App(): JSX.Element {
         </div>
       </header>
 
-      {error && <div className="app__error">{error}</div>}
+      {error && (
+        <div className="app__error" role="alert">
+          <span>{error}</span>
+          <button aria-label="오류 닫기" onClick={() => setError(null)} type="button">
+            닫기
+          </button>
+        </div>
+      )}
 
       <div className={`app__body app__body--${activePage}`}>
         <main className={`chart-panel chart-panel--${activePage}`}>
