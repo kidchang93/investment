@@ -699,6 +699,25 @@ function orderLogSymbolLabel(symbol?: string, requestedInstrumentId?: string): s
 }
 
 /**
+ * 이 종목으로는 주문이 되지 않는다는 안내.
+ *
+ * 주문 티켓과 예약주문 카드 두 곳에서 쓴다. 티켓만 고쳤더니 예약주문 쪽은
+ * 같은 사실이 10px 잔글씨로 버튼 아래에 남아 두 화면이 어긋났다. 한 곳에
+ * 묶어 두면 다음에 문구를 고칠 때 같이 따라온다.
+ */
+function UnorderableInstrumentNotice({ action, where }: { action: string; where: string }): JSX.Element {
+  return (
+    <div className="order-ticket__unavailable" role="note">
+      <strong>{action}할 수 없는 종목입니다</strong>
+      <span>
+        지수·선물·야간 환산가는 값을 보라고 둔 참고 지표입니다.
+        국내 주식·ETF·ETN 중에서 골라 주세요 — {where}에 있습니다.
+      </span>
+    </div>
+  );
+}
+
+/**
  * 이 숫자는 실제 시세가 아니라는 표시.
  *
  * 화면 구성을 보려고 넣어 둔 상수가 몇 군데 있는데, 종목명이 진짜라서
@@ -3049,7 +3068,12 @@ export function App(): JSX.Element {
     if (!kisSellability?.configured) return notices;
     const sellable = kisSellability.sellableQuantity;
     if (sellable !== undefined && orderQuantityNumber > sellable) {
-      notices.push(`실계좌 매도가능수량은 ${formatNumber(sellable)}주입니다.`);
+      // 매수 쪽 `최대 0주까지…`와 같은 문제. 0이면 사실만 적지 말고 못 판다고 적는다.
+      notices.push(
+        sellable > 0
+          ? `실계좌 매도가능수량은 ${formatNumber(sellable)}주입니다.`
+          : '실계좌에 보유한 수량이 없어 매도할 수 없습니다.',
+      );
     }
     return notices;
   }, [kisOrderability, kisSellability, orderEstimatedNotional, orderQuantityNumber, orderSide]);
@@ -5679,6 +5703,9 @@ export function App(): JSX.Element {
                     </button>
                   </div>
                 </div>
+                {!isOrderableDomesticInstrument(selectedInstrument) && (
+                  <UnorderableInstrumentNotice action="예약주문" where="종목 화면의 관심·탐색 탭" />
+                )}
                 <div className="risk-rules">
                   <label className="risk-rules__wide">
                     <span>종목 (차트에서 선택한 종목)</span>
@@ -5725,9 +5752,13 @@ export function App(): JSX.Element {
                   <label className="risk-rules__toggle">
                     <button
                       className="live-order__submit"
-                      disabled={
-                        !isOrderableDomesticInstrument(selectedInstrument) || isReservedCancelling
-                      }
+                      /*
+                       * 차단 사유가 있으면 잠근다. 예전에는 종목 조건만 봐서, 지정가가
+                       * 비어 있어도 눌렸다. submitReservedOrder가 막아 주긴 했지만
+                       * 눌러 봐야 아래 이미 적힌 말을 다시 들었다. 주문 티켓은 같은
+                       * 상황에서 잠기는데 여기만 달랐다.
+                       */
+                      disabled={reservedOrderBlockers.length > 0 || isReservedCancelling}
                       onClick={() => void submitReservedOrder()}
                       title={
                         reservedOrderBlockers.length > 0 ? reservedOrderBlockers.join('\n') : undefined
@@ -5856,13 +5887,7 @@ export function App(): JSX.Element {
               바꾸는 수밖에 없어서, 할 일까지 함께 적는다.
             */}
             {!isOrderableDomesticInstrument(selectedInstrument) && (
-              <div className="order-ticket__unavailable" role="note">
-                <strong>주문할 수 없는 종목입니다</strong>
-                <span>
-                  지수·선물·야간 환산가는 값을 보라고 둔 참고 지표입니다.
-                  국내 주식·ETF·ETN 중에서 골라 주세요 — 위 <b>관심</b>·<b>탐색</b>에 있습니다.
-                </span>
-              </div>
+              <UnorderableInstrumentNotice action="주문" where="위 관심·탐색 탭" />
             )}
             <div className="order-ticket__body">
               <div className="order-ticket__controls">
