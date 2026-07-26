@@ -4477,10 +4477,18 @@ export function App(): JSX.Element {
                 <section className="terminal-page terminal-page--calendar" aria-label="경제 캘린더">
                   <div className="terminal-page__header">
                     <div>
-                      <span>KST · 2026년 7월</span>
+                      {/*
+                        `KST · 2026년 7월`이 고정 문자열이었다. 달이 바뀌어도
+                        7월이라고 적는다. 지금 달을 계산해서 쓴다.
+                      */}
+                      <span>
+                        KST · {new Date(nowMs).getFullYear()}년 {new Date(nowMs).getMonth() + 1}월
+                        {' · 다가오는 일정 '}{upcomingEvents.length}건
+                      </span>
                       <strong>경제 캘린더</strong>
                     </div>
-                    <small>다가오는 일정 {upcomingEvents.length}건</small>
+                    {/* 일정도 등급도 확인된 값이 아니다. 안내가 맨 아래 패널에만 있었다. */}
+                    <SampleBadge note="일정과 중요도는 확인된 값이 아닙니다. 화면 구성을 보여주려고 넣어 둔 것이라 실제 발표 일정은 따로 확인하세요." />
                   </div>
                   <div className="terminal-filterbar" role="tablist" aria-label="캘린더 필터">
                     {CALENDAR_REGION_OPTIONS.map((option) => (
