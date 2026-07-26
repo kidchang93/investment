@@ -3112,6 +3112,35 @@ export function App(): JSX.Element {
     }
   }
 
+  /*
+   * 자동매매가 지금 설정으로 실제로 주문을 낼 수 있는지.
+   *
+   * 러너를 시작해도 매 회차 "후보 없음"이나 "차단"만 쌓이는 경우가 있다.
+   * 그 이유는 리스크 룰에 있는데 화면이 다른 카드라 연결짓기 어렵다.
+   * 시작 버튼 옆에서 바로 보이게 한다.
+   */
+  const autoTraderBlockers = useMemo(() => {
+    const blockers: string[] = [];
+    if (!riskRules) return blockers;
+    if (!riskRules.enabled) {
+      blockers.push('리스크 룰에서 이 계좌의 실주문이 꺼져 있습니다. 아래 실주문 리스크 룰에서 켜세요.');
+    }
+    if (!riskRules.allowMarketOrder) {
+      blockers.push(
+        '시장가 주문이 막혀 있습니다. 자동매매는 신호가 난 값에 붙어야 해서 시장가로 냅니다 — 아래에서 허용하세요.',
+      );
+    }
+    if (riskRules.symbolAllowlist.length > 0) {
+      blockers.push(
+        `허용 종목이 ${riskRules.symbolAllowlist.join(', ')}로 좁혀져 있습니다. 종목을 알고리즘이 고르게 하려면 아래에서 비우세요.`,
+      );
+    }
+    if (autoMode === 'live' && liveOrderGate && !liveOrderGate.enabled) {
+      blockers.push(...liveOrderGate.blockers);
+    }
+    return blockers;
+  }, [autoMode, liveOrderGate, riskRules]);
+
   async function submitAutoTraderStart(): Promise<void> {
     if (!kisAccountId) return;
     setIsAutoSubmitting(true);
@@ -5275,6 +5304,22 @@ export function App(): JSX.Element {
                         )}
                       </strong>
                     </div>
+                  </div>
+                )}
+
+                {/*
+                  막고 있는 설정을 시작 버튼 가까이 적는다. 리스크 룰은 아래 다른
+                  카드에 있어서, 여기서 알려주지 않으면 왜 아무것도 안 사는지
+                  알아내기 어렵다.
+                */}
+                {autoTrader?.status !== 'running' && autoTraderBlockers.length > 0 && (
+                  <div className="auto-trader__blockers">
+                    <strong>지금 설정으로는 주문이 나가지 않습니다</strong>
+                    <ul>
+                      {autoTraderBlockers.map((blocker) => (
+                        <li key={blocker}>{blocker}</li>
+                      ))}
+                    </ul>
                   </div>
                 )}
 

@@ -5469,3 +5469,32 @@ button {
   text-decoration: none;
   cursor: help;
 }
+
+/*
+ * 자동매매를 막고 있는 설정 안내.
+ *
+ * 리스크 룰은 아래 다른 카드에 있어서, 여기서 알려주지 않으면 러너를 켜 놓고도
+ * 왜 아무것도 안 사는지 알아내기 어렵다. 경고가 아니라 안내라 색은 조용하게 둔다.
+ */
+.auto-trader__blockers {
+  margin: 0 16px 12px;
+  padding: 9px 12px;
+  border: 1px solid rgba(245, 196, 81, 0.32);
+  border-radius: 6px;
+  background: rgba(245, 196, 81, 0.07);
+}
+
+.auto-trader__blockers > strong {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--focus);
+  font-size: 12px;
+}
+
+.auto-trader__blockers ul {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+}
