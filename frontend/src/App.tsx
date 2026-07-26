@@ -1655,6 +1655,8 @@ export function App(): JSX.Element {
   const [activeCategory, setActiveCategory] = useState<string>('kr-night-proxies');
   const [categoryItems, setCategoryItems] = useState<Instrument[]>([]);
   const [terminalItems, setTerminalItems] = useState<Instrument[]>([]);
+  /** 터미널 지표 fetch가 끝났는지. 초기 종목을 고를 때 순서를 정하는 데 쓴다. */
+  const [isTerminalLoaded, setIsTerminalLoaded] = useState(false);
   const [discoverQuery, setDiscoverQuery] = useState('');
   const [selectedInstrument, setSelectedInstrument] = useState<Instrument | null>(null);
   const [visibleCategoryQuoteIds, setVisibleCategoryQuoteIds] = useState<string[]>([]);
@@ -1945,21 +1947,34 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     fetchWatchlistItems(activeSavedWatchlistId)
-      .then((items) => {
-        setWatchlist(items);
-        if (items.length) setSelectedInstrument((current) => current ?? items[0]);
-      })
+      .then(setWatchlist)
       .catch((e) => setError(toErrorMessage(e)));
   }, [activeSavedWatchlistId]);
 
   useEffect(() => {
     fetchTerminalInstruments()
-      .then((items) => {
-        setTerminalItems(items);
-        if (items.length) setSelectedInstrument((current) => current ?? items[0]);
-      })
-      .catch((e) => setError(toErrorMessage(e)));
+      .then(setTerminalItems)
+      .catch((e) => setError(toErrorMessage(e)))
+      // 실패해도 표시해야 아래에서 관심목록으로 넘어간다.
+      .finally(() => setIsTerminalLoaded(true));
   }, []);
+
+  /*
+   * 처음 열었을 때 고를 종목.
+   *
+   * 예전에는 관심목록 fetch와 터미널 fetch가 각자 `current ?? items[0]`으로
+   * 같은 자리를 채웠다. 먼저 도착한 쪽이 이기니 매번 같은 종목이 잡힌다는
+   * 보장이 없었다. 순서를 여기 한 곳에서 정한다 — 터미널 지표(야간 환산가 등)가
+   * 우선이고, 그게 비었을 때만 관심목록으로 넘어간다. 이 앱의 첫 화면이
+   * 야간 지표라 지금 실제로 잡히던 쪽을 그대로 규칙으로 굳힌 것이다.
+   *
+   * 사용자가 한 번 고르면 이 효과는 아무것도 하지 않는다.
+   */
+  useEffect(() => {
+    if (selectedInstrument || !isTerminalLoaded) return;
+    const first = terminalItems[0] ?? watchlist[0];
+    if (first) setSelectedInstrument(first);
+  }, [isTerminalLoaded, selectedInstrument, terminalItems, watchlist]);
 
   useEffect(() => {
     fetchInstrumentCategories()
@@ -3278,7 +3293,9 @@ export function App(): JSX.Element {
     }
     if (riskRules.symbolAllowlist.length > 0) {
       blockers.push(
-        `허용 종목이 ${riskRules.symbolAllowlist.join(', ')}로 좁혀져 있습니다. 종목을 알고리즘이 고르게 하려면 아래에서 비우세요.`,
+        // 종목코드 뒤에 `로`를 붙이면 끝자리에 따라 틀린다 — `005930로`가 그랬다.
+        `허용 종목이 좁혀져 있습니다 (${riskRules.symbolAllowlist.join(', ')}).`
+          + ' 종목을 알고리즘이 고르게 하려면 아래에서 비우세요.',
       );
     }
     if (autoMode === 'live' && liveOrderGate && !liveOrderGate.enabled) {

@@ -201,10 +201,10 @@ export async function checkRiskRules(input: RiskCheckInput): Promise<RiskVerdict
     violations.push('이 계좌는 시장가 주문이 막혀 있습니다.');
   }
   if (rules.symbolBlocklist.includes(input.symbol)) {
-    violations.push(`${input.symbol}은 차단 종목입니다.`);
+    violations.push(`차단 종목입니다 (${input.symbol}).`);
   }
   if (rules.symbolAllowlist.length > 0 && !rules.symbolAllowlist.includes(input.symbol)) {
-    violations.push(`${input.symbol}은 허용 종목 목록에 없습니다.`);
+    violations.push(`허용 종목 목록에 없습니다 (${input.symbol}).`);
   }
 
   if (!input.skipSessionCheck) {

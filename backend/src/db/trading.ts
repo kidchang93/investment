@@ -313,7 +313,7 @@ async function validateOrderRequest(
 
   const estimatedNotional = request.quantity * (request.limitPrice ?? request.estimatedPrice);
   if (Number.isFinite(estimatedNotional) && estimatedNotional > account.maxOrderNotional) {
-    messages.push(`1회 주문 한도 ${formatKrw(account.maxOrderNotional)}를 초과했습니다.`);
+    messages.push(`1회 주문 한도를 초과했습니다 (${formatKrw(account.maxOrderNotional)}).`);
   }
   if (request.side === 'buy' && Number.isFinite(estimatedNotional) && estimatedNotional > account.buyingPower) {
     messages.push('주문 가능 금액을 초과했습니다.');
