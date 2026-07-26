@@ -32,6 +32,19 @@ export interface Strategy {
    * 잴 수 없는 조건이었는데 "out-of-sample 성적이 나쁘다"로 기록했다.
    */
   minBars: number;
+  /**
+   * 백테스트로 확인된 것. 화면에 그대로 보여준다.
+   *
+   * 드롭다운이 세 전략을 동등한 선택지로 늘어놓고 있었다. 하나는 8종목
+   * 표본에서 확정으로 잃는데 그 사실이 화면에 없었다. 숫자만 적으면 시간이
+   * 지나 어긋나므로 측정 시점과 조건을 함께 적는다.
+   */
+  backtestNote: string;
+  /**
+   * `measured_loss` — 판단할 만한 표본에서 잃었다.
+   * `unproven` — 표본이 얇아 좋다고도 나쁘다고도 말할 수 없다.
+   */
+  verdict: 'measured_loss' | 'unproven';
   /** 이번 회차에 낼 신호들. 낼 게 없으면 빈 배열 */
   decide(context: StrategyContext): StrategySignal[];
 }
@@ -53,6 +66,10 @@ export function movingAverage(candles: Candle[], period: number): number | undef
 export class MovingAverageCrossStrategy implements Strategy {
   readonly key = 'ma_cross';
   readonly label = '이동평균 교차';
+  readonly verdict = 'unproven' as const;
+  readonly backtestNote =
+    '2026-07 측정(8종목·뒤 구간 105봉): 평균 +9.87%였지만 이익 종목이 3/8, 매매 18회다.'
+    + ' SK하이닉스 한 종목의 +112%가 평균을 끌어올렸다. 좋다고 말할 표본이 아니다.';
 
   constructor(
     private readonly shortPeriod = 5,
@@ -158,6 +175,10 @@ function stdev(values: number[], mean: number): number {
 export class VolatilityBreakoutStrategy implements Strategy {
   readonly key = 'volatility_breakout';
   readonly label = '변동성 돌파';
+  readonly verdict = 'measured_loss' as const;
+  readonly backtestNote =
+    '2026-07 측정(8종목·뒤 구간 105봉): 평균 -13.97%, 이익 종목 1/8, 매매 89회.'
+    + ' 표본이 충분한데 잃었다. 비용 합계가 173만원으로 수수료가 수익을 먹었다.';
 
   constructor(
     private readonly k = 0.5,
@@ -231,6 +252,10 @@ export class VolatilityBreakoutStrategy implements Strategy {
 export class MeanReversionStrategy implements Strategy {
   readonly key = 'mean_reversion';
   readonly label = '평균 회귀';
+  readonly verdict = 'unproven' as const;
+  readonly backtestNote =
+    '2026-07 측정(8종목·뒤 구간 105봉): 승률 77.78%인데 평균 +1.01%, 이익 종목 3/8.'
+    + ' 자주 조금 이기고 드물게 크게 잃는 모양이다. 승률만 보면 안 된다.';
 
   constructor(
     private readonly period = 20,
@@ -303,6 +328,16 @@ export function getStrategy(key: string): Strategy | undefined {
   return STRATEGIES.get(key);
 }
 
-export function listStrategies(): Array<{ key: string; label: string }> {
-  return [...STRATEGIES.values()].map((strategy) => ({ key: strategy.key, label: strategy.label }));
+export function listStrategies(): Array<{
+  key: string;
+  label: string;
+  backtestNote: string;
+  verdict: Strategy['verdict'];
+}> {
+  return [...STRATEGIES.values()].map((strategy) => ({
+    key: strategy.key,
+    label: strategy.label,
+    backtestNote: strategy.backtestNote,
+    verdict: strategy.verdict,
+  }));
 }

@@ -1791,7 +1791,9 @@ export function App(): JSX.Element {
    * 돌고 있는 동안에는 주기적으로 다시 받아 실행 기록이 쌓이는 걸 보여준다.
    */
   const [autoTrader, setAutoTrader] = useState<AutoTraderState | null>(null);
-  const [autoStrategies, setAutoStrategies] = useState<Array<{ key: string; label: string }>>([]);
+  const [autoStrategies, setAutoStrategies] = useState<
+    Array<{ key: string; label: string; backtestNote?: string; verdict?: 'measured_loss' | 'unproven' }>
+  >([]);
   const [autoStrategy, setAutoStrategy] = useState('ma_cross');
   const [autoMode, setAutoMode] = useState<AutoTraderMode>('dry_run');
   const [autoTarget, setAutoTarget] = useState('100000');
@@ -3362,6 +3364,8 @@ export function App(): JSX.Element {
     field.scrollIntoView({ block: 'center' });
     field.focus({ preventScroll: true });
   }, []);
+
+  const selectedAutoStrategy = autoStrategies.find((item) => item.key === autoStrategy);
 
   const autoTraderBlockers = useMemo(() => {
     /*
@@ -5528,10 +5532,26 @@ export function App(): JSX.Element {
                       {autoStrategies.map((item) => (
                         <option key={item.key} value={item.key}>
                           {item.label}
+                          {/*
+                            `<option>`에는 툴팁을 붙일 수 없어 라벨 글 자체로 밝힌다.
+                            드롭다운이 세 전략을 동등한 선택지로 늘어놓고 있었는데,
+                            하나는 8종목 표본에서 확정으로 잃는다.
+                          */}
+                          {item.verdict === 'measured_loss' ? ' — 백테스트에서 잃었다' : ''}
                         </option>
                       ))}
                     </select>
                   </label>
+
+                  {/* 고른 전략에 대해 무엇이 확인됐는지. 숫자만 적으면 시점이 없어 오해된다. */}
+                  {selectedAutoStrategy?.backtestNote && (
+                    <p
+                      className="auto-trader__verdict"
+                      data-verdict={selectedAutoStrategy.verdict}
+                    >
+                      {selectedAutoStrategy.backtestNote}
+                    </p>
+                  )}
 
                   <label className="auto-trader__field">
                     <span>실행 방식</span>
