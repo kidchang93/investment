@@ -14,7 +14,7 @@
  */
 
 import { getInstrument } from '../db/instruments.js';
-import { getInstrumentCandles } from '../kis/rest.js';
+import { getDailyCandleHistory, getInstrumentCandles } from '../kis/rest.js';
 import { DEFAULT_COSTS, backtestSplit, type BacktestResult } from '../trading/backtest.js';
 import { getStrategy, listStrategies } from '../trading/strategy.js';
 
@@ -37,6 +37,18 @@ const SPLIT_RATIO = 0.7;
  */
 const MEASURABLE_MULTIPLE = 3;
 
+/*
+ * 목표 봉 수. 70/30으로 나누면 뒤 구간이 90봉이라 MA(20)의 63봉 기준을 넘는다.
+ */
+const TARGET_BARS = 300;
+
+/*
+ * 이보다 매매가 적으면 수익률·승률이 전략이 아니라 몇 번의 운이다. 구간이
+ * 길어져도 신호가 드문 전략은 여기 걸린다 — 이동평균 교차는 105봉에서
+ * 1~2회였다. 숫자를 지우지는 않고 단발이라는 사실을 옆에 적는다.
+ */
+const MIN_TRADES_TO_JUDGE = 10;
+
 function pct(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
 }
@@ -51,6 +63,9 @@ function line(label: string, result: BacktestResult): string {
     `비용 ${Math.round(result.totalCost).toLocaleString().padStart(7)}원`,
     result.openQuantity > 0
       ? `· 미청산 ${result.openQuantity}주(평가 ${Math.round(result.openValue).toLocaleString()}원 포함)`
+      : '',
+    result.tradeCount < MIN_TRADES_TO_JUDGE
+      ? `· 매매가 ${result.tradeCount}회뿐이라 성적이라 부를 수 없다`
       : '',
   ]
     .filter(Boolean)
@@ -77,7 +92,14 @@ async function main(): Promise<void> {
       console.log(`\n${symbol}: 종목을 찾지 못했습니다.`);
       continue;
     }
-    const response = await getInstrumentCandles(instrument);
+    /*
+     * 국내 주식은 페이징으로 길게 받는다. 한 번 호출은 100건이 상한인데,
+     * 100봉으로는 in/out-of-sample을 나눠 잴 수 없다. 종목당 KIS 호출이
+     * 최대 5회 나가지만 이건 손으로 돌리는 비교 도구라 화면 경로와 무관하다.
+     */
+    const response = instrument.country === 'KR' && instrument.assetType === 'stock'
+      ? await getDailyCandleHistory(instrument.providerSymbol, TARGET_BARS)
+      : await getInstrumentCandles(instrument);
     const candles = response.candles;
     console.log(`\n■ ${instrument.name} (${symbol}) · 일봉 ${candles.length}개`);
     if (candles.length < 60) {

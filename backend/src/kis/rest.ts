@@ -188,15 +188,17 @@ function toCredentials(account: KisAccountConfig): KisCredentials {
 }
 
 /**
- * 일봉 시세 (국내주식 기간별시세, tr_id: FHKST03010100).
- * output1에서 종목명, output2에서 최근 캔들 배열(내림차순)을 얻어 오름차순으로 정규화한다.
+ * 일봉 한 페이지 (국내주식 기간별시세, tr_id: FHKST03010100).
+ *
+ * KIS는 요청한 날짜 범위와 무관하게 **한 번에 100건까지만** 준다. days를 100,
+ * 250, 600으로 줘도 셋 다 100건이었다. 범위 안 거래일이 100일을 넘을 때 어느
+ * 쪽을 버리는지는 스펙에 없으므로, 창은 100거래일 아래로 잡아 추측을 피한다.
  */
-export async function getDailyCandles(code: string, days = 120): Promise<CandlesResponse> {
-  const end = new Date();
-  const start = new Date();
-  // 주말·공휴일을 감안해 여유 있게 과거로 잡는다.
-  start.setDate(start.getDate() - Math.ceil(days * 1.7));
-
+async function fetchDailyCandlePage(
+  code: string,
+  start: Date,
+  end: Date,
+): Promise<{ name: string; candles: Candle[] }> {
   const json = await kisGet(
     '/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice',
     'FHKST03010100',
@@ -240,6 +242,60 @@ export async function getDailyCandles(code: string, days = 120): Promise<Candles
     )
     .sort((a, b) => a.time - b.time);
 
+  return { name, candles };
+}
+
+/**
+ * 일봉 시세. 화면에서 쓰는 기본 경로 — KIS 호출 1회다.
+ */
+export async function getDailyCandles(code: string, days = 120): Promise<CandlesResponse> {
+  const end = new Date();
+  const start = new Date();
+  // 주말·공휴일을 감안해 여유 있게 과거로 잡는다.
+  start.setDate(start.getDate() - Math.ceil(days * 1.7));
+  const page = await fetchDailyCandlePage(code, start, end);
+  return { code, name: page.name, candles: page.candles };
+}
+
+/** 한 페이지에 요청할 달력 일수. 약 90거래일이라 100건 상한에 걸리지 않는다. */
+const DAILY_PAGE_CALENDAR_DAYS = 130;
+
+/**
+ * 일봉을 여러 번 나눠 받아 더 길게 만든다.
+ *
+ * 백테스트 전용이다. 화면 경로에서 쓰면 종목 하나당 KIS 호출이 여러 번 나가
+ * 조회 한도를 빨리 쓴다. 100봉으로는 in/out-of-sample을 나눠 잴 수 없어서
+ * (뒤 구간이 30봉이면 MA(20)의 판단 기회가 9번뿐이다) 이 경로를 따로 둔다.
+ *
+ * 창을 과거로 옮겨 가며 부르고, 받은 것 중 가장 오래된 날의 하루 전으로 다음
+ * 창의 끝을 잡는다. 같은 날이 겹쳐 오면 날짜로 중복을 걷는다.
+ */
+export async function getDailyCandleHistory(
+  code: string,
+  targetBars = 300,
+  maxPages = 5,
+): Promise<CandlesResponse> {
+  const byTime = new Map<number, Candle>();
+  let name = code;
+  let end = new Date();
+
+  for (let page = 0; page < maxPages && byTime.size < targetBars; page += 1) {
+    const start = new Date(end);
+    start.setDate(start.getDate() - DAILY_PAGE_CALENDAR_DAYS);
+
+    const result = await fetchDailyCandlePage(code, start, end);
+    if (page === 0) name = result.name;
+    // 더 옛날 구간이 비어 있으면(상장 전 등) 멈춘다. 안 그러면 빈 창을 계속 부른다.
+    if (result.candles.length === 0) break;
+
+    for (const candle of result.candles) byTime.set(candle.time, candle);
+
+    const oldest = result.candles[0].time;
+    end = new Date(oldest * 1000);
+    end.setDate(end.getDate() - 1);
+  }
+
+  const candles = [...byTime.values()].sort((a, b) => a.time - b.time);
   return { code, name, candles };
 }
 
