@@ -3025,12 +3025,23 @@ export function App(): JSX.Element {
     if (orderSide === 'buy') {
       if (!kisOrderability?.configured || orderEstimatedNotional === undefined) return notices;
       if (kisOrderability.cashBuyAmount !== undefined && orderEstimatedNotional > kisOrderability.cashBuyAmount) {
+        /*
+         * 위 칸의 이름(`실계좌 매수가능`)을 그대로 쓴다 — 같은 숫자를
+         * `미수 없는 매수금액`이라 부르고 있어 다른 값처럼 읽혔고, `미수`는
+         * 초보자가 모르는 말이다. 금액은 괄호로 뺀다. 통화에 따라 끝 글자가
+         * 달라져(`원`/`$…`) 조사를 붙이면 틀린다 — 실제로 `49,751원를`였다.
+         */
         notices.push(
-          `실계좌 미수 없는 매수금액 ${formatMoney(kisOrderability.cashBuyAmount, kisOrderability.currency)}를 초과합니다.`,
+          `실계좌 매수가능 금액을 초과합니다 (${formatMoney(kisOrderability.cashBuyAmount, kisOrderability.currency)}).`,
         );
       }
       if (kisOrderability.cashBuyQuantity !== undefined && orderQuantityNumber > kisOrderability.cashBuyQuantity) {
-        notices.push(`실계좌 기준 최대 ${formatNumber(kisOrderability.cashBuyQuantity)}주까지 매수할 수 있습니다.`);
+        // 0주일 때 `최대 0주까지 매수할 수 있습니다`가 되어 살 수 있다는 말처럼 읽혔다.
+        notices.push(
+          kisOrderability.cashBuyQuantity > 0
+            ? `실계좌 기준 최대 ${formatNumber(kisOrderability.cashBuyQuantity)}주까지 매수할 수 있습니다.`
+            : '실계좌 예수금으로는 1주도 살 수 없습니다.',
+        );
       }
       return notices;
     }
@@ -5836,6 +5847,23 @@ export function App(): JSX.Element {
                 <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
               </div>
             </div>
+            {/*
+              종목 자체가 주문 대상이 아니면 폼을 채우기 전에 알려야 한다.
+              이전에는 이 사실이 `국내 주식·ETF·ETN만 주문할 수 있습니다`라는
+              10px 잔글씨로 버튼 74px 아래에 있었다. 그 위로는 수량도 입력되고
+              `예상 주문액`까지 계산돼서, 다 채우고 눌러 봐야 안 되는 걸 알았다.
+              다른 차단 사유(게이트, 수량 0)는 고치면 되는 것이지만 이건 종목을
+              바꾸는 수밖에 없어서, 할 일까지 함께 적는다.
+            */}
+            {!isOrderableDomesticInstrument(selectedInstrument) && (
+              <div className="order-ticket__unavailable" role="note">
+                <strong>주문할 수 없는 종목입니다</strong>
+                <span>
+                  지수·선물·야간 환산가는 값을 보라고 둔 참고 지표입니다.
+                  국내 주식·ETF·ETN 중에서 골라 주세요 — 위 <b>관심</b>·<b>탐색</b>에 있습니다.
+                </span>
+              </div>
+            )}
             <div className="order-ticket__body">
               <div className="order-ticket__controls">
                 <div className="order-ticket__segments" role="tablist" aria-label="매수 매도">

@@ -2167,6 +2167,38 @@ span.sample-badge {
   gap: 12px;
 }
 
+/*
+ * 이 종목으로는 주문이 안 된다는 안내.
+ *
+ * 경고 빨강을 쓰지 않는다. 뭔가 잘못됐다는 게 아니라 종목을 바꾸면 되는
+ * 일이라, 눈에는 들어오되 겁주지 않는 앰버(--focus)로 둔다.
+ */
+.order-ticket__unavailable {
+  display: grid;
+  gap: 3px;
+  margin: 8px 12px 0;
+  padding: 9px 11px;
+  border: 1px solid rgba(245, 196, 81, 0.3);
+  border-radius: 6px;
+  background: rgba(245, 196, 81, 0.07);
+}
+
+.order-ticket__unavailable strong {
+  color: var(--focus);
+  font-size: 12px;
+}
+
+.order-ticket__unavailable span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.order-ticket__unavailable b {
+  color: var(--text);
+  font-weight: 700;
+}
+
 .order-ticket__header > div:first-child {
   display: flex;
   align-items: baseline;
