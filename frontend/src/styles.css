@@ -1154,15 +1154,6 @@ button {
   font-size: 20px;
 }
 
-/* 리포트 헤더처럼 종목명과 예시 표시를 함께 두는 자리. */
-.terminal-page__header-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: end;
-}
-
 /*
  * 예시 데이터 표시.
  *

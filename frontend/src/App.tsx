@@ -179,13 +179,6 @@ interface FeeBroker {
   supportsDerivatives: boolean;
 }
 
-interface ReportModel {
-  key: string;
-  label: string;
-  score: number;
-  detail: string;
-}
-
 interface HeatmapItem {
   symbol: string;
   name: string;
@@ -375,7 +368,7 @@ const TERMINAL_TAB_GROUPS: Array<{ label: string; options: TerminalTabOption[] }
     options: [
       { key: 'news', label: '뉴스룸', title: '속보와 종목별 뉴스' },
       { key: 'calendar', label: '캘린더', title: '경제 지표 발표 일정' },
-      { key: 'reports', label: '리포트', title: '가치투자 모델 보고서' },
+      { key: 'reports', label: '리포트', title: '고른 종목의 오늘 수치' },
     ],
   },
   {
@@ -557,13 +550,6 @@ const THEME_FLOW_ITEMS: ThemeFlowItem[] = [
   { name: '자동차', symbols: ['005380', '000270'], tags: ['수출', '전기차'] },
   { name: '조선·방산', symbols: ['329180', '012450'], tags: ['수주', '정책'] },
   { name: '플랫폼', symbols: ['035420', '035720'], tags: ['광고', 'AI'] },
-];
-
-const REPORT_MODELS: ReportModel[] = [
-  { key: 'magic', label: '마법공식', score: 82, detail: '수익성·자본효율 기반 정렬' },
-  { key: 'graham', label: '그레이엄', score: 76, detail: '안전마진·재무 안정성 점검' },
-  { key: 'dcf', label: 'DCF', score: 69, detail: '현금흐름 할인 민감도' },
-  { key: 'damodaran', label: '다모다란', score: 71, detail: '시장 프리미엄·리스크 조정' },
 ];
 
 /*
@@ -2888,14 +2874,47 @@ export function App(): JSX.Element {
 
     return { ranked, pending: scored.filter((item) => !item.snapshot) };
   }, [categoryItems, quotesByCode, recentInstruments, stream.trades, terminalItems, watchlist]);
-  const selectedReportModels = useMemo(() => {
-    const volumeBoost = snapshot ? Math.min(12, Math.log10(Math.max(1, snapshot.accVolume)) * 1.6) : 4;
-    const momentumPenalty = snapshot ? Math.min(10, Math.abs(snapshot.changeRate) * 0.8) : 0;
-    return REPORT_MODELS.map((model, index) => ({
-      ...model,
-      score: Math.round(Math.max(0, Math.min(100, model.score + volumeBoost - momentumPenalty - index))),
-    }));
-  }, [snapshot?.accVolume, snapshot?.changeRate]);
+  /*
+   * 종목 요약.
+   *
+   * 예전에는 `마법공식 82 · 그레이엄 76 · DCF 69 · 다모다란 71`이었다. 이름은
+   * 실제 가치평가 방법인데 계산은 그 방법이 아니었다 — 넷 다
+   * `고정 기본값 + 거래량항 - 등락률항 - 순번`이라 같은 값에 상수만 달랐고
+   * 순서가 절대 바뀌지 않았다. 재무제표가 없으면 그 모델들은 계산할 수 없다.
+   *
+   * 지금 가진 것으로 계산되는 값만 둔다. 막대 길이도 실제 비율이 있는 값
+   * (당일 범위 위치)에만 준다 — 등락률·거래량은 0~100 스케일이 아니다.
+   */
+  const selectedReportRows = useMemo(() => {
+    if (!snapshot) return [];
+    const rangePosition = getRangePosition(snapshot.price, snapshot.low, snapshot.high);
+    return [
+      {
+        key: 'changeRate',
+        label: '전일 대비',
+        value: formatRate(snapshot.changeRate),
+        detail: `전일 종가 대비 ${formatSignedCurrencyPrice(snapshot.change, selectedCurrency)}`,
+        bar: undefined,
+      },
+      {
+        key: 'range',
+        label: '당일 범위 위치',
+        value: rangePosition === null ? '-' : `${Math.round(rangePosition)}%`,
+        detail:
+          rangePosition === null
+            ? '고가와 저가가 같아 위치를 낼 수 없습니다'
+            : `저가 ${formatCurrencyPrice(snapshot.low, selectedCurrency)} · 고가 ${formatCurrencyPrice(snapshot.high, selectedCurrency)}`,
+        bar: rangePosition ?? undefined,
+      },
+      {
+        key: 'volume',
+        label: '누적 거래량',
+        value: formatVolume(snapshot.accVolume),
+        detail: '오늘 지금까지 체결된 수량',
+        bar: undefined,
+      },
+    ];
+  }, [selectedCurrency, snapshot]);
   const feeAmountNumber = parseAmountInput(feeAmount, 1_000_000);
   const feeExpectedReturnNumber = Number(feeExpectedReturn);
   const feeMarketOption = FEE_MARKET_OPTIONS.find((option) => option.key === feeMarket) ?? FEE_MARKET_OPTIONS[0];
@@ -4481,37 +4500,42 @@ export function App(): JSX.Element {
               )}
 
               {terminalTab === 'reports' && (
-                <section className="terminal-page terminal-page--reports" aria-label="가치투자 리포트">
+                <section className="terminal-page terminal-page--reports" aria-label="종목 요약">
                   <div className="terminal-page__header">
                     <div>
-                      <span>마법공식 · 그레이엄 · DCF · 다모다란</span>
-                      <strong>가치투자 리포트</strong>
+                      <span>고른 종목의 오늘 수치 · 전일 종가 대비</span>
+                      <strong>종목 요약</strong>
                     </div>
-                    <div className="terminal-page__header-meta">
-                      <small>{selectedInstrument?.name ?? '종목 선택 대기'}</small>
-                      <SampleBadge note="재무제표로 계산한 점수가 아닙니다. 모델별 기본 점수는 고정값이고 거기에 선택 종목의 거래량·등락률만 반영합니다." />
-                    </div>
+                    <small>{selectedInstrument?.name ?? '종목 선택 대기'}</small>
                   </div>
+                  {/*
+                    가치평가 모델 이름(마법공식·그레이엄·DCF·다모다란)을 걷어냈다.
+                    이름은 실제 방법인데 계산은 그 방법이 아니었다. 재무제표가
+                    없으면 못 내는 값이라, 지금 가진 시세로 계산되는 것만 둔다.
+                  */}
                   <div className="terminal-report-grid">
-                    {selectedReportModels.map((model) => (
-                      <article key={model.key}>
-                        <span>{model.label}</span>
-                        <strong>{model.score}</strong>
-                        <em>{model.detail}</em>
-                        <i style={{ width: `${model.score}%` }} />
+                    {selectedReportRows.map((row) => (
+                      <article key={row.key}>
+                        <span>{row.label}</span>
+                        <strong>{row.value}</strong>
+                        <em>{row.detail}</em>
+                        {row.bar !== undefined && <i style={{ width: `${row.bar}%` }} />}
                       </article>
                     ))}
+                    {selectedReportRows.length === 0 && (
+                      <p>{selectedInstrument ? pendingQuoteLabel(selectedInstrument) : '종목을 고르면 오늘 수치를 보여줍니다'}</p>
+                    )}
                   </div>
                   <div className="terminal-report-layout">
                     <section className="terminal-panel">
                       <div className="terminal-panel__header">
-                        <strong>현재 리포트 요약</strong>
+                        <strong>이 화면이 보여주는 것</strong>
                         <span>{selectedInstrument?.symbol ?? '-'}</span>
                       </div>
                       <p>
                         {selectedInstrument
-                          ? `${selectedInstrument.name}의 현재가, 거래량, 변동률을 기준으로 가치 모델 점수를 재계산했습니다. 재무제표 API가 붙기 전까지는 가격 기반 예비 스코어로 표시합니다.`
-                          : '종목을 선택하면 가격 기반 예비 리포트를 생성합니다.'}
+                          ? `${selectedInstrument.name}의 오늘 시세에서 바로 읽은 값입니다. 재무제표가 있어야 하는 가치평가(마법공식·그레이엄·DCF 등)는 아직 계산하지 않습니다.`
+                          : '종목을 고르면 그 종목의 오늘 수치를 보여줍니다.'}
                       </p>
                     </section>
                     <section className="terminal-panel">
