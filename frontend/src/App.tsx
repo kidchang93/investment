@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addWatchlistItem,
+  fetchAutoTraderState,
+  fetchAutoTraderStrategies,
+  startAutoTrader,
+  stopAutoTrader,
   cancelKisReservedOrder,
   placeKisReservedOrder,
   createWatchlist,
@@ -36,6 +40,8 @@ import {
 import { useStream } from './useStream';
 import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } from './Chart';
 import type {
+  AutoTraderMode,
+  AutoTraderState,
   BrokerAccountRef,
   BrokerAccountSnapshot,
   BrokerAmendableOrder,
@@ -287,6 +293,15 @@ const SIDE_PANEL_OPTIONS: Array<{ key: SidePanelTab; label: string }> = [
   { key: 'watch', label: '관심' },
   { key: 'discover', label: '탐색' },
 ];
+
+/** 자동매매 상태를 사람 말로. 코드값을 그대로 보여주면 무슨 뜻인지 알 수 없다. */
+const AUTO_TRADER_STATUS_LABEL: Record<string, string> = {
+  stopped: '멈춤',
+  running: '돌고 있음',
+  target_reached: '목표 도달로 정지',
+  stopped_out: '중단선 도달로 정지',
+  error: '오류로 정지',
+};
 
 const SIDE_PANEL_TITLE: Record<SidePanelTab, string> = {
   order: '주문',
@@ -1647,6 +1662,19 @@ export function App(): JSX.Element {
   const [liveOrderGate, setLiveOrderGate] = useState<LiveOrderGate | null>(null);
   /* 주문 확인 단계를 보여주는 중인지. 실제 증권사 주문 화면과 같은 흐름이다. */
   const [liveOrderConfirming, setLiveOrderConfirming] = useState(false);
+
+  /*
+   * 자동매매. 러너는 서버에 살고 화면은 상태를 받아 보여줄 뿐이다.
+   * 돌고 있는 동안에는 주기적으로 다시 받아 실행 기록이 쌓이는 걸 보여준다.
+   */
+  const [autoTrader, setAutoTrader] = useState<AutoTraderState | null>(null);
+  const [autoStrategies, setAutoStrategies] = useState<Array<{ key: string; label: string }>>([]);
+  const [autoStrategy, setAutoStrategy] = useState('ma_cross');
+  const [autoMode, setAutoMode] = useState<AutoTraderMode>('dry_run');
+  const [autoTarget, setAutoTarget] = useState('100000');
+  const [autoStop, setAutoStop] = useState('40000');
+  const [autoMessage, setAutoMessage] = useState<string | null>(null);
+  const [isAutoSubmitting, setIsAutoSubmitting] = useState(false);
   const [isLiveOrderSubmitting, setIsLiveOrderSubmitting] = useState(false);
   const [liveOrderMessage, setLiveOrderMessage] = useState<string | null>(null);
   /** 정정 중인 주문 id와 새 단가. 취소는 입력이 필요 없다. */
@@ -1706,6 +1734,31 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('activePage', activePage), [activePage]);
   useEffect(() => writeStoredValue('terminalTab', terminalTab), [terminalTab]);
   useEffect(() => writeStoredValue('sidePanelTab', sidePanelTab), [sidePanelTab]);
+
+  useEffect(() => {
+    fetchAutoTraderStrategies()
+      .then(setAutoStrategies)
+      .catch(() => setAutoStrategies([]));
+  }, []);
+
+  const refreshAutoTrader = useCallback(() => {
+    if (!kisAccountId) return;
+    fetchAutoTraderState(kisAccountId)
+      .then(setAutoTrader)
+      .catch(() => setAutoTrader(null));
+  }, [kisAccountId]);
+
+  useEffect(() => {
+    if (activePage !== 'portfolio') return undefined;
+    refreshAutoTrader();
+    /*
+     * 돌고 있을 때만 주기 조회한다. 멈춰 있으면 기록이 늘지 않으므로
+     * 계속 물어볼 이유가 없다.
+     */
+    if (autoTrader?.status !== 'running') return undefined;
+    const timer = window.setInterval(refreshAutoTrader, 10000);
+    return () => window.clearInterval(timer);
+  }, [activePage, autoTrader?.status, refreshAutoTrader]);
 
   /*
    * 주문 패널이 실제로 열려 있는지. 매수가능금액·매도가능수량·미체결처럼
@@ -3041,6 +3094,41 @@ export function App(): JSX.Element {
       setLiveOrderMessage(String(e instanceof Error ? e.message : e));
     } finally {
       setIsLiveOrderSubmitting(false);
+    }
+  }
+
+  async function submitAutoTraderStart(): Promise<void> {
+    if (!kisAccountId) return;
+    setIsAutoSubmitting(true);
+    setAutoMessage(null);
+    try {
+      const state = await startAutoTrader({
+        accountId: kisAccountId,
+        mode: autoMode,
+        strategy: autoStrategy,
+        targetEquity: Number(autoTarget),
+        stopEquity: Number(autoStop),
+        intervalSeconds: 60,
+        maxPositions: 1,
+      });
+      setAutoTrader(state);
+    } catch (e) {
+      setAutoMessage(toErrorMessage(e));
+    } finally {
+      setIsAutoSubmitting(false);
+    }
+  }
+
+  async function submitAutoTraderStop(): Promise<void> {
+    if (!kisAccountId) return;
+    setIsAutoSubmitting(true);
+    setAutoMessage(null);
+    try {
+      setAutoTrader(await stopAutoTrader(kisAccountId));
+    } catch (e) {
+      setAutoMessage(toErrorMessage(e));
+    } finally {
+      setIsAutoSubmitting(false);
     }
   }
 
@@ -5092,6 +5180,140 @@ export function App(): JSX.Element {
                     {kisTradeProfit?.message ?? '기간별 매매손익을 조회하는 중입니다'}
                   </div>
                 )}
+              </section>
+
+              <section className="portfolio-card portfolio-card--wide" aria-label="자동매매">
+                <div className="portfolio-card__header">
+                  <div>
+                    <strong>자동매매</strong>
+                    <span>
+                      규칙대로 사고팔다가 목표나 중단선에 닿으면 스스로 멈춥니다 · 수익을 보장하지 않습니다
+                    </span>
+                  </div>
+                  <div className="portfolio-card__actions">
+                    <em className="auto-trader__status" data-status={autoTrader?.status ?? 'stopped'}>
+                      {AUTO_TRADER_STATUS_LABEL[autoTrader?.status ?? 'stopped']}
+                    </em>
+                  </div>
+                </div>
+
+                <div className="auto-trader">
+                  <label className="auto-trader__field">
+                    <span>전략</span>
+                    <select
+                      disabled={autoTrader?.status === 'running'}
+                      onChange={(event) => setAutoStrategy(event.target.value)}
+                      value={autoStrategy}
+                    >
+                      {autoStrategies.map((item) => (
+                        <option key={item.key} value={item.key}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="auto-trader__field">
+                    <span>실행 방식</span>
+                    <select
+                      disabled={autoTrader?.status === 'running'}
+                      onChange={(event) => setAutoMode(event.target.value as AutoTraderMode)}
+                      value={autoMode}
+                    >
+                      <option value="dry_run">연습 — 주문을 만들되 보내지 않음</option>
+                      <option value="live">실제 — 실계좌로 주문을 보냄</option>
+                    </select>
+                  </label>
+
+                  <label className="auto-trader__field">
+                    <span>목표 금액 (닿으면 정지)</span>
+                    <input
+                      disabled={autoTrader?.status === 'running'}
+                      inputMode="numeric"
+                      onChange={(event) => setAutoTarget(event.target.value)}
+                      value={autoTarget}
+                    />
+                  </label>
+
+                  <label className="auto-trader__field">
+                    <span>중단 금액 (내려가면 정지)</span>
+                    <input
+                      disabled={autoTrader?.status === 'running'}
+                      inputMode="numeric"
+                      onChange={(event) => setAutoStop(event.target.value)}
+                      value={autoStop}
+                    />
+                  </label>
+
+                  <div className="auto-trader__actions">
+                    {autoTrader?.status === 'running' ? (
+                      <button
+                        className="auto-trader__stop"
+                        disabled={isAutoSubmitting}
+                        onClick={() => void submitAutoTraderStop()}
+                        type="button"
+                      >
+                        {isAutoSubmitting ? '처리 중' : '정지'}
+                      </button>
+                    ) : (
+                      /*
+                        연습인지 실제인지가 버튼 색으로 보여야 한다. 매수 버튼 색을
+                        그대로 쓰면 연습 모드인데도 실계좌 주문처럼 보인다.
+                      */
+                      <button
+                        className="auto-trader__start"
+                        data-mode={autoMode}
+                        disabled={isAutoSubmitting}
+                        onClick={() => void submitAutoTraderStart()}
+                        type="button"
+                      >
+                        {isAutoSubmitting ? '처리 중' : autoMode === 'live' ? '실제 매매 시작' : '연습 시작'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {autoTrader?.startEquity !== undefined && (
+                  <div className="portfolio-page__metrics portfolio-page__metrics--broker">
+                    <div>
+                      <span>시작 금액</span>
+                      <strong>{formatMoney(autoTrader.startEquity)}</strong>
+                    </div>
+                    <div>
+                      <span>지금 금액</span>
+                      <strong>{formatMoney(autoTrader.currentEquity)}</strong>
+                    </div>
+                    <div>
+                      <span>목표까지</span>
+                      <strong>
+                        {formatMoney(
+                          Math.max(0, autoTrader.config.targetEquity - (autoTrader.currentEquity ?? 0)),
+                        )}
+                      </strong>
+                    </div>
+                  </div>
+                )}
+
+                {autoTrader?.stopReason && <p className="live-order__result">{autoTrader.stopReason}</p>}
+                {autoMessage && <p className="live-order__result">{autoMessage}</p>}
+
+                <div className="portfolio-table portfolio-table--auto-runs">
+                  <div className="portfolio-table__head">
+                    <span>시각</span>
+                    <span>내용</span>
+                  </div>
+                  {(autoTrader?.recentRuns ?? []).slice(0, 12).map((run) => (
+                    <div className="portfolio-table__row" key={run.id}>
+                      <span>{formatClock(run.createdAt)}</span>
+                      <span>{run.message}</span>
+                    </div>
+                  ))}
+                  {(autoTrader?.recentRuns ?? []).length === 0 && (
+                    <div className="portfolio-table__empty">
+                      아직 실행한 적이 없습니다 · 시작하면 회차마다 무엇을 했는지 여기에 쌓입니다
+                    </div>
+                  )}
+                </div>
               </section>
 
               <section className="portfolio-card portfolio-card--wide" aria-label="실주문 리스크 룰">

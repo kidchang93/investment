@@ -1,5 +1,7 @@
 import { API_BASE } from './config';
 import type {
+  AutoTraderConfig,
+  AutoTraderState,
   AmendLiveOrderRequest,
   CancelReservedOrderRequest,
   PlaceReservedOrderRequest,
@@ -367,4 +369,48 @@ export async function removeWatchlistItem(watchlistId: string, instrumentId: str
     { method: 'DELETE' },
   );
   if (!res.ok) throw new Error(`관심그룹 종목 삭제 실패: ${res.status}`);
+}
+
+/* ── 자동매매 ─────────────────────────────────────────────────────────── */
+
+export async function fetchAutoTraderStrategies(): Promise<Array<{ key: string; label: string }>> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/auto-trader/strategies`);
+  if (!res.ok) throw new Error(`전략 목록 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchAutoTraderState(accountId: string): Promise<AutoTraderState> {
+  const res = await fetch(
+    `${API_BASE}/api/broker/kis/auto-trader?accountId=${encodeURIComponent(accountId)}`,
+  );
+  if (!res.ok) throw new Error(`자동매매 상태 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * 자동매매 시작.
+ *
+ * 서버가 거절하면 그 이유를 그대로 올린다 — 실주문 모드인데 게이트가 닫혀
+ * 있으면 여기서 막힌다. 이유를 삼키면 화면에서 왜 시작이 안 되는지 알 수 없다.
+ */
+export async function startAutoTrader(config: AutoTraderConfig): Promise<AutoTraderState> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/auto-trader/start`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.message ?? `자동매매 시작 실패: ${res.status}`);
+  return body;
+}
+
+export async function stopAutoTrader(accountId: string): Promise<AutoTraderState> {
+  const res = await fetch(`${API_BASE}/api/broker/kis/auto-trader/stop`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accountId }),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.message ?? `자동매매 정지 실패: ${res.status}`);
+  return body;
 }

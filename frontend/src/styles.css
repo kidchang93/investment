@@ -5351,3 +5351,132 @@ button {
   font-size: 11px;
   font-style: normal;
 }
+
+/*
+ * 자동매매 패널.
+ *
+ * 실제 돈이 오갈 수 있는 기능이라 상태를 한눈에 알 수 있어야 한다.
+ * 돌고 있을 때만 눈에 띄게 하고, 멈춰 있을 때는 조용히 둔다.
+ */
+.auto-trader {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  align-items: end;
+  gap: 10px;
+  padding: 10px 16px 14px;
+}
+
+.auto-trader__field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.auto-trader__field > span {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.auto-trader__field select,
+.auto-trader__field input {
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.auto-trader__field select:disabled,
+.auto-trader__field input:disabled {
+  color: var(--muted);
+}
+
+.auto-trader__actions {
+  display: flex;
+  align-items: end;
+}
+
+.auto-trader__actions > button {
+  width: 100%;
+  min-height: 30px;
+}
+
+.auto-trader__stop {
+  border: 1px solid rgba(229, 72, 77, 0.5);
+  border-radius: 5px;
+  background: rgba(229, 72, 77, 0.14);
+  color: #ff9b9f;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.auto-trader__status {
+  padding: 2px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+/* 돌고 있을 때만 눈에 띈다. */
+.auto-trader__status[data-status='running'] {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.12);
+  color: #8ee59e;
+}
+
+.auto-trader__status[data-status='target_reached'] {
+  border-color: rgba(245, 196, 81, 0.45);
+  color: var(--focus);
+}
+
+.auto-trader__status[data-status='stopped_out'],
+.auto-trader__status[data-status='error'] {
+  border-color: rgba(229, 72, 77, 0.45);
+  color: #ff9b9f;
+}
+
+/* 실행 기록. 시각은 좁게, 내용은 넓게. */
+.portfolio-table--auto-runs .portfolio-table__head,
+.portfolio-table--auto-runs .portfolio-table__row {
+  grid-template-columns: 84px minmax(0, 1fr);
+}
+
+.portfolio-table--auto-runs .portfolio-table__row > span:last-child {
+  white-space: normal;
+}
+
+/*
+ * 시작 버튼은 무엇이 일어날지를 색으로 알려준다. 연습은 조용하게, 실제 돈이
+ * 나가는 쪽은 눈에 띄게. 매수 버튼 색을 그대로 쓰면 연습인데도 실주문처럼 보인다.
+ */
+.auto-trader__start {
+  min-height: 30px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.auto-trader__start:hover:not(:disabled) {
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+.auto-trader__start[data-mode='live'] {
+  border-color: rgba(229, 72, 77, 0.55);
+  background: rgba(229, 72, 77, 0.16);
+  color: #ff9b9f;
+}
+
+.auto-trader__start:disabled {
+  color: var(--muted);
+  cursor: default;
+}
