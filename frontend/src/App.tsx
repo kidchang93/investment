@@ -377,8 +377,8 @@ const TERMINAL_TAB_GROUPS: Array<{ label: string; options: TerminalTabOption[] }
   {
     label: '커뮤니티',
     options: [
-      { key: 'lounge', label: '라운지', title: '트레이더 쓰레드 피드' },
-      { key: 'chat', label: '채팅', title: '실시간 채팅 미리보기' },
+      { key: 'lounge', label: '라운지', title: '커뮤니티 화면 구성 미리보기' },
+      { key: 'chat', label: '채팅', title: '채팅 화면 구성 미리보기' },
     ],
   },
   {
@@ -612,6 +612,13 @@ const LOUNGE_POSTS: LoungePost[] = [
   },
 ];
 
+/*
+ * 채팅 피드.
+ *
+ * 지어낸 메시지다. 라운지 게시글에는 표시를 붙였는데 여기만 빠져 있었다 —
+ * 사용자명도 시각도 고정이라 언제 열어도 08:41이 최신으로 뜬다. `실시간
+ * 채팅`이라는 제목 아래 그렇게 놓이면 지금 오가는 대화로 읽힌다.
+ */
 const CHAT_MESSAGES: ChatMessage[] = [
   { id: 'chat-1', author: 'open-watch', message: '개장 전 환율이 먼저 튀면 야간 환산가 괴리를 같이 보세요.', time: '08:41', tone: 'macro' },
   { id: 'chat-2', author: 'semi-bid', message: '삼전 GDR 프리미엄은 둔한데 KOSPI200 야간선물은 강합니다.', time: '08:43', tone: 'normal' },
@@ -4207,8 +4214,14 @@ export function App(): JSX.Element {
                 </div>
               </section>
 
-              <section className="terminal-news-ticker" aria-label="실시간 뉴스">
-                <strong>실시간 뉴스</strong>
+              {/*
+                `뉴스 ticker`가 영어라 `실시간 뉴스`로 바꿨는데(5aed021) 그건
+                내가 잘못 붙인 말이다. 여기 항목은 뉴스 검색 링크이고, 실제
+                기사가 있을 때도 스트리밍이 아니라 조회해 온 목록이다.
+                출처는 항목마다 따로 적히니 제목은 종류만 말한다.
+              */}
+              <section className="terminal-news-ticker" aria-label="뉴스">
+                <strong>뉴스</strong>
                 <div>
                   {terminalNewsCards.slice(0, 4).map((item) => (
                     <a href={item.url} key={item.id} rel="noreferrer" target="_blank">
@@ -4810,7 +4823,7 @@ export function App(): JSX.Element {
                 <section className="terminal-page terminal-page--lounge" aria-label="라운지">
                   <div className="terminal-page__header">
                     <div>
-                      <span>트레이더 쓰레드 피드</span>
+                      <span>커뮤니티 화면 구성 · 읽기 전용</span>
                       <strong>라운지</strong>
                     </div>
                     <SampleBadge note="실제 게시글이 아닙니다. 화면 구성을 보여주려고 넣어 둔 글입니다." />
@@ -4838,13 +4851,13 @@ export function App(): JSX.Element {
               )}
 
               {terminalTab === 'chat' && (
-                <section className="terminal-page terminal-page--chat" aria-label="실시간 채팅">
+                <section className="terminal-page terminal-page--chat" aria-label="채팅 화면">
                   <div className="terminal-page__header">
                     <div>
-                      <span>라이브 룸 · 읽기 전용</span>
-                      <strong>실시간 채팅</strong>
+                      <span>읽기 전용 · 인증·신고 도구 연동 전</span>
+                      <strong>채팅 화면</strong>
                     </div>
-                    <small>인증·신고 도구 연동 전</small>
+                    <SampleBadge note="실제 대화가 아닙니다. 화면 구성을 보여주려고 넣어 둔 메시지라 시각도 고정입니다." />
                   </div>
                   <div className="terminal-filterbar" role="tablist" aria-label="채팅 폭 조절">
                     {CHAT_PANEL_MODE_OPTIONS.map((option) => (
