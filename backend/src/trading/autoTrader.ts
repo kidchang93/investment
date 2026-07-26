@@ -118,6 +118,8 @@ export async function startAutoTrader(
     currentEquity: startEquity,
     startedAt: Date.now(),
     recentRuns: [],
+    // 이 값은 서버 라우트가 DB 조회 결과로 덮어쓴다. 러너 자체는 로그를 안 읽는다.
+    recentRunsHasMore: false,
   };
   const handle: RunnerHandle = { timer: null, state, consecutiveErrors: 0, busy: false };
   runners.set(config.accountId, handle);

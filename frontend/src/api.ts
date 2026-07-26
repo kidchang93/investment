@@ -123,8 +123,16 @@ export async function fetchKisReservedOrders(accountId?: string): Promise<Broker
   return res.json();
 }
 
-/** 실계좌 주문 전송 시도 기록. 게이트에 막힌 시도(blocked)도 함께 온다. */
-export async function fetchKisOrderLog(accountId?: string): Promise<BrokerOrderRecord[]> {
+/**
+ * 실계좌 주문 전송 시도 기록. 게이트에 막힌 시도(blocked)도 함께 온다.
+ *
+ * `hasMore`는 서버 상한을 넘겨 더 오래된 기록이 남아 있다는 뜻이다. 예전에는
+ * 배열만 와서, 화면이 `50건`을 보여주면서 그게 전부인지 잘린 것인지 말할
+ * 방법이 없었다.
+ */
+export async function fetchKisOrderLog(
+  accountId?: string,
+): Promise<{ records: BrokerOrderRecord[]; hasMore: boolean }> {
   const res = await fetch(`${API_BASE}/api/broker/kis/order-log${accountQuery(accountId)}`);
   if (!res.ok) throw new Error(`실주문 기록 조회 실패: ${res.status}`);
   return res.json();

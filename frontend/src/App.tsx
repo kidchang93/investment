@@ -1783,6 +1783,8 @@ export function App(): JSX.Element {
   const [reservedPrice, setReservedPrice] = useState('');
   const [reservedCancelMessage, setReservedCancelMessage] = useState<string | null>(null);
   const [kisOrderLog, setKisOrderLog] = useState<BrokerOrderRecord[]>([]);
+  /** 서버 상한을 넘겨 더 오래된 기록이 남아 있는지. */
+  const [kisOrderLogHasMore, setKisOrderLogHasMore] = useState(false);
   const [kisTradeProfit, setKisTradeProfit] = useState<BrokerTradeProfitSnapshot | null>(null);
   const [tradeProfitDays, setTradeProfitDays] = useState(30);
   /** 서버에 저장된 리스크 룰과, 편집 중인 사본. 저장 성공 시에만 둘을 맞춘다. */
@@ -2230,7 +2232,10 @@ export function App(): JSX.Element {
 
   const refreshKisOrderLog = useCallback((): void => {
     fetchKisOrderLog(kisAccountId ?? undefined)
-      .then(setKisOrderLog)
+      .then((result) => {
+        setKisOrderLog(result.records);
+        setKisOrderLogHasMore(result.hasMore);
+      })
       .catch((e) => setError(toErrorMessage(e)));
   }, [kisAccountId]);
 
@@ -5834,6 +5839,12 @@ export function App(): JSX.Element {
                       아직 실행한 적이 없습니다 · 시작하면 회차마다 무엇을 했는지 여기에 쌓입니다
                     </div>
                   )}
+                  {/* 서버가 40건에서 자른다. 다 보여준 것처럼 두지 않는다. */}
+                  {autoTrader?.recentRunsHasMore && (
+                    <div className="portfolio-table__empty">
+                      더 오래된 기록은 서버에 남아 있습니다 · 여기에는 최근 것만 옵니다
+                    </div>
+                  )}
                 </div>
               </section>
 
@@ -5972,7 +5983,11 @@ export function App(): JSX.Element {
                 <div className="portfolio-card__header">
                   <div>
                     <strong>실계좌 주문 기록</strong>
-                    <span>{kisOrderLog.length}건 · 차단된 시도도 남습니다</span>
+                    <span>
+                      {kisOrderLog.length}건
+                      {kisOrderLogHasMore && ' (더 오래된 기록은 서버에 남아 있습니다)'}
+                      {' · 차단된 시도도 남습니다'}
+                    </span>
                   </div>
                   <button className="portfolio-card__refresh" onClick={refreshKisOrderLog} type="button">
                     새로고침

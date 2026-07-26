@@ -143,7 +143,17 @@ export async function recordBrokerOrderAttempt(attempt: BrokerOrderAttempt): Pro
   }
 }
 
-export async function getBrokerOrderRecords(accountId?: string, limit = 50): Promise<BrokerOrderRecord[]> {
+/**
+ * 주문 기록. 상한을 넘겼는지도 함께 알린다.
+ *
+ * 예전에는 배열만 돌려줘서, 화면이 `50건`을 보여주면서 그게 전부인지 잘린
+ * 것인지 말할 방법이 없었다. 한 건 더 조회해 보고 넘치면 그 사실을 넘긴다 —
+ * COUNT를 따로 세는 것보다 싸다.
+ */
+export async function getBrokerOrderRecords(
+  accountId?: string,
+  limit = 50,
+): Promise<{ records: BrokerOrderRecord[]; hasMore: boolean }> {
   const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.floor(limit), 1), 200) : 50;
   const { rows } = await pool.query<BrokerOrderRow>(
     `
@@ -157,9 +167,10 @@ export async function getBrokerOrderRecords(accountId?: string, limit = 50): Pro
       ORDER BY created_at DESC
       LIMIT $2
     `,
-    [accountId ?? null, safeLimit],
+    [accountId ?? null, safeLimit + 1],
   );
-  return rows.map(rowToBrokerOrderRecord);
+  const hasMore = rows.length > safeLimit;
+  return { records: rows.slice(0, safeLimit).map(rowToBrokerOrderRecord), hasMore };
 }
 
 function optionalNumber(value: string | null): number | undefined {

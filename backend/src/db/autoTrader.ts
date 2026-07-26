@@ -83,7 +83,11 @@ export async function recordAutoTraderRun(input: AutoTraderRunInput): Promise<bo
   }
 }
 
-export async function getAutoTraderRuns(accountId: string, limit = 50): Promise<AutoTraderRun[]> {
+/** 실행 로그. 주문 기록과 같은 이유로 상한 초과 여부도 함께 준다. */
+export async function getAutoTraderRuns(
+  accountId: string,
+  limit = 50,
+): Promise<{ runs: AutoTraderRun[]; hasMore: boolean }> {
   const { rows } = await pool.query<AutoTraderRunRow>(
     `
       SELECT id, created_at, status, message, instrument_id, side, quantity, price, equity
@@ -92,17 +96,21 @@ export async function getAutoTraderRuns(accountId: string, limit = 50): Promise<
       ORDER BY created_at DESC
       LIMIT $2
     `,
-    [accountId, limit],
+    [accountId, limit + 1],
   );
-  return rows.map((row) => ({
-    id: Number(row.id),
-    createdAt: row.created_at.getTime(),
-    status: row.status as AutoTraderStatus,
-    message: row.message,
-    instrumentId: row.instrument_id ?? undefined,
-    side: (row.side as OrderSide | null) ?? undefined,
-    quantity: row.quantity === null ? undefined : Number(row.quantity),
-    price: row.price === null ? undefined : Number(row.price),
-    equity: row.equity === null ? undefined : Number(row.equity),
-  }));
+  const hasMore = rows.length > limit;
+  return {
+    hasMore,
+    runs: rows.slice(0, limit).map((row) => ({
+      id: Number(row.id),
+      createdAt: row.created_at.getTime(),
+      status: row.status as AutoTraderStatus,
+      message: row.message,
+      instrumentId: row.instrument_id ?? undefined,
+      side: (row.side as OrderSide | null) ?? undefined,
+      quantity: row.quantity === null ? undefined : Number(row.quantity),
+      price: row.price === null ? undefined : Number(row.price),
+      equity: row.equity === null ? undefined : Number(row.equity),
+    })),
+  };
 }

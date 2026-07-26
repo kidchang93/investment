@@ -496,9 +496,9 @@ async function main(): Promise<void> {
     if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
     if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
     const state = getAutoTraderState(account.id);
-    const recentRuns = await getAutoTraderRuns(account.id, 40);
-    if (!state) return { status: 'stopped', recentRuns };
-    return { ...state, recentRuns };
+    const { runs: recentRuns, hasMore: recentRunsHasMore } = await getAutoTraderRuns(account.id, 40);
+    if (!state) return { status: 'stopped', recentRuns, recentRunsHasMore };
+    return { ...state, recentRuns, recentRunsHasMore };
   });
 
   app.post<{ Body: Partial<AutoTraderConfig> }>('/api/broker/kis/auto-trader/start', async (req, reply) => {

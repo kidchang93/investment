@@ -757,4 +757,6 @@ export interface AutoTraderState {
   /** 정지했다면 그 이유 */
   stopReason?: string;
   recentRuns: AutoTraderRun[];
+  /** 서버 상한을 넘겨 더 오래된 기록이 남아 있는지. 화면이 "이게 전부"라고 말하지 않게 한다. */
+  recentRunsHasMore: boolean;
 }
