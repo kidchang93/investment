@@ -86,6 +86,20 @@ async function main(): Promise<void> {
   console.log(`원금 ${startCash.toLocaleString()}원 · 비용 가정 수수료 ${pct(DEFAULT_COSTS.commissionRate)} /`
     + ` 거래세 ${pct(DEFAULT_COSTS.sellTaxRate)} / 슬리피지 ${pct(DEFAULT_COSTS.slippageRate)}`);
 
+  /*
+   * 종목별 결과만 늘어놓으면 판정이 안 된다. 이동평균 교차는 한 종목에서
+   * 매매가 1~2회라 +112%든 -17%든 운이다. 뒤 구간 결과를 전략별로 모아
+   * 매매 표본을 합쳐야 승률을 말할 수 있다.
+   */
+  const pooled = new Map<string, {
+    label: string;
+    returns: number[];
+    trades: number;
+    wins: number;
+    cost: number;
+    unmeasurable: number;
+  }>();
+
   for (const symbol of symbols) {
     const instrument = await getInstrument(`KR:KOSPI:${symbol}`) ?? await getInstrument(`KR:KOSDAQ:${symbol}`);
     if (!instrument) {
@@ -110,9 +124,8 @@ async function main(): Promise<void> {
     /*
      * 구간이 전략의 최소 캔들 수보다 짧으면 신호가 날 자리가 없다. 그런데도
      * 태우면 `매매 0회 · 수익률 0%`가 나오고, 그게 "전략이 나빴다"로 읽힌다.
-     * 실제로 그렇게 읽고 기록했다 — KIS 일봉은 100개라 70/30으로 나누면 뒤
-     * 구간이 30봉이고, MA(20) 교차는 21봉이 지나야 첫 판단이 선다.
-     * 여유 5봉을 더 요구한다. 딱 minBars면 교차가 한 번 날까 말까다.
+     * 실제로 그렇게 읽고 기록했다 — 페이징 전에는 뒤 구간이 30봉이었고,
+     * MA(20) 교차는 21봉이 지나야 첫 판단이 선다.
      */
     const cut = Math.floor(candles.length * SPLIT_RATIO);
     const windows = { 앞: cut, 뒤: candles.length - cut };
@@ -128,17 +141,60 @@ async function main(): Promise<void> {
         ['  앞 구간', windows.앞, split.inSample],
         ['  뒤 구간', windows.뒤, split.outOfSample],
       ] as const) {
+        const entry = pooled.get(key) ?? {
+          label,
+          returns: [],
+          trades: 0,
+          wins: 0,
+          cost: 0,
+          unmeasurable: 0,
+        };
+        pooled.set(key, entry);
+
         if (bars < need) {
           console.log(
             `    ${name.padEnd(12)}잴 수 없음 — ${bars}봉으로는 판단 기회가`
             + ` ${Math.max(0, bars - minBars)}번뿐이다 (${need}봉 이상 필요).`
             + ' 이 구간 숫자는 전략 성적이 아니다.',
           );
+          if (name.includes('뒤')) entry.unmeasurable += 1;
           continue;
+        }
+        if (name.includes('뒤')) {
+          entry.returns.push(result.returnRate);
+          entry.trades += result.tradeCount;
+          entry.wins += result.winCount;
+          entry.cost += result.totalCost;
         }
         console.log(`    ${line(name, result)}${name.includes('뒤') ? '   ← 실제로 봐야 할 숫자' : ''}`);
       }
     }
+  }
+
+  console.log('\n\n═══ 뒤 구간 합산 ═══');
+  console.log(`종목 ${symbols.length}개 · 전략별로 out-of-sample 결과만 모았다.`);
+  for (const [, entry] of pooled) {
+    if (entry.returns.length === 0) {
+      console.log(`  ${entry.label.padEnd(10)} 잴 수 있는 종목이 없었다`
+        + (entry.unmeasurable ? ` (${entry.unmeasurable}종목 구간 부족)` : ''));
+      continue;
+    }
+    const mean = entry.returns.reduce((a, b) => a + b, 0) / entry.returns.length;
+    const positive = entry.returns.filter((r) => r > 0).length;
+    const winRate = entry.trades > 0 ? entry.wins / entry.trades : 0;
+    /*
+     * 종목별 수익률은 같은 비중으로 평균한다. 매매는 합쳐서 세야 승률이
+     * 표본다워진다 — 한 종목에서 2회면 승률 50%가 아무 뜻이 없다.
+     */
+    console.log(
+      `  ${entry.label.padEnd(10)}`
+      + ` 평균 수익률 ${pct(mean).padStart(8)}`
+      + ` · 플러스 ${positive}/${entry.returns.length}종목`
+      + ` · 매매 합계 ${String(entry.trades).padStart(3)}회`
+      + ` · 합산 승률 ${pct(winRate).padStart(7)}`
+      + ` · 비용 합계 ${Math.round(entry.cost).toLocaleString()}원`
+      + (entry.trades < MIN_TRADES_TO_JUDGE ? '  · 합쳐도 표본이 부족하다' : ''),
+    );
   }
 }
 

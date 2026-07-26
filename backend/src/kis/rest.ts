@@ -115,19 +115,43 @@ async function kisGetWithHeaders(
   };
   if (trCont) headers.tr_cont = trCont;
 
+  /*
+   * 한도 초과가 두 가지 모양으로 온다.
+   *
+   * 보통은 200 + `rt_cd: 1` + `msg_cd: EGW00201`인데, 부하가 몰리면 같은 내용이
+   * **500**으로 온다. 예전에는 non-OK면 바로 throw해서 500으로 온 한도 초과가
+   * 백오프를 타지 못했다. 백테스트에서 종목 8개를 페이징으로 받다가 실제로
+   * 여기서 끊겼다. 상태 코드가 아니라 본문의 msg_cd로 판단한다.
+   */
   async function callOnce(): Promise<{ body: Record<string, unknown>; headers: Headers }> {
     const res = await fetch(url, { headers: { ...headers } });
-    if (!res.ok) {
-      throw new Error(`KIS GET ${path} 실패 (${res.status}): ${await res.text()}`);
+    const text = await res.text();
+    let body: Record<string, unknown> = {};
+    try {
+      body = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      body = {};
     }
-    return { body: (await res.json()) as Record<string, unknown>, headers: res.headers };
+    if (!res.ok && !isRateLimited(body)) {
+      throw new Error(`KIS GET ${path} 실패 (${res.status}): ${text}`);
+    }
+    return { body, headers: res.headers };
   }
 
   const first = await scheduleKisCall(callOnce);
   // 한도에 걸리면 잠시 쉬고 한 번만 더 시도한다. 계속 두드리면 더 오래 막힌다.
   if (!isRateLimited(first.body)) return first;
   await delay(KIS_RATE_LIMIT_BACKOFF_MS);
-  return scheduleKisCall(callOnce);
+  const second = await scheduleKisCall(callOnce);
+  /*
+   * 두 번째도 한도면 그대로 넘기지 않는다. 빈 본문이 정상 응답처럼 흘러가면
+   * 호출한 쪽은 `캔들 0건`을 사실로 받아들인다 — 이번 작업 내내 고쳐 온 그
+   * 모양이다. 실패는 실패로 알린다.
+   */
+  if (isRateLimited(second.body)) {
+    throw new Error(`KIS GET ${path} 실패: 초당 호출 한도를 넘었습니다 (${KIS_RATE_LIMIT_CODE})`);
+  }
+  return second;
 }
 
 function yyyymmdd(d: Date): string {
@@ -260,6 +284,9 @@ export async function getDailyCandles(code: string, days = 120): Promise<Candles
 /** 한 페이지에 요청할 달력 일수. 약 90거래일이라 100건 상한에 걸리지 않는다. */
 const DAILY_PAGE_CALENDAR_DAYS = 130;
 
+/** 페이지 사이 간격. 백테스트는 느려도 되니 넉넉히 둔다. */
+const KIS_PAGE_GAP_MS = 250;
+
 /**
  * 일봉을 여러 번 나눠 받아 더 길게 만든다.
  *
@@ -282,6 +309,13 @@ export async function getDailyCandleHistory(
   for (let page = 0; page < maxPages && byTime.size < targetBars; page += 1) {
     const start = new Date(end);
     start.setDate(start.getDate() - DAILY_PAGE_CALENDAR_DAYS);
+
+    /*
+     * 페이지 사이에 간격을 둔다. scheduleKisCall이 70ms를 보장하지만, 종목
+     * 여러 개를 연달아 받으면 그것만으로는 초당 한도에 걸렸다 — 8종목을
+     * 돌리다 다섯째 종목에서 EGW00201로 끊겼다.
+     */
+    if (page > 0) await delay(KIS_PAGE_GAP_MS);
 
     const result = await fetchDailyCandlePage(code, start, end);
     if (page === 0) name = result.name;
