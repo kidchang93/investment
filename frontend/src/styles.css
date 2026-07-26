@@ -1437,6 +1437,18 @@ span.sample-badge {
   background: rgba(59, 130, 246, 0.12);
 }
 
+/*
+ * 아직 시세가 안 온 타일.
+ *
+ * `[data-tone]` 규칙들보다 뒤에 둬야 배경색을 덮는다 — 특이도가 같아
+ * 순서로 결정된다. 값이 없는데 색이 칠해져 있으면 오르내린 것처럼 보인다.
+ */
+.terminal-heatmap article[data-pending='true'] {
+  border-color: var(--border-soft);
+  background: rgba(148, 163, 184, 0.05);
+  opacity: 0.6;
+}
+
 .terminal-heatmap article strong,
 .terminal-heatmap article span,
 .terminal-heatmap article em {

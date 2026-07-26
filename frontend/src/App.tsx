@@ -191,8 +191,8 @@ interface HeatmapItem {
   symbol: string;
   name: string;
   sector: string;
+  /** 타일 크기 비율. 시총이 아니라 화면을 채우는 값이다. */
   weight: number;
-  change: number;
 }
 
 interface LoungePost {
@@ -557,20 +557,32 @@ const REPORT_MODELS: ReportModel[] = [
   { key: 'damodaran', label: '다모다란', score: 71, detail: '시장 프리미엄·리스크 조정' },
 ];
 
+/*
+ * 히트맵에 올릴 종목.
+ *
+ * 예전에는 `change`에 지어낸 등락률이 박혀 있었다 — 실존 종목에 가짜 숫자를
+ * 붙여 색까지 입히고 있었다. 이제 등락률은 시세에서 받아온다.
+ *
+ * `weight`는 타일 크기일 뿐이다. 시총 비중을 재서 넣은 값이 아니라 화면을
+ * 채우는 비율이라, 이건 그대로 둔다(화면에도 그렇게 적는다).
+ */
 const HEATMAP_ITEMS: HeatmapItem[] = [
-  { symbol: '005930', name: '삼성전자', sector: 'semiconductor', weight: 18, change: 0.22 },
-  { symbol: '000660', name: 'SK하이닉스', sector: 'semiconductor', weight: 14, change: -0.27 },
-  { symbol: '373220', name: 'LG에너지솔루션', sector: 'battery', weight: 8, change: -1.18 },
-  { symbol: '207940', name: '삼성바이오로직스', sector: 'bio', weight: 7, change: 0.84 },
-  { symbol: '012450', name: '한화에어로스페이스', sector: 'defense', weight: 6, change: 2.11 },
-  { symbol: '329180', name: 'HD현대중공업', sector: 'shipbuilding', weight: 5, change: 1.62 },
-  { symbol: '005380', name: '현대차', sector: 'auto', weight: 5, change: -0.42 },
-  { symbol: '035420', name: 'NAVER', sector: 'platform', weight: 4, change: 0.37 },
-  { symbol: '035720', name: '카카오', sector: 'platform', weight: 3, change: -0.75 },
-  { symbol: '051910', name: 'LG화학', sector: 'battery', weight: 3, change: -1.42 },
-  { symbol: '068270', name: '셀트리온', sector: 'bio', weight: 3, change: 0.51 },
-  { symbol: '000270', name: '기아', sector: 'auto', weight: 3, change: 0.18 },
+  { symbol: '005930', name: '삼성전자', sector: 'semiconductor', weight: 18 },
+  { symbol: '000660', name: 'SK하이닉스', sector: 'semiconductor', weight: 14 },
+  { symbol: '373220', name: 'LG에너지솔루션', sector: 'battery', weight: 8 },
+  { symbol: '207940', name: '삼성바이오로직스', sector: 'bio', weight: 7 },
+  { symbol: '012450', name: '한화에어로스페이스', sector: 'defense', weight: 6 },
+  { symbol: '329180', name: 'HD현대중공업', sector: 'shipbuilding', weight: 5 },
+  { symbol: '005380', name: '현대차', sector: 'auto', weight: 5 },
+  { symbol: '035420', name: 'NAVER', sector: 'platform', weight: 4 },
+  { symbol: '035720', name: '카카오', sector: 'platform', weight: 3 },
+  { symbol: '051910', name: 'LG화학', sector: 'battery', weight: 3 },
+  { symbol: '068270', name: '셀트리온', sector: 'bio', weight: 3 },
+  { symbol: '000270', name: '기아', sector: 'auto', weight: 3 },
 ];
+
+/** 히트맵 종목의 시세 조회용 id. 전부 KOSPI다. */
+const HEATMAP_INSTRUMENT_IDS = HEATMAP_ITEMS.map((item) => `KR:KOSPI:${item.symbol}`);
 
 const LOUNGE_POSTS: LoungePost[] = [
   {
@@ -2422,6 +2434,11 @@ export function App(): JSX.Element {
     if (selectedInstrument?.country === 'KR') add(selectedInstrument);
     if (activePage === 'terminal') {
       for (const instrument of terminalItems) add(instrument);
+      /*
+       * 히트맵 12종목. 그 탭이 열려 있을 때만 넣는다 — 발견 화면에 머무는
+       * 동안 계속 12건을 더 부르면 KIS 조회 한도를 그만큼 빨리 쓴다.
+       */
+      if (terminalTab === 'heatmap') for (const id of HEATMAP_INSTRUMENT_IDS) addId(id);
     }
     for (const instrument of recentInstruments) add(instrument);
     for (const instrument of watchlist) add(instrument);
@@ -2441,6 +2458,7 @@ export function App(): JSX.Element {
     sidePanelTab,
     symbolResults,
     terminalItems,
+    terminalTab,
     visibleCategoryQuoteIds,
     watchlist,
   ]);
@@ -2725,6 +2743,20 @@ export function App(): JSX.Element {
     () => new Map(terminalItems.map((instrument) => [instrument.id, instrument])),
     [terminalItems],
   );
+  /*
+   * 히트맵에 올릴 값. 등락률은 시세에서 가져온다.
+   * 아직 안 온 종목은 숫자를 만들지 않고 비운 채로 둔다 — 예전에는 여기에
+   * 지어낸 값이 박혀 있었고, 색까지 입혀 진짜처럼 보였다.
+   */
+  const heatmapRows = useMemo(
+    () =>
+      HEATMAP_ITEMS.map((item) => {
+        const snapshot = toSnapshot(undefined, quotesByCode[`KR:KOSPI:${item.symbol}`]);
+        return { ...item, changeRate: snapshot?.changeRate };
+      }),
+    [quotesByCode],
+  );
+
   const macroBoardGroups = useMemo(
     () =>
       MACRO_BOARD_GROUPS.map((group) => ({
@@ -4440,21 +4472,23 @@ export function App(): JSX.Element {
                 <section className="terminal-page terminal-page--heatmap" aria-label="섹터 히트맵">
                   <div className="terminal-page__header">
                     <div>
-                      <span>화면 구성 예시 · -5% ~ +5% 범위로 색을 입힘</span>
+                      <span>시총 상위 12종목 · 전일 종가 대비 · -5% ~ +5%로 색을 입힘</span>
                       <strong>섹터 히트맵</strong>
                     </div>
-                    <SampleBadge note="실제 시세가 아닙니다. 종목명은 실존하지만 등락률과 비중은 화면 구성을 보여주려고 넣어 둔 값입니다." />
+                    {/* 등락률은 이제 실제 시세다. 고정값인 타일 크기만 밝힌다. */}
+                    <SampleBadge note="등락률은 실제 시세입니다. 타일 크기는 시총 비중이 아니라 화면을 채우는 고정 비율입니다." />
                   </div>
                   <div className="terminal-heatmap">
-                    {HEATMAP_ITEMS.map((item) => (
+                    {heatmapRows.map((item) => (
                       <article
-                        data-tone={heatmapTone(item.change)}
+                        data-pending={item.changeRate === undefined ? 'true' : undefined}
+                        data-tone={item.changeRate === undefined ? 'flat' : heatmapTone(item.changeRate)}
                         key={item.symbol}
                         style={{ flexGrow: Number(heatmapArea(item.weight).replace('fr', '')) }}
                       >
                         <strong>{item.name}</strong>
                         <span>{item.symbol} · {item.sector}</span>
-                        <em>{formatRate(item.change)}</em>
+                        <em>{item.changeRate === undefined ? '시세 대기' : formatRate(item.changeRate)}</em>
                       </article>
                     ))}
                   </div>
