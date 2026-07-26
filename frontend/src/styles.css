@@ -1117,7 +1117,6 @@ button {
 }
 
 .terminal-headlines,
-.terminal-kpi-row,
 .terminal-dominance,
 .terminal-fee-controls,
 .terminal-simulation-grid {
@@ -1153,7 +1152,6 @@ button {
 }
 
 .terminal-headlines a,
-.terminal-kpi-row button,
 .terminal-dominance div,
 .terminal-fee-controls label,
 .terminal-fee-controls > div {
@@ -1171,8 +1169,7 @@ button {
   text-decoration: none;
 }
 
-.terminal-headlines a:hover,
-.terminal-kpi-row button:hover {
+.terminal-headlines a:hover {
   border-color: rgba(245, 196, 81, 0.34);
   background: rgba(245, 196, 81, 0.08);
 }
@@ -1191,7 +1188,6 @@ button {
 
 .terminal-headlines strong,
 .terminal-news-list strong,
-.terminal-kpi-row strong,
 .terminal-dominance strong,
 .terminal-fee-controls strong {
   overflow: hidden;
@@ -1202,8 +1198,6 @@ button {
 .terminal-headlines em,
 .terminal-news-list em,
 .terminal-news-list span,
-.terminal-kpi-row span,
-.terminal-kpi-row em,
 .terminal-dominance span,
 .terminal-dominance em,
 .terminal-fee-controls span,
@@ -1225,7 +1219,7 @@ button {
 
 .terminal-news-list a,
 .terminal-news-list p,
-.terminal-macro-list button,
+.terminal-macro-list button[data-tone],
 .terminal-leaderboard div {
   display: grid;
   grid-template-columns: minmax(78px, 0.2fr) minmax(0, 1fr) minmax(120px, 0.25fr);
@@ -1244,7 +1238,7 @@ button {
 }
 
 .terminal-news-list a:hover,
-.terminal-macro-list button:hover:not(:disabled) {
+.terminal-macro-list button[data-tone]:hover:not(:disabled) {
   border-color: rgba(245, 196, 81, 0.34);
   background: rgba(245, 196, 81, 0.08);
 }
@@ -1255,26 +1249,20 @@ button {
   gap: 10px;
 }
 
-.terminal-macro-list button {
+.terminal-macro-list button[data-tone] {
   grid-template-columns: minmax(0, 1fr) auto auto;
   cursor: pointer;
 }
 
-.terminal-macro-list button:disabled {
+.terminal-macro-list button[data-tone]:disabled {
   cursor: default;
   opacity: 0.68;
 }
 
-.terminal-kpi-row button {
-  cursor: pointer;
-}
-
-.terminal-kpi-row button[data-tone='up'],
 .terminal-macro-list button[data-tone='up'] {
   border-color: rgba(229, 72, 77, 0.26);
 }
 
-.terminal-kpi-row button[data-tone='down'],
 .terminal-macro-list button[data-tone='down'] {
   border-color: rgba(59, 130, 246, 0.26);
 }
@@ -4806,7 +4794,6 @@ button {
   }
 
   .terminal-headlines,
-  .terminal-kpi-row,
   .terminal-dominance,
   .terminal-fee-controls,
   .terminal-macro-grid,
@@ -4928,7 +4915,7 @@ button {
   .terminal-news-ticker,
   .terminal-news-list a,
   .terminal-news-list p,
-  .terminal-macro-list button,
+  .terminal-macro-list button[data-tone],
   .terminal-leaderboard div,
   .terminal-theme-list article,
   .terminal-ranking-list button,
@@ -4946,7 +4933,6 @@ button {
   }
 
   .terminal-headlines,
-  .terminal-kpi-row,
   .terminal-dominance,
   .terminal-fee-controls,
   .terminal-macro-grid,

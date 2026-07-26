@@ -681,9 +681,13 @@ function BrokerAccountPicker({
 function CollapsibleRows({
   rows,
   limit = 8,
+  /* 접힌 줄이 무엇인지 부르는 쪽이 정할 수 있게 한다. `N건 더 보기`로는
+     "아직 조회할 수 없는 항목"인지 그냥 나머지인지 구별되지 않는다. */
+  moreLabel,
 }: {
   rows: JSX.Element[];
   limit?: number;
+  moreLabel?: (hidden: number) => string;
 }): JSX.Element {
   const [expanded, setExpanded] = useState(false);
   if (rows.length <= limit) return <>{rows}</>;
@@ -692,7 +696,7 @@ function CollapsibleRows({
     <>
       {expanded ? rows : rows.slice(0, limit)}
       <button className="portfolio-table__more" onClick={() => setExpanded((v) => !v)} type="button">
-        {expanded ? '접기' : `${rows.length - limit}건 더 보기`}
+        {expanded ? '접기' : (moreLabel ?? ((hidden: number) => `${hidden}건 더 보기`))(rows.length - limit)}
       </button>
     </>
   );
@@ -2591,7 +2595,6 @@ export function App(): JSX.Element {
       })).filter((group) => group.items.length > 0),
     [macroFilter, quotesByCode, stream.trades, terminalInstrumentById, usdKrwRate],
   );
-  const macroCoreItems = macroBoardGroups[0]?.items ?? [];
   const upcomingEvents = useMemo(
     () =>
       ECONOMIC_EVENTS.filter((event) => new Date(`${event.date}T23:59:59+09:00`).getTime() >= nowMs)
@@ -3993,78 +3996,66 @@ export function App(): JSX.Element {
                       </button>
                     ))}
                   </div>
-                  <div className="terminal-kpi-row">
-                    {macroCoreItems.map((item) => {
-                      const itemTone = item.exchangeRate
-                        ? feeImpactTone(item.exchangeRate.changeRate)
-                        : moveTone(item.snapshot?.sign);
+                  <div className="terminal-macro-grid">
+                    {macroBoardGroups.map((group) => {
+                      /*
+                       * 값이 들어온 항목만 먼저 보여주고 나머지는 접는다. 이 화면은
+                       * 25개 행 중 값이 있는 게 2개뿐이라, 전부 펼쳐 두면 `-`만 스무 줄
+                       * 넘게 이어져 처음 보는 사람에게는 고장난 화면으로 읽힌다.
+                       * 숨기지는 않는다 — 무엇이 왜 안 되는지는 펼쳐서 볼 수 있다.
+                       */
+                      const hasValue = (item: (typeof group.items)[number]): boolean =>
+                        Boolean(item.snapshot || item.exchangeRate);
+                      const ordered = [...group.items].sort(
+                        (a, b) => Number(hasValue(b)) - Number(hasValue(a)),
+                      );
+                      const readyCount = ordered.filter(hasValue).length;
+
                       return (
-                        <button
-                          data-tone={itemTone}
-                          key={item.key}
-                          onClick={() => item.instrument && selectInstrument(item.instrument)}
-                          type="button"
-                        >
-                          <span>{item.label}</span>
-                          <strong>
-                            {item.exchangeRate
-                              ? formatExchangeRate(item.exchangeRate.rate)
-                              : item.snapshot
-                                ? formatCurrencyPrice(item.snapshot.price, item.instrument?.currency)
-                                : (item.fallback ?? '-')}
-                          </strong>
-                          <em>
-                            {item.exchangeRate
-                              ? formatRate(item.exchangeRate.changeRate)
-                              : item.snapshot
-                                ? formatRate(item.snapshot.changeRate)
-                                : item.detail}
-                          </em>
-                        </button>
+                        <section className="terminal-panel" key={group.label}>
+                          <div className="terminal-panel__header">
+                            <strong>{group.label}</strong>
+                            <span>{readyCount}/{group.items.length}</span>
+                          </div>
+                          <div className="terminal-macro-list">
+                            <CollapsibleRows
+                              limit={readyCount}
+                              moreLabel={(hidden) => `아직 값을 받지 못한 항목 ${hidden}개 보기`}
+                              rows={ordered.map((item) => {
+                                const itemTone = item.exchangeRate
+                                  ? feeImpactTone(item.exchangeRate.changeRate)
+                                  : moveTone(item.snapshot?.sign);
+                                return (
+                                  <button
+                                    data-tone={itemTone}
+                                    disabled={!item.instrument && !item.exchangeRate}
+                                    key={item.key}
+                                    onClick={() => item.instrument && selectInstrument(item.instrument)}
+                                    type="button"
+                                  >
+                                    <span>{item.label}</span>
+                                    <strong>
+                                      {item.exchangeRate
+                                        ? formatExchangeRate(item.exchangeRate.rate)
+                                        : item.snapshot
+                                          ? formatCurrencyPrice(item.snapshot.price, item.instrument?.currency)
+                                          : (item.fallback ?? '-')}
+                                    </strong>
+                                    <em>
+                                      {item.exchangeRate
+                                        ? formatRate(item.exchangeRate.changeRate)
+                                        : item.snapshot
+                                          ? formatRate(item.snapshot.changeRate)
+                                          : item.detail}
+                                    </em>
+                                  </button>
+                                );
+                              })}
+                            />
+                          </div>
+                        </section>
                       );
                     })}
-                  </div>
-                  <div className="terminal-macro-grid">
-                    {macroBoardGroups.map((group) => (
-                      <section className="terminal-panel" key={group.label}>
-                        <div className="terminal-panel__header">
-                          <strong>{group.label}</strong>
-                          <span>{group.items.filter((item) => item.snapshot || item.exchangeRate).length}/{group.items.length}</span>
-                        </div>
-                        <div className="terminal-macro-list">
-                          {group.items.map((item) => {
-                            const itemTone = item.exchangeRate
-                              ? feeImpactTone(item.exchangeRate.changeRate)
-                              : moveTone(item.snapshot?.sign);
-                            return (
-                              <button
-                                data-tone={itemTone}
-                                disabled={!item.instrument && !item.exchangeRate}
-                                key={item.key}
-                                onClick={() => item.instrument && selectInstrument(item.instrument)}
-                                type="button"
-                              >
-                                <span>{item.label}</span>
-                                <strong>
-                                  {item.exchangeRate
-                                    ? formatExchangeRate(item.exchangeRate.rate)
-                                    : item.snapshot
-                                      ? formatCurrencyPrice(item.snapshot.price, item.instrument?.currency)
-                                      : (item.fallback ?? '-')}
-                                </strong>
-                                <em>
-                                  {item.exchangeRate
-                                    ? formatRate(item.exchangeRate.changeRate)
-                                    : item.snapshot
-                                      ? formatRate(item.snapshot.changeRate)
-                                      : item.detail}
-                                </em>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </section>
-                    ))}
                   </div>
                 </section>
               )}
