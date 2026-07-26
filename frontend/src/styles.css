@@ -3487,24 +3487,29 @@ button {
   color: var(--muted);
 }
 
+/*
+ * 거래량 요약. 시장 정보 줄·시세 헤더와 같은 방식으로 눕힌다.
+ * 타일 6개가 각각 65px씩 세워져 있어 차트 아래로 76px을 먹고 있었다.
+ */
 .volume-panel {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
-  min-height: 76px;
-  padding: 9px 12px;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  min-height: 0;
+  padding: 7px 12px;
   border-top: 1px solid var(--border);
   background: #0b0f17;
 }
 
 .volume-panel > div {
-  display: grid;
-  align-content: center;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
   min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: rgba(15, 23, 42, 0.44);
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .volume-panel span {
@@ -3526,13 +3531,18 @@ button {
   gap: 4px;
 }
 
+/*
+ * 상승/하락 비율 막대. 예전엔 width: 100%라 이 칸 하나가 줄 전체를 차지해,
+ * 나머지가 다 들어갈 자리가 있는데도 두 줄로 갈라졌다. 한 줄 배치에 맞춰
+ * 폭을 고정한다 — 비율을 눈으로 보여주는 게 목적이라 길 필요는 없다.
+ */
 .volume-panel__split-track {
   display: flex;
   align-items: stretch;
-  width: 100%;
+  flex-shrink: 0;
+  width: 56px;
   height: 5px;
   overflow: hidden;
-  margin-top: 2px;
   border: 0;
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.12);
@@ -3841,10 +3851,16 @@ button {
 }
 
 .volume-panel.bottom-panel {
-  --bottom-panel-height: 76px;
+  /* 타일을 눕히면서 필요한 높이가 줄었다. 76px은 세워 뒀을 때의 값이다. */
+  --bottom-panel-height: 34px;
   max-height: var(--bottom-panel-height);
   min-height: var(--bottom-panel-height);
-  overflow: hidden;
+  /*
+   * 가로는 잘라도 세로는 스크롤한다. 예상보다 좁아져 두 줄로 접히면
+   * overflow: hidden에서는 둘째 줄이 잘려 사라졌다 — 600px에서 실제로 그랬다.
+   * 단축 속성을 뒤에 두면 앞서 적은 overflow-y가 덮이므로 한 줄로 적는다.
+   */
+  overflow: hidden auto;
 }
 
 .volume-panel.bottom-panel--expanded {
@@ -4959,12 +4975,13 @@ button {
     max-height: 180px;
   }
 
-  .volume-panel {
-    grid-template-columns: 1fr;
-  }
-
+  /*
+   * 눕힌 배치는 좁아지면 두세 줄로 접힌다. 넓은 화면 높이(34px)를 그대로 쓰면
+   * overflow: hidden에 걸려 둘째 줄이 잘린다 — 600px에서 내용 57px / 보임 33px로
+   * 실제로 잘렸다. 여기서는 줄 수만큼 늘려 준다.
+   */
   .volume-panel.bottom-panel {
-    --bottom-panel-height: 156px;
+    --bottom-panel-height: 84px;
     overflow-y: auto;
   }
 

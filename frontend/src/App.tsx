@@ -910,7 +910,12 @@ function formatVolume(n: number): string {
   if (!Number.isFinite(n)) return '-';
   if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1)}억`;
   if (n >= 10_000) return `${Math.floor(n / 10_000).toLocaleString('ko-KR')}만`;
-  return n.toLocaleString('ko-KR');
+  /*
+   * 거래량은 주식 수라 소수점이 의미 없다. 평균 거래량처럼 나눗셈으로 나온 값이
+   * 1만 미만이면 `4,573.842`처럼 소수점 세 자리가 그대로 찍혔다 — 옆 칸들이
+   * `54만`, `5만`인데 혼자만 형식이 달랐다.
+   */
+  return Math.round(n).toLocaleString('ko-KR');
 }
 
 function formatTradeTime(time: string | undefined): string {
