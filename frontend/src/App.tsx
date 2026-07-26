@@ -304,20 +304,58 @@ const TERMINAL_CATEGORY_SHORTCUTS = [
   { id: 'overseas-futures', label: '해외선물', detail: '글로벌 선물' },
 ] as const;
 
-const TERMINAL_TAB_OPTIONS: Array<{ key: TerminalTab; label: string; title: string }> = [
-  { key: 'overview', label: '대시보드', title: '핵심 지표와 출처' },
-  { key: 'news', label: '뉴스룸', title: '속보와 종목별 뉴스' },
-  { key: 'macro', label: '매크로', title: '원자재·환율·금리·지수' },
-  { key: 'calendar', label: '캘린더', title: '경제 지표 발표 일정' },
-  { key: 'reports', label: '리포트', title: '가치투자 모델 보고서' },
-  { key: 'heatmap', label: '히트맵', title: '시총 상위 종목 등락 지도' },
-  { key: 'ranking', label: '랭킹', title: '24시간 인기 종목' },
-  { key: 'themes', label: '테마', title: '도미넌스와 테마 흐름' },
-  { key: 'fees', label: '수수료', title: '증권사 비용 계산' },
-  { key: 'lounge', label: '라운지', title: '트레이더 쓰레드 피드' },
-  { key: 'chat', label: '채팅', title: '실시간 채팅 미리보기' },
-  { key: 'simulation', label: '시뮬', title: '테스트매매와 리더보드' },
+interface TerminalTabOption {
+  key: TerminalTab;
+  label: string;
+  title: string;
+}
+
+/*
+ * 탭 12개를 한 줄에 평평하게 늘어놓으면 무엇이 어디 있는지 알 수 없다. 라벨만
+ * 봐서는 히트맵·랭킹·테마가 서로 어떻게 다른지도 구분되지 않는다. 찾는 것이
+ * 무엇이냐로 묶어 준다 — 지금 시장이 어떤지, 무슨 일이 있었는지, 남들은 뭐라
+ * 하는지, 계산해 볼 것.
+ *
+ * 줄을 늘리지 않고 한 줄 안에서 묶는다. 버튼 합계가 720px인데 줄 폭이 1484px라
+ * 여유가 충분하다.
+ */
+const TERMINAL_TAB_GROUPS: Array<{ label: string; options: TerminalTabOption[] }> = [
+  {
+    label: '시세',
+    options: [
+      { key: 'overview', label: '대시보드', title: '핵심 지표와 출처' },
+      { key: 'heatmap', label: '히트맵', title: '시총 상위 종목 등락 지도' },
+      { key: 'ranking', label: '랭킹', title: '24시간 인기 종목' },
+      { key: 'themes', label: '테마', title: '도미넌스와 테마 흐름' },
+      { key: 'macro', label: '매크로', title: '원자재·환율·금리·지수' },
+    ],
+  },
+  {
+    label: '뉴스·일정',
+    options: [
+      { key: 'news', label: '뉴스룸', title: '속보와 종목별 뉴스' },
+      { key: 'calendar', label: '캘린더', title: '경제 지표 발표 일정' },
+      { key: 'reports', label: '리포트', title: '가치투자 모델 보고서' },
+    ],
+  },
+  {
+    label: '커뮤니티',
+    options: [
+      { key: 'lounge', label: '라운지', title: '트레이더 쓰레드 피드' },
+      { key: 'chat', label: '채팅', title: '실시간 채팅 미리보기' },
+    ],
+  },
+  {
+    label: '도구',
+    options: [
+      { key: 'fees', label: '수수료', title: '증권사 비용 계산' },
+      { key: 'simulation', label: '시뮬', title: '테스트매매와 리더보드' },
+    ],
+  },
 ];
+
+/** 저장값 검증처럼 그룹이 필요 없는 곳에서 쓰는 평탄한 목록. */
+const TERMINAL_TAB_OPTIONS: TerminalTabOption[] = TERMINAL_TAB_GROUPS.flatMap((group) => group.options);
 
 const NEWS_FILTER_OPTIONS: Array<{ key: NewsFilter; label: string }> = [
   { key: 'all', label: '전체' },
@@ -3692,7 +3730,7 @@ export function App(): JSX.Element {
           )}
 
           {activePage === 'terminal' && (
-            <section className="terminal-board" aria-label="야간 지표 터미널">
+            <section className="terminal-board" aria-label="발견">
               <div className="terminal-board__hero">
                 <div>
                   {/*
@@ -3701,8 +3739,14 @@ export function App(): JSX.Element {
                     게이트가 열리면 두 표시가 서로 어긋나 읽힌다. 화면 성격만 적는다.
                   */}
                   <span>야간 지표 · 시세 조회</span>
-                  <h2>야간 지표 터미널</h2>
-                  <p>국내 야간선물, GDR 환산가, 원자재와 관련 뉴스를 한 화면에서 확인합니다.</p>
+                  <h2>발견</h2>
+                  {/*
+                    상단 네비는 `발견`인데 제목은 `야간 지표 터미널`이라 서로 달랐다.
+                    아래 탭이 시세·뉴스·커뮤니티·도구까지 담고 있어 제목이 실제
+                    범위보다 좁기도 했다. 이름을 네비와 맞추고, 항상 보이는 부분이
+                    무엇인지는 설명으로 남긴다.
+                  */}
+                  <p>야간 지표를 띄워 두고, 아래 탭에서 시세 흐름·뉴스·커뮤니티·도구를 살펴봅니다.</p>
                 </div>
                 {/*
                   화면에서 가장 큰 숫자인데 자산 유형만 적혀 있어 어느 종목인지 알 수 없었다.
@@ -3759,17 +3803,22 @@ export function App(): JSX.Element {
                 </div>
               </section>
 
-              <nav className="terminal-tabs" aria-label="터미널 기능" ref={terminalTabsRef}>
-                {TERMINAL_TAB_OPTIONS.map((option) => (
-                  <button
-                    aria-selected={terminalTab === option.key}
-                    key={option.key}
-                    onClick={() => setTerminalTab(option.key)}
-                    title={option.title}
-                    type="button"
-                  >
-                    {option.label}
-                  </button>
+              <nav className="terminal-tabs" aria-label="발견 기능" ref={terminalTabsRef}>
+                {TERMINAL_TAB_GROUPS.map((group) => (
+                  <div className="terminal-tabs__group" key={group.label} role="group" aria-label={group.label}>
+                    <span>{group.label}</span>
+                    {group.options.map((option) => (
+                      <button
+                        aria-selected={terminalTab === option.key}
+                        key={option.key}
+                        onClick={() => setTerminalTab(option.key)}
+                        title={option.title}
+                        type="button"
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
                 ))}
               </nav>
 
