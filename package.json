@@ -14,7 +14,8 @@
     "dev:api": "npm run dev -w backend",
     "dev:web": "npm run dev -w frontend",
     "build": "npm run build -w frontend",
-    "typecheck": "npm run typecheck -w backend"
+    "typecheck": "npm run typecheck -w backend",
+    "test": "npm run test -w backend"
   },
   "engines": {
     "node": ">=20"

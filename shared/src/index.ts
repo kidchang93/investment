@@ -686,3 +686,69 @@ export interface CreateOrderResponse {
   order: OrderIntent;
   fill?: TradingFill;
 }
+
+/* ── 자동매매 ─────────────────────────────────────────────────────────── */
+
+/** 자동매매 실행 모드. `dry_run`은 주문을 만들되 KIS로 보내지 않는다. */
+export type AutoTraderMode = 'dry_run' | 'live';
+
+/** 자동매매 상태. `stopped` 외에는 러너가 살아 있다. */
+export type AutoTraderStatus =
+  | 'stopped'
+  | 'running'
+  | 'target_reached'
+  | 'stopped_out'
+  | 'error';
+
+/** 전략이 내는 신호. 종목까지 전략이 고른다. */
+export interface StrategySignal {
+  instrumentId: string;
+  side: OrderSide;
+  /** 왜 이 신호가 나왔는지. 실행 기록에 그대로 남는다. */
+  reason: string;
+}
+
+export interface AutoTraderConfig {
+  accountId: string;
+  mode: AutoTraderMode;
+  /** 전략 키. 지금은 'ma_cross' 하나 */
+  strategy: string;
+  /** 목표 평가금액. 도달하면 정지한다 */
+  targetEquity: number;
+  /** 이 금액 아래로 내려가면 정지한다 */
+  stopEquity: number;
+  /** 러너를 깨우는 주기(초) */
+  intervalSeconds: number;
+  /** 한 번에 들고 갈 종목 수 */
+  maxPositions: number;
+}
+
+/** 러너가 한 번 돌 때마다 남기는 기록. 왜 샀고 왜 안 샀는지가 다 남는다. */
+export interface AutoTraderRun {
+  id: number;
+  createdAt: number;
+  status: AutoTraderStatus;
+  /** 이번 회차에 무엇을 했는지 한 줄 */
+  message: string;
+  /** 주문을 냈다면 그 내용 */
+  instrumentId?: string;
+  side?: OrderSide;
+  quantity?: number;
+  price?: number;
+  /** 이번 회차 시점의 평가금액 */
+  equity?: number;
+}
+
+export interface AutoTraderState {
+  config: AutoTraderConfig;
+  status: AutoTraderStatus;
+  /** 시작 시점 평가금액. 수익률 계산 기준 */
+  startEquity?: number;
+  /** 마지막으로 확인한 평가금액 */
+  currentEquity?: number;
+  startedAt?: number;
+  stoppedAt?: number;
+  /** 정지했다면 그 이유 */
+  stopReason?: string;
+  recentRuns: AutoTraderRun[];
+}

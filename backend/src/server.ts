@@ -22,7 +22,15 @@ import {
   seedDefaultWatchlist,
 } from './db/instruments.js';
 import { createOrderIntent, ensureTradingSchema, getFillByOrderId, getTradingOverview } from './db/trading.js';
+import { ensureAutoTraderSchema, getAutoTraderRuns } from './db/autoTrader.js';
 import { ensureBrokerOrderSchema, getBrokerOrderRecords, recordBrokerOrderAttempt } from './db/brokerOrders.js';
+import {
+  getAutoTraderState,
+  startAutoTrader,
+  stopAutoTrader,
+} from './trading/autoTrader.js';
+import { listStrategies } from './trading/strategy.js';
+import { loadAutoTraderCandidates } from './trading/universe.js';
 import { checkRiskRules, ensureRiskRuleSchema, getRiskRules, upsertRiskRules } from './db/riskRules.js';
 import {
   getDailyCandles,
@@ -48,6 +56,7 @@ import { KisRealtime } from './kis/realtime.js';
 import { WATCHLIST } from './watchlist.js';
 import type {
   AmendLiveOrderRequest,
+  AutoTraderConfig,
   ClientMessage,
   ClientSubscribeInstrument,
   CreateOrderRequest,
@@ -162,6 +171,7 @@ async function main(): Promise<void> {
   await ensureTradingSchema();
   await ensureBrokerOrderSchema();
   await ensureRiskRuleSchema();
+  await ensureAutoTraderSchema();
   await seedDefaultWatchlist(WATCHLIST);
 
   // ── REST ────────────────────────────────────────────────
@@ -458,6 +468,75 @@ async function main(): Promise<void> {
   );
 
   app.get('/api/broker/kis/live-order-gate', async () => evaluateLiveOrderGate());
+
+  /*
+   * 자동매매.
+   *
+   * 러너는 서버 메모리에 산다. 서버가 재시작되면 멈춘 상태로 시작한다 —
+   * 사람이 모르는 사이에 되살아나 주문을 내는 쪽이 더 위험하다.
+   * 실행 기록만 DB에 남아 재시작 뒤에도 무슨 일이 있었는지 볼 수 있다.
+   */
+  app.get('/api/broker/kis/auto-trader/strategies', async () => listStrategies());
+
+  app.get<{ Querystring: { accountId?: string } }>('/api/broker/kis/auto-trader', async (req, reply) => {
+    const account = resolveAccount(req.query.accountId);
+    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+    if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
+    const state = getAutoTraderState(account.id);
+    const recentRuns = await getAutoTraderRuns(account.id, 40);
+    if (!state) return { status: 'stopped', recentRuns };
+    return { ...state, recentRuns };
+  });
+
+  app.post<{ Body: Partial<AutoTraderConfig> }>('/api/broker/kis/auto-trader/start', async (req, reply) => {
+    const account = resolveAccount(req.body.accountId);
+    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+    if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
+
+    const { mode, strategy, targetEquity, stopEquity, intervalSeconds, maxPositions } = req.body;
+    if (mode !== 'dry_run' && mode !== 'live') {
+      return reply.code(400).send({ message: "mode는 'dry_run' 또는 'live'여야 합니다." });
+    }
+    if (!Number.isFinite(targetEquity) || !Number.isFinite(stopEquity)) {
+      return reply.code(400).send({ message: '목표 금액과 중단 금액이 필요합니다.' });
+    }
+    /*
+     * 실주문 모드는 서버 게이트가 열려 있을 때만 시작할 수 있다. 게이트가 닫힌 채로
+     * 시작하면 매 회차 주문이 거부되며 기록만 쌓인다 — 켜졌다고 착각하기 쉽다.
+     */
+    if (mode === 'live') {
+      const gate = evaluateLiveOrderGate();
+      if (!gate.enabled) {
+        return reply.code(403).send({ message: '실주문이 차단되어 있어 실주문 모드로 시작할 수 없습니다.', gate });
+      }
+    }
+
+    try {
+      const state = await startAutoTrader(
+        {
+          accountId: account.id,
+          mode,
+          strategy: strategy || 'ma_cross',
+          targetEquity: Number(targetEquity),
+          stopEquity: Number(stopEquity),
+          intervalSeconds: Number(intervalSeconds) || 60,
+          maxPositions: Number(maxPositions) || 1,
+        },
+        { loadCandidates: loadAutoTraderCandidates },
+      );
+      return state;
+    } catch (e) {
+      return reply.code(400).send({ message: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  app.post<{ Body: { accountId?: string } }>('/api/broker/kis/auto-trader/stop', async (req, reply) => {
+    const account = resolveAccount(req.body.accountId);
+    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+    if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
+    const state = await stopAutoTrader(account.id, 'stopped', '사용자 정지');
+    return state ?? { status: 'stopped' };
+  });
 
   app.get<{ Querystring: { accountId?: string } }>('/api/broker/kis/risk-rules', async (req, reply) => {
     const account = resolveAccount(req.query.accountId);
