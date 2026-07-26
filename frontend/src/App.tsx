@@ -3587,6 +3587,18 @@ export function App(): JSX.Element {
 
   return (
     <div className={`app${isFocusMode ? ' is-focus-mode' : ''}`}>
+      {/*
+        키보드로 주문 폼까지 가려면 Tab을 45번 눌러야 했다 — 헤더, 검색,
+        차트 도구(커서·십자선·추세선…), 지표, 기간, 프리셋을 전부 지난 뒤에야
+        오른쪽 패널이 나온다. 마우스로는 바로 누르니 보이지 않던 거리다.
+        첫 Tab에서 이 링크가 뜨고, 누르면 패널로 건너뛴다.
+        평소에는 화면에서 안 보이지만 DOM에는 있어 낭독기도 읽는다.
+      */}
+      {activePage === 'market' && (
+        <a className="skip-link" href="#side-panel">
+          주문·관심 패널로 건너뛰기
+        </a>
+      )}
       <header className="app__header">
         <div>
           <span className="app__eyebrow">실시간 차트 · 뉴스 · 출처 터미널</span>
@@ -5933,6 +5945,9 @@ export function App(): JSX.Element {
         {activePage === 'market' && <aside
           className={`watchlist${isWatchlistCollapsed ? ' is-collapsed' : ''}${isCompactList ? ' is-compact-list' : ''}`}
           data-panel={sidePanelTab}
+          id="side-panel"
+          /* 건너뛰기 링크가 여기로 포커스를 옮긴다. -1이라 Tab 순서는 그대로다. */
+          tabIndex={-1}
         >
           <div className="watchlist__header">
             <div>

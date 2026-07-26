@@ -55,6 +55,38 @@ button {
   background: var(--surface);
 }
 
+/*
+ * 건너뛰기 링크.
+ *
+ * 평소에는 화면 위로 밀어 두고 포커스가 오면 내려온다. `display: none`이나
+ * `visibility: hidden`으로 숨기면 포커스를 받지 못해 아예 쓸 수 없다.
+ * 포커스 링은 전역 규칙을 따르되, 이 링크는 헤더 위에 겹치므로 z-index를 준다.
+ */
+.skip-link {
+  position: absolute;
+  top: 0;
+  left: 12px;
+  z-index: 40;
+  padding: 8px 14px;
+  border: 1px solid var(--focus);
+  border-radius: 0 0 6px 6px;
+  background: #0d121a;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  transform: translateY(-110%);
+}
+
+/*
+ * `:focus-visible`이 아니라 `:focus`를 쓴다. 이 링크는 화면 밖에 있어
+ * 마우스로는 닿을 수 없고 키보드로만 온다. 그래서 모달리티를 따질 이유가
+ * 없고, 조건이 단순한 쪽이 확실하다.
+ */
+.skip-link:focus {
+  transform: translateY(0);
+}
+
 .app__header {
   display: flex;
   align-items: center;
