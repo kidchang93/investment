@@ -578,6 +578,12 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+/* 값 대신 사유(`휴장`)가 들어간 자리. 값처럼 보이지 않게 한 단계 죽인다. */
+.symbol-search__select em[data-pending='true'] {
+  color: var(--faint);
+  font-variant-numeric: normal;
+}
+
 .symbol-search__hint {
   min-height: 28px;
   padding: 7px 10px;
@@ -4760,6 +4766,18 @@ span.sample-badge {
 }
 
 .instrument-row__price > span:first-child {
+  white-space: nowrap;
+}
+
+/*
+ * 값이 비었을 때 그 사유(`휴장`, `시세 대기`).
+ *
+ * 부모가 `style={{ color }}`로 등락 색을 걸고 있어 그냥 두면 값처럼 보인다.
+ * 상속은 클래스보다 약하므로 여기서 정하면 특이도 다툼 없이 눌린다.
+ */
+.instrument-row__pending {
+  color: var(--faint);
+  font-size: 11px;
   white-space: nowrap;
 }
 

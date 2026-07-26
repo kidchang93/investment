@@ -1461,8 +1461,22 @@ function mergeCandles(base: Candle[], overlay: Candle[]): Candle[] {
   return [...byTime.values()].sort((a, b) => a.time - b.time).slice(-360);
 }
 
+/*
+ * 화면에 보일 시장 이름.
+ *
+ * `instrument.market`을 그대로 찍으면 우리 내부 코드가 그대로 나온다 —
+ * 탐색 목록에 `005930-NIGHT · NIGHT_PROXY · KRW`처럼 떴다. KOSPI·KOSDAQ·NAS
+ * 같은 실제 시장 이름은 그대로 두고, 우리가 만든 구성만 한국어로 바꾼다.
+ */
+const MARKET_LABELS: Record<string, string> = {
+  NIGHT_PROXY: '야간 환산가',
+  KRX_NIGHT: 'KRX 야간선물',
+  TV_COMMODITY: '원자재',
+  OV_FUT: '해외선물',
+};
+
 function marketLabel(instrument: Instrument): string {
-  return `${instrument.market} · ${instrument.currency}`;
+  return `${MARKET_LABELS[instrument.market] ?? instrument.market} · ${instrument.currency}`;
 }
 
 interface DataSourceLink {
@@ -1578,10 +1592,13 @@ function InstrumentRow({
       </div>
       <div className="instrument-row__price" style={{ color }}>
         <span>{snapshot ? formatCurrencyPrice(snapshot.price, instrument.currency) : '-'}</span>
-        {snapshot && (
+        {snapshot ? (
           <span className="instrument-row__rate">
             {formatSignedCurrencyPrice(snapshot.change, instrument.currency)} ({formatRate(snapshot.changeRate)})
           </span>
+        ) : (
+          /* 값이 왜 비었는지 적는다. `-`만 두면 로딩인지 휴장인지 알 수 없다. */
+          <span className="instrument-row__pending">{pendingQuoteLabel(instrument)}</span>
         )}
         {snapshot && rangePosition !== null && (
           <span
@@ -3641,10 +3658,14 @@ export function App(): JSX.Element {
                           <strong>{instrument.symbol}</strong>
                           <span>{instrument.name}</span>
                           <small>{marketLabel(instrument)}</small>
-                          <em style={{ color: signColor(resultSnapshot?.sign) }}>
+                          {/* 값이 없으면 `-` 대신 왜 없는지 적는다. 목록 행과 같은 규칙이다. */}
+                          <em
+                            data-pending={resultSnapshot ? undefined : 'true'}
+                            style={resultSnapshot ? { color: signColor(resultSnapshot.sign) } : undefined}
+                          >
                             {resultSnapshot
                               ? `${formatCurrencyPrice(resultSnapshot.price, instrument.currency)} · ${formatRate(resultSnapshot.changeRate)}`
-                              : '-'}
+                              : pendingQuoteLabel(instrument)}
                           </em>
                         </button>
                         <button
