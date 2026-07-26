@@ -196,7 +196,7 @@ export async function fetchKisLiveOrderGate(): Promise<LiveOrderGate> {
 }
 
 /**
- * 실계좌 주문 전송. 서버 게이트가 열려 있어야 하고 확인 문구가 정확히 일치해야 한다.
+ * 실계좌 주문 전송. 서버 게이트가 열려 있고 리스크 룰을 통과해야 접수된다.
  * paper 주문(`createOrder`)과 의도적으로 분리된 경로다.
  */
 export async function placeKisLiveOrder(request: PlaceLiveOrderRequest): Promise<PlaceLiveOrderResult> {

@@ -76,18 +76,21 @@ KIS가 주문/계좌 TR_ID를 개편했다. 구 ID도 아직 응답하지만 **�
 
 1. `KIS_LIVE_ORDER_ENABLED=true` (서버 환경 변수)
 2. 등록된 KIS 계좌가 1개 이상
-3. 요청 body의 `confirmationPhrase`가 정확히 `실주문 전송`
-4. 국내 주식·ETF·ETN 종목 (지수·선물·야간 프록시는 거부)
-5. 수량 > 0, 지정가면 단가 > 0
+3. 국내 주식·ETF·ETN 종목 (지수·선물·야간 프록시는 거부)
+4. 수량 > 0, 지정가면 단가 > 0
+5. 리스크 룰 통과 (1회/일일 한도, 허용·차단 종목, 거래시간, 거래일)
 
-체크박스 대신 **문구 입력**을 서버가 검증한다. 클릭 한 번으로 오발주가 나가지 않게 하려는 의도다.
+> 예전에는 `confirmationPhrase`로 `실주문 전송`을 정확히 받아야 했다. 클라이언트가 아는
+> 상수를 클라이언트가 다시 보내는 것뿐이라 오발주를 막는 힘이 없었고, 증권사 화면에는
+> 없는 모양이라 걷어냈다. 대신 화면에서 주문 내용(종목·수량·가격·계좌)을 보여주고
+> 한 번 확인받는다 — 실제 주문 화면이 하는 방식이다. **서버 쪽 실제 차단은 게이트와
+> 리스크 룰이 담당한다.**
 
 ### 확인된 차단 동작
 
 | 요청 | 결과 |
 |------|------|
 | 게이트 꺼짐 | `403` + `gate.blockers` |
-| 확인 문구 불일치 | `400` |
 | 수량 0 | `400` |
 | 지정가인데 단가 없음 | `400` |
 | 야간 프록시 종목 | `400` |
@@ -132,18 +135,17 @@ curl "http://localhost:4000/api/broker/kis/quote/<ID>"
 curl -X POST http://localhost:4000/api/broker/kis/orders \
   -H 'content-type: application/json' \
   -d '{"accountId":"21","instrumentId":"<ID>","side":"buy",
-       "orderType":"limit","quantity":1,"limitPrice":<하한가+틱>,
-       "confirmationPhrase":"실주문 전송"}'
+       "orderType":"limit","quantity":1,"limitPrice":<하한가+틱>}'
 
 # 4) 응답의 orderNo / orderBranchNo로 즉시 취소
 curl -X POST http://localhost:4000/api/broker/kis/orders/amend \
   -H 'content-type: application/json' \
   -d '{"accountId":"21","action":"cancel","orderNo":"<ODNO>",
        "orderBranchNo":"<KRX_FWDG_ORD_ORGNO>","orderTypeCode":"00",
-       "quantityAll":true,"confirmationPhrase":"실주문 전송"}'
+       "quantityAll":true}'
 ```
 
-화면으로도 같다. 매매 탭 > 실계좌 주문에 확인 문구를 넣고 전송한 뒤,
+화면으로도 같다. 종목 화면 > 오른쪽 주문 탭 > 실계좌 주문에서 매수/매도를 누르고 확인한 뒤,
 바로 옆 **미체결 주문**에서 취소를 누른다.
 
 > 확인 후 반드시 취소하고 `KIS_LIVE_ORDER_ENABLED` 없이 서버를 다시 띄운다.
@@ -158,7 +160,7 @@ curl -X POST http://localhost:4000/api/broker/kis/orders/amend \
 장 마감 후에 넣는 게 정상인 기능에 장중 잣대를 대면 정상 사용을 막기 때문이다.
 
 화면으로 하는 게 편하다. **포트폴리오 > 실계좌 예약주문** 카드에서
-확인 문구 `실주문 전송`을 넣으면 등록·취소 버튼이 함께 열린다. 종목은 차트에서 고른 것을 쓴다.
+등록·취소 버튼은 게이트가 열려 있으면 바로 쓸 수 있다. 종목은 차트에서 고른 것을 쓴다.
 
 > 등록 응답의 `reservationSeq`는 **취소에 반드시 필요하다.** 조회 필터(`CNCL_YN` 등)의
 > 의미가 확실하지 않아 목록에 안 잡힐 수 있으므로, 등록 직후 화면 메시지와
@@ -173,7 +175,7 @@ KIS_LIVE_ORDER_ENABLED=true npm run dev:api
 curl -X POST http://localhost:4000/api/broker/kis/reserved-orders \
   -H 'content-type: application/json' \
   -d '{"accountId":"21","instrumentId":"KR:KOSPI:005930","side":"buy",
-       "quantity":1,"limitPrice":<지정가>,"confirmationPhrase":"실주문 전송"}'
+       "quantity":1,"limitPrice":<지정가>}'
 
 # 목록 확인
 curl "http://localhost:4000/api/broker/kis/reserved-orders?accountId=21"
@@ -184,8 +186,7 @@ curl "http://localhost:4000/api/broker/kis/reserved-orders?accountId=21"
 # (주문일자는 등록한 날짜 YYYYMMDD)
 curl -X POST http://localhost:4000/api/broker/kis/reserved-orders/cancel \
   -H 'content-type: application/json' \
-  -d '{"accountId":"21","reservationSeq":"<SEQ>","reservationOrderDate":"<YYYYMMDD>",
-       "confirmationPhrase":"실주문 전송"}'
+  -d '{"accountId":"21","reservationSeq":"<SEQ>","reservationOrderDate":"<YYYYMMDD>"}'
 ```
 
 > ⚠ **예약주문은 취소하지 않으면 다음 개장일에 실제로 주문이 나간다.** 반드시 취소한다.
@@ -301,13 +302,14 @@ WS를 하나 더 열어야 한다.
 | 화면 | 붙은 기능 |
 |------|------|
 | 주문 티켓 | 실계좌 매수가능(매수) / 매도가능수량(매도), 한도 초과 참고 경고 |
-| 주문 티켓 · 실계좌 주문 | 게이트 상태 배지, 확인 문구 입력, 전송 버튼 |
+| 주문 티켓 · 실계좌 주문 | 게이트 상태 배지, 매수/매도 버튼, 주문 확인 단계 |
 | 주문 티켓 · 미체결 주문 | 목록 + 정정(단가 입력) / 취소 |
 | 주문 티켓 · 실시간 통보 | 접수·체결·거부가 실시간으로 쌓임 (HTS ID 필요) |
 | 포트폴리오 | 실계좌 잔고, 주문·체결 감사 기록, 기간별 매매손익, 리스크 룰 편집, 주문 전송 기록, 예약주문 목록·취소 |
 
-전송 버튼은 **서버 게이트와 프런트 검증을 모두 통과해야** 열린다. 확인 문구를 정확히
-입력해도 `KIS_LIVE_ORDER_ENABLED`가 꺼져 있으면 잠긴 채로 남는 것을 확인했다.
+매수/매도 버튼은 **프런트 검증을 통과해야** 열리고, 그다음 주문 확인 단계의 전송
+버튼은 **서버 게이트까지 통과해야** 열린다. `KIS_LIVE_ORDER_ENABLED`가 꺼져 있으면
+확인 단계까지 가더라도 전송 버튼이 잠긴 채로 남는 것을 확인했다.
 
 ## 리스크 룰 (`trading_risk_rules`)
 
@@ -343,11 +345,11 @@ WS를 하나 더 열어야 한다.
 
 | 상태 | 언제 |
 |------|------|
-| `blocked` | 게이트가 닫혀 있거나 확인 문구·수량·단가·종목·계좌 검증에 막힘 |
+| `blocked` | 게이트가 닫혀 있거나 수량·단가·종목·계좌·리스크 룰 검증에 막힘 |
 | `submitted` | 브로커가 접수함. `orderNo` / `orderBranchNo` 저장 |
 | `rejected` | 브로커가 거부함. 사유가 `message`에 남음 |
 
-계좌번호(CANO)·앱키·확인 문구는 저장하지 않는다. 화면용 계좌 id만 남긴다.
+계좌번호(CANO)·앱키는 저장하지 않는다. 화면용 계좌 id만 남긴다.
 기록 저장이 실패해도 주문 응답 자체는 깨지지 않는다(실패 시 서버 로그에 경고).
 
 ## 다음 작업 순서

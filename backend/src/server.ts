@@ -72,11 +72,6 @@ const STREAM_SUBSCRIBE_LIMIT = 80;
 /** 매수가능 조회가 성립하는 국내 자산 유형. 지수·선물·야간 프록시는 주문 대상이 아니다. */
 const ORDERABLE_DOMESTIC_ASSET_TYPES = new Set<InstrumentAssetType>(['stock', 'etf', 'etn']);
 const DEFAULT_EXECUTION_DAYS = 30;
-/**
- * 실주문 전송 시 사용자가 그대로 입력해야 하는 확인 문구.
- * UI 체크박스만으로는 오발주를 막지 못하므로 서버가 문구 자체를 검증한다.
- */
-const LIVE_ORDER_CONFIRMATION = '실주문 전송';
 
 function normalizeSymbolList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -316,7 +311,7 @@ async function main(): Promise<void> {
   app.post<{ Body: Partial<PlaceReservedOrderRequest> }>(
     '/api/broker/kis/reserved-orders',
     async (req, reply) => {
-      const { accountId, instrumentId, side, quantity, limitPrice, endDate, confirmationPhrase } = req.body;
+      const { accountId, instrumentId, side, quantity, limitPrice, endDate } = req.body;
       const auditBase = {
         accountId: accountId ?? '(미지정)',
         action: 'place' as const,
@@ -334,11 +329,6 @@ async function main(): Promise<void> {
       if (!gate.enabled) {
         await block('실주문이 차단되어 있습니다.', gate.blockers);
         return reply.code(403).send({ message: '실주문이 차단되어 있습니다.', gate });
-      }
-      if (confirmationPhrase !== LIVE_ORDER_CONFIRMATION) {
-        const message = `확인 문구가 일치하지 않습니다. '${LIVE_ORDER_CONFIRMATION}'을 입력하세요.`;
-        await block(message, ['확인 문구 불일치']);
-        return reply.code(400).send({ message });
       }
       if (!instrumentId || (side !== 'buy' && side !== 'sell')) {
         const message = '종목과 주문 방향이 필요합니다.';
@@ -429,12 +419,9 @@ async function main(): Promise<void> {
   app.post<{ Body: Partial<CancelReservedOrderRequest> }>(
     '/api/broker/kis/reserved-orders/cancel',
     async (req, reply) => {
-      const { accountId, reservationSeq, reservationOrderDate, reservationOrgNo, confirmationPhrase } = req.body;
+      const { accountId, reservationSeq, reservationOrderDate, reservationOrgNo } = req.body;
       const gate = evaluateLiveOrderGate();
       if (!gate.enabled) return reply.code(403).send({ message: '실주문이 차단되어 있습니다.', gate });
-      if (confirmationPhrase !== LIVE_ORDER_CONFIRMATION) {
-        return reply.code(400).send({ message: `확인 문구가 일치하지 않습니다. '${LIVE_ORDER_CONFIRMATION}'을 입력하세요.` });
-      }
       if (!reservationSeq || !reservationOrderDate) {
         return reply.code(400).send({ message: '예약주문순번과 주문일자가 필요합니다.' });
       }
@@ -519,7 +506,7 @@ async function main(): Promise<void> {
   // 게이트가 열려 있어야만 동작한다. 기본값은 항상 차단이다.
   // 보내지 못한 시도도 trading_broker_orders에 blocked로 남긴다.
   app.post<{ Body: Partial<PlaceLiveOrderRequest> }>('/api/broker/kis/orders', async (req, reply) => {
-    const { accountId, instrumentId, side, orderType, quantity, limitPrice, confirmationPhrase } = req.body;
+    const { accountId, instrumentId, side, orderType, quantity, limitPrice } = req.body;
     const auditBase = {
       accountId: accountId ?? '(미지정)',
       action: 'place' as const,
@@ -544,11 +531,6 @@ async function main(): Promise<void> {
     if (!gate.enabled) {
       await block('실주문이 차단되어 있습니다.', gate.blockers);
       return reply.code(403).send({ message: '실주문이 차단되어 있습니다.', gate });
-    }
-    if (confirmationPhrase !== LIVE_ORDER_CONFIRMATION) {
-      const message = `확인 문구가 일치하지 않습니다. '${LIVE_ORDER_CONFIRMATION}'을 입력하세요.`;
-      await block(message, ['확인 문구 불일치']);
-      return reply.code(400).send({ message });
     }
     if (!instrumentId || (side !== 'buy' && side !== 'sell') || (orderType !== 'market' && orderType !== 'limit')) {
       const message = '주문 방향 또는 주문 유형이 올바르지 않습니다.';
@@ -682,11 +664,6 @@ async function main(): Promise<void> {
     if (!gate.enabled) {
       await block('실주문이 차단되어 있습니다.', gate.blockers);
       return reply.code(403).send({ message: '실주문이 차단되어 있습니다.', gate });
-    }
-    if (req.body.confirmationPhrase !== LIVE_ORDER_CONFIRMATION) {
-      const message = `확인 문구가 일치하지 않습니다. '${LIVE_ORDER_CONFIRMATION}'을 입력하세요.`;
-      await block(message, ['확인 문구 불일치']);
-      return reply.code(400).send({ message });
     }
     if (action !== 'amend' && action !== 'cancel') {
       const message = 'action은 amend 또는 cancel이어야 합니다.';

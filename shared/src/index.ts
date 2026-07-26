@@ -541,7 +541,6 @@ export interface PlaceLiveOrderRequest {
   /** 지정가일 때 필수 */
   limitPrice?: number;
   /** 사용자 2단계 확인. 서버가 값 자체를 검증한다. */
-  confirmationPhrase: string;
 }
 
 /** 실주문 전송 결과 */
@@ -574,7 +573,6 @@ export interface AmendLiveOrderRequest {
   /** 정정 시 새 단가. 취소는 무시된다 */
   limitPrice?: number;
   quantityAll: boolean;
-  confirmationPhrase: string;
 }
 
 /**
@@ -623,7 +621,7 @@ export type BrokerOrderRecordStatus = 'blocked' | 'submitted' | 'rejected';
 
 /**
  * 실계좌 주문 전송 시도 1건의 감사 기록.
- * 보내지 못한 시도(`blocked`)도 같은 목록에 남는다. 계좌번호·확인 문구는 담기지 않는다.
+ * 보내지 못한 시도(`blocked`)도 같은 목록에 남는다. 계좌번호는 담기지 않는다.
  */
 export interface BrokerOrderRecord {
   id: string;
@@ -657,7 +655,6 @@ export interface PlaceReservedOrderRequest {
   limitPrice: number;
   /** 예약 종료일자 YYYYMMDD. 생략하면 익영업일 1회 */
   endDate?: string;
-  confirmationPhrase: string;
 }
 
 /**
@@ -671,7 +668,6 @@ export interface CancelReservedOrderRequest {
   /** 예약주문 주문일자 YYYYMMDD */
   reservationOrderDate: string;
   reservationOrgNo?: string;
-  confirmationPhrase: string;
 }
 
 export interface CreateOrderRequest {

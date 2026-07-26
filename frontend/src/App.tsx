@@ -560,8 +560,6 @@ const SEARCH_QUOTE_TARGETS = 10;
 const RECENT_INSTRUMENT_LIMIT = 8;
 // 매수가능 조회는 실계좌 API라 지정가를 타이핑하는 동안 매 글자마다 호출하지 않는다.
 const ORDERABILITY_DEBOUNCE_MS = 700;
-/** 실주문 확인 문구. 서버(`LIVE_ORDER_CONFIRMATION`)와 반드시 같아야 한다. */
-const LIVE_ORDER_CONFIRMATION = '실주문 전송';
 const ORDERABLE_DOMESTIC_ASSET_TYPES = new Set<Instrument['assetType']>(['stock', 'etf', 'etn']);
 const STORAGE_PREFIX = 'investment-monitor:';
 
@@ -1602,8 +1600,6 @@ export function App(): JSX.Element {
   const [kisOpenOrders, setKisOpenOrders] = useState<BrokerAmendableOrder[]>([]);
   const [isKisOpenOrdersRefreshing, setIsKisOpenOrdersRefreshing] = useState(false);
   const [kisReservedOrders, setKisReservedOrders] = useState<BrokerReservedOrder[]>([]);
-  /** 예약주문 취소도 확인 문구를 요구한다. 매매 탭 입력과 분리해 포트폴리오에서 따로 받는다. */
-  const [reservedCancelPhrase, setReservedCancelPhrase] = useState('');
   const [isReservedCancelling, setIsReservedCancelling] = useState(false);
   const [reservedSide, setReservedSide] = useState<OrderSide>('buy');
   const [reservedQuantity, setReservedQuantity] = useState('1');
@@ -1619,8 +1615,8 @@ export function App(): JSX.Element {
   const [isRiskSaving, setIsRiskSaving] = useState(false);
   const [riskMessage, setRiskMessage] = useState<string | null>(null);
   const [liveOrderGate, setLiveOrderGate] = useState<LiveOrderGate | null>(null);
-  /** 실주문 확인 문구. 서버가 값 자체를 검증하므로 프런트도 같은 문구를 요구한다. */
-  const [liveOrderPhrase, setLiveOrderPhrase] = useState('');
+  /* 주문 확인 단계를 보여주는 중인지. 실제 증권사 주문 화면과 같은 흐름이다. */
+  const [liveOrderConfirming, setLiveOrderConfirming] = useState(false);
   const [isLiveOrderSubmitting, setIsLiveOrderSubmitting] = useState(false);
   const [liveOrderMessage, setLiveOrderMessage] = useState<string | null>(null);
   /** 정정 중인 주문 id와 새 단가. 취소는 입력이 필요 없다. */
@@ -2895,11 +2891,9 @@ export function App(): JSX.Element {
     if (orderType === 'limit' && (!Number.isFinite(orderLimitPriceNumber) || orderLimitPriceNumber <= 0)) {
       blockers.push('지정가 주문은 단가가 필요합니다.');
     }
-    if (liveOrderPhrase !== LIVE_ORDER_CONFIRMATION) blockers.push(`확인 문구 '${LIVE_ORDER_CONFIRMATION}'을 입력하세요.`);
     return blockers;
   }, [
     liveOrderGate,
-    liveOrderPhrase,
     orderLimitPriceNumber,
     orderQuantityNumber,
     orderType,
@@ -2918,11 +2912,8 @@ export function App(): JSX.Element {
     const price = Number(reservedPrice);
     if (!Number.isFinite(quantity) || quantity <= 0) blockers.push('수량은 0보다 커야 합니다.');
     if (!Number.isFinite(price) || price <= 0) blockers.push('지정가를 입력하세요.');
-    if (reservedCancelPhrase !== LIVE_ORDER_CONFIRMATION) {
-      blockers.push(`확인 문구 '${LIVE_ORDER_CONFIRMATION}'을 입력하세요 (등록·취소 공통).`);
-    }
     return blockers;
-  }, [reservedCancelPhrase, reservedPrice, reservedQuantity, selectedInstrument]);
+  }, [reservedPrice, reservedQuantity, selectedInstrument]);
   const portfolioPositionCount = tradingOverview?.positions.length ?? 0;
   const kisAccountPositionCount = kisAccountSnapshot?.positions.length ?? 0;
   const kisExecutionCount = kisExecutionSnapshot?.executions.length ?? 0;
@@ -3061,13 +3052,12 @@ export function App(): JSX.Element {
         orderType,
         quantity: orderQuantityNumber,
         limitPrice: orderType === 'limit' ? orderLimitPriceNumber : undefined,
-        confirmationPhrase: liveOrderPhrase,
       });
       setLiveOrderMessage(
         `접수됨 · 주문번호 ${result.orderNo || '-'} (지점 ${result.orderBranchNo || '-'}) · ${result.message}`,
       );
-      // 접수 직후 문구를 비워 같은 주문이 연달아 나가지 않게 한다.
-      setLiveOrderPhrase('');
+      // 접수 직후 확인 단계를 닫아 같은 주문이 연달아 나가지 않게 한다.
+      setLiveOrderConfirming(false);
       refreshKisOpenOrders();
       refreshKisOrderLog();
       refreshKisAccountSnapshot();
@@ -3112,7 +3102,7 @@ export function App(): JSX.Element {
   }
 
   async function submitReservedOrder(): Promise<void> {
-    if (!selectedInstrument || reservedCancelPhrase !== LIVE_ORDER_CONFIRMATION) return;
+    if (!selectedInstrument) return;
     const quantity = Number(reservedQuantity);
     const limitPrice = Number(reservedPrice);
     if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(limitPrice) || limitPrice <= 0) {
@@ -3129,14 +3119,12 @@ export function App(): JSX.Element {
         side: reservedSide,
         quantity,
         limitPrice,
-        confirmationPhrase: reservedCancelPhrase,
       });
       // 목록 조회가 못 잡아도 취소하려면 순번이 필요하다. 응답값을 화면에 남긴다.
       setReservedCancelMessage(
         `등록됨 · 예약주문순번 ${result.reservationSeq || '(응답에 없음)'} · ${result.message}` +
           ' — 이 순번을 메모해 두세요. 취소에 필요합니다.',
       );
-      setReservedCancelPhrase('');
       refreshKisReservedOrders();
       refreshKisOrderLog();
     } catch (e) {
@@ -3147,7 +3135,6 @@ export function App(): JSX.Element {
   }
 
   async function cancelReservedOrder(order: BrokerReservedOrder): Promise<void> {
-    if (reservedCancelPhrase !== LIVE_ORDER_CONFIRMATION) return;
     setIsReservedCancelling(true);
     setReservedCancelMessage(null);
     try {
@@ -3155,14 +3142,12 @@ export function App(): JSX.Element {
         accountId: kisAccountId ?? '',
         reservationSeq: order.reservationSeq,
         reservationOrderDate: order.orderDate,
-        confirmationPhrase: reservedCancelPhrase,
       });
       setReservedCancelMessage(
         result.processed
           ? `취소됨 · ${result.message}`
           : `접수됐지만 정상처리 여부가 확인되지 않았습니다 · ${result.message}`,
       );
-      setReservedCancelPhrase('');
       refreshKisReservedOrders();
       refreshKisOrderLog();
     } catch (e) {
@@ -3175,10 +3160,6 @@ export function App(): JSX.Element {
   }
 
   async function submitAmendOrCancel(order: BrokerAmendableOrder, action: 'amend' | 'cancel'): Promise<void> {
-    if (liveOrderPhrase !== LIVE_ORDER_CONFIRMATION) {
-      setLiveOrderMessage(`정정·취소도 확인 문구 '${LIVE_ORDER_CONFIRMATION}'이 필요합니다.`);
-      return;
-    }
     const newPrice = Number(amendPrice);
     if (action === 'amend' && (!Number.isFinite(newPrice) || newPrice <= 0)) {
       setLiveOrderMessage('정정할 새 단가를 입력하세요.');
@@ -3196,12 +3177,10 @@ export function App(): JSX.Element {
         orderTypeCode: order.orderTypeCode,
         limitPrice: action === 'amend' ? newPrice : undefined,
         quantityAll: true,
-        confirmationPhrase: liveOrderPhrase,
       });
       setLiveOrderMessage(`${action === 'amend' ? '정정' : '취소'} 접수됨 · ${result.message}`);
       setAmendingOrderId(null);
       setAmendPrice('');
-      setLiveOrderPhrase('');
       refreshKisOpenOrders();
       refreshKisOrderLog();
     } catch (e) {
@@ -5333,14 +5312,6 @@ export function App(): JSX.Element {
                     </span>
                   </div>
                   <div className="portfolio-card__actions">
-                    <label className="live-order__phrase live-order__phrase--inline">
-                      <input
-                        onChange={(event) => setReservedCancelPhrase(event.target.value)}
-                        placeholder={`등록·취소하려면 '${LIVE_ORDER_CONFIRMATION}' 입력`}
-                        type="text"
-                        value={reservedCancelPhrase}
-                      />
-                    </label>
                     <button className="portfolio-card__refresh" onClick={refreshKisReservedOrders} type="button">
                       새로고침
                     </button>
@@ -5393,9 +5364,7 @@ export function App(): JSX.Element {
                     <button
                       className="live-order__submit"
                       disabled={
-                        !isOrderableDomesticInstrument(selectedInstrument) ||
-                        isReservedCancelling ||
-                        reservedCancelPhrase !== LIVE_ORDER_CONFIRMATION
+                        !isOrderableDomesticInstrument(selectedInstrument) || isReservedCancelling
                       }
                       onClick={() => void submitReservedOrder()}
                       type="button"
@@ -5437,7 +5406,7 @@ export function App(): JSX.Element {
                           </em>
                           {!order.canceled && (
                             <button
-                              disabled={isReservedCancelling || reservedCancelPhrase !== LIVE_ORDER_CONFIRMATION}
+                              disabled={isReservedCancelling}
                               onClick={() => void cancelReservedOrder(order)}
                               type="button"
                             >
@@ -5834,31 +5803,60 @@ export function App(): JSX.Element {
                 </em>
                 <span>{liveOrderGate?.isProdEnv ? '실전(prod)' : '모의(vts)'}</span>
               </div>
+              {/*
+                예전엔 `실주문 전송`을 그대로 받아치는 문구 입력이 있었다. 클라이언트가
+                아는 상수를 클라이언트가 다시 적는 거라 오발주를 막는 힘은 없었고,
+                증권사 화면에서 볼 수 없는 모양이었다. 실제 주문 화면이 하는 대로
+                주문 내용을 보여주고 한 번 확인받는다.
+              */}
               <div className="live-order__body">
-                <label className="live-order__phrase">
-                  <span>확인 문구</span>
-                  <input
-                    onChange={(event) => setLiveOrderPhrase(event.target.value)}
-                    placeholder={LIVE_ORDER_CONFIRMATION}
-                    type="text"
-                    value={liveOrderPhrase}
-                  />
-                </label>
-                <button
-                  className="live-order__submit"
-                  data-side={orderSide}
-                  disabled={!liveOrderCanSubmit}
-                  onClick={() => void submitLiveOrder()}
-                  type="button"
-                >
-                  {isLiveOrderSubmitting
-                    ? '전송 중'
-                    : `실주문 ${orderSide === 'buy' ? '매수' : '매도'} ${formatNumber(orderQuantityNumber)}주`}
-                </button>
+                {liveOrderConfirming ? (
+                  <div className="live-order__confirm">
+                    <p>
+                      <strong>{selectedInstrument?.name ?? '-'}</strong>
+                      <span>
+                        {formatNumber(orderQuantityNumber)}주 ·{' '}
+                        {orderType === 'market'
+                          ? '시장가'
+                          : `지정가 ${formatCurrencyPrice(orderLimitPriceNumber, selectedCurrency)}`}
+                      </span>
+                      {/*
+                        실주문은 kisAccountId로 나간다. activeTradingAccount는 paper
+                        티켓 쪽 계정이라 여기 적으면 `Paper KRW`처럼 실제로 주문이
+                        나가지 않는 계좌가 확인 화면에 뜬다.
+                      */}
+                      <em>{kisAccounts.find((account) => account.id === kisAccountId)?.label ?? kisAccountId}</em>
+                    </p>
+                    <div className="live-order__confirm-actions">
+                      <button onClick={() => setLiveOrderConfirming(false)} type="button">
+                        취소
+                      </button>
+                      <button
+                        className="live-order__submit"
+                        data-side={orderSide}
+                        disabled={!liveOrderCanSubmit}
+                        onClick={() => void submitLiveOrder()}
+                        type="button"
+                      >
+                        {isLiveOrderSubmitting ? '전송 중' : '주문 확인'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    className="live-order__submit"
+                    data-side={orderSide}
+                    disabled={liveOrderBlockers.length > 0}
+                    onClick={() => setLiveOrderConfirming(true)}
+                    type="button"
+                  >
+                    {orderSide === 'buy' ? '매수' : '매도'}
+                  </button>
+                )}
               </div>
               <div className="live-order__messages">
                 {liveOrderBlockers.length === 0 ? (
-                  <em data-tone="warn">전송 준비됨. 누르면 실계좌로 주문이 나갑니다.</em>
+                  <em data-tone="warn">실계좌 주문입니다. 확인하면 그대로 접수됩니다.</em>
                 ) : (
                   liveOrderBlockers.map((blocker) => <em key={blocker}>{blocker}</em>)
                 )}

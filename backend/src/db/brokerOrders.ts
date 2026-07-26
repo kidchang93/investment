@@ -9,7 +9,7 @@ import type { BrokerOrderRecord, OrderSide, OrderType } from '@invest/shared';
  * "보내지 못한 시도"까지 남겨야 하기 때문이다. 게이트에 막힌 주문도 버리지 않고
  * `blocked`로 남겨 왜 막혔는지 추적한다.
  *
- * 계좌번호(CANO)·앱키·확인 문구는 **여기에 저장하지 않는다.** 화면용 계좌 id만 남긴다.
+ * 계좌번호(CANO)·앱키는 **여기에 저장하지 않는다.** 화면용 계좌 id만 남긴다.
  */
 
 interface BrokerOrderRow {

@@ -5,7 +5,7 @@ import type { OrderSide, OrderType, RiskRuleSet, RiskVerdict } from '@invest/sha
 /**
  * 계좌별 실주문 리스크 룰.
  *
- * 게이트(`KIS_LIVE_ORDER_ENABLED` + 확인 문구)는 "실주문을 켰는가"만 본다.
+ * 게이트(`KIS_LIVE_ORDER_ENABLED`)는 "실주문을 켰는가"만 본다.
  * 여기서는 "이 주문을 내도 되는가"를 본다 — 1회 한도, 일일 한도, 종목 제한, 장 시간.
  *
  * 판정은 항상 서버에서 한다. 프런트는 결과를 보여줄 뿐 우회할 수 없다.

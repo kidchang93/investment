@@ -5117,7 +5117,6 @@ button {
   }
 }
 
-/* 예약주문 카드 헤더의 확인 문구 입력. 표 안이 아니라 헤더에 있어 폭을 줄인다. */
 .live-order__phrase--inline {
   flex: 0 1 220px;
 }
@@ -5187,4 +5186,62 @@ button {
 .app :is(a, button, input, select, textarea, [tabindex]):focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
+}
+
+/*
+ * 실주문 확인 단계. 예전에는 `실주문 전송`이라는 문구를 그대로 받아치게 했는데,
+ * 클라이언트가 아는 상수를 클라이언트가 다시 적는 것뿐이라 오발주를 막는 힘이
+ * 없었다. 실제 증권사 주문 화면처럼 무엇이 나가는지 보여주고 한 번 확인받는다.
+ */
+.live-order__confirm {
+  display: grid;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid rgba(229, 72, 77, 0.4);
+  border-radius: 6px;
+  background: rgba(229, 72, 77, 0.08);
+}
+
+.live-order__confirm p {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.live-order__confirm strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.live-order__confirm span {
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-order__confirm em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.live-order__confirm-actions {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px;
+}
+
+.live-order__confirm-actions > button:first-child {
+  min-height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.live-order__confirm-actions > button:first-child:hover {
+  color: var(--text);
 }
