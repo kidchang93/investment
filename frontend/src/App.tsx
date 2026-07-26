@@ -3,7 +3,6 @@ import {
   addWatchlistItem,
   cancelKisReservedOrder,
   placeKisReservedOrder,
-  createOrder,
   createWatchlist,
   deleteWatchlist,
   amendKisLiveOrder,
@@ -28,7 +27,6 @@ import {
   fetchInstrumentQuote,
   fetchInstrumentQuotes,
   fetchTerminalInstruments,
-  fetchTradingOverview,
   fetchUsdKrwExchangeRate,
   fetchWatchlistItems,
   fetchWatchlists,
@@ -62,7 +60,6 @@ import type {
   OrderType,
   PriceSign,
   Quote,
-  TradingOverview,
   Trade,
   WatchlistGroup,
 } from '@invest/shared';
@@ -1063,25 +1060,6 @@ function formatMoney(n: number | undefined, currency = 'KRW'): string {
   return formatCurrencyPrice(n, currency);
 }
 
-function orderStatusLabel(status: string): string {
-  switch (status) {
-    case 'blocked':
-      return '차단';
-    case 'accepted':
-      return '접수';
-    case 'submitted':
-      return '전송';
-    case 'filled':
-      return '체결';
-    case 'canceled':
-      return '취소';
-    case 'rejected':
-      return '거부';
-    default:
-      return status;
-  }
-}
-
 function brokerExecutionStatusLabel(status: BrokerExecutionStatus): string {
   switch (status) {
     case 'filled':
@@ -1640,7 +1618,6 @@ export function App(): JSX.Element {
   const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>(() =>
     readStoredValue('sidePanelTab', 'discover', SIDE_PANEL_OPTIONS.map((option) => option.key)),
   );
-  const [tradingOverview, setTradingOverview] = useState<TradingOverview | null>(null);
   const [kisAccounts, setKisAccounts] = useState<BrokerAccountRef[]>([]);
   const [kisAccountId, setKisAccountId] = useState<string | null>(null);
   const [kisAccountSnapshot, setKisAccountSnapshot] = useState<BrokerAccountSnapshot | null>(null);
@@ -1682,8 +1659,6 @@ export function App(): JSX.Element {
   const [orderTimeInForce, setOrderTimeInForce] = useState<OrderTimeInForce>('day');
   const [orderQuantity, setOrderQuantity] = useState('1');
   const [orderLimitPrice, setOrderLimitPrice] = useState('');
-  const [orderAcknowledged, setOrderAcknowledged] = useState(false);
-  const [isOrderSubmitting, setIsOrderSubmitting] = useState(false);
   const [simulationCash, setSimulationCash] = useState(() => {
     const value = Number(window.localStorage.getItem(`${STORAGE_PREFIX}simulationCash`));
     return Number.isFinite(value) && value >= 0 ? value : 1_000_000;
@@ -1839,12 +1814,6 @@ export function App(): JSX.Element {
   useEffect(() => {
     fetchInstrumentCategories()
       .then(setCategories)
-      .catch((e) => setError(toErrorMessage(e)));
-  }, []);
-
-  useEffect(() => {
-    fetchTradingOverview()
-      .then(setTradingOverview)
       .catch((e) => setError(toErrorMessage(e)));
   }, []);
 
@@ -2856,10 +2825,6 @@ export function App(): JSX.Element {
     bottomDockTab === 'volume' ? '거래량' : bottomDockTab === 'trades' ? '체결' : '뉴스';
   const bottomDockModeLabel =
     BOTTOM_DOCK_MODE_OPTIONS.find((option) => option.key === bottomDockMode)?.label ?? bottomDockMode;
-  const activeTradingAccount = tradingOverview?.accounts[0];
-  const selectedPosition = tradingOverview?.positions.find(
-    (position) => position.instrument.id === selectedInstrument?.id,
-  );
   const orderQuantityNumber = Number(orderQuantity);
   const orderLimitPriceNumber = Number(orderLimitPrice);
   const orderEstimatedPrice = snapshot?.price;
@@ -2877,46 +2842,6 @@ export function App(): JSX.Element {
     selectedInstrument?.currency,
     usdKrwRate,
   );
-  const orderRiskMessages = useMemo(() => {
-    const messages: string[] = [];
-    if (!selectedInstrument) messages.push('종목을 먼저 선택하세요.');
-    if (!activeTradingAccount) messages.push('매매 계정을 불러오는 중입니다.');
-    if (!Number.isFinite(orderQuantityNumber) || orderQuantityNumber <= 0) messages.push('수량은 0보다 커야 합니다.');
-    if (!orderEstimatedPrice) messages.push('현재가를 확인할 수 없습니다.');
-    if (orderType === 'limit' && (!Number.isFinite(orderLimitPriceNumber) || orderLimitPriceNumber <= 0)) {
-      messages.push('지정가를 입력하세요.');
-    }
-    if (selectedInstrument && activeTradingAccount && selectedInstrument.currency !== activeTradingAccount.baseCurrency) {
-      messages.push(
-        `계정 통화(${activeTradingAccount.baseCurrency})와 종목 통화(${selectedInstrument.currency})가 달라 아직 주문할 수 없습니다.`,
-      );
-    }
-    if (activeTradingAccount && orderEstimatedNotional !== undefined) {
-      if (orderEstimatedNotional > activeTradingAccount.maxOrderNotional) {
-        messages.push(`1회 주문 한도 ${formatMoney(activeTradingAccount.maxOrderNotional)}를 초과했습니다.`);
-      }
-      if (orderSide === 'buy' && orderEstimatedNotional > activeTradingAccount.buyingPower) {
-        messages.push('주문 가능 금액을 초과했습니다.');
-      }
-    }
-    if (orderSide === 'sell' && (selectedPosition?.quantity ?? 0) < orderQuantityNumber) {
-      messages.push('보유 수량보다 많은 매도 주문입니다.');
-    }
-    if (!orderAcknowledged) messages.push('주문 확인 체크가 필요합니다.');
-    return messages;
-  }, [
-    activeTradingAccount,
-    orderAcknowledged,
-    orderEstimatedNotional,
-    orderEstimatedPrice,
-    orderLimitPriceNumber,
-    orderQuantityNumber,
-    orderSide,
-    orderType,
-    selectedInstrument,
-    selectedInstrument?.currency,
-    selectedPosition?.quantity,
-  ]);
   // 실계좌 한도는 paper 주문을 막지 않는다. 실주문 게이트를 대비한 참고 경고로만 노출한다.
   const orderLiveNotices = useMemo(() => {
     const notices: string[] = [];
@@ -2940,9 +2865,6 @@ export function App(): JSX.Element {
     }
     return notices;
   }, [kisOrderability, kisSellability, orderEstimatedNotional, orderQuantityNumber, orderSide]);
-  const orderCanSubmit =
-    Boolean(selectedInstrument && activeTradingAccount && orderRiskMessages.length === 0 && orderEstimatedPrice) &&
-    !isOrderSubmitting;
   /**
    * 실주문 전송 조건. 서버 게이트와 같은 항목을 프런트에서도 막는다.
    * paper 주문 확인 체크(`orderAcknowledged`)와는 무관하다.
@@ -2978,7 +2900,6 @@ export function App(): JSX.Element {
     if (!Number.isFinite(price) || price <= 0) blockers.push('지정가를 입력하세요.');
     return blockers;
   }, [reservedPrice, reservedQuantity, selectedInstrument]);
-  const portfolioPositionCount = tradingOverview?.positions.length ?? 0;
   const kisAccountPositionCount = kisAccountSnapshot?.positions.length ?? 0;
   const kisExecutionCount = kisExecutionSnapshot?.executions.length ?? 0;
   const kisOpenExecutionCount =
@@ -2993,16 +2914,6 @@ export function App(): JSX.Element {
         : kisAccountSnapshot.unrealizedPnl < 0
           ? 'down'
           : 'flat';
-  const portfolioMarketValue = useMemo(
-    () =>
-      tradingOverview?.positions.reduce((total, position) => {
-        const positionSnapshot = getSnapshotForInstrument(position.instrument);
-        return total + position.quantity * (positionSnapshot?.price ?? position.averagePrice);
-      }, 0) ?? 0,
-    [quotesByCode, stream.trades, tradingOverview?.positions],
-  );
-  const recentFillTotal =
-    tradingOverview?.recentFills.slice(0, 10).reduce((total, fill) => total + fill.notional, 0) ?? 0;
 
   function selectInstrument(instrument: Instrument): void {
     setSelectedInstrument(instrument);
@@ -3251,31 +3162,6 @@ export function App(): JSX.Element {
       setLiveOrderMessage(String(e instanceof Error ? e.message : e));
     } finally {
       setIsLiveOrderSubmitting(false);
-    }
-  }
-
-  async function submitOrderIntent(): Promise<void> {
-    if (!selectedInstrument || !activeTradingAccount || !orderEstimatedPrice) return;
-    setIsOrderSubmitting(true);
-    try {
-      await createOrder({
-        accountId: activeTradingAccount.id,
-        instrumentId: selectedInstrument.id,
-        side: orderSide,
-        orderType,
-        timeInForce: orderTimeInForce,
-        quantity: orderQuantityNumber,
-        limitPrice: orderType === 'limit' ? orderLimitPriceNumber : undefined,
-        estimatedPrice: orderEstimatedPrice,
-        userAcknowledged: orderAcknowledged,
-      });
-      setOrderAcknowledged(false);
-      const overview = await fetchTradingOverview();
-      setTradingOverview(overview);
-    } catch (e) {
-      setError(toErrorMessage(e));
-    } finally {
-      setIsOrderSubmitting(false);
     }
   }
 
@@ -3643,19 +3529,13 @@ export function App(): JSX.Element {
               <div className="page-heading__account">
                 <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
               </div>
-              {/*
-                예전엔 모의 계좌 잔고만 적혀 있었다. 바로 아래가 실계좌 섹션이라
-                페이지 대표 금액이 실계좌 돈으로 읽혔다. 둘 다 이름표와 함께 보여준다.
-              */}
+              {/* 계좌가 하나뿐이라 이름표 없이 금액만 적는다. */}
               <small className="page-heading__balances">
                 <b data-account="live">
-                  실계좌{' '}
+                  예수금{' '}
                   {kisAccountSnapshot?.configured
                     ? formatMoney(kisAccountSnapshot.cashBalance, kisAccountSnapshot.baseCurrency)
                     : '미설정'}
-                </b>
-                <b data-account="paper">
-                  모의계좌 {formatMoney(activeTradingAccount?.cashBalance, activeTradingAccount?.baseCurrency)}
                 </b>
               </small>
             </div>
@@ -5509,148 +5389,6 @@ export function App(): JSX.Element {
                 )}
                 {reservedCancelMessage && <p className="live-order__result">{reservedCancelMessage}</p>}
               </section>
-
-              <h2 className="portfolio-section" data-kind="paper">
-                <span>모의계좌</span>
-                <em>{activeTradingAccount?.label ?? 'paper'} · 실제 주문이 나가지 않습니다</em>
-              </h2>
-              <div className="portfolio-page__metrics">
-                <div>
-                  <span>현금</span>
-                  <strong>{formatMoney(activeTradingAccount?.cashBalance, activeTradingAccount?.baseCurrency)}</strong>
-                </div>
-                <div>
-                  <span>주문 가능</span>
-                  <strong>{formatMoney(activeTradingAccount?.buyingPower, activeTradingAccount?.baseCurrency)}</strong>
-                </div>
-                <div>
-                  <span>보유 종목</span>
-                  <strong>{portfolioPositionCount}개</strong>
-                </div>
-                <div>
-                  <span>평가 기준액</span>
-                  <strong>{formatMoney(portfolioMarketValue, activeTradingAccount?.baseCurrency)}</strong>
-                </div>
-                <div>
-                  <span>최근 체결액</span>
-                  <strong>{formatMoney(recentFillTotal, activeTradingAccount?.baseCurrency)}</strong>
-                </div>
-              </div>
-
-              <div className="portfolio-page__grid">
-                <section className="portfolio-card" aria-label="보유 포지션">
-                  <div className="portfolio-card__header">
-                    <strong>보유 포지션</strong>
-                    <span>{portfolioPositionCount}개</span>
-                  </div>
-                  <div className="portfolio-table portfolio-table--positions">
-                    <div className="portfolio-table__head">
-                      <span>종목</span>
-                      <span>수량</span>
-                      <span>평균단가</span>
-                      <span>현재가</span>
-                      <span>평가금액</span>
-                    </div>
-                    {tradingOverview?.positions.map((position) => {
-                      const positionSnapshot = getSnapshotForInstrument(position.instrument);
-                      const markPrice = positionSnapshot?.price ?? position.averagePrice;
-                      return (
-                        <button
-                          className="portfolio-table__row"
-                          key={position.id}
-                          onClick={() => {
-                            selectInstrument(position.instrument);
-                            setActivePage('market');
-                            setSidePanelTab('order');
-                          }}
-                          type="button"
-                        >
-                          <strong>{position.instrument.symbol}</strong>
-                          <span>{formatNumber(position.quantity)}</span>
-                          <span>{formatMoney(position.averagePrice, position.currency)}</span>
-                          <span>{formatMoney(markPrice, position.currency)}</span>
-                          <span>{formatMoney(position.quantity * markPrice, position.currency)}</span>
-                        </button>
-                      );
-                    })}
-                    {portfolioPositionCount === 0 && <div className="portfolio-table__empty">보유 포지션 없음</div>}
-                  </div>
-                </section>
-
-                <section className="portfolio-card" aria-label="최근 주문">
-                  <div className="portfolio-card__header">
-                    <strong>최근 주문</strong>
-                    <span>{tradingOverview?.recentOrders.length ?? 0}건</span>
-                  </div>
-                  <div className="portfolio-table portfolio-table--orders">
-                    <div className="portfolio-table__head">
-                      <span>상태</span>
-                      <span>종목</span>
-                      <span>방향</span>
-                      <span>수량</span>
-                      <span>주문액</span>
-                    </div>
-                    {tradingOverview?.recentOrders.slice(0, 12).map((order) => (
-                      <button
-                        className="portfolio-table__row"
-                        key={order.id}
-                        onClick={() => {
-                          selectInstrument(order.instrument);
-                          setActivePage('market');
-                            setSidePanelTab('order');
-                        }}
-                        type="button"
-                      >
-                        <em data-status={order.status}>{orderStatusLabel(order.status)}</em>
-                        <strong>{order.instrument.symbol}</strong>
-                        <span>{order.side === 'buy' ? '매수' : '매도'}</span>
-                        <span>{formatNumber(order.quantity)}</span>
-                        <span>{formatMoney(order.estimatedNotional, order.currency)}</span>
-                      </button>
-                    ))}
-                    {(!tradingOverview || tradingOverview.recentOrders.length === 0) && (
-                      <div className="portfolio-table__empty">주문 기록 없음</div>
-                    )}
-                  </div>
-                </section>
-
-                <section className="portfolio-card portfolio-card--wide" aria-label="최근 체결">
-                  <div className="portfolio-card__header">
-                    <strong>최근 체결</strong>
-                    <span>{tradingOverview?.recentFills.length ?? 0}건</span>
-                  </div>
-                  <div className="portfolio-table portfolio-table--fills">
-                    <div className="portfolio-table__head">
-                      <span>종목</span>
-                      <span>방향</span>
-                      <span>수량</span>
-                      <span>체결가</span>
-                      <span>체결액</span>
-                    </div>
-                    {tradingOverview?.recentFills.slice(0, 16).map((fill) => (
-                      <button
-                        className="portfolio-table__row"
-                        key={fill.id}
-                        onClick={() => {
-                          selectInstrument(fill.instrument);
-                          setActivePage('market');
-                            setSidePanelTab('order');
-                        }}
-                        type="button"
-                      >
-                        <strong>{fill.instrument.symbol}</strong>
-                        <span>{fill.side === 'buy' ? '매수' : '매도'}</span>
-                        <span>{formatNumber(fill.quantity)}</span>
-                        <span>{formatMoney(fill.price, fill.currency)}</span>
-                        <span>{formatMoney(fill.notional, fill.currency)}</span>
-                      </button>
-                    ))}
-                    {(!tradingOverview || tradingOverview.recentFills.length === 0) && (
-                      <div className="portfolio-table__empty">체결 기록 없음</div>
-                    )}
-                  </div>
-                </section>
-              </div>
             </section>
           )}
         </main>
@@ -5711,15 +5449,6 @@ export function App(): JSX.Element {
               <div className="order-ticket__account">
                 <span className="order-ticket__account-label">실계좌</span>
                 <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
-                {/*
-                  용어를 맞추고 나니 계좌 이름과 이 배지가 똑같이 `모의계좌`가 됐다.
-                  예전엔 `Paper KRW` + `PAPER`라 서로 다른 말처럼 보여 중복이 가려져
-                  있었을 뿐이다. 이름이 이미 말해주는 건 빼고, 이름만으로 알 수 없는
-                  경우(실계좌인데 잠겨 있음)에만 띄운다.
-                */}
-                {activeTradingAccount && activeTradingAccount.mode !== 'paper' && (
-                  <span>실계좌 잠김</span>
-                )}
               </div>
             </div>
             <div className="order-ticket__body">
@@ -5794,14 +5523,6 @@ export function App(): JSX.Element {
                   <strong>{formatMoney(orderEstimatedNotional, selectedInstrument?.currency)}</strong>
                   {orderEstimatedNotionalKrw && <small>{orderEstimatedNotionalKrw}</small>}
                 </div>
-                {/*
-                  모의 주문가능(971만)과 실계좌 매수가능(5만)이 나란히 놓인다.
-                  둘 다 "얼마까지 살 수 있나"라서 표시를 안 갈라두면 어느 계좌 돈인지 오해한다.
-                */}
-                <div data-account="paper">
-                  <span>모의 주문가능</span>
-                  <strong>{formatMoney(activeTradingAccount?.buyingPower, activeTradingAccount?.baseCurrency)}</strong>
-                </div>
                 <div data-account="live">
                   <span>{orderSide === 'buy' ? '실계좌 매수가능' : '실계좌 매도가능'}</span>
                   {orderSide === 'buy' ? (
@@ -5832,46 +5553,7 @@ export function App(): JSX.Element {
                     </>
                   )}
                 </div>
-                <div>
-                  <span>보유 수량</span>
-                  <strong>{selectedPosition ? formatNumber(selectedPosition.quantity) : '-'}</strong>
-                </div>
               </div>
-              <div className="order-ticket__risk">
-                <label className="order-ticket__ack">
-                  <input
-                    checked={orderAcknowledged}
-                    onChange={(event) => setOrderAcknowledged(event.target.checked)}
-                    type="checkbox"
-                  />
-                  <span>모의계좌 주문이며 실계좌로 나가지 않습니다</span>
-                </label>
-                <div className="order-ticket__messages">
-                  {orderRiskMessages.length === 0 ? (
-                    <em data-tone="ok">주문 의도 생성 가능</em>
-                  ) : (
-                    orderRiskMessages.map((message) => <em key={message}>{message}</em>)
-                  )}
-                  {orderLiveNotices.map((notice) => (
-                    <em data-tone="live" key={notice}>
-                      {notice}
-                    </em>
-                  ))}
-                </div>
-              </div>
-              <div className="order-ticket__destination">
-                <span className="order-ticket__account-label">모의계좌</span>
-                {/* 이름표가 이미 `모의계좌`라 계좌 이름을 또 적으면 같은 말이 두 번 나온다. */}
-                <em>연습용 · 실제로 체결되지 않습니다</em>
-              </div>
-              <button
-                className="order-ticket__submit"
-                disabled={!orderCanSubmit}
-                onClick={() => void submitOrderIntent()}
-                type="button"
-              >
-                {isOrderSubmitting ? '처리 중' : orderType === 'market' ? '모의 즉시 체결' : '모의 주문 저장'}
-              </button>
             </div>
 
             {/* 실계좌 주문. paper 경로와 시각적으로도 분리해 오발주를 막는다. */}
@@ -5900,11 +5582,7 @@ export function App(): JSX.Element {
                           ? '시장가'
                           : `지정가 ${formatCurrencyPrice(orderLimitPriceNumber, selectedCurrency)}`}
                       </span>
-                      {/*
-                        실주문은 kisAccountId로 나간다. activeTradingAccount는 paper
-                        티켓 쪽 계정이라 여기 적으면 `Paper KRW`처럼 실제로 주문이
-                        나가지 않는 계좌가 확인 화면에 뜬다.
-                      */}
+                      {/* 주문이 실제로 나가는 계좌를 적는다. */}
                       <em>{kisAccounts.find((account) => account.id === kisAccountId)?.label ?? kisAccountId}</em>
                     </p>
                     <div className="live-order__confirm-actions">
@@ -5940,6 +5618,16 @@ export function App(): JSX.Element {
                 ) : (
                   liveOrderBlockers.map((blocker) => <em key={blocker}>{blocker}</em>)
                 )}
+                {/*
+                  미수 없는 매수금액·매도가능수량 안내. 주문을 막지는 않는다 —
+                  미수를 쓰면 넘겨서도 주문할 수 있어서 차단 조건으로 쓰면 틀린다.
+                  예전엔 연습 주문 쪽에 붙어 있었는데 실계좌 제약이라 여기로 옮겼다.
+                */}
+                {orderLiveNotices.map((notice) => (
+                  <em data-tone="live" key={notice}>
+                    {notice}
+                  </em>
+                ))}
               </div>
               {liveOrderMessage && <p className="live-order__result">{liveOrderMessage}</p>}
             </div>
@@ -6065,39 +5753,6 @@ export function App(): JSX.Element {
               )}
             </div>
 
-            {/*
-              지난 주문·체결은 기록이라 아래로 내린다. 예전에는 paper 제출 버튼과
-              실계좌 주문 블록 사이에 끼어 있어, 같은 일을 하는 두 주문 버튼이
-              목록 하나를 사이에 두고 떨어져 있었다.
-            */}
-            {tradingOverview && (
-              <div className="order-ticket__recent" aria-label="최근 주문 의도">
-                <span>최근 주문</span>
-                {tradingOverview.recentOrders.slice(0, 3).map((order) => (
-                  <div key={order.id}>
-                    <strong>{order.instrument.symbol}</strong>
-                    <em data-status={order.status}>{orderStatusLabel(order.status)}</em>
-                    <span>
-                      {order.side === 'buy' ? '매수' : '매도'} {formatNumber(order.quantity)} ·{' '}
-                      {formatMoney(order.estimatedNotional, order.currency)}
-                    </span>
-                  </div>
-                ))}
-                {tradingOverview.recentOrders.length === 0 && <strong>저장된 주문 없음</strong>}
-                <span>최근 체결</span>
-                {tradingOverview.recentFills.slice(0, 3).map((fill) => (
-                  <div key={fill.id}>
-                    <strong>{fill.instrument.symbol}</strong>
-                    <em data-status="filled">체결</em>
-                    <span>
-                      {fill.side === 'buy' ? '매수' : '매도'} {formatNumber(fill.quantity)} ·{' '}
-                      {formatMoney(fill.notional, fill.currency)}
-                    </span>
-                  </div>
-                ))}
-                {tradingOverview.recentFills.length === 0 && <strong>체결 없음</strong>}
-              </div>
-            )}
           </section>}
           {sidePanelTab === 'watch' && <div className="watchlist__summary" aria-label="관심종목 요약">
             <div className="watchlist__summary-counts">
