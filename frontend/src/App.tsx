@@ -2523,25 +2523,30 @@ export function App(): JSX.Element {
     snapshot && snapshot.open !== 0 && openChange !== undefined ? (openChange / snapshot.open) * 100 : undefined;
   const watchedIds = useMemo(() => new Set(watchlist.map((item) => item.id)), [watchlist]);
   const bottomPanelClass = `bottom-panel bottom-panel--${bottomDockMode}`;
-  const comparisonItems = useMemo(() => {
+  /*
+   * 종목 바로가기 줄에 넣을 목록. 최근 본 것이 먼저 오고, 비교를 켜면 관심종목이
+   * 뒤에 이어 붙는다. 중복은 여기서 걸러 같은 종목이 두 번 나오지 않게 한다.
+   */
+  const chipInstruments = useMemo(() => {
     const seen = new Set<string>();
-    const candidates: Instrument[] = [];
-
-    for (const instrument of [...recentInstruments, ...watchlist]) {
-      if (instrument.id === selectedInstrument?.id || seen.has(instrument.id)) continue;
+    const list: Instrument[] = [];
+    const add = (instrument: Instrument): void => {
+      if (seen.has(instrument.id)) return;
       seen.add(instrument.id);
-      candidates.push(instrument);
-    }
+      list.push(instrument);
+    };
+    for (const instrument of recentInstruments) add(instrument);
+    if (showComparePanel) for (const instrument of watchlist) add(instrument);
+    return list.slice(0, 10);
+  }, [recentInstruments, showComparePanel, watchlist]);
 
-    return candidates.slice(0, 6);
-  }, [recentInstruments, selectedInstrument?.id, watchlist]);
   const layoutStateBadges = useMemo(() => {
     const badges: string[] = [];
     if (isFocusMode) badges.push('집중');
     if (isWatchlistCollapsed && !isFocusMode) badges.push('관심 접힘');
     if (bottomDockMode === 'hidden') badges.push('하단 숨김');
     if (bottomDockMode === 'expanded') badges.push('하단 확장');
-    if (showComparePanel) badges.push('비교');
+    if (showComparePanel) badges.push('관심 함께');
     return badges;
   }, [bottomDockMode, isFocusMode, isWatchlistCollapsed, showComparePanel]);
   const chartOverlayBadges = useMemo(() => {
@@ -3604,7 +3609,7 @@ export function App(): JSX.Element {
               <button
                 aria-pressed={showComparePanel}
                 onClick={() => setShowComparePanel((value) => !value)}
-                title="최근/관심 종목 비교 (C)"
+                title="관심종목도 바로가기 줄에 함께 표시 (C)"
                 type="button"
               >
                 비교
@@ -3639,10 +3644,16 @@ export function App(): JSX.Element {
             </div>
           )}
 
-          {activePage !== 'portfolio' && recentInstruments.length > 0 && (
-            <div className="recent-symbols" role="tablist" aria-label="최근 종목">
-              <span className="recent-symbols__label">최근</span>
-              {recentInstruments.map((instrument) => {
+          {/*
+            예전엔 `최근`과 `비교` 두 줄이 따로 있었다. 둘 다 누르면 그 종목으로
+            옮겨가는 같은 동작인 데다, 비교 목록이 최근 목록을 포함하고 있어
+            비교를 켜면 같은 종목이 두 줄에 중복으로 보였다. 한 줄로 합치고
+            비교 버튼은 "관심종목도 이어 붙이기"로 쓴다.
+          */}
+          {activePage !== 'portfolio' && chipInstruments.length > 0 && (
+            <div className="recent-symbols" role="tablist" aria-label="종목 바로가기">
+              <span className="recent-symbols__label">종목</span>
+              {chipInstruments.map((instrument) => {
                 const recentTrade = instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined;
                 const recentQuote = quotesByCode[instrument.id];
                 const recentSnapshot = toSnapshot(
@@ -3678,42 +3689,6 @@ export function App(): JSX.Element {
               >
                 비우기
               </button>
-            </div>
-          )}
-
-          {activePage === 'market' && showComparePanel && (
-            <div className="comparison-strip" aria-label="종목 비교">
-              <span className="comparison-strip__label">비교</span>
-              {comparisonItems.map((instrument) => {
-                const comparisonTrade =
-                  instrument.country === 'KR' ? stream.trades[instrument.providerSymbol] : undefined;
-                const comparisonQuote = quotesByCode[instrument.id];
-                const comparisonSnapshot = toSnapshot(
-                  comparisonTrade,
-                  comparisonQuote,
-                );
-                const comparisonSource = quoteSourceForInstrument(instrument, comparisonTrade, comparisonQuote);
-                return (
-                  <button
-                    key={instrument.id}
-                    onClick={() => selectInstrument(instrument)}
-                    title={`${instrument.name} ${marketLabel(instrument)}`}
-                    type="button"
-                  >
-                    <strong>{instrument.symbol}</strong>
-                    <span>{instrument.name}</span>
-                    <em style={{ color: signColor(comparisonSnapshot?.sign) }}>
-                      {comparisonSnapshot
-                        ? `${formatCurrencyPrice(comparisonSnapshot.price, instrument.currency)} · ${formatRate(comparisonSnapshot.changeRate)}`
-                        : '-'}
-                    </em>
-                    <small data-source={comparisonSource}>{comparisonSource}</small>
-                  </button>
-                );
-              })}
-              {comparisonItems.length === 0 && (
-                <p>최근 종목이나 관심종목을 선택하면 비교할 수 있습니다</p>
-              )}
             </div>
           )}
 
