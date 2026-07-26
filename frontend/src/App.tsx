@@ -1768,11 +1768,15 @@ export function App(): JSX.Element {
   const [tradeProfitDays, setTradeProfitDays] = useState(30);
   /** 서버에 저장된 리스크 룰과, 편집 중인 사본. 저장 성공 시에만 둘을 맞춘다. */
   const [riskRules, setRiskRules] = useState<RiskRuleSet | null>(null);
+  /** 리스크 룰 조회 실패 사유. 게이트와 같은 이유로 null과 따로 둔다. */
+  const [riskRulesError, setRiskRulesError] = useState<string | null>(null);
   const [riskDraft, setRiskDraft] = useState<RiskRuleSet | null>(null);
   const [riskSymbolText, setRiskSymbolText] = useState({ allow: '', block: '' });
   const [isRiskSaving, setIsRiskSaving] = useState(false);
   const [riskMessage, setRiskMessage] = useState<string | null>(null);
   const [liveOrderGate, setLiveOrderGate] = useState<LiveOrderGate | null>(null);
+  /** 게이트 조회가 실패했을 때의 사유. null이 `아직 안 옴`과 `못 받음`을 겸하지 않게 한다. */
+  const [liveOrderGateError, setLiveOrderGateError] = useState<string | null>(null);
   /* 주문 확인 단계를 보여주는 중인지. 실제 증권사 주문 화면과 같은 흐름이다. */
   const [liveOrderConfirming, setLiveOrderConfirming] = useState(false);
   /*
@@ -2177,9 +2181,11 @@ export function App(): JSX.Element {
         setRiskDraft(rules);
         setRiskSymbolText({ allow: rules.symbolAllowlist.join(', '), block: rules.symbolBlocklist.join(', ') });
         setRiskMessage(null);
+        setRiskRulesError(null);
       })
-      .catch(() => {
-        if (!disposed) setRiskRules(null);
+      // 게이트와 같다 — 못 받은 것을 `불러오는 중`으로 두면 오지 않을 답을 기다린다.
+      .catch((e) => {
+        if (!disposed) setRiskRulesError(toErrorMessage(e));
       });
     return () => {
       disposed = true;
@@ -2225,8 +2231,16 @@ export function App(): JSX.Element {
    */
   useEffect(() => {
     fetchKisLiveOrderGate()
-      .then(setLiveOrderGate)
-      .catch(() => setLiveOrderGate(null));
+      .then((gate) => {
+        setLiveOrderGate(gate);
+        setLiveOrderGateError(null);
+      })
+      /*
+       * 받아 둔 값은 지우지 않는다. 지우면 `확인 중`으로 되돌아가 실패가
+       * 로딩처럼 보인다 — 실제로 조회가 깨진 뒤 헤더·주문 패널·차단 사유
+       * 세 곳이 오지 않을 답을 기다리는 문구로 굳어 있었다.
+       */
+      .catch((e) => setLiveOrderGateError(toErrorMessage(e)));
   }, [activePage]);
 
   useEffect(() => {
@@ -2577,15 +2591,28 @@ export function App(): JSX.Element {
    */
   const liveOrderArmed = liveOrderGate?.enabled === true;
   const modeChipState = liveOrderGate ? (liveOrderArmed ? 'true' : 'false') : 'unknown';
+  /*
+   * 게이트를 모르는 상태는 두 가지다 — 아직 안 왔거나, 조회가 실패했거나.
+   * 한 마디를 여기서 만들어 헤더·하단 도크·주문 패널이 같이 쓴다. 예전에는
+   * 세 곳이 각자 `!liveOrderGate ? '확인 중'`이라 실패해도 셋 다 기다리는
+   * 문구를 계속 띄웠다.
+   */
+  const gateUnknownLabel = liveOrderGateError ? '확인 실패' : '확인 중';
   const modeChipLabel = !liveOrderGate
-    ? '확인 중'
+    ? gateUnknownLabel
     : liveOrderArmed
       ? `주문 가능 · ${liveOrderGate.isProdEnv ? '실전 서버' : '모의 서버'}`
       : '주문 잠김';
   /* 하단 도크용. 헤더 배지와 달리 환경 표기는 빼고 짧게 쓴다. */
-  const sessionModeLabel = !liveOrderGate ? '확인 중' : liveOrderArmed ? '주문 가능' : '주문 잠김';
+  const sessionModeLabel = !liveOrderGate
+    ? gateUnknownLabel
+    : liveOrderArmed
+      ? '주문 가능'
+      : '주문 잠김';
   const modeChipTitle = !liveOrderGate
-    ? '실주문을 보낼 수 있는지 확인하는 중입니다'
+    ? (liveOrderGateError
+        ? `실주문을 보낼 수 있는지 확인하지 못했습니다 — ${liveOrderGateError}`
+        : '실주문을 보낼 수 있는지 확인하는 중입니다')
     : liveOrderArmed
       ? `실주문이 열려 있습니다 · ${liveOrderGate.isProdEnv ? 'KIS 실전 서버' : 'KIS 모의 서버'}`
       : `실주문 차단됨 — ${liveOrderGate.blockers.join(' / ')}`;
@@ -3131,7 +3158,13 @@ export function App(): JSX.Element {
    */
   const liveOrderBlockers = useMemo(() => {
     const blockers: string[] = [...(liveOrderGate?.blockers ?? [])];
-    if (!liveOrderGate) blockers.push('실주문을 보낼 수 있는지 확인하는 중입니다.');
+    if (!liveOrderGate) {
+      blockers.push(
+        liveOrderGateError
+          ? `실주문을 보낼 수 있는지 확인하지 못했습니다. 확인 전에는 주문이 나가지 않습니다 (${liveOrderGateError})`
+          : '실주문을 보낼 수 있는지 확인하는 중입니다.',
+      );
+    }
     if (!isOrderableDomesticInstrument(selectedInstrument)) blockers.push('국내 주식·ETF·ETN만 주문할 수 있습니다.');
     if (!Number.isFinite(orderQuantityNumber) || orderQuantityNumber <= 0) blockers.push('수량은 0보다 커야 합니다.');
     if (orderType === 'limit' && (!Number.isFinite(orderLimitPriceNumber) || orderLimitPriceNumber <= 0)) {
@@ -3140,6 +3173,7 @@ export function App(): JSX.Element {
     return blockers;
   }, [
     liveOrderGate,
+    liveOrderGateError,
     orderLimitPriceNumber,
     orderQuantityNumber,
     orderType,
@@ -5593,7 +5627,7 @@ export function App(): JSX.Element {
                     <strong>실주문 리스크 룰</strong>
                     <span>
                       주문이 열려 있어도 이 룰에 걸리면 나가지 않습니다
-                      {riskRules ? '' : ' · 불러오는 중'}
+                      {riskRules ? '' : riskRulesError ? ' · 불러오지 못했습니다' : ' · 불러오는 중'}
                     </span>
                   </div>
                   <div className="portfolio-card__actions">
@@ -6105,7 +6139,7 @@ export function App(): JSX.Element {
               <div className="live-order__header">
                 <strong>이 주문은 실계좌로 나갑니다</strong>
                 <em data-open={liveOrderGate?.enabled ? 'true' : 'false'}>
-                  {liveOrderGate ? (liveOrderGate.enabled ? '주문 가능' : '주문 잠김') : '확인 중'}
+                  {liveOrderGate ? (liveOrderGate.enabled ? '주문 가능' : '주문 잠김') : gateUnknownLabel}
                 </em>
                 <span>{liveOrderGate?.isProdEnv ? '실전 서버' : '모의 서버'}</span>
               </div>
