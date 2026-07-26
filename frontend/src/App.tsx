@@ -2749,14 +2749,19 @@ export function App(): JSX.Element {
       getSnapshotForInstrument,
     );
   }, [moveFilter, query, quotesByCode, stream.trades, watchGroup, watchSort, watchlist]);
+  /*
+   * 지금 걸린 조건만 모은다. 기본값(`전체`, `기본순`)은 넣지 않는다 — 바로 위
+   * 버튼줄에 강조로 이미 보이는 데다, 아무것도 안 걸었는데 `전체 · 기본순`이
+   * 떠 있으면 뭔가 걸린 것처럼 읽힌다.
+   */
   const watchFilterChips = useMemo(() => {
-    const groupLabel = WATCH_GROUP_OPTIONS.find((option) => option.key === watchGroup)?.label ?? '전체';
-    const moveLabel = MOVE_FILTER_OPTIONS.find((option) => option.key === moveFilter)?.label ?? '전체';
-    const sortLabel = WATCH_SORT_OPTIONS.find((option) => option.key === watchSort)?.label ?? '기본순';
+    const groupLabel = WATCH_GROUP_OPTIONS.find((option) => option.key === watchGroup)?.label;
+    const moveLabel = MOVE_FILTER_OPTIONS.find((option) => option.key === moveFilter)?.label;
+    const sortLabel = WATCH_SORT_OPTIONS.find((option) => option.key === watchSort)?.label;
     return [
-      groupLabel,
+      watchGroup === 'all' ? undefined : groupLabel,
       moveFilter === 'all' ? undefined : moveLabel,
-      sortLabel,
+      watchSort === 'custom' ? undefined : sortLabel,
       query.trim() ? `검색 ${query.trim()}` : undefined,
       isCompactList ? '촘촘' : undefined,
     ].filter((item): item is string => Boolean(item));
@@ -2836,6 +2841,20 @@ export function App(): JSX.Element {
       total: visibleCategoryItems.length,
     };
   }, [discoverFilteredCategoryItems, quotesByCode, stream.trades, visibleCategoryItems, visibleCategoryQuoteIds]);
+  /*
+   * 탐색 목록 위에 적을 한 마디.
+   *
+   * `시세 0/7`만 적으면 휴장 중에는 영원히 0이라 멈춘 진행률처럼 보인다. 지금
+   * 행들은 값 자리에 `-`만 있고 사유가 없어서, 이 줄이 유일한 설명이다.
+   * 보이는 종목이 전부 장이 닫혀 있으면 진행률 대신 그 사실을 적는다.
+   */
+  const discoverQuoteNote = useMemo((): string | null => {
+    if (isQuoteRefreshing) return '갱신 중';
+    const { loaded, total } = categoryQuoteProgress;
+    if (total === 0 || loaded >= total) return null;
+    const allClosed = visibleCategoryItems.every((instrument) => closedSessionLabel(instrument));
+    return allClosed ? '장이 닫혀 시세가 없습니다' : `시세 ${loaded}/${total}`;
+  }, [categoryQuoteProgress, isQuoteRefreshing, visibleCategoryItems]);
   const realtimeSubscriptionInstruments = useMemo(() => {
     const instruments = new Map<string, ClientSubscribeInstrument>();
     const visibleIds = new Set(visibleCategoryQuoteIds);
@@ -6147,13 +6166,23 @@ export function App(): JSX.Element {
             </div>
 
           </section>}
+          {/*
+            시세가 하나도 안 들어온 상태에서는 다섯 칸이 전부 `0`과 `-`였다.
+            72px를 써서 아무것도 말하지 않는 셈이라, 그럴 땐 한 줄로 줄인다.
+          */}
           {sidePanelTab === 'watch' && <div className="watchlist__summary" aria-label="관심종목 요약">
-            <div className="watchlist__summary-counts">
-              <span data-tone="up">상승 {watchlistSummary.up}</span>
-              <span data-tone="down">하락 {watchlistSummary.down}</span>
-              <span>보합 {watchlistSummary.flat}</span>
-              <span>대기 {watchlistSummary.waiting}</span>
-            </div>
+            {watchlistBreadthTotal === 0 ? (
+              <div className="watchlist__summary-counts">
+                <span>{watchlistSummary.waiting}종목 시세 대기</span>
+              </div>
+            ) : (
+              <div className="watchlist__summary-counts">
+                <span data-tone="up">상승 {watchlistSummary.up}</span>
+                <span data-tone="down">하락 {watchlistSummary.down}</span>
+                <span>보합 {watchlistSummary.flat}</span>
+                {watchlistSummary.waiting > 0 && <span>대기 {watchlistSummary.waiting}</span>}
+              </div>
+            )}
             {watchlistBreadthTotal > 0 && (
               <div
                 aria-label={`관심종목 상승 ${watchlistSummary.up}, 하락 ${watchlistSummary.down}, 보합 ${watchlistSummary.flat}`}
@@ -6173,16 +6202,14 @@ export function App(): JSX.Element {
                 />
               </div>
             )}
-            <div className="watchlist__summary-top">
-              <span>최대 변동</span>
-              {watchlistSummary.topMover ? (
+            {watchlistSummary.topMover && (
+              <div className="watchlist__summary-top">
+                <span>최대 변동</span>
                 <strong style={{ color: signColor(watchlistSummary.topMover.snapshot.sign) }}>
                   {watchlistSummary.topMover.instrument.name} {formatRate(watchlistSummary.topMover.snapshot.changeRate)}
                 </strong>
-              ) : (
-                <strong>-</strong>
-              )}
-            </div>
+              </div>
+            )}
           </div>}
           {sidePanelTab === 'watch' && <div className="watchlist__saved-groups" role="tablist" aria-label="저장 관심그룹">
             {savedWatchlists.map((group) => (
@@ -6277,17 +6304,25 @@ export function App(): JSX.Element {
               촘촘
             </button>
           </div>}
-          {sidePanelTab === 'watch' && <div className="watchlist__section-title">
-            <strong>현재 그룹</strong>
-            <div className="watchlist__section-meta">
-              <div className="watchlist__filter-chips" aria-label="현재 리스트 필터">
-                {watchFilterChips.map((chip) => (
-                  <em key={chip}>{chip}</em>
-                ))}
+          {/*
+            걸린 조건이 없고 걸러진 종목도 없으면 이 줄은 위에 있는 것을 그대로
+            되풀이한다 — `현재 그룹 · 전체 · 기본순 · 6 / 6`에서 네 가지가 전부
+            헤더와 버튼줄에 이미 있었다. 말할 게 있을 때만 낸다.
+          */}
+          {sidePanelTab === 'watch'
+            && (watchFilterChips.length > 0 || filteredWatchlist.length !== watchlist.length) && (
+            <div className="watchlist__section-title">
+              <strong>걸린 조건</strong>
+              <div className="watchlist__section-meta">
+                <div className="watchlist__filter-chips" aria-label="지금 걸린 조건">
+                  {watchFilterChips.map((chip) => (
+                    <em key={chip}>{chip}</em>
+                  ))}
+                </div>
+                <span>{filteredWatchlist.length} / {watchlist.length}</span>
               </div>
-              <span>{filteredWatchlist.length} / {watchlist.length}</span>
             </div>
-          </div>}
+          )}
           {sidePanelTab === 'watch' && <div className="watchlist__rows watchlist__rows--saved">
             {filteredWatchlist.map((instrument) => (
               <InstrumentRow
@@ -6352,10 +6387,12 @@ export function App(): JSX.Element {
             </div>
             <div className="discover__section-label discover__section-label--results">
               <strong>{categories.find((category) => category.id === activeCategory)?.label ?? '결과'}</strong>
-              <span>
-                {categoryQuoteProgress.loaded}/{categoryQuoteProgress.total} 반영 ·{' '}
-                {isQuoteRefreshing ? `갱신 중 ${categoryQuoteProgress.requested}개` : '화면 근처 우선'}
-              </span>
+              {/*
+                예전엔 `1/1 반영 · 화면 근처 우선`이 늘 붙어 있었다. 다 받아온
+                상태에서도 뜨는 데다, `화면 근처 우선`은 화면에 보이는 것부터
+                조회한다는 내부 사정이라 읽는 사람이 할 일이 없다.
+              */}
+              {discoverQuoteNote && <span>{discoverQuoteNote}</span>}
             </div>
             <div className="watchlist__rows discover__rows" ref={discoverRowsRef}>
               {visibleCategoryItems.map((instrument) => (
