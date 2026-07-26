@@ -4490,29 +4490,51 @@ export function App(): JSX.Element {
                     {/* 일정도 등급도 확인된 값이 아니다. 안내가 맨 아래 패널에만 있었다. */}
                     <SampleBadge note="일정과 중요도는 확인된 값이 아닙니다. 화면 구성을 보여주려고 넣어 둔 것이라 실제 발표 일정은 따로 확인하세요." />
                   </div>
-                  <div className="terminal-filterbar" role="tablist" aria-label="캘린더 필터">
-                    {CALENDAR_REGION_OPTIONS.map((option) => (
-                      <button
-                        aria-selected={calendarRegionFilter === option.key}
-                        key={option.key}
-                        onClick={() => setCalendarRegionFilter(option.key)}
-                        role="tab"
-                        type="button"
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                    {CALENDAR_IMPACT_OPTIONS.map((option) => (
-                      <button
-                        aria-selected={calendarImpactFilter === option.key}
-                        key={option.key}
-                        onClick={() => setCalendarImpactFilter(option.key)}
-                        role="tab"
-                        type="button"
-                      >
-                        {option.label}
-                      </button>
-                    ))}
+                  {/*
+                    지역과 중요도가 한 줄에 섞여 있었다. 두 갈래 모두 첫 항목이
+                    `전체`라 같은 글씨의 버튼이 나란히 눌린 채로 있었고, 어느 쪽이
+                    무엇을 거르는지 화면에 적혀 있지 않았다. 화면 낭독기에는 더
+                    나빴다 — 한 tablist 안에서 `전체, 탭, 선택됨`이 두 번 났다.
+                    tablist는 선택이 하나라는 뜻이라 무엇이 켜져 있는지 알 수 없다.
+                    갈래마다 이름을 붙이고 tablist도 따로 둔다.
+                  */}
+                  <div className="terminal-filterbar terminal-filterbar--grouped">
+                    <div className="terminal-filterbar__group">
+                      <span className="terminal-filterbar__label" id="calendar-region-label">
+                        지역
+                      </span>
+                      <div aria-labelledby="calendar-region-label" role="tablist">
+                        {CALENDAR_REGION_OPTIONS.map((option) => (
+                          <button
+                            aria-selected={calendarRegionFilter === option.key}
+                            key={option.key}
+                            onClick={() => setCalendarRegionFilter(option.key)}
+                            role="tab"
+                            type="button"
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="terminal-filterbar__group">
+                      <span className="terminal-filterbar__label" id="calendar-impact-label">
+                        중요도
+                      </span>
+                      <div aria-labelledby="calendar-impact-label" role="tablist">
+                        {CALENDAR_IMPACT_OPTIONS.map((option) => (
+                          <button
+                            aria-selected={calendarImpactFilter === option.key}
+                            key={option.key}
+                            onClick={() => setCalendarImpactFilter(option.key)}
+                            role="tab"
+                            type="button"
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                   <div className="terminal-calendar-grid">
                     {/*

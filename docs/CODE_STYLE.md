@@ -42,6 +42,11 @@
 - WebSocket·차트 인스턴스 등 렌더 사이 유지 대상은 `useRef`. 렌더에 반영할 값만 `useState`.
 - 상태 갱신은 불변 업데이트: `setState((s) => ({ ...s, trades: { ...s.trades, [code]: t } }))`.
 - 스타일은 `styles.css` 클래스 기반 (BEM 유사: `watch-row__price`). 인라인 스타일은 동적 색상 등 최소한만.
+- 필터가 두 갈래 이상이면 갈래마다 이름을 붙이고 `role="tablist"`도 따로 둔다.
+  캘린더의 지역·중요도가 한 `tablist`에 섞여 있어 `전체` 버튼 두 개가 나란히
+  눌린 채 떠 있었다. 화면에는 어느 쪽이 무엇을 거르는지 적혀 있지 않았고,
+  낭독기에는 선택이 둘인 `tablist`로 들렸다. 이름은 `<span id>` +
+  `aria-labelledby`로 붙여 `tablist` 자식은 탭만 남긴다.
 
 ## 금지 패턴
 
