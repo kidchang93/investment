@@ -1677,6 +1677,12 @@ export function App(): JSX.Element {
   const [liveOrderGate, setLiveOrderGate] = useState<LiveOrderGate | null>(null);
   /* 주문 확인 단계를 보여주는 중인지. 실제 증권사 주문 화면과 같은 흐름이다. */
   const [liveOrderConfirming, setLiveOrderConfirming] = useState(false);
+  /*
+   * 이번 주문의 멱등성 키. 확인 단계에 들어갈 때 한 번 만들고 그동안 유지한다.
+   * 전송 버튼을 두 번 누르거나 네트워크가 끊겨 재시도해도 서버가 같은 키를 보고
+   * 한 주문만 접수한다.
+   */
+  const [liveOrderKey, setLiveOrderKey] = useState<string | null>(null);
 
   /*
    * 자동매매. 러너는 서버에 살고 화면은 상태를 받아 보여줄 뿐이다.
@@ -3110,12 +3116,14 @@ export function App(): JSX.Element {
         orderType,
         quantity: orderQuantityNumber,
         limitPrice: orderType === 'limit' ? orderLimitPriceNumber : undefined,
+        clientOrderId: liveOrderKey ?? undefined,
       });
       setLiveOrderMessage(
         `접수됨 · 주문번호 ${result.orderNo || '-'} (지점 ${result.orderBranchNo || '-'}) · ${result.message}`,
       );
-      // 접수 직후 확인 단계를 닫아 같은 주문이 연달아 나가지 않게 한다.
+      // 접수 직후 확인 단계를 닫고 키도 버린다. 다음 주문은 새 키로 나간다.
       setLiveOrderConfirming(false);
+      setLiveOrderKey(null);
       refreshKisOpenOrders();
       refreshKisOrderLog();
       refreshKisAccountSnapshot();
@@ -5890,7 +5898,13 @@ export function App(): JSX.Element {
                       <em>{kisAccounts.find((account) => account.id === kisAccountId)?.label ?? kisAccountId}</em>
                     </p>
                     <div className="live-order__confirm-actions">
-                      <button onClick={() => setLiveOrderConfirming(false)} type="button">
+                      <button
+                        onClick={() => {
+                          setLiveOrderConfirming(false);
+                          setLiveOrderKey(null);
+                        }}
+                        type="button"
+                      >
                         취소
                       </button>
                       <button
@@ -5909,7 +5923,10 @@ export function App(): JSX.Element {
                     className="live-order__submit"
                     data-side={orderSide}
                     disabled={liveOrderBlockers.length > 0}
-                    onClick={() => setLiveOrderConfirming(true)}
+                    onClick={() => {
+                      setLiveOrderKey(crypto.randomUUID());
+                      setLiveOrderConfirming(true);
+                    }}
                     /* 잠긴 버튼은 이유를 손에 쥐여준다. 눌리지 않는 이유가 화면 어딘가에만
                        적혀 있으면 버튼과 설명을 연결짓지 못한다. */
                     title={liveOrderBlockers.length > 0 ? liveOrderBlockers.join('\n') : undefined}

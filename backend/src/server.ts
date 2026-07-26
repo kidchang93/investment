@@ -23,6 +23,11 @@ import {
 } from './db/instruments.js';
 import { createOrderIntent, ensureTradingSchema, getFillByOrderId, getTradingOverview } from './db/trading.js';
 import { ensureAutoTraderSchema, getAutoTraderRuns } from './db/autoTrader.js';
+import {
+  claimClientOrderId,
+  completeClaimedOrder,
+  getOrderByClientOrderId,
+} from './db/brokerOrders.js';
 import { ensureBrokerOrderSchema, getBrokerOrderRecords, recordBrokerOrderAttempt } from './db/brokerOrders.js';
 import {
   getAutoTraderState,
@@ -593,7 +598,7 @@ async function main(): Promise<void> {
   // 게이트가 열려 있어야만 동작한다. 기본값은 항상 차단이다.
   // 보내지 못한 시도도 trading_broker_orders에 blocked로 남긴다.
   app.post<{ Body: Partial<PlaceLiveOrderRequest> }>('/api/broker/kis/orders', async (req, reply) => {
-    const { accountId, instrumentId, side, orderType, quantity, limitPrice } = req.body;
+    const { accountId, instrumentId, side, orderType, quantity, limitPrice, clientOrderId } = req.body;
     const auditBase = {
       accountId: accountId ?? '(미지정)',
       action: 'place' as const,
@@ -692,6 +697,39 @@ async function main(): Promise<void> {
       return reply.code(403).send({ message: '리스크 룰에 막혔습니다.', verdict });
     }
 
+    /*
+      * 멱등성 키를 주문 **전에** 선점한다. 주문 후에 잡으면 그 사이 재시도가 들어와
+      * 같은 주문이 두 번 나간다. 잡지 못했다면 이미 처리된 요청이므로 앞선 결과를
+      * 그대로 돌려주고 새로 보내지 않는다.
+      *
+      * 선점 자체가 DB 오류로 실패하면 중복인지 알 수 없으므로 보내지 않는다 —
+      * 모르면 보내지 않는 쪽이 안전하다.
+      */
+    if (clientOrderId) {
+      let claimed: boolean;
+      try {
+        claimed = await claimClientOrderId(account.id, clientOrderId, 'place');
+      } catch (err) {
+        req.log.error({ err, clientOrderId }, '멱등성 키 선점 실패');
+        return reply.code(503).send({ message: '주문 중복 여부를 확인할 수 없어 보내지 않았습니다. 잠시 후 같은 요청을 다시 보내세요.' });
+      }
+      if (!claimed) {
+        const previous = await getOrderByClientOrderId(clientOrderId);
+        req.log.warn({ clientOrderId }, '같은 주문 키로 재요청 — 새로 보내지 않음');
+        return {
+          accepted: previous?.status === 'submitted',
+          accountId: account.id,
+          symbol: instrument.providerSymbol,
+          side,
+          quantity,
+          orderNo: previous?.orderNo ?? '',
+          orderBranchNo: previous?.orderBranchNo ?? '',
+          acceptedAt: '',
+          message: `이미 처리된 주문입니다 · ${previous?.message ?? '앞선 결과를 확인하세요'}`,
+        } satisfies PlaceLiveOrderResult;
+      }
+    }
+
     try {
       const result = await placeKisDomesticOrder(account, {
         symbol: instrument.providerSymbol,
@@ -700,13 +738,15 @@ async function main(): Promise<void> {
         quantity,
         limitPrice,
       });
-      await audit({
+      const done = {
         ...placeAudit,
-        status: 'submitted',
+        status: 'submitted' as const,
         message: result.message,
         orderNo: result.orderNo,
         orderBranchNo: result.orderBranchNo,
-      });
+      };
+      if (clientOrderId) await completeClaimedOrder(clientOrderId, done);
+      else await audit(done);
       req.log.info(
         { accountId: account.id, symbol: instrument.providerSymbol, side, quantity, orderNo: result.orderNo },
         '실주문 접수',
@@ -724,7 +764,9 @@ async function main(): Promise<void> {
       } satisfies PlaceLiveOrderResult;
     } catch (err) {
       const message = String(err instanceof Error ? err.message : err);
-      await audit({ ...placeAudit, status: 'rejected', message });
+      const failed = { ...placeAudit, status: 'rejected' as const, message };
+      if (clientOrderId) await completeClaimedOrder(clientOrderId, failed);
+      else await audit(failed);
       req.log.error({ err, accountId: account.id, instrumentId }, '실주문 전송 실패');
       return reply.code(502).send({ message });
     }

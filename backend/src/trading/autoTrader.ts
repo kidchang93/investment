@@ -24,8 +24,11 @@ import type {
   StrategySignal,
 } from '@invest/shared';
 
+import { randomUUID } from 'node:crypto';
+
 import { getKisAccount, type KisAccountConfig } from '../config.js';
 import { recordAutoTraderRun } from '../db/autoTrader.js';
+import { claimClientOrderId, completeClaimedOrder } from '../db/brokerOrders.js';
 import { checkRiskRules } from '../db/riskRules.js';
 import {
   getKisDomesticAccountSnapshot,
@@ -309,11 +312,57 @@ async function executeSignal(
     return;
   }
 
-  const result = await placeKisDomesticOrder(account, {
-    symbol: candidate.instrument.symbol,
+  /*
+   * 멱등성 키를 먼저 선점한다. 회차 겹침은 busy 플래그로 막지만, 그것만으로는
+   * KIS 호출이 타임아웃 뒤 재시도되는 경우를 막지 못한다. 잡지 못했다면 이미
+   * 나간 주문이므로 보내지 않는다.
+   *
+   * 선점이 DB 오류로 실패하면 중복인지 알 수 없으니 보내지 않는다 — 자동매매는
+   * 사람이 지켜보지 않는 상태로 도는 만큼 모르면 멈추는 쪽이 안전하다.
+   */
+  const clientOrderId = randomUUID();
+  const claimed = await claimClientOrderId(config.accountId, clientOrderId, 'place');
+  if (!claimed) {
+    await recordAutoTraderRun({
+      accountId: config.accountId,
+      status: 'running',
+      message: `${candidate.instrument.name} 주문 건너뜀 · 같은 주문 키가 이미 처리됨`,
+      instrumentId: signal.instrumentId,
+      side: signal.side,
+      equity,
+    });
+    return;
+  }
+
+  let result;
+  try {
+    result = await placeKisDomesticOrder(account, {
+      symbol: candidate.instrument.symbol,
+      side: signal.side,
+      orderType: 'market',
+      quantity,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    await completeClaimedOrder(clientOrderId, {
+      status: 'rejected',
+      message,
+      side: signal.side,
+      symbol: candidate.instrument.symbol,
+      orderType: 'market',
+      quantity,
+    });
+    throw e;
+  }
+  await completeClaimedOrder(clientOrderId, {
+    status: 'submitted',
+    message: result.message,
     side: signal.side,
+    symbol: candidate.instrument.symbol,
     orderType: 'market',
     quantity,
+    orderNo: result.orderNo,
+    orderBranchNo: result.orderBranchNo,
   });
   await recordAutoTraderRun({
     accountId: config.accountId,

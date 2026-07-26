@@ -534,6 +534,12 @@ export interface LiveOrderGate {
 /** 실주문 전송 요청. paper 주문(`CreateOrderRequest`)과 의도적으로 분리한다. */
 export interface PlaceLiveOrderRequest {
   accountId: string;
+  /*
+   * 멱등성 키. 같은 값으로 다시 보내면 새 주문을 내지 않고 앞선 결과를 돌려준다.
+   * 네트워크가 끊겨 재시도할 때 같은 주문이 두 번 나가는 것을 막는다.
+   * 생략하면 매 요청이 별개 주문이 된다.
+   */
+  clientOrderId?: string;
   instrumentId: string;
   side: OrderSide;
   orderType: OrderType;
