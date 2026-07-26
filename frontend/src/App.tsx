@@ -4341,11 +4341,19 @@ export function App(): JSX.Element {
                     </div>
                     <small>{filteredTerminalNews.length}건 · {selectedInstrument?.name ?? '시장 전체'}</small>
                   </div>
+                  {/*
+                    이 셋은 눌러도 아무 일도 일어나지 않았다 — onClick이 없다.
+                    그런데 실제로 동작하는 `채팅 보기`와 똑같이 생겼고 커서까지
+                    손가락으로 바뀌어서, 처음 보는 사람은 눌러 보고 앱이 고장난
+                    줄 안다. 채팅 입력칸과 같은 방식으로 막아 두고 왜 막혔는지
+                    옆에 적는다 — `disabled`만으로는 이유가 보이지 않는다.
+                  */}
                   <div className="terminal-news-tools">
-                    <button type="button">알림 대기</button>
-                    <button type="button">음성 읽기</button>
-                    <button type="button">공유 링크</button>
+                    <button disabled type="button">알림 대기</button>
+                    <button disabled type="button">음성 읽기</button>
+                    <button disabled type="button">공유 링크</button>
                     <button onClick={() => setTerminalTab('chat')} type="button">채팅 보기</button>
+                    <small>알림·음성·공유는 아직 연결되지 않았습니다</small>
                   </div>
                   <div className="terminal-filterbar" role="tablist" aria-label="뉴스 필터">
                     {NEWS_FILTER_OPTIONS.map((option) => (

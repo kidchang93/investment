@@ -1235,9 +1235,24 @@ span.sample-badge {
   font-weight: 800;
 }
 
-.terminal-news-tools button:hover {
+.terminal-news-tools button:hover:not(:disabled) {
   border-color: rgba(245, 196, 81, 0.34);
   color: var(--text);
+}
+
+/*
+ * 아직 연결되지 않은 도구. 눌리는 것처럼 보이지 않게 한다 — 커서가 손가락으로
+ * 바뀌고 테두리가 밝아지면 초보자는 눌러 보고 앱이 고장났다고 읽는다.
+ */
+.terminal-news-tools button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.terminal-news-tools small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .terminal-headlines a,
