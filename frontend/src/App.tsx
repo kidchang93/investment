@@ -678,6 +678,22 @@ function BrokerAccountPicker({
  * 기록이 쌓이는 카드 하나가 화면을 독점하면 옆 카드를 못 본다.
  * 카드마다 따로 자르면 기준이 갈리므로 한 곳에서 처리한다.
  */
+/**
+ * 이 숫자는 실제 시세가 아니라는 표시.
+ *
+ * 화면 구성을 보려고 넣어 둔 상수가 몇 군데 있는데, 종목명이 진짜라서
+ * 등락률·점수도 진짜로 읽힌다. 실제로 히트맵은 `삼성전자 +0.22%`처럼
+ * 실존 종목에 지어낸 값을 붙여 보여주고 있었다. 값을 지우면 화면 구성을
+ * 볼 수 없으니, 지우는 대신 어디까지가 예시인지 밝힌다.
+ */
+function SampleBadge({ note }: { note: string }): JSX.Element {
+  return (
+    <span className="sample-badge" title={note}>
+      예시 데이터
+    </span>
+  );
+}
+
 function CollapsibleRows({
   rows,
   limit = 8,
@@ -4132,7 +4148,10 @@ export function App(): JSX.Element {
                       <span>마법공식 · 그레이엄 · DCF · 다모다란</span>
                       <strong>가치투자 리포트</strong>
                     </div>
-                    <small>{selectedInstrument?.name ?? '종목 선택 대기'}</small>
+                    <div className="terminal-page__header-meta">
+                      <small>{selectedInstrument?.name ?? '종목 선택 대기'}</small>
+                      <SampleBadge note="재무제표로 계산한 점수가 아닙니다. 모델별 기본 점수는 고정값이고 거기에 선택 종목의 거래량·등락률만 반영합니다." />
+                    </div>
                   </div>
                   <div className="terminal-report-grid">
                     {selectedReportModels.map((model) => (
@@ -4180,10 +4199,10 @@ export function App(): JSX.Element {
                 <section className="terminal-page terminal-page--heatmap" aria-label="섹터 히트맵">
                   <div className="terminal-page__header">
                     <div>
-                      <span>시총 상위 종목 · 등락률 시각화</span>
+                      <span>화면 구성 예시 · -5% ~ +5% 범위로 색을 입힘</span>
                       <strong>섹터 히트맵</strong>
                     </div>
-                    <small>-5% ~ +5% 범위</small>
+                    <SampleBadge note="실제 시세가 아닙니다. 종목명은 실존하지만 등락률과 비중은 화면 구성을 보여주려고 넣어 둔 값입니다." />
                   </div>
                   <div className="terminal-heatmap">
                     {HEATMAP_ITEMS.map((item) => (
@@ -4258,16 +4277,16 @@ export function App(): JSX.Element {
                 <section className="terminal-page terminal-page--themes" aria-label="테마와 도미넌스">
                   <div className="terminal-page__header">
                     <div>
-                      <span>시장 도미넌스 · 테마 흐름</span>
+                      <span>테마별 자금 흐름 · 상승 {themeBreadth.up} · 하락 {themeBreadth.down}</span>
                       <strong>테마 보드</strong>
                     </div>
-                    <small>상승 {themeBreadth.up} · 하락 {themeBreadth.down}</small>
+                    <SampleBadge note="실제 집계가 아닙니다. 점수·등락률·비중 모두 화면 구성을 보여주려고 넣어 둔 값입니다." />
                   </div>
                   <div className="terminal-dominance">
                     <div>
                       <span>삼닉 관심도</span>
                       <strong>36%</strong>
-                      <em>반도체 테마 내 거래대금 비중 추정</em>
+                      <em>고정값 · 거래대금 연동 전</em>
                     </div>
                     <div>
                       <span>시장 폭</span>
@@ -4372,7 +4391,7 @@ export function App(): JSX.Element {
                       <span>트레이더 쓰레드 피드</span>
                       <strong>라운지</strong>
                     </div>
-                    <small>읽기 전용 샘플</small>
+                    <SampleBadge note="실제 게시글이 아닙니다. 화면 구성을 보여주려고 넣어 둔 글입니다." />
                   </div>
                   <div className="terminal-lounge-layout">
                     <section className="terminal-panel">
@@ -4544,7 +4563,7 @@ export function App(): JSX.Element {
                   <section className="terminal-panel">
                     <div className="terminal-panel__header">
                       <strong>리더보드</strong>
-                      <span>내 순위는 로컬 평가 기준</span>
+                      <SampleBadge note="my-simulation만 내 기록입니다. 나머지 참가자와 손익은 화면 구성을 보여주려고 넣어 둔 값이라 순위에 의미가 없습니다." />
                     </div>
                     <div className="terminal-leaderboard">
                       <div>

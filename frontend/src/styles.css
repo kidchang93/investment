@@ -1116,6 +1116,41 @@ button {
   font-size: 20px;
 }
 
+/* 리포트 헤더처럼 종목명과 예시 표시를 함께 두는 자리. */
+.terminal-page__header-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: end;
+}
+
+/*
+ * 예시 데이터 표시.
+ *
+ * 셀렉터를 `span.sample-badge`(0,1,1)로 둔다. `.sample-badge`(0,1,0)로는
+ * 이 배지가 들어가는 세 부모(.terminal-page__header span,
+ * .terminal-panel__header span)의 color/font-size에 진다.
+ *
+ * 상태색(초록/노랑)을 쓰지 않는다. 이건 정상/경고 신호가 아니라
+ * "이 숫자는 재지 않은 값"이라는 표시라, 점선 테두리로 구분만 한다.
+ */
+span.sample-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px dashed rgba(148, 163, 184, 0.42);
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.06);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: help;
+  flex-shrink: 0;
+}
+
 .terminal-headlines,
 .terminal-dominance,
 .terminal-fee-controls,
