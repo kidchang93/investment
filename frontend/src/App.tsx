@@ -3830,7 +3830,14 @@ export function App(): JSX.Element {
           <span className="freshness-chip" data-tone={tradeFreshnessTone} title={tradeFreshnessTitle}>
             {tradeFreshnessLabel}
           </span>
+          {/*
+            화면에 `새로고침`이라고만 적힌 버튼이 한 화면에 다섯 개까지 뜬다
+            (시세·잔고·체결 내역·주문 기록·예약주문). 눈으로는 어느 카드 안에
+            있는지로 구별되지만, 낭독기로 버튼만 훑으면 `새로고침` 다섯 번이라
+            무엇을 새로 부르는 건지 알 수 없다. 무엇을 새로 부르는지 이름에 적는다.
+          */}
           <button
+            aria-label={isQuoteRefreshing ? '시세 불러오는 중' : '시세 새로고침'}
             className="status-refresh"
             disabled={quoteTargetIds.length === 0 || isQuoteRefreshing}
             onClick={() => refreshVisibleQuotes(false)}
@@ -4044,8 +4051,10 @@ export function App(): JSX.Element {
                 ))}
               </div>
               <button onClick={() => runChartCommand('fit')} title="전체 차트 맞춤 (F)" type="button">맞춤</button>
-              <button onClick={() => runChartCommand('zoomIn')} title="차트 확대 (+)" type="button">+</button>
-              <button onClick={() => runChartCommand('zoomOut')} title="차트 축소 (-)" type="button">−</button>
+              {/* 이름이 `+`·`−`뿐이라 낭독기에는 기호로만 들렸다. 옆의 도구 줄은
+                  이미 aria-label={tool.title}을 쓰고 있어 그 방식에 맞춘다. */}
+              <button aria-label="차트 확대" onClick={() => runChartCommand('zoomIn')} title="차트 확대 (+)" type="button">+</button>
+              <button aria-label="차트 축소" onClick={() => runChartCommand('zoomOut')} title="차트 축소 (-)" type="button">−</button>
               <button
                 aria-pressed={showMovingAverage}
                 onClick={() => setShowMovingAverage((value) => !value)}
@@ -4527,6 +4536,9 @@ export function App(): JSX.Element {
                       <div aria-labelledby="calendar-region-label" role="tablist">
                         {CALENDAR_REGION_OPTIONS.map((option) => (
                           <button
+                            /* 두 갈래 모두 `전체`가 있어 버튼 이름만으로는 구별되지
+                               않는다. 갈래 이름을 붙여야 버튼만 훑어도 알 수 있다. */
+                            aria-label={`지역 ${option.label}`}
                             aria-selected={calendarRegionFilter === option.key}
                             key={option.key}
                             onClick={() => setCalendarRegionFilter(option.key)}
@@ -4545,6 +4557,7 @@ export function App(): JSX.Element {
                       <div aria-labelledby="calendar-impact-label" role="tablist">
                         {CALENDAR_IMPACT_OPTIONS.map((option) => (
                           <button
+                            aria-label={`중요도 ${option.label}`}
                             aria-selected={calendarImpactFilter === option.key}
                             key={option.key}
                             onClick={() => setCalendarImpactFilter(option.key)}
@@ -5511,6 +5524,7 @@ export function App(): JSX.Element {
                   </div>
                   <div className="portfolio-card__actions">
                     <button
+                      aria-label={isKisAccountRefreshing ? '잔고 조회 중' : '잔고 새로고침'}
                       className="portfolio-card__refresh"
                       disabled={isKisAccountRefreshing}
                       onClick={refreshKisAccountSnapshot}
@@ -5585,6 +5599,7 @@ export function App(): JSX.Element {
                   </div>
                   <div className="portfolio-card__actions">
                     <button
+                      aria-label={isKisExecutionRefreshing ? '체결 내역 조회 중' : '체결 내역 새로고침'}
                       className="portfolio-card__refresh"
                       disabled={isKisExecutionRefreshing}
                       onClick={refreshKisExecutions}
@@ -5891,6 +5906,8 @@ export function App(): JSX.Element {
                           {blocker.text}
                           {blocker.fieldId && (
                             <button
+                              /* 막힌 사유마다 하나씩 붙어 이름이 전부 `설정으로 이동`이었다. */
+                              aria-label={`설정으로 이동: ${blocker.text}`}
                               className="auto-trader__jump"
                               onClick={() => focusRiskField(blocker.fieldId as string)}
                               type="button"
@@ -6084,7 +6101,12 @@ export function App(): JSX.Element {
                       {' · 차단된 시도도 남습니다'}
                     </span>
                   </div>
-                  <button className="portfolio-card__refresh" onClick={refreshKisOrderLog} type="button">
+                  <button
+                    aria-label="주문 기록 새로고침"
+                    className="portfolio-card__refresh"
+                    onClick={refreshKisOrderLog}
+                    type="button"
+                  >
                     새로고침
                   </button>
                 </div>
@@ -6137,7 +6159,12 @@ export function App(): JSX.Element {
                     </span>
                   </div>
                   <div className="portfolio-card__actions">
-                    <button className="portfolio-card__refresh" onClick={refreshKisReservedOrders} type="button">
+                    <button
+                      aria-label="예약주문 새로고침"
+                      className="portfolio-card__refresh"
+                      onClick={refreshKisReservedOrders}
+                      type="button"
+                    >
                       새로고침
                     </button>
                   </div>
@@ -6607,7 +6634,12 @@ export function App(): JSX.Element {
                 {/* `안 팔린`이라고 적으면 매수 주문이 빠진다. 미체결은 사고파는 양쪽 다 해당한다. */}
                 <strong>체결을 기다리는 주문</strong>
                 <span>{kisOpenOrders.length}건 · 값을 고치거나 취소할 수 있습니다</span>
-                <button disabled={isKisOpenOrdersRefreshing} onClick={refreshKisOpenOrders} type="button">
+                <button
+                  aria-label={isKisOpenOrdersRefreshing ? '미체결 주문 조회 중' : '미체결 주문 새로고침'}
+                  disabled={isKisOpenOrdersRefreshing}
+                  onClick={refreshKisOpenOrders}
+                  type="button"
+                >
                   {isKisOpenOrdersRefreshing ? '조회 중' : '새로고침'}
                 </button>
               </div>
