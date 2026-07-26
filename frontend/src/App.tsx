@@ -5765,34 +5765,6 @@ export function App(): JSX.Element {
                 {isOrderSubmitting ? '처리 중' : orderType === 'market' ? 'Paper 즉시 체결' : 'Paper 주문 저장'}
               </button>
             </div>
-            {tradingOverview && (
-              <div className="order-ticket__recent" aria-label="최근 주문 의도">
-                <span>최근 주문</span>
-                {tradingOverview.recentOrders.slice(0, 3).map((order) => (
-                  <div key={order.id}>
-                    <strong>{order.instrument.symbol}</strong>
-                    <em data-status={order.status}>{orderStatusLabel(order.status)}</em>
-                    <span>
-                      {order.side === 'buy' ? '매수' : '매도'} {formatNumber(order.quantity)} ·{' '}
-                      {formatMoney(order.estimatedNotional, order.currency)}
-                    </span>
-                  </div>
-                ))}
-                {tradingOverview.recentOrders.length === 0 && <strong>저장된 주문 없음</strong>}
-                <span>최근 체결</span>
-                {tradingOverview.recentFills.slice(0, 3).map((fill) => (
-                  <div key={fill.id}>
-                    <strong>{fill.instrument.symbol}</strong>
-                    <em data-status="filled">체결</em>
-                    <span>
-                      {fill.side === 'buy' ? '매수' : '매도'} {formatNumber(fill.quantity)} ·{' '}
-                      {formatMoney(fill.notional, fill.currency)}
-                    </span>
-                  </div>
-                ))}
-                {tradingOverview.recentFills.length === 0 && <strong>체결 없음</strong>}
-              </div>
-            )}
 
             {/* 실계좌 주문. paper 경로와 시각적으로도 분리해 오발주를 막는다. */}
             <div className="live-order" aria-label="실계좌 주문 전송">
@@ -5984,6 +5956,40 @@ export function App(): JSX.Element {
                 </div>
               )}
             </div>
+
+            {/*
+              지난 주문·체결은 기록이라 아래로 내린다. 예전에는 paper 제출 버튼과
+              실계좌 주문 블록 사이에 끼어 있어, 같은 일을 하는 두 주문 버튼이
+              목록 하나를 사이에 두고 떨어져 있었다.
+            */}
+            {tradingOverview && (
+              <div className="order-ticket__recent" aria-label="최근 주문 의도">
+                <span>최근 주문</span>
+                {tradingOverview.recentOrders.slice(0, 3).map((order) => (
+                  <div key={order.id}>
+                    <strong>{order.instrument.symbol}</strong>
+                    <em data-status={order.status}>{orderStatusLabel(order.status)}</em>
+                    <span>
+                      {order.side === 'buy' ? '매수' : '매도'} {formatNumber(order.quantity)} ·{' '}
+                      {formatMoney(order.estimatedNotional, order.currency)}
+                    </span>
+                  </div>
+                ))}
+                {tradingOverview.recentOrders.length === 0 && <strong>저장된 주문 없음</strong>}
+                <span>최근 체결</span>
+                {tradingOverview.recentFills.slice(0, 3).map((fill) => (
+                  <div key={fill.id}>
+                    <strong>{fill.instrument.symbol}</strong>
+                    <em data-status="filled">체결</em>
+                    <span>
+                      {fill.side === 'buy' ? '매수' : '매도'} {formatNumber(fill.quantity)} ·{' '}
+                      {formatMoney(fill.notional, fill.currency)}
+                    </span>
+                  </div>
+                ))}
+                {tradingOverview.recentFills.length === 0 && <strong>체결 없음</strong>}
+              </div>
+            )}
           </section>}
           {sidePanelTab === 'watch' && <div className="watchlist__summary" aria-label="관심종목 요약">
             <div className="watchlist__summary-counts">
