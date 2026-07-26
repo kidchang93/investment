@@ -5701,10 +5701,16 @@ export function App(): JSX.Element {
               같은 걸 보여주고 있어 좁은 폭에서 자리만 차지하다 세로로 눌렸다.
               계좌 선택만 남긴다.
             */}
+            {/*
+              계좌가 두 종류다. KIS에 연결한 실계좌와, 앱 안에만 있는 연습용
+              모의계좌. 예전엔 이 둘을 한 줄에 붙여 `KIS 21  KIS 23  모의계좌`로
+              보여서 KIS 계좌가 모의계좌인 것처럼 읽혔다. 어느 계좌로 나가는
+              주문인지가 이 화면에서 가장 중요하므로 줄을 갈라 이름표를 붙인다.
+            */}
             <div className="order-ticket__header">
               <div className="order-ticket__account">
+                <span className="order-ticket__account-label">실계좌</span>
                 <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
-                <em>{activeTradingAccount?.label ?? '계정 대기'}</em>
                 {/*
                   용어를 맞추고 나니 계좌 이름과 이 배지가 똑같이 `모의계좌`가 됐다.
                   예전엔 `Paper KRW` + `PAPER`라 서로 다른 말처럼 보여 중복이 가려져
@@ -5852,6 +5858,11 @@ export function App(): JSX.Element {
                     </em>
                   ))}
                 </div>
+              </div>
+              <div className="order-ticket__destination">
+                <span className="order-ticket__account-label">모의계좌</span>
+                {/* 이름표가 이미 `모의계좌`라 계좌 이름을 또 적으면 같은 말이 두 번 나온다. */}
+                <em>연습용 · 실제로 체결되지 않습니다</em>
               </div>
               <button
                 className="order-ticket__submit"

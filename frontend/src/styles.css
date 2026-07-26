@@ -5319,3 +5319,35 @@ button {
   margin-left: auto;
   padding-right: 12px;
 }
+
+/*
+ * 주문이 어느 계좌로 나가는지 붙이는 이름표.
+ *
+ * 계좌가 두 종류다 — KIS에 연결한 실계좌, 그리고 앱 안에만 있는 연습용
+ * 모의계좌. 예전엔 둘을 한 줄에 붙여 `KIS 21  KIS 23  모의계좌`로 보여서
+ * KIS 계좌가 모의계좌인 것처럼 읽혔다.
+ */
+.order-ticket__account-label {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: #090d14;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.order-ticket__destination {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.order-ticket__destination em {
+  color: var(--faint);
+  font-size: 11px;
+  font-style: normal;
+}
