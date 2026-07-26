@@ -5489,7 +5489,9 @@ span.sample-badge {
 /* 실행 기록. 시각은 좁게, 내용은 넓게. */
 .portfolio-table--auto-runs .portfolio-table__head,
 .portfolio-table--auto-runs .portfolio-table__row {
-  grid-template-columns: 84px minmax(0, 1fr);
+  /* 날짜가 붙은 줄(`07-26 11:58:34`)이 92px을 쓴다. 헤더와 행이 같은 값이어야
+     열이 어긋나지 않으므로 한 규칙에서 함께 정한다. */
+  grid-template-columns: 96px minmax(0, 1fr);
 }
 
 .portfolio-table--auto-runs .portfolio-table__row > span:last-child {

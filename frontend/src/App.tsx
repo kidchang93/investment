@@ -1064,6 +1064,26 @@ function tradeTimestampMs(trade: Trade | undefined): number | null {
   return new Date(y, m - 1, d, hh, mm, ss).getTime();
 }
 
+/**
+ * 로그용 시각. 오늘이면 시각만, 다른 날이면 날짜까지.
+ *
+ * 실행 로그는 하루를 넘겨 쌓이는데 `11:58:34`만 적으면 어제 것과 오늘 것이
+ * 똑같아 보인다. 오늘 것에까지 날짜를 붙이면 대부분의 줄이 같은 날짜를
+ * 반복하므로, 넘어간 줄에만 붙인다.
+ */
+function formatLogTime(ms: number, nowMs: number): string {
+  const at = new Date(ms);
+  const now = new Date(nowMs);
+  const sameDay =
+    at.getFullYear() === now.getFullYear() &&
+    at.getMonth() === now.getMonth() &&
+    at.getDate() === now.getDate();
+  if (sameDay) return formatClock(ms);
+  const month = String(at.getMonth() + 1).padStart(2, '0');
+  const day = String(at.getDate()).padStart(2, '0');
+  return `${month}-${day} ${formatClock(ms)}`;
+}
+
 function formatCandleDate(seconds: number, withTime: boolean): string {
   return new Intl.DateTimeFormat('ko-KR', {
     month: '2-digit',
@@ -5514,12 +5534,23 @@ export function App(): JSX.Element {
                     <span>시각</span>
                     <span>내용</span>
                   </div>
-                  {(autoTrader?.recentRuns ?? []).slice(0, 12).map((run) => (
-                    <div className="portfolio-table__row" key={run.id}>
-                      <span>{formatClock(run.createdAt)}</span>
-                      <span>{run.message}</span>
-                    </div>
-                  ))}
+                  {/*
+                    예전에는 `.slice(0, 12)`로 잘랐다. 서버는 40건을 보내는데
+                    28건이 말없이 사라지고, 남은 12건이 카드 714px 중 494px을
+                    차지했다. 한 세션이 `시작 → 후보 없음 → 정지` 3줄이라
+                    같은 내용이 계속 쌓이는 것도 이유다. 6줄(최근 두 세션)만
+                    두고 나머지는 접는다 — 버리지는 않는다.
+                  */}
+                  <CollapsibleRows
+                    limit={6}
+                    moreLabel={(hidden) => `이전 기록 ${hidden}건 더 보기`}
+                    rows={(autoTrader?.recentRuns ?? []).map((run) => (
+                      <div className="portfolio-table__row" key={run.id}>
+                        <span>{formatLogTime(run.createdAt, nowMs)}</span>
+                        <span>{run.message}</span>
+                      </div>
+                    ))}
+                  />
                   {(autoTrader?.recentRuns ?? []).length === 0 && (
                     <div className="portfolio-table__empty">
                       아직 실행한 적이 없습니다 · 시작하면 회차마다 무엇을 했는지 여기에 쌓입니다
