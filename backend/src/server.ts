@@ -120,8 +120,16 @@ function evaluateLiveOrderGate(): LiveOrderGate {
   const isProdEnv = config.env === 'prod';
   const serverEnabled = config.liveOrderEnabled;
   const blockers: string[] = [];
-  if (!serverEnabled) blockers.push('서버에서 실주문이 비활성화되어 있습니다 (KIS_LIVE_ORDER_ENABLED).');
-  if (config.kisAccounts.length === 0) blockers.push('등록된 KIS 계좌가 없습니다.');
+  /*
+   * 막힌 이유는 화면에 그대로 나간다. 무엇 때문에 막혔는지만 적으면 처음 보는
+   * 사람은 다음에 뭘 해야 할지 알 수 없으므로 고치는 방법까지 한 문장에 담는다.
+   */
+  if (!serverEnabled) {
+    blockers.push('실주문이 꺼져 있습니다. .env에 KIS_LIVE_ORDER_ENABLED=true를 넣고 서버를 다시 시작하세요.');
+  }
+  if (config.kisAccounts.length === 0) {
+    blockers.push('연결된 계좌가 없습니다. .env에 KIS_<번호>_ACCOUNT_NO / KIS_APP_KEY_<번호> / KIS_APP_SECRET_<번호>를 넣으세요.');
+  }
   return { enabled: blockers.length === 0, isProdEnv, serverEnabled, blockers };
 }
 

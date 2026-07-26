@@ -4908,7 +4908,7 @@ export function App(): JSX.Element {
                           <span>{formatMoney(position.unrealizedPnl, position.currency)}</span>
                         </div>
                       ))} />
-                      {kisAccountPositionCount === 0 && <div className="portfolio-table__empty">실계좌 보유 종목 없음</div>}
+                      {kisAccountPositionCount === 0 && <div className="portfolio-table__empty">보유 종목이 없습니다 · 종목 화면에서 매수하면 여기에 표시됩니다</div>}
                     </div>
                   </>
                 ) : (
@@ -4991,7 +4991,7 @@ export function App(): JSX.Element {
                         </div>
                       ))} />
                       {kisExecutionCount === 0 && (
-                        <div className="portfolio-table__empty">조회 구간에 실계좌 주문 없음</div>
+                        <div className="portfolio-table__empty">이 기간에 낸 주문이 없습니다 · 기간을 넓히거나 종목 화면에서 주문해 보세요</div>
                       )}
                     </div>
                   </>
@@ -5057,7 +5057,7 @@ export function App(): JSX.Element {
                       </div>
                     </div>
                     {kisTradeProfit.rows.length === 0 ? (
-                      <div className="portfolio-table__empty">조회 구간에 매도로 확정된 손익 없음</div>
+                      <div className="portfolio-table__empty">확정 손익이 없습니다 · 손익은 팔았을 때 확정됩니다</div>
                     ) : (
                       <div className="portfolio-table portfolio-table--trade-profit">
                         <div className="portfolio-table__head">
@@ -5336,6 +5336,9 @@ export function App(): JSX.Element {
                         !isOrderableDomesticInstrument(selectedInstrument) || isReservedCancelling
                       }
                       onClick={() => void submitReservedOrder()}
+                      title={
+                        reservedOrderBlockers.length > 0 ? reservedOrderBlockers.join('\n') : undefined
+                      }
                       type="button"
                     >
                       {isReservedCancelling ? '처리 중' : '예약주문 등록'}
@@ -5351,7 +5354,7 @@ export function App(): JSX.Element {
                   </div>
                 )}
                 {kisReservedOrders.length === 0 ? (
-                  <div className="portfolio-table__empty">등록된 예약주문 없음</div>
+                  <div className="portfolio-table__empty">예약주문이 없습니다 · 아래에서 등록하면 다음 개장일에 주문이 나갑니다</div>
                 ) : (
                   <div className="portfolio-table portfolio-table--reserved">
                     <div className="portfolio-table__head">
@@ -5606,6 +5609,9 @@ export function App(): JSX.Element {
                     data-side={orderSide}
                     disabled={liveOrderBlockers.length > 0}
                     onClick={() => setLiveOrderConfirming(true)}
+                    /* 잠긴 버튼은 이유를 손에 쥐여준다. 눌리지 않는 이유가 화면 어딘가에만
+                       적혀 있으면 버튼과 설명을 연결짓지 못한다. */
+                    title={liveOrderBlockers.length > 0 ? liveOrderBlockers.join('\n') : undefined}
                     type="button"
                   >
                     {orderSide === 'buy' ? '매수' : '매도'}
@@ -5642,7 +5648,7 @@ export function App(): JSX.Element {
                 </span>
               </div>
               {stream.orderNotices.length === 0 ? (
-                <div className="portfolio-table__empty">수신된 통보 없음</div>
+                <div className="portfolio-table__empty">받은 통보가 없습니다 · 주문을 내면 접수·체결이 여기에 실시간으로 쌓입니다</div>
               ) : (
                 <div className="portfolio-table portfolio-table--notices">
                   <div className="portfolio-table__head">
@@ -5680,7 +5686,7 @@ export function App(): JSX.Element {
                 </button>
               </div>
               {kisOpenOrders.length === 0 ? (
-                <div className="portfolio-table__empty">정정·취소할 미체결 주문 없음</div>
+                <div className="portfolio-table__empty">아직 체결되지 않은 주문이 없습니다 · 지정가 주문을 내면 여기에서 값을 고치거나 취소할 수 있습니다</div>
               ) : (
                 <div className="portfolio-table portfolio-table--open-orders">
                   <div className="portfolio-table__head">
