@@ -1393,7 +1393,7 @@ button {
   background: linear-gradient(90deg, #3b82f6, rgba(148, 163, 184, 0.35), #e5484d);
 }
 
-.terminal-ranking-list button,
+.terminal-ranking-list button:not(.portfolio-table__more),
 .terminal-ranking-list p {
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr) 130px 110px;
@@ -1410,11 +1410,11 @@ button {
   text-align: left;
 }
 
-.terminal-ranking-list button {
+.terminal-ranking-list button:not(.portfolio-table__more) {
   cursor: pointer;
 }
 
-.terminal-ranking-list button:hover {
+.terminal-ranking-list button:not(.portfolio-table__more):hover {
   border-color: rgba(245, 196, 81, 0.34);
   background: rgba(245, 196, 81, 0.08);
 }
@@ -4918,7 +4918,7 @@ button {
   .terminal-macro-list button[data-tone],
   .terminal-leaderboard div,
   .terminal-theme-list article,
-  .terminal-ranking-list button,
+  .terminal-ranking-list button:not(.portfolio-table__more),
   .terminal-ranking-list p,
   .terminal-sim-ticket,
   .terminal-sim-positions button,

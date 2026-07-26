@@ -366,7 +366,7 @@ const TERMINAL_TAB_GROUPS: Array<{ label: string; options: TerminalTabOption[] }
     options: [
       { key: 'overview', label: '대시보드', title: '핵심 지표와 출처' },
       { key: 'heatmap', label: '히트맵', title: '시총 상위 종목 등락 지도' },
-      { key: 'ranking', label: '랭킹', title: '24시간 인기 종목' },
+      { key: 'ranking', label: '랭킹', title: '많이 움직인 종목' },
       { key: 'themes', label: '테마', title: '도미넌스와 테마 흐름' },
       { key: 'macro', label: '매크로', title: '원자재·환율·금리·지수' },
     ],
@@ -2615,7 +2615,7 @@ export function App(): JSX.Element {
     return { up, down, total: THEME_FLOW_ITEMS.length };
   }, []);
   const marketCountdown = useMemo(() => getKoreanMarketCountdown(nowMs), [nowMs]);
-  const popularInstruments = useMemo(() => {
+  const moversBoard = useMemo(() => {
     const seen = new Set<string>();
     const candidates = [...terminalItems, ...recentInstruments, ...watchlist, ...categoryItems].filter((instrument) => {
       if (seen.has(instrument.id)) return false;
@@ -2623,10 +2623,23 @@ export function App(): JSX.Element {
       return true;
     });
 
-    return candidates
-      .map((instrument) => ({ instrument, snapshot: getSnapshotForInstrument(instrument) }))
-      .sort((a, b) => Math.abs(b.snapshot?.changeRate ?? 0) - Math.abs(a.snapshot?.changeRate ?? 0))
+    const scored = candidates.map((instrument) => ({
+      instrument,
+      snapshot: getSnapshotForInstrument(instrument),
+    }));
+
+    /*
+     * 시세가 없는 종목은 순위에서 뺀다. 예전에는 정렬 키가
+     * `Math.abs(b.snapshot?.changeRate ?? 0)`이라 값이 없는 쪽이 전부 0으로 묶여
+     * 배열에 꽂힌 순서대로 #2~#10을 받았다. 휴장이면 열 중 아홉이 그 상태라
+     * "삼성전자 9위" 같은 줄이 나오는데, 순위가 아니라 그냥 자리였다.
+     */
+    const ranked = scored
+      .filter((item): item is { instrument: Instrument; snapshot: PriceSnapshot } => Boolean(item.snapshot))
+      .sort((a, b) => Math.abs(b.snapshot.changeRate) - Math.abs(a.snapshot.changeRate))
       .slice(0, 10);
+
+    return { ranked, pending: scored.filter((item) => !item.snapshot).slice(0, 10) };
   }, [categoryItems, quotesByCode, recentInstruments, stream.trades, terminalItems, watchlist]);
   const selectedReportModels = useMemo(() => {
     const volumeBoost = snapshot ? Math.min(12, Math.log10(Math.max(1, snapshot.accVolume)) * 1.6) : 4;
@@ -4195,29 +4208,48 @@ export function App(): JSX.Element {
               )}
 
               {terminalTab === 'ranking' && (
-                <section className="terminal-page terminal-page--ranking" aria-label="24시간 인기 종목">
+                <section className="terminal-page terminal-page--ranking" aria-label="많이 움직인 종목">
                   <div className="terminal-page__header">
                     <div>
-                      <span>최근·관심·터미널 지표 기반</span>
-                      <strong>24시간 인기 종목</strong>
+                      <span>최근·관심 종목 중에서 · 전일 종가 대비</span>
+                      <strong>많이 움직인 종목</strong>
                     </div>
-                    <small>{popularInstruments.length}개 후보</small>
+                    <small>{moversBoard.ranked.length}개</small>
                   </div>
                   <div className="terminal-ranking-list">
-                    {popularInstruments.map((item, index) => (
+                    {moversBoard.ranked.map((item, index) => (
                       <button
-                        data-tone={moveTone(item.snapshot?.sign)}
+                        data-tone={moveTone(item.snapshot.sign)}
                         key={item.instrument.id}
                         onClick={() => selectInstrument(item.instrument)}
                         type="button"
                       >
                         <span>#{index + 1}</span>
                         <strong>{item.instrument.name}</strong>
-                        <em>{item.snapshot ? formatCurrencyPrice(item.snapshot.price, item.instrument.currency) : '-'}</em>
-                        <small>{item.snapshot ? formatRate(item.snapshot.changeRate) : pendingQuoteLabel(item.instrument)}</small>
+                        <em>{formatCurrencyPrice(item.snapshot.price, item.instrument.currency)}</em>
+                        <small>{formatRate(item.snapshot.changeRate)}</small>
                       </button>
                     ))}
-                    {popularInstruments.length === 0 && <p>시세가 쌓이면 인기 종목을 표시합니다</p>}
+                    {moversBoard.ranked.length === 0 && <p>시세가 들어오면 등락률이 큰 순서로 보여줍니다</p>}
+                    {/* 시세를 못 받은 종목은 순위 없이, 왜 못 받았는지와 함께 접어 둔다. */}
+                    {moversBoard.pending.length > 0 && (
+                      <CollapsibleRows
+                        limit={0}
+                        moreLabel={(hidden) => `아직 시세를 받지 못한 종목 ${hidden}개 보기`}
+                        rows={moversBoard.pending.map((item) => (
+                          <button
+                            key={item.instrument.id}
+                            onClick={() => selectInstrument(item.instrument)}
+                            type="button"
+                          >
+                            <span aria-hidden="true">·</span>
+                            <strong>{item.instrument.name}</strong>
+                            <em>-</em>
+                            <small>{pendingQuoteLabel(item.instrument)}</small>
+                          </button>
+                        ))}
+                      />
+                    )}
                   </div>
                 </section>
               )}
