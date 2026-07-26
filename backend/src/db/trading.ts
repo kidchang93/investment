@@ -176,8 +176,16 @@ export async function ensureTradingSchema(): Promise<void> {
       INSERT INTO trading_accounts (
         id, label, broker, mode, base_currency, cash_balance, buying_power, max_order_notional, live_enabled
       )
-      VALUES ($1, 'Paper KRW', 'paper', 'paper', 'KRW', 10000000, 10000000, 1000000, false)
-      ON CONFLICT (id) DO NOTHING
+      VALUES ($1, '모의계좌', 'paper', 'paper', 'KRW', 10000000, 10000000, 1000000, false)
+      /*
+       * 라벨만 갱신한다. 예전 기본값이 'Paper KRW'였는데 화면 곳곳에서 같은 계좌를
+       * Paper·모의·시뮬로 제각각 불러 초보자가 같은 것인지 알 수 없었다. 이름을
+       * 직접 바꾼 계좌는 건드리지 않도록 옛 기본값일 때만 고친다. 잔고 관련
+       * 컬럼은 손대지 않는다.
+       */
+      ON CONFLICT (id) DO UPDATE
+        SET label = EXCLUDED.label
+        WHERE trading_accounts.label = 'Paper KRW'
     `,
     [PAPER_ACCOUNT_ID],
   );

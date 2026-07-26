@@ -349,7 +349,7 @@ const TERMINAL_TAB_GROUPS: Array<{ label: string; options: TerminalTabOption[] }
     label: '도구',
     options: [
       { key: 'fees', label: '수수료', title: '증권사 비용 계산' },
-      { key: 'simulation', label: '시뮬', title: '테스트매매와 리더보드' },
+      { key: 'simulation', label: '모의투자', title: '모의계좌로 연습 매매' },
     ],
   },
 ];
@@ -2413,7 +2413,7 @@ export function App(): JSX.Element {
   const modeChipLabel = !liveOrderGate
     ? '게이트 확인 중'
     : liveOrderArmed
-      ? `실주문 가능 · ${liveOrderGate.isProdEnv ? '실전' : '모의'}`
+      ? `실주문 가능 · ${liveOrderGate.isProdEnv ? '실전 서버' : '모의 서버'}`
       : '조회 전용';
   /* 하단 도크용. 헤더 배지와 달리 환경 표기는 빼고 짧게 쓴다. */
   const sessionModeLabel = !liveOrderGate
@@ -2424,7 +2424,7 @@ export function App(): JSX.Element {
   const modeChipTitle = !liveOrderGate
     ? '실주문 게이트 상태를 확인하는 중입니다'
     : liveOrderArmed
-      ? `실주문이 열려 있습니다 · ${liveOrderGate.isProdEnv ? '실전(prod)' : '모의(vts)'}`
+      ? `실주문이 열려 있습니다 · ${liveOrderGate.isProdEnv ? 'KIS 실전 서버' : 'KIS 모의 서버'}`
       : `실주문 차단됨 — ${liveOrderGate.blockers.join(' / ')}`;
   const activeChartReadout = hoveredChartReadout ?? (
     snapshot
@@ -3281,18 +3281,18 @@ export function App(): JSX.Element {
 
   function submitSimulationOrder(side: OrderSide): void {
     if (!selectedInstrument || !snapshot) {
-      setError('시뮬레이션할 종목과 현재가를 먼저 확인하세요.');
+      setError('모의 주문할 종목과 현재가를 먼저 확인하세요.');
       return;
     }
     if (!Number.isFinite(simulationQuantityNumber) || simulationQuantityNumber <= 0) {
-      setError('시뮬레이션 수량은 0보다 커야 합니다.');
+      setError('수량은 0보다 커야 합니다.');
       return;
     }
 
     const notional = simulationQuantityNumber * snapshot.price;
     if (side === 'buy') {
       if (notional > simulationCash) {
-        setError('시뮬레이션 현금이 부족합니다.');
+        setError('모의계좌 현금이 부족합니다.');
         return;
       }
       setSimulationCash((cash) => cash - notional);
@@ -3322,7 +3322,7 @@ export function App(): JSX.Element {
     }
 
     if (!simulationSelectedPosition || simulationSelectedPosition.quantity < simulationQuantityNumber) {
-      setError('시뮬레이션 보유 수량이 부족합니다.');
+      setError('모의계좌 보유 수량이 부족합니다.');
       return;
     }
     setSimulationCash((cash) => cash + notional);
@@ -3383,7 +3383,7 @@ export function App(): JSX.Element {
             title="보이는 종목 시세 즉시 갱신"
             type="button"
           >
-            {isQuoteRefreshing ? '갱신중' : '갱신'}
+            {isQuoteRefreshing ? '불러오는 중' : '새로고침'}
           </button>
           <span
             className="status-dot"
@@ -3655,7 +3655,7 @@ export function App(): JSX.Element {
                     : '미설정'}
                 </b>
                 <b data-account="paper">
-                  모의 {formatMoney(activeTradingAccount?.cashBalance, activeTradingAccount?.baseCurrency)}
+                  모의계좌 {formatMoney(activeTradingAccount?.cashBalance, activeTradingAccount?.baseCurrency)}
                 </b>
               </small>
             </div>
@@ -4412,11 +4412,11 @@ export function App(): JSX.Element {
               )}
 
               {terminalTab === 'simulation' && (
-                <section className="terminal-page terminal-page--simulation" aria-label="테스트매매">
+                <section className="terminal-page terminal-page--simulation" aria-label="모의투자">
                   <div className="terminal-page__header">
                     <div>
-                      <span>실매매 전 단계</span>
-                      <strong>테스트매매 시뮬레이션</strong>
+                      <span>실계좌 주문 전 연습</span>
+                      <strong>모의투자</strong>
                     </div>
                     <small>{formatSignedPrice(Math.round(simulationPnl))} pt</small>
                   </div>
@@ -4445,7 +4445,7 @@ export function App(): JSX.Element {
                   <div className="terminal-simulation-grid">
                     <section className="terminal-panel">
                       <div className="terminal-panel__header">
-                        <strong>가상 주문</strong>
+                        <strong>모의 주문</strong>
                         <span>{selectedInstrument?.name ?? '종목 선택 대기'}</span>
                       </div>
                       <div className="terminal-sim-ticket">
@@ -4465,8 +4465,8 @@ export function App(): JSX.Element {
                           <span>보유</span>
                           <strong>{simulationSelectedPosition ? formatPrice(simulationSelectedPosition.quantity) : '0'}</strong>
                         </div>
-                        <button onClick={() => submitSimulationOrder('buy')} type="button">가상 매수</button>
-                        <button onClick={() => submitSimulationOrder('sell')} type="button">가상 매도</button>
+                        <button onClick={() => submitSimulationOrder('buy')} type="button">모의 매수</button>
+                        <button onClick={() => submitSimulationOrder('sell')} type="button">모의 매도</button>
                         <button
                           onClick={() => {
                             setSimulationCash(1_000_000);
@@ -4506,7 +4506,7 @@ export function App(): JSX.Element {
                             </button>
                           );
                         })}
-                        {simulationPositions.length === 0 && <p>가상 매수하면 포지션이 표시됩니다</p>}
+                        {simulationPositions.length === 0 && <p>모의 매수하면 포지션이 표시됩니다</p>}
                       </div>
                     </section>
                   </div>
@@ -5511,7 +5511,7 @@ export function App(): JSX.Element {
               </section>
 
               <h2 className="portfolio-section" data-kind="paper">
-                <span>모의 계좌</span>
+                <span>모의계좌</span>
                 <em>{activeTradingAccount?.label ?? 'paper'} · 실제 주문이 나가지 않습니다</em>
               </h2>
               <div className="portfolio-page__metrics">
@@ -5705,7 +5705,15 @@ export function App(): JSX.Element {
               <div className="order-ticket__account">
                 <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
                 <em>{activeTradingAccount?.label ?? '계정 대기'}</em>
-                <span>{activeTradingAccount?.mode === 'paper' ? 'PAPER' : 'LIVE 잠금'}</span>
+                {/*
+                  용어를 맞추고 나니 계좌 이름과 이 배지가 똑같이 `모의계좌`가 됐다.
+                  예전엔 `Paper KRW` + `PAPER`라 서로 다른 말처럼 보여 중복이 가려져
+                  있었을 뿐이다. 이름이 이미 말해주는 건 빼고, 이름만으로 알 수 없는
+                  경우(실계좌인데 잠겨 있음)에만 띄운다.
+                */}
+                {activeTradingAccount && activeTradingAccount.mode !== 'paper' && (
+                  <span>실계좌 잠김</span>
+                )}
               </div>
             </div>
             <div className="order-ticket__body">
@@ -5830,7 +5838,7 @@ export function App(): JSX.Element {
                     onChange={(event) => setOrderAcknowledged(event.target.checked)}
                     type="checkbox"
                   />
-                  <span>paper 주문이며 실계좌로 전송되지 않음을 확인했습니다.</span>
+                  <span>모의계좌 주문이며 실계좌로 나가지 않습니다</span>
                 </label>
                 <div className="order-ticket__messages">
                   {orderRiskMessages.length === 0 ? (
@@ -5851,7 +5859,7 @@ export function App(): JSX.Element {
                 onClick={() => void submitOrderIntent()}
                 type="button"
               >
-                {isOrderSubmitting ? '처리 중' : orderType === 'market' ? 'Paper 즉시 체결' : 'Paper 주문 저장'}
+                {isOrderSubmitting ? '처리 중' : orderType === 'market' ? '모의 즉시 체결' : '모의 주문 저장'}
               </button>
             </div>
 
@@ -5862,7 +5870,7 @@ export function App(): JSX.Element {
                 <em data-open={liveOrderGate?.enabled ? 'true' : 'false'}>
                   {liveOrderGate ? (liveOrderGate.enabled ? '게이트 열림' : '게이트 차단') : '확인 중'}
                 </em>
-                <span>{liveOrderGate?.isProdEnv ? '실전(prod)' : '모의(vts)'}</span>
+                <span>{liveOrderGate?.isProdEnv ? '실전 서버' : '모의 서버'}</span>
               </div>
               {/*
                 예전엔 `실주문 전송`을 그대로 받아치는 문구 입력이 있었다. 클라이언트가
