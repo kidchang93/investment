@@ -1586,6 +1586,18 @@ span.sample-badge {
   font-style: normal;
 }
 
+/*
+ * 이미 지난 일정.
+ *
+ * `[data-impact]` 규칙들보다 뒤에 둬야 테두리색을 덮는다 — 특이도가 같아
+ * (0,2,1) 순서로 결정된다. 지우지는 않는다. 지난 발표도 왜 그날 움직였는지
+ * 볼 때 쓴다.
+ */
+.terminal-calendar-grid article[data-past='true'] {
+  border-color: var(--border-soft);
+  opacity: 0.55;
+}
+
 .terminal-theme-list article,
 .terminal-fee-table__head,
 .terminal-fee-table__row {

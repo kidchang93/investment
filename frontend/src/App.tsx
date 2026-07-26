@@ -2702,12 +2702,16 @@ export function App(): JSX.Element {
       })).filter((group) => group.items.length > 0),
     [macroFilter, quotesByCode, stream.trades, terminalInstrumentById, usdKrwRate],
   );
+  /*
+   * `다가오는 일정 N건` 라벨에만 쓴다. 목록은 calendarEvents가 그린다.
+   * 여기 `.slice(0, 6)`이 붙어 있어서 8건이 남아도 라벨이 6건에서 멈췄다 —
+   * 세는 값에 상한을 걸면 개수가 개수가 아니게 된다.
+   */
   const upcomingEvents = useMemo(
     () =>
       ECONOMIC_EVENTS.filter((event) => new Date(`${event.date}T23:59:59+09:00`).getTime() >= nowMs)
         .filter((event) => calendarRegionFilter === 'all' || event.scope === calendarRegionFilter)
-        .filter((event) => calendarImpactFilter === 'all' || event.impact === calendarImpactFilter)
-        .slice(0, 6),
+        .filter((event) => calendarImpactFilter === 'all' || event.impact === calendarImpactFilter),
     [calendarImpactFilter, calendarRegionFilter, nowMs],
   );
   const calendarEvents = useMemo(
@@ -2746,7 +2750,7 @@ export function App(): JSX.Element {
       .sort((a, b) => Math.abs(b.snapshot.changeRate) - Math.abs(a.snapshot.changeRate))
       .slice(0, 10);
 
-    return { ranked, pending: scored.filter((item) => !item.snapshot).slice(0, 10) };
+    return { ranked, pending: scored.filter((item) => !item.snapshot) };
   }, [categoryItems, quotesByCode, recentInstruments, stream.trades, terminalItems, watchlist]);
   const selectedReportModels = useMemo(() => {
     const volumeBoost = snapshot ? Math.min(12, Math.log10(Math.max(1, snapshot.accVolume)) * 1.6) : 4;
@@ -4256,13 +4260,28 @@ export function App(): JSX.Element {
                     ))}
                   </div>
                   <div className="terminal-calendar-grid">
-                    {calendarEvents.map((event) => (
-                      <article data-impact={event.impact} key={`${event.date}-${event.title}`}>
-                        <span>{formatEventDay(event.date)} · {event.time}</span>
-                        <strong>{event.title}</strong>
-                        <em>{event.region} · 중요도 {event.impact}</em>
-                      </article>
-                    ))}
+                    {/*
+                      지난 일정과 앞으로의 일정이 똑같이 보였다. 오늘이 07-26인데
+                      07-13 발표가 같은 모양으로 떠 있으니, 위의 `다가오는 일정 2건`과
+                      아래 10줄이 왜 다른지 알 수 없었다. 지난 줄을 눌러 둔다.
+                    */}
+                    {calendarEvents.map((event) => {
+                      const isPast = new Date(`${event.date}T23:59:59+09:00`).getTime() < nowMs;
+                      return (
+                        <article
+                          data-impact={event.impact}
+                          data-past={isPast ? 'true' : undefined}
+                          key={`${event.date}-${event.title}`}
+                        >
+                          <span>
+                            {formatEventDay(event.date)} · {event.time}
+                            {isPast && ' · 지남'}
+                          </span>
+                          <strong>{event.title}</strong>
+                          <em>{event.region} · 중요도 {event.impact}</em>
+                        </article>
+                      );
+                    })}
                   </div>
                   <div className="terminal-panel terminal-panel--notice">
                     <div className="terminal-panel__header">
@@ -5203,7 +5222,7 @@ export function App(): JSX.Element {
                         <span>현재가</span>
                         <span>평가손익</span>
                       </div>
-                      <CollapsibleRows rows={kisAccountSnapshot.positions.slice(0, 16).map((position) => (
+                      <CollapsibleRows rows={kisAccountSnapshot.positions.map((position) => (
                         <div className="portfolio-table__row" key={position.symbol}>
                           <strong>{position.symbol}</strong>
                           <span>{formatNumber(position.quantity)}</span>
@@ -5273,7 +5292,7 @@ export function App(): JSX.Element {
                         <span>체결금액</span>
                         <span>상태</span>
                       </div>
-                      <CollapsibleRows rows={kisExecutionSnapshot.executions.slice(0, 30).map((execution) => (
+                      <CollapsibleRows rows={kisExecutionSnapshot.executions.map((execution) => (
                         <div className="portfolio-table__row" key={execution.id}>
                           <span>{formatBrokerOrderTime(execution.orderDate, execution.orderTime)}</span>
                           <strong>{execution.name || execution.symbol}</strong>
@@ -5373,7 +5392,7 @@ export function App(): JSX.Element {
                           <span>실현손익</span>
                           <span>손익률</span>
                         </div>
-                        <CollapsibleRows rows={kisTradeProfit.rows.slice(0, 30).map((row) => (
+                        <CollapsibleRows rows={kisTradeProfit.rows.map((row) => (
                           <div className="portfolio-table__row" key={row.id}>
                             <span>{formatBrokerOrderTime(row.tradeDate)}</span>
                             <strong>{row.name || row.symbol}</strong>
@@ -5710,7 +5729,7 @@ export function App(): JSX.Element {
                       <span>사유</span>
                       <span>상태</span>
                     </div>
-                    <CollapsibleRows rows={kisOrderLog.slice(0, 30).map((record) => (
+                    <CollapsibleRows rows={kisOrderLog.map((record) => (
                       <div className="portfolio-table__row" key={record.id}>
                         <span>{formatClock(record.createdAt)}</span>
                         <span>
@@ -5837,7 +5856,7 @@ export function App(): JSX.Element {
                       <span>단가</span>
                       <span>상태·취소</span>
                     </div>
-                    <CollapsibleRows rows={kisReservedOrders.slice(0, 20).map((order) => (
+                    <CollapsibleRows rows={kisReservedOrders.map((order) => (
                       <div className="portfolio-table__row" key={order.id}>
                         <span>{formatBrokerOrderTime(order.orderDate)}</span>
                         <strong>{order.name || order.symbol}</strong>
@@ -6186,20 +6205,24 @@ export function App(): JSX.Element {
                     <span>주문번호</span>
                     <span>상태</span>
                   </div>
-                  {stream.orderNotices.slice(0, 20).map((notice) => (
-                    <div className="portfolio-table__row" key={`${notice.orderNo}-${notice.receivedAt}`}>
-                      <span>{formatBrokerClock(notice.time) ?? formatClock(notice.receivedAt)}</span>
-                      <strong>{notice.name || notice.symbol}</strong>
-                      <span>{notice.side === 'buy' ? '매수' : '매도'}</span>
-                      <span>
-                        {formatNumber(notice.quantity)}주 · {formatMoney(notice.price)}
-                      </span>
-                      <span>{notice.orderNo}</span>
-                      <em data-status={notice.rejected ? 'rejected' : notice.kind === 'filled' ? 'filled' : 'open'}>
-                        {notice.rejected ? '거부' : notice.kind === 'filled' ? '체결' : '접수'}
-                      </em>
-                    </div>
-                  ))}
+                  {/* 헤더가 `N건`이라고 세어 놓고 20건만 그리면 숫자와 화면이 어긋난다. */}
+                  <CollapsibleRows
+                    moreLabel={(hidden) => `이전 통보 ${hidden}건 더 보기`}
+                    rows={stream.orderNotices.map((notice) => (
+                      <div className="portfolio-table__row" key={`${notice.orderNo}-${notice.receivedAt}`}>
+                        <span>{formatBrokerClock(notice.time) ?? formatClock(notice.receivedAt)}</span>
+                        <strong>{notice.name || notice.symbol}</strong>
+                        <span>{notice.side === 'buy' ? '매수' : '매도'}</span>
+                        <span>
+                          {formatNumber(notice.quantity)}주 · {formatMoney(notice.price)}
+                        </span>
+                        <span>{notice.orderNo}</span>
+                        <em data-status={notice.rejected ? 'rejected' : notice.kind === 'filled' ? 'filled' : 'open'}>
+                          {notice.rejected ? '거부' : notice.kind === 'filled' ? '체결' : '접수'}
+                        </em>
+                      </div>
+                    ))}
+                  />
                 </div>
               )}
             </div>
