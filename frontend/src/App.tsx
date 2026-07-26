@@ -166,9 +166,8 @@ interface EconomicEvent {
 
 interface ThemeFlowItem {
   name: string;
-  leader: string;
-  score: number;
-  change: number;
+  /** 이 테마의 등락률을 계산할 구성 종목. 히트맵과 같은 12종목을 나눠 쓴다. */
+  symbols: string[];
   tags: string[];
 }
 
@@ -541,13 +540,23 @@ const ECONOMIC_EVENTS: EconomicEvent[] = [
   { date: '2026-07-31', time: '21:30', region: '미국', title: 'PCE 물가지수', impact: '최고', scope: 'global' },
 ];
 
+/*
+ * 테마 보드.
+ *
+ * 예전에는 `score`(92·81·76…)와 `change`(+18.4%…)가 박혀 있었다. score는
+ * 무엇을 잰 값인지 정의가 없었고 change는 지어낸 등락률이었다. score는
+ * 지우고, 등락률은 구성 종목의 실제 등락률 평균으로 계산한다.
+ *
+ * 구성 종목은 히트맵과 같은 12개다 — 이미 조회가 되는 것을 확인한 종목이라
+ * 새로 해석할 위험이 없고, 두 탭이 같은 종목을 본다는 점도 말이 된다.
+ */
 const THEME_FLOW_ITEMS: ThemeFlowItem[] = [
-  { name: '반도체', leader: '삼성전자 · SK하이닉스', score: 92, change: 18.4, tags: ['HBM', 'AI'] },
-  { name: '방산', leader: '한화에어로스페이스', score: 81, change: 12.2, tags: ['수출', '정책'] },
-  { name: '전력기기', leader: 'HD현대일렉트릭', score: 76, change: 9.7, tags: ['전력망', 'AI데이터센터'] },
-  { name: '2차전지', leader: 'LG에너지솔루션', score: 64, change: -3.8, tags: ['IRA', '소재'] },
-  { name: '바이오', leader: '삼성바이오로직스', score: 58, change: 4.1, tags: ['CDMO', '실적'] },
-  { name: '조선', leader: 'HD한국조선해양', score: 55, change: 6.5, tags: ['LNG', '수주'] },
+  { name: '반도체', symbols: ['005930', '000660'], tags: ['HBM', 'AI'] },
+  { name: '2차전지', symbols: ['373220', '051910'], tags: ['IRA', '소재'] },
+  { name: '바이오', symbols: ['207940', '068270'], tags: ['CDMO', '실적'] },
+  { name: '자동차', symbols: ['005380', '000270'], tags: ['수출', '전기차'] },
+  { name: '조선·방산', symbols: ['329180', '012450'], tags: ['수주', '정책'] },
+  { name: '플랫폼', symbols: ['035420', '035720'], tags: ['광고', 'AI'] },
 ];
 
 const REPORT_MODELS: ReportModel[] = [
@@ -630,13 +639,6 @@ const FEE_BROKERS: FeeBroker[] = [
   { name: '삼성증권', product: 'mPOP', commissionRate: 0.00015, institutionRate: 0.00003, supportsDerivatives: true },
   { name: 'KB증권', product: 'M-able', commissionRate: 0.00015, institutionRate: 0.00003, supportsDerivatives: true },
   { name: '토스증권', product: '모바일', commissionRate: 0.00015, institutionRate: 0.00003, supportsDerivatives: false },
-];
-
-const SIMULATION_LEADERS = [
-  { rank: 1, name: 'night-alpha', pnl: 184200, trades: 32, winRate: 62 },
-  { rank: 2, name: 'macro-runner', pnl: 126500, trades: 21, winRate: 57 },
-  { rank: 3, name: 'oil-swing', pnl: 98400, trades: 18, winRate: 55 },
-  { rank: 4, name: 'risk-flat', pnl: 41200, trades: 11, winRate: 64 },
 ];
 
 const OVERSEAS_REFRESH_MS = 5_000;
@@ -781,11 +783,30 @@ function readStoredValue<T extends string>(key: string, fallback: T, allowed: re
   return allowed.includes(value as T) ? (value as T) : fallback;
 }
 
+/** 모의투자 시드머니. 손익은 이 값을 기준으로 잰다. */
+const SIMULATION_SEED_CASH = 1_000_000;
+
 function readStoredBoolean(key: string, fallback: boolean): boolean {
   const value = window.localStorage.getItem(`${STORAGE_PREFIX}${key}`);
   if (value === 'true') return true;
   if (value === 'false') return false;
   return fallback;
+}
+
+/**
+ * 저장된 숫자. 없으면 fallback.
+ *
+ * `Number(localStorage.getItem(...))`로 쓰면 안 된다. 키가 없을 때
+ * `getItem`은 null을 주고 `Number(null)`은 NaN이 아니라 **0**이다.
+ * 그래서 `Number.isFinite(value) && value >= 0` 같은 검사를 통과해 버린다.
+ * 모의투자 시드머니가 그랬다 — 처음 여는 사람은 현금 0에 손익 -100만원으로
+ * 시작했고, 살 돈이 없어 아무것도 못 했다.
+ */
+function readStoredNumber(key: string, fallback: number, isValid: (value: number) => boolean): number {
+  const raw = window.localStorage.getItem(`${STORAGE_PREFIX}${key}`);
+  if (raw === null || raw.trim() === '') return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && isValid(value) ? value : fallback;
 }
 
 function writeStoredValue(key: string, value: string | boolean): void {
@@ -1824,10 +1845,9 @@ export function App(): JSX.Element {
   const [orderTimeInForce, setOrderTimeInForce] = useState<OrderTimeInForce>('day');
   const [orderQuantity, setOrderQuantity] = useState('1');
   const [orderLimitPrice, setOrderLimitPrice] = useState('');
-  const [simulationCash, setSimulationCash] = useState(() => {
-    const value = Number(window.localStorage.getItem(`${STORAGE_PREFIX}simulationCash`));
-    return Number.isFinite(value) && value >= 0 ? value : 1_000_000;
-  });
+  const [simulationCash, setSimulationCash] = useState(() =>
+    readStoredNumber('simulationCash', SIMULATION_SEED_CASH, (value) => value >= 0),
+  );
   const [simulationPositions, setSimulationPositions] = useState<SimulationPosition[]>(readStoredSimulationPositions);
   const [simulationQuantity, setSimulationQuantity] = useState('1');
   const [error, setError] = useState<string | null>(null);
@@ -2438,7 +2458,10 @@ export function App(): JSX.Element {
        * 히트맵 12종목. 그 탭이 열려 있을 때만 넣는다 — 발견 화면에 머무는
        * 동안 계속 12건을 더 부르면 KIS 조회 한도를 그만큼 빨리 쓴다.
        */
-      if (terminalTab === 'heatmap') for (const id of HEATMAP_INSTRUMENT_IDS) addId(id);
+      /* 히트맵과 테마 보드가 같은 12종목을 쓴다. 둘 중 하나가 열려 있을 때만 부른다. */
+      if (terminalTab === 'heatmap' || terminalTab === 'themes') {
+        for (const id of HEATMAP_INSTRUMENT_IDS) addId(id);
+      }
     }
     for (const instrument of recentInstruments) add(instrument);
     for (const instrument of watchlist) add(instrument);
@@ -2790,11 +2813,54 @@ export function App(): JSX.Element {
         .filter((event) => calendarImpactFilter === 'all' || event.impact === calendarImpactFilter),
     [calendarImpactFilter, calendarRegionFilter],
   );
+  /*
+   * 테마 등락률 = 구성 종목 등락률의 평균. 한 종목이라도 시세가 안 왔으면
+   * 평균을 내지 않는다 — 반쪽만으로 낸 값을 테마 등락률이라 부를 수 없다.
+   */
+  const themeRows = useMemo(
+    () =>
+      THEME_FLOW_ITEMS.map((item) => {
+        const rates = item.symbols.map(
+          (symbol) => toSnapshot(undefined, quotesByCode[`KR:KOSPI:${symbol}`])?.changeRate,
+        );
+        const ready = rates.every((rate) => rate !== undefined);
+        return {
+          ...item,
+          changeRate: ready
+            ? (rates as number[]).reduce((sum, rate) => sum + rate, 0) / rates.length
+            : undefined,
+        };
+      }),
+    [quotesByCode],
+  );
+
+  /** 가장 많이 오른 테마. 시세가 없으면 고르지 않는다. */
+  const themeTop = useMemo(() => {
+    const measured = themeRows.filter((item) => item.changeRate !== undefined);
+    if (measured.length === 0) return undefined;
+    return measured.reduce((best, item) =>
+      (item.changeRate as number) > (best.changeRate as number) ? item : best,
+    );
+  }, [themeRows]);
+
+  /** 가장 많이 내린 테마. 상위만 보여주면 오른 쪽만 눈에 남는다. */
+  const themeBottom = useMemo(() => {
+    const measured = themeRows.filter((item) => item.changeRate !== undefined);
+    if (measured.length === 0) return undefined;
+    return measured.reduce((worst, item) =>
+      (item.changeRate as number) < (worst.changeRate as number) ? item : worst,
+    );
+  }, [themeRows]);
+
   const themeBreadth = useMemo(() => {
-    const up = THEME_FLOW_ITEMS.filter((item) => item.change > 0).length;
-    const down = THEME_FLOW_ITEMS.filter((item) => item.change < 0).length;
-    return { up, down, total: THEME_FLOW_ITEMS.length };
-  }, []);
+    const measured = themeRows.filter((item) => item.changeRate !== undefined);
+    return {
+      up: measured.filter((item) => (item.changeRate as number) > 0).length,
+      down: measured.filter((item) => (item.changeRate as number) < 0).length,
+      measured: measured.length,
+      total: themeRows.length,
+    };
+  }, [themeRows]);
   const marketCountdown = useMemo(() => getKoreanMarketCountdown(nowMs), [nowMs]);
   const moversBoard = useMemo(() => {
     const seen = new Set<string>();
@@ -2868,7 +2934,7 @@ export function App(): JSX.Element {
     0,
   );
   const simulationEquity = simulationCash + simulationMarketValue;
-  const simulationPnl = simulationEquity - 1_000_000;
+  const simulationPnl = simulationEquity - SIMULATION_SEED_CASH;
   const simulationSelectedPosition = selectedInstrument
     ? simulationPositions.find((position) => position.instrumentId === selectedInstrument.id)
     : undefined;
@@ -4552,37 +4618,58 @@ export function App(): JSX.Element {
                 <section className="terminal-page terminal-page--themes" aria-label="테마와 도미넌스">
                   <div className="terminal-page__header">
                     <div>
-                      <span>테마별 자금 흐름 · 상승 {themeBreadth.up} · 하락 {themeBreadth.down}</span>
+                      <span>
+                        구성 종목 등락률 평균 · 전일 종가 대비
+                        {themeBreadth.measured > 0 && ` · 상승 ${themeBreadth.up} · 하락 ${themeBreadth.down}`}
+                      </span>
                       <strong>테마 보드</strong>
                     </div>
-                    <SampleBadge note="실제 집계가 아닙니다. 점수·등락률·비중 모두 화면 구성을 보여주려고 넣어 둔 값입니다." />
+                    {/* 등락률은 실제 시세다. 어떤 종목을 묶었는지가 사람이 정한 부분이다. */}
+                    <SampleBadge note="등락률은 구성 종목의 실제 시세로 계산합니다. 어떤 종목을 한 테마로 묶을지는 사람이 정한 것이라 분류 기준이 따로 있지는 않습니다." />
                   </div>
+                  {/*
+                    `삼닉 관심도 36%`가 있던 자리다. 무엇을 잰 값인지 정의가
+                    없었고 계산할 소스도 없어서, 셀 수 있는 것으로 바꿨다.
+                    설명도 고정 문구를 쓰지 않는다 — `시장 폭`이 1/6인데
+                    `주요 테마 상승 우위`라고 적혀 있었다.
+                  */}
                   <div className="terminal-dominance">
                     <div>
-                      <span>삼닉 관심도</span>
-                      <strong>36%</strong>
-                      <em>고정값 · 거래대금 연동 전</em>
-                    </div>
-                    <div>
                       <span>시장 폭</span>
-                      <strong>{themeBreadth.up}/{themeBreadth.total}</strong>
-                      <em>주요 테마 상승 우위</em>
+                      <strong>{themeBreadth.up}/{themeBreadth.measured || themeBreadth.total}</strong>
+                      <em>
+                        {themeBreadth.measured === 0
+                          ? '시세 대기'
+                          : themeBreadth.up > themeBreadth.down
+                            ? '오른 테마가 더 많다'
+                            : themeBreadth.up < themeBreadth.down
+                              ? '내린 테마가 더 많다'
+                              : '오른 테마와 내린 테마가 같다'}
+                      </em>
                     </div>
                     <div>
-                      <span>상위 테마</span>
-                      <strong>{THEME_FLOW_ITEMS[0]?.name}</strong>
-                      <em>{THEME_FLOW_ITEMS[0]?.leader}</em>
+                      <span>가장 오른 테마</span>
+                      <strong>{themeTop?.name ?? '-'}</strong>
+                      <em>{themeTop ? formatRate(themeTop.changeRate as number) : '시세 대기'}</em>
+                    </div>
+                    <div>
+                      <span>가장 내린 테마</span>
+                      <strong>{themeBottom?.name ?? '-'}</strong>
+                      <em>{themeBottom ? formatRate(themeBottom.changeRate as number) : '시세 대기'}</em>
                     </div>
                   </div>
                   <div className="terminal-theme-list">
-                    {THEME_FLOW_ITEMS.map((item) => (
-                      <article data-tone={feeImpactTone(item.change)} key={item.name}>
+                    {themeRows.map((item) => (
+                      <article
+                        data-pending={item.changeRate === undefined ? 'true' : undefined}
+                        data-tone={item.changeRate === undefined ? 'flat' : feeImpactTone(item.changeRate)}
+                        key={item.name}
+                      >
                         <div>
                           <strong>{item.name}</strong>
-                          <span>{item.leader}</span>
+                          <span>{item.symbols.join(' · ')}</span>
                         </div>
-                        <em>{item.score}</em>
-                        <small>{formatRate(item.change)}</small>
+                        <em>{item.changeRate === undefined ? '시세 대기' : formatRate(item.changeRate)}</em>
                         <span>{item.tags.join(' · ')}</span>
                       </article>
                     ))}
@@ -4835,26 +4922,24 @@ export function App(): JSX.Element {
                       </div>
                     </section>
                   </div>
+                  {/*
+                    예전엔 `리더보드`에 지어낸 참가자 넷이 있었고 내 실제 손익이
+                    그 사이에 #0으로 끼어 있었다. 이 모의투자는 서버 없이
+                    localStorage만 쓰는 도구라 다른 참가자가 있을 수 없다 —
+                    실데이터로 바꿀 길이 없는 순위표였다. 내 기록만 남긴다.
+                  */}
                   <section className="terminal-panel">
                     <div className="terminal-panel__header">
-                      <strong>리더보드</strong>
-                      <SampleBadge note="my-simulation만 내 기록입니다. 나머지 참가자와 손익은 화면 구성을 보여주려고 넣어 둔 값이라 순위에 의미가 없습니다." />
+                      <strong>내 모의 성적</strong>
+                      <span>이 브라우저에만 저장됩니다</span>
                     </div>
                     <div className="terminal-leaderboard">
                       <div>
-                        <span>#0</span>
-                        <strong>my-simulation</strong>
+                        <span aria-hidden="true">·</span>
+                        <strong>내 기록</strong>
                         <em>{formatSignedPrice(Math.round(simulationPnl))} pt</em>
                         <small>{simulationPositions.length}개 보유</small>
                       </div>
-                      {SIMULATION_LEADERS.map((leader) => (
-                        <div key={leader.rank}>
-                          <span>#{leader.rank}</span>
-                          <strong>{leader.name}</strong>
-                          <em>{formatSignedPrice(leader.pnl)} pt</em>
-                          <small>{leader.trades}회 · 승률 {leader.winRate}%</small>
-                        </div>
-                      ))}
                     </div>
                   </section>
                 </section>

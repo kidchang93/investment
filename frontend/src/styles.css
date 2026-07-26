@@ -1666,6 +1666,17 @@ span.sample-badge {
   color: #93c5fd;
 }
 
+/*
+ * 아직 구성 종목 시세가 다 안 온 테마.
+ *
+ * `[data-tone]`들보다 뒤에 둬야 색을 덮는다 — 특이도가 같아 순서로 결정된다.
+ * 값이 없는데 오르내림 색이 칠해져 있으면 잰 것처럼 보인다.
+ */
+.terminal-theme-list article[data-pending='true'] {
+  color: var(--faint);
+  opacity: 0.65;
+}
+
 .terminal-theme-list article strong,
 .terminal-theme-list article span,
 .terminal-theme-list article em,
