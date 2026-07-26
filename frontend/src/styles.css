@@ -1860,19 +1860,36 @@ button {
   font-style: normal;
 }
 
+/*
+ * 세 칸(정체성·가격·시세)을 모두 가로로 눕히고 나니 3열 그리드가 걸림돌이 됐다.
+ * 가운데 auto 열이 490px을 가져가면서 정체성 칸이 최소폭까지 눌려 오히려
+ * 세 줄로 접혔다. 칸마다 필요한 만큼 쓰고 모자라면 줄바꿈하도록 바꾼다.
+ */
 .quote-header {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto minmax(360px, 0.9fr);
-  align-items: center;
-  gap: 18px;
-  padding: 14px 18px;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 18px;
+  padding: 10px 18px;
   border-bottom: 1px solid var(--border);
   background: linear-gradient(180deg, #101722 0%, #0b0f17 100%);
 }
 
+/* 이름은 이 화면의 정체성이라 먼저 줄어드는 쪽이 되면 안 된다. */
 .quote-header__identity {
-  display: grid;
-  gap: 3px;
+  flex: 0 1 auto;
+}
+
+/*
+ * 종목코드·이름·갱신시각을 한 줄로 눕힌다. 셋을 세로로 쌓으면 73px이 되는데,
+ * 이 줄 하나 때문에 헤더가 두꺼워지고 차트가 밀렸다.
+ */
+.quote-header__identity {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
   min-width: 0;
 }
 
@@ -1920,12 +1937,18 @@ button {
   font-size: 12px;
 }
 
+/*
+ * 현재가는 이 화면에서 가장 큰 숫자로 남기고, 등락과 부가 정보만 옆으로 눕힌다.
+ * 값의 크기가 곧 중요도라 여기까지 줄이면 무엇을 봐야 할지 알기 어려워진다.
+ */
 .quote-header__price {
-  display: grid;
-  justify-items: end;
-  gap: 2px;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 8px;
   min-width: 160px;
-  padding: 6px 8px;
+  padding: 2px 8px;
   border-radius: 6px;
   font-variant-numeric: tabular-nums;
   transition: background-color 0.18s ease;
@@ -1988,20 +2011,23 @@ button {
   color: #93c5fd;
 }
 
+/* 시장 정보 줄과 같은 방식. 타일로 세우지 않고 한 줄에 눕힌다. */
 .quote-stats {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(72px, 1fr));
-  gap: 8px;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 14px;
 }
 
 .quote-stats div {
-  display: grid;
+  display: flex;
+  align-items: baseline;
   gap: 5px;
-  min-height: 48px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: rgba(15, 23, 42, 0.54);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .quote-stats span {
