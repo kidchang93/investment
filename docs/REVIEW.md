@@ -3,12 +3,23 @@
 ## 머지 전 필수 통과 조건
 
 ```bash
+npm test                       # node:test — 통과 필수
 npm run typecheck              # backend tsc --noEmit — 통과 필수
 npm run typecheck -w frontend  # frontend tsc --noEmit — 통과 필수
 npm run build                  # frontend vite build — 통과 필수
 ```
 
-세 명령 모두 오류 0이어야 머지한다. (frontend는 `noUnusedLocals`/`noUnusedParameters`로 미사용 심볼도 실패 처리됨)
+네 명령 모두 오류 0이어야 머지한다. (frontend는 `noUnusedLocals`/`noUnusedParameters`로 미사용 심볼도 실패 처리됨)
+
+### 화면을 고쳤으면 콘솔도 본다
+
+렌더 결과만 보면 놓치는 게 있다. 콘솔을 비우고 새로고침한 뒤 오류가 0인지
+확인한다.
+
+개발 중에는 Vite가 편집 중인 파일을 핫리로드해 `ReferenceError`가 잠깐 쌓인다.
+파일을 다 쓰기 전에 저장되면 그렇다. 그건 실제 결함이 아니므로 **콘솔을 비우고
+새로 로드해서** 다시 나는지로 가른다 — 실제로 86건이 쌓여 있었는데 전부
+편집 중간 상태였고, 지우고 새로 로드하니 0이었다.
 
 ## 리뷰 체크리스트
 
