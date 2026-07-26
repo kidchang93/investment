@@ -3347,26 +3347,56 @@ export function App(): JSX.Element {
    * 그 이유는 리스크 룰에 있는데 화면이 다른 카드라 연결짓기 어렵다.
    * 시작 버튼 옆에서 바로 보이게 한다.
    */
+  /**
+   * 차단 사유에서 그 설정 칸으로 데려간다. 스크롤과 포커스를 함께 준다 —
+   * 포커스만 주면 카드가 화면 밖일 때 보이지 않는 곳으로 커서가 간다.
+   *
+   * `behavior: 'smooth'`는 쓰지 않는다. 이 페이지의 스크롤 컨테이너
+   * (`.chart-panel--portfolio`)에서는 아예 움직이지 않았다 — 브라우저 설정이나
+   * CSS scroll-behavior 문제가 아니라(둘 다 기본값) 그냥 안 먹었다.
+   * 즉시 스크롤은 scrollTop 0 → 1021로 정상 동작한다.
+   */
+  const focusRiskField = useCallback((fieldId: string): void => {
+    const field = document.getElementById(fieldId);
+    if (!field) return;
+    field.scrollIntoView({ block: 'center' });
+    field.focus({ preventScroll: true });
+  }, []);
+
   const autoTraderBlockers = useMemo(() => {
-    const blockers: string[] = [];
+    /*
+     * `아래에서 허용하세요`라고만 적었더니 갈 곳을 찾아야 했다. 리스크 룰
+     * 카드는 534px 아래라 화면 밖이고, 그 안에 필드가 열 개다. 어느 칸인지
+     * 이름으로 말하고, 바로 그 칸으로 데려갈 수 있게 id를 함께 넘긴다.
+     */
+    const blockers: Array<{ text: string; fieldId?: string }> = [];
     if (!riskRules) return blockers;
     if (!riskRules.enabled) {
-      blockers.push('리스크 룰에서 이 계좌의 실주문이 꺼져 있습니다. 아래 실주문 리스크 룰에서 켜세요.');
+      blockers.push({
+        text: '이 계좌의 실주문이 꺼져 있습니다. 아래 리스크 룰의 `이 계좌 실주문 허용`을 켜세요.',
+        fieldId: 'risk-enabled',
+      });
     }
     if (!riskRules.allowMarketOrder) {
-      blockers.push(
-        '시장가 주문이 막혀 있습니다. 자동매매는 신호가 난 값에 붙어야 해서 시장가로 냅니다 — 아래에서 허용하세요.',
-      );
+      blockers.push({
+        text:
+          '시장가 주문이 막혀 있습니다. 자동매매는 신호가 난 값에 붙어야 해서 시장가로 냅니다 —'
+          + ' 아래 리스크 룰의 `시장가 주문 허용`을 켜세요.',
+        fieldId: 'risk-allow-market-order',
+      });
     }
     if (riskRules.symbolAllowlist.length > 0) {
-      blockers.push(
+      blockers.push({
         // 종목코드 뒤에 `로`를 붙이면 끝자리에 따라 틀린다 — `005930로`가 그랬다.
-        `허용 종목이 좁혀져 있습니다 (${riskRules.symbolAllowlist.join(', ')}).`
-          + ' 종목을 알고리즘이 고르게 하려면 아래에서 비우세요.',
-      );
+        text:
+          `허용 종목이 좁혀져 있습니다 (${riskRules.symbolAllowlist.join(', ')}).`
+          + ' 종목을 알고리즘이 고르게 하려면 아래 리스크 룰의 `허용 종목` 칸을 비우세요.',
+        fieldId: 'risk-symbol-allowlist',
+      });
     }
     if (autoMode === 'live' && liveOrderGate && !liveOrderGate.enabled) {
-      blockers.push(...liveOrderGate.blockers);
+      // 게이트는 서버 설정이라 화면에서 갈 곳이 없다. 사유만 그대로 옮긴다.
+      blockers.push(...liveOrderGate.blockers.map((text) => ({ text })));
     }
     return blockers;
   }, [autoMode, liveOrderGate, riskRules]);
@@ -5594,7 +5624,18 @@ export function App(): JSX.Element {
                     <strong>지금 설정으로는 주문이 나가지 않습니다</strong>
                     <ul>
                       {autoTraderBlockers.map((blocker) => (
-                        <li key={blocker}>{blocker}</li>
+                        <li key={blocker.text}>
+                          {blocker.text}
+                          {blocker.fieldId && (
+                            <button
+                              className="auto-trader__jump"
+                              onClick={() => focusRiskField(blocker.fieldId as string)}
+                              type="button"
+                            >
+                              설정으로 이동
+                            </button>
+                          )}
+                        </li>
                       ))}
                     </ul>
                   </div>
@@ -5659,6 +5700,7 @@ export function App(): JSX.Element {
                       <label className="risk-rules__toggle">
                         <input
                           checked={riskDraft.enabled}
+                          id="risk-enabled"
                           onChange={(event) => setRiskDraft({ ...riskDraft, enabled: event.target.checked })}
                           type="checkbox"
                         />
@@ -5667,6 +5709,7 @@ export function App(): JSX.Element {
                       <label className="risk-rules__toggle">
                         <input
                           checked={riskDraft.allowMarketOrder}
+                          id="risk-allow-market-order"
                           onChange={(event) => setRiskDraft({ ...riskDraft, allowMarketOrder: event.target.checked })}
                           type="checkbox"
                         />
@@ -5737,6 +5780,7 @@ export function App(): JSX.Element {
                       <label className="risk-rules__wide">
                         <span>허용 종목 (비우면 전체 허용)</span>
                         <input
+                          id="risk-symbol-allowlist"
                           onChange={(event) => setRiskSymbolText({ ...riskSymbolText, allow: event.target.value })}
                           placeholder="005930, 000660"
                           type="text"

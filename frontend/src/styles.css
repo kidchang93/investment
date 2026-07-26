@@ -5614,6 +5614,24 @@ span.sample-badge {
 }
 
 /*
+ * 막고 있는 설정으로 데려가는 버튼.
+ *
+ * 사유 문장 끝에 붙는다. 줄 안에 섞이므로 inline으로 두고, 문장과 구분되게
+ * 밑줄만 준다 — 사유 목록 안에서 또 하나의 상자가 되면 읽는 흐름이 끊긴다.
+ */
+.auto-trader__blockers li button.auto-trader__jump {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--focus);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/*
  * 수량 입력 + `최대` 버튼.
  *
  * 매수 가능 금액과 판매 가능 수량은 이미 받아 오고 있었는데 화면에는 숫자로만
