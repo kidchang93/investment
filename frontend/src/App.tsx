@@ -3631,7 +3631,17 @@ export function App(): JSX.Element {
             <div className="page-heading">
               <div>
                 <span>계좌 현황</span>
-                <strong>포트폴리오</strong>
+                {/* 상단 네비와 같은 이름을 쓴다. `포트폴리오`라고 적혀 있어 서로 달랐다. */}
+                <strong>내 계좌</strong>
+              </div>
+              {/*
+                계좌 선택은 이 화면 전체의 맥락이지 카드별 설정이 아니다. 예전엔
+                잔고·주문체결·리스크 룰 카드가 각자 같은 선택기를 갖고 있었고, 셋 다
+                같은 kisAccountId를 바꿨다. 같은 컨트롤이 세 번 보이면 카드마다 계좌를
+                따로 고르는 것처럼 읽힌다. 여기 한 번만 둔다.
+              */}
+              <div className="page-heading__account">
+                <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
               </div>
               {/*
                 예전엔 모의 계좌 잔고만 적혀 있었다. 바로 아래가 실계좌 섹션이라
@@ -4965,7 +4975,6 @@ export function App(): JSX.Element {
                     </span>
                   </div>
                   <div className="portfolio-card__actions">
-                    <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
                     <button
                       className="portfolio-card__refresh"
                       disabled={isKisAccountRefreshing}
@@ -5040,7 +5049,6 @@ export function App(): JSX.Element {
                     </span>
                   </div>
                   <div className="portfolio-card__actions">
-                    <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
                     <button
                       className="portfolio-card__refresh"
                       disabled={isKisExecutionRefreshing}
@@ -5216,7 +5224,6 @@ export function App(): JSX.Element {
                     </span>
                   </div>
                   <div className="portfolio-card__actions">
-                    <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
                     <button
                       className="portfolio-card__refresh"
                       disabled={!riskDraft || isRiskSaving}
