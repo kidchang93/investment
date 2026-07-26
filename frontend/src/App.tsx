@@ -1810,12 +1810,22 @@ export function App(): JSX.Element {
   const [kisOpenOrders, setKisOpenOrders] = useState<BrokerAmendableOrder[]>([]);
   const [isKisOpenOrdersRefreshing, setIsKisOpenOrdersRefreshing] = useState(false);
   const [kisReservedOrders, setKisReservedOrders] = useState<BrokerReservedOrder[]>([]);
+  /*
+   * 언제 받아온 값인지. 잔고 카드만 `갱신 07:27:39`를 적고 나머지는 아무것도
+   * 적지 않았다. 그래서 새로고침을 눌러도 내용이 같으면 화면이 한 픽셀도
+   * 바뀌지 않는다 — 실제로 눌러 보고 카드 innerHTML이 그대로인 걸 확인했다.
+   * 눌린 건지 아닌지 알 방법이 없다. 서버가 주는 값이 있으면 그것을 쓰고
+   * (체결내역), 없으면 받은 시각을 적는다.
+   */
+  const [kisOpenOrdersUpdatedAt, setKisOpenOrdersUpdatedAt] = useState<number | null>(null);
+  const [kisReservedOrdersUpdatedAt, setKisReservedOrdersUpdatedAt] = useState<number | null>(null);
   const [isReservedCancelling, setIsReservedCancelling] = useState(false);
   const [reservedSide, setReservedSide] = useState<OrderSide>('buy');
   const [reservedQuantity, setReservedQuantity] = useState('1');
   const [reservedPrice, setReservedPrice] = useState('');
   const [reservedCancelMessage, setReservedCancelMessage] = useState<string | null>(null);
   const [kisOrderLog, setKisOrderLog] = useState<BrokerOrderRecord[]>([]);
+  const [kisOrderLogUpdatedAt, setKisOrderLogUpdatedAt] = useState<number | null>(null);
   /** 서버 상한을 넘겨 더 오래된 기록이 남아 있는지. */
   const [kisOrderLogHasMore, setKisOrderLogHasMore] = useState(false);
   const [kisTradeProfit, setKisTradeProfit] = useState<BrokerTradeProfitSnapshot | null>(null);
@@ -2186,7 +2196,10 @@ export function App(): JSX.Element {
   const refreshKisOpenOrders = useCallback((): void => {
     setIsKisOpenOrdersRefreshing(true);
     fetchKisOpenOrders(kisAccountId ?? undefined)
-      .then(setKisOpenOrders)
+      .then((orders) => {
+        setKisOpenOrders(orders);
+        setKisOpenOrdersUpdatedAt(Date.now());
+      })
       .catch((e) => setError(toErrorMessage(e)))
       .finally(() => setIsKisOpenOrdersRefreshing(false));
   }, [kisAccountId]);
@@ -2199,7 +2212,10 @@ export function App(): JSX.Element {
 
   const refreshKisReservedOrders = useCallback((): void => {
     fetchKisReservedOrders(kisAccountId ?? undefined)
-      .then(setKisReservedOrders)
+      .then((orders) => {
+        setKisReservedOrders(orders);
+        setKisReservedOrdersUpdatedAt(Date.now());
+      })
       .catch((e) => setError(toErrorMessage(e)));
   }, [kisAccountId]);
 
@@ -2268,6 +2284,7 @@ export function App(): JSX.Element {
       .then((result) => {
         setKisOrderLog(result.records);
         setKisOrderLogHasMore(result.hasMore);
+        setKisOrderLogUpdatedAt(Date.now());
       })
       .catch((e) => setError(toErrorMessage(e)));
   }, [kisAccountId]);
@@ -5604,7 +5621,9 @@ export function App(): JSX.Element {
                     <strong>실계좌 주문·체결</strong>
                     <span>
                       {kisExecutionSnapshot
-                        ? `${formatBrokerDate(kisExecutionSnapshot.from)} ~ ${formatBrokerDate(kisExecutionSnapshot.to)} · ${kisExecutionCount}건`
+                        ? `${formatBrokerDate(kisExecutionSnapshot.from)} ~ ${formatBrokerDate(kisExecutionSnapshot.to)} · ${kisExecutionCount}건${
+                            kisExecutionSnapshot.updatedAt ? ` · 갱신 ${formatClock(kisExecutionSnapshot.updatedAt)}` : ''
+                          }`
                         : '조회 대기'}
                     </span>
                   </div>
@@ -6110,6 +6129,7 @@ export function App(): JSX.Element {
                       {kisOrderLog.length}건
                       {kisOrderLogHasMore && ' (더 오래된 기록은 서버에 남아 있습니다)'}
                       {' · 차단된 시도도 남습니다'}
+                      {kisOrderLogUpdatedAt !== null && ` · 갱신 ${formatClock(kisOrderLogUpdatedAt)}`}
                     </span>
                   </div>
                   <button
@@ -6167,6 +6187,7 @@ export function App(): JSX.Element {
                     <strong>실계좌 예약주문</strong>
                     <span>
                       {kisReservedOrders.length}건 · 최근 30일 · 취소하지 않으면 다음 개장일에 주문이 나갑니다
+                      {kisReservedOrdersUpdatedAt !== null && ` · 갱신 ${formatClock(kisReservedOrdersUpdatedAt)}`}
                     </span>
                   </div>
                   <div className="portfolio-card__actions">
@@ -6644,7 +6665,10 @@ export function App(): JSX.Element {
               <div className="live-order__header">
                 {/* `안 팔린`이라고 적으면 매수 주문이 빠진다. 미체결은 사고파는 양쪽 다 해당한다. */}
                 <strong>체결을 기다리는 주문</strong>
-                <span>{kisOpenOrders.length}건 · 값을 고치거나 취소할 수 있습니다</span>
+                <span>
+                  {kisOpenOrders.length}건 · 값을 고치거나 취소할 수 있습니다
+                  {kisOpenOrdersUpdatedAt !== null && ` · 갱신 ${formatClock(kisOpenOrdersUpdatedAt)}`}
+                </span>
                 <button
                   aria-label={isKisOpenOrdersRefreshing ? '미체결 주문 조회 중' : '미체결 주문 새로고침'}
                   disabled={isKisOpenOrdersRefreshing}
