@@ -23,6 +23,15 @@ export interface StrategyContext {
 export interface Strategy {
   key: string;
   label: string;
+  /**
+   * 신호를 하나라도 낼 수 있으려면 필요한 최소 캔들 수.
+   *
+   * 이게 없으면 짧은 구간을 태워 놓고 `매매 0회 · 수익률 0%`를 결과로 읽게
+   * 된다. 실제로 그랬다 — KIS 일봉이 100개인데 70/30으로 나누니 뒤 구간이
+   * 30봉이라, MA(20) 교차가 나올 자리가 거의 없었다. 전략이 나쁜 게 아니라
+   * 잴 수 없는 조건이었는데 "out-of-sample 성적이 나쁘다"로 기록했다.
+   */
+  minBars: number;
   /** 이번 회차에 낼 신호들. 낼 게 없으면 빈 배열 */
   decide(context: StrategyContext): StrategySignal[];
 }
@@ -49,6 +58,11 @@ export class MovingAverageCrossStrategy implements Strategy {
     private readonly shortPeriod = 5,
     private readonly longPeriod = 20,
   ) {}
+
+  /** 직전 봉과 비교해야 교차를 알 수 있으므로 장기선 기간 + 1. */
+  get minBars(): number {
+    return this.longPeriod + 1;
+  }
 
   decide(context: StrategyContext): StrategySignal[] {
     const signals: StrategySignal[] = [];
@@ -150,6 +164,11 @@ export class VolatilityBreakoutStrategy implements Strategy {
     private readonly lookback = 20,
   ) {}
 
+  /** 기준선을 만들려면 직전 lookback개 봉 + 이번 봉. */
+  get minBars(): number {
+    return this.lookback + 1;
+  }
+
   decide(context: StrategyContext): StrategySignal[] {
     const signals: StrategySignal[] = [];
     const heldIds = new Set(context.positions.map((position) => position.instrumentId));
@@ -218,6 +237,10 @@ export class MeanReversionStrategy implements Strategy {
     private readonly entryZ = -1.5,
     private readonly exitZ = 0,
   ) {}
+
+  get minBars(): number {
+    return this.period;
+  }
 
   decide(context: StrategyContext): StrategySignal[] {
     const signals: StrategySignal[] = [];

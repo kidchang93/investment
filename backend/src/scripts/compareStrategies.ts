@@ -16,7 +16,7 @@
 import { getInstrument } from '../db/instruments.js';
 import { getInstrumentCandles } from '../kis/rest.js';
 import { DEFAULT_COSTS, backtestSplit, type BacktestResult } from '../trading/backtest.js';
-import { listStrategies } from '../trading/strategy.js';
+import { getStrategy, listStrategies } from '../trading/strategy.js';
 
 /*
  * 원금은 전략 비교에서 생각보다 중요하다. 1주 값보다 적으면 신호가 나도 살 수
@@ -24,6 +24,18 @@ import { listStrategies } from '../trading/strategy.js';
  * 0회였다. 전략의 성질을 보려면 주 단위 제약이 걸리지 않을 만큼은 넣어야 한다.
  */
 const DEFAULT_CASH = 10_000_000;
+
+/** in-sample 비율. 나머지가 out-of-sample이다. */
+const SPLIT_RATIO = 0.7;
+
+/*
+ * 구간이 최소 캔들 수의 몇 배는 돼야 잴 수 있다고 본다.
+ *
+ * MA(20)은 21봉이 지나야 첫 판단이 선다. 30봉 구간이면 판단 기회가 9번뿐이라
+ * 교차가 안 나는 게 정상이고, 그 결과는 `매매 0회`다. 워밍업이 구간의 3분의 1
+ * 아래로 내려가야 남은 구간에서 나온 결과를 성적이라 부를 수 있다.
+ */
+const MEASURABLE_MULTIPLE = 3;
 
 function pct(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
@@ -73,11 +85,37 @@ async function main(): Promise<void> {
       continue;
     }
 
+    /*
+     * 구간이 전략의 최소 캔들 수보다 짧으면 신호가 날 자리가 없다. 그런데도
+     * 태우면 `매매 0회 · 수익률 0%`가 나오고, 그게 "전략이 나빴다"로 읽힌다.
+     * 실제로 그렇게 읽고 기록했다 — KIS 일봉은 100개라 70/30으로 나누면 뒤
+     * 구간이 30봉이고, MA(20) 교차는 21봉이 지나야 첫 판단이 선다.
+     * 여유 5봉을 더 요구한다. 딱 minBars면 교차가 한 번 날까 말까다.
+     */
+    const cut = Math.floor(candles.length * SPLIT_RATIO);
+    const windows = { 앞: cut, 뒤: candles.length - cut };
+    console.log(`  구간 나눔 ${SPLIT_RATIO * 100}% — 앞 ${windows.앞}봉 / 뒤 ${windows.뒤}봉`);
+
     for (const { key, label } of listStrategies()) {
-      const split = backtestSplit(key, instrument, candles, startCash, DEFAULT_COSTS, 0.7);
-      console.log(`  ${label}`);
-      console.log(`    ${line('  앞 구간', split.inSample)}`);
-      console.log(`    ${line('  뒤 구간', split.outOfSample)}   ← 실제로 봐야 할 숫자`);
+      const minBars = getStrategy(key)?.minBars ?? 0;
+      const need = minBars * MEASURABLE_MULTIPLE;
+      console.log(`  ${label} (최소 ${minBars}봉 필요)`);
+
+      const split = backtestSplit(key, instrument, candles, startCash, DEFAULT_COSTS, SPLIT_RATIO);
+      for (const [name, bars, result] of [
+        ['  앞 구간', windows.앞, split.inSample],
+        ['  뒤 구간', windows.뒤, split.outOfSample],
+      ] as const) {
+        if (bars < need) {
+          console.log(
+            `    ${name.padEnd(12)}잴 수 없음 — ${bars}봉으로는 판단 기회가`
+            + ` ${Math.max(0, bars - minBars)}번뿐이다 (${need}봉 이상 필요).`
+            + ' 이 구간 숫자는 전략 성적이 아니다.',
+          );
+          continue;
+        }
+        console.log(`    ${line(name, result)}${name.includes('뒤') ? '   ← 실제로 봐야 할 숫자' : ''}`);
+      }
     }
   }
 }

@@ -10,7 +10,12 @@ import { describe, it } from 'node:test';
 
 import type { Candle, Instrument } from '@invest/shared';
 
-import { MovingAverageCrossStrategy, movingAverage } from './strategy.js';
+import {
+  MeanReversionStrategy,
+  MovingAverageCrossStrategy,
+  VolatilityBreakoutStrategy,
+  movingAverage,
+} from './strategy.js';
 
 const strategy = new MovingAverageCrossStrategy(3, 5);
 
@@ -109,5 +114,38 @@ describe('이동평균 교차 전략', () => {
       maxPositions: 1,
     });
     assert.equal(signals.length, 1);
+  });
+});
+
+describe('minBars', () => {
+  /*
+   * 이 값이 실제 필요 캔들 수와 어긋나면 비교 스크립트가 잴 수 없는 구간을
+   * 잴 수 있다고 판단한다. 선언값과 실제 동작을 맞춰 둔다.
+   */
+  const all = [
+    new MovingAverageCrossStrategy(),
+    new VolatilityBreakoutStrategy(),
+    new MeanReversionStrategy(),
+  ];
+
+  it('선언한 최소 캔들 수보다 하나 적으면 어떤 전략도 신호를 내지 않는다', () => {
+    for (const item of all) {
+      // 크게 오르내리게 채운다 — 캔들만 충분하면 신호가 날 만한 모양이다.
+      const closes = Array.from(
+        { length: item.minBars - 1 },
+        (_, i) => 100 + (i % 2 === 0 ? -15 : 15) + i * 2,
+      );
+      assert.deepEqual(
+        item.decide(context(closes)),
+        [],
+        `${item.label}: ${item.minBars - 1}봉에서는 신호가 없어야 한다`,
+      );
+    }
+  });
+
+  it('minBars는 양수다', () => {
+    for (const item of all) {
+      assert.ok(item.minBars > 0, `${item.label}: ${item.minBars}`);
+    }
   });
 });
