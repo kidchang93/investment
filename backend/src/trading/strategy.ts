@@ -70,11 +70,11 @@ export function movingAverage(candles: Candle[], period: number): number | undef
 export class MovingAverageCrossStrategy implements Strategy {
   readonly key = 'ma_cross';
   readonly label = '이동평균 교차';
-  readonly verdict = 'unproven' as const;
+  readonly verdict = 'no_edge' as const;
   readonly backtestNote =
-    '2026-07 측정(20종목·뒤 구간 105봉): 평균 +16.84%, 매매 51회, 승률 31.37%.'
-    + ' 다만 이익 종목이 9/20으로 절반이 안 된다 — 몇 종목의 큰 수익이 평균을'
-    + ' 끌어올린 모양이라, 아무 종목에나 걸면 이 평균이 나온다고 보면 안 된다.';
+    '2026-07 측정(20종목·뒤 구간 105봉): 평균은 +16.84%지만 중앙값이 -4.86%다.'
+    + ' 한 종목의 +223%가 평균을 만든 것이고, 가운데 종목은 잃었다(이익 9/20).'
+    + ' 평균만 보면 가장 좋아 보이는데 보통은 손실이다.';
 
   constructor(
     private readonly shortPeriod = 5,
@@ -182,9 +182,9 @@ export class VolatilityBreakoutStrategy implements Strategy {
   readonly label = '변동성 돌파';
   readonly verdict = 'no_edge' as const;
   readonly backtestNote =
-    '2026-07 측정(20종목·뒤 구간 105봉): 평균 -0.40%, 이익 종목 8/20, 매매 215회.'
-    + ' 표본은 셋 중 가장 두꺼운데 우위가 없다. 215번 사고팔아 비용으로만'
-    + ' 460만원을 쓰고 제자리다.';
+    '2026-07 측정(20종목·뒤 구간 105봉): 평균 -0.40%, 중앙값 -4.30%, 이익 8/20.'
+    + ' 매매 215회로 표본이 가장 두꺼운데 우위가 없다. 215번 사고팔아'
+    + ' 비용으로만 460만원을 쓰고 제자리다.';
 
   constructor(
     private readonly k = 0.5,
@@ -260,9 +260,9 @@ export class MeanReversionStrategy implements Strategy {
   readonly label = '평균 회귀';
   readonly verdict = 'unproven' as const;
   readonly backtestNote =
-    '2026-07 측정(20종목·뒤 구간 105봉): 승률 72.50%인데 평균 +2.96%, 매매 40회.'
-    + ' 이익 종목 11/20으로 셋 중 가장 고르지만 폭이 작다. 자주 조금 이기고'
-    + ' 드물게 크게 잃는 모양이라 승률만 보면 안 된다.';
+    '2026-07 측정(20종목·뒤 구간 105봉): 평균 +2.96%, 중앙값 +2.21%, 이익 11/20.'
+    + ' 셋 중 유일하게 평균과 중앙값이 붙어 있어 소수 종목이 끌고 간 결과가'
+    + ' 아니다. 다만 폭이 작고 한 구간·40회 매매라 아직 확신할 표본은 아니다.';
 
   constructor(
     private readonly period = 20,

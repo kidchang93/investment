@@ -49,6 +49,19 @@ const TARGET_BARS = 300;
  */
 const MIN_TRADES_TO_JUDGE = 10;
 
+/*
+ * 평균과 중앙값이 이만큼 벌어지면 소수 종목이 결과를 끌고 있다고 본다.
+ * 20종목에서 5%p면 종목 한둘의 큰 수익/손실이 평균을 움직인 정도다.
+ */
+const OUTLIER_GAP = 0.05;
+
+/** 중앙값. 짝수 개면 가운데 둘의 평균. */
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
 function pct(value: number): string {
   return `${(value * 100).toFixed(2)}%`;
 }
@@ -180,6 +193,8 @@ async function main(): Promise<void> {
       continue;
     }
     const mean = entry.returns.reduce((a, b) => a + b, 0) / entry.returns.length;
+    const mid = median(entry.returns);
+    const sorted = [...entry.returns].sort((a, b) => a - b);
     const positive = entry.returns.filter((r) => r > 0).length;
     const winRate = entry.trades > 0 ? entry.wins / entry.trades : 0;
     /*
@@ -188,12 +203,26 @@ async function main(): Promise<void> {
      */
     console.log(
       `  ${entry.label.padEnd(10)}`
-      + ` 평균 수익률 ${pct(mean).padStart(8)}`
+      + ` 평균 ${pct(mean).padStart(8)}`
+      + ` · 중앙값 ${pct(mid).padStart(8)}`
       + ` · 플러스 ${positive}/${entry.returns.length}종목`
-      + ` · 매매 합계 ${String(entry.trades).padStart(3)}회`
-      + ` · 합산 승률 ${pct(winRate).padStart(7)}`
-      + ` · 비용 합계 ${Math.round(entry.cost).toLocaleString()}원`
+      + ` · 매매 ${String(entry.trades).padStart(3)}회`
+      + ` · 승률 ${pct(winRate).padStart(7)}`
+      + ` · 비용 ${Math.round(entry.cost).toLocaleString()}원`
       + (entry.trades < MIN_TRADES_TO_JUDGE ? '  · 합쳐도 표본이 부족하다' : ''),
+    );
+    /*
+     * 평균과 중앙값이 벌어지면 몇 종목이 결과를 끌고 간다는 뜻이다. 8종목으로
+     * 재고 판정을 확정했다가 20종목에서 뒤집힌 적이 있는데, 그때 평균만 보고
+     * 있었다. 최저·최고까지 적어 폭을 함께 보게 한다.
+     */
+    const gap = mean - mid;
+    console.log(
+      `    ${' '.repeat(8)}최저 ${pct(sorted[0])} · 최고 ${pct(sorted[sorted.length - 1])}`
+      + (Math.abs(gap) > OUTLIER_GAP
+        ? `  ← 평균이 중앙값보다 ${pct(Math.abs(gap))} ${gap > 0 ? '높다' : '낮다'}.`
+          + ' 소수 종목이 평균을 끌고 있다'
+        : ''),
     );
   }
 }
