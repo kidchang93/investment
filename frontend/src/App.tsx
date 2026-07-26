@@ -2115,11 +2115,20 @@ export function App(): JSX.Element {
     };
   }, [isOrderPanelOpen, kisAccountId, orderSide, selectedInstrument]);
 
+  /*
+   * 실패를 빈 배열로 바꾸지 않는다.
+   *
+   * 예전에는 `.catch(() => set…([]))`이라 백엔드가 죽으면 화면이
+   * `예약주문이 없습니다` · `실계좌 주문 시도 없음` · `아직 체결되지 않은
+   * 주문이 없습니다`로 바뀌었다. 못 받아온 것과 없는 것은 전혀 다른데
+   * 화면은 후자로 말했다 — 다음 개장일에 나갈 예약주문을 취소된 것으로
+   * 읽을 수 있다. 받아 둔 값은 그대로 두고 오류만 띄운다(체결내역이 쓰는 방식).
+   */
   const refreshKisOpenOrders = useCallback((): void => {
     setIsKisOpenOrdersRefreshing(true);
     fetchKisOpenOrders(kisAccountId ?? undefined)
       .then(setKisOpenOrders)
-      .catch(() => setKisOpenOrders([]))
+      .catch((e) => setError(toErrorMessage(e)))
       .finally(() => setIsKisOpenOrdersRefreshing(false));
   }, [kisAccountId]);
 
@@ -2132,7 +2141,7 @@ export function App(): JSX.Element {
   const refreshKisReservedOrders = useCallback((): void => {
     fetchKisReservedOrders(kisAccountId ?? undefined)
       .then(setKisReservedOrders)
-      .catch(() => setKisReservedOrders([]));
+      .catch((e) => setError(toErrorMessage(e)));
   }, [kisAccountId]);
 
   // 예약주문은 포트폴리오에서만 쓴다.
@@ -2196,7 +2205,7 @@ export function App(): JSX.Element {
   const refreshKisOrderLog = useCallback((): void => {
     fetchKisOrderLog(kisAccountId ?? undefined)
       .then(setKisOrderLog)
-      .catch(() => setKisOrderLog([]));
+      .catch((e) => setError(toErrorMessage(e)));
   }, [kisAccountId]);
 
   // 주문 로그는 DB 조회라 KIS 호출이 없다. 매매·포트폴리오 양쪽에서 본다.
