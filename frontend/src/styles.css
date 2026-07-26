@@ -5604,12 +5604,23 @@ span.sample-badge {
 
 .auto-trader__actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: end;
+  gap: 4px;
 }
 
 .auto-trader__actions > button {
   width: 100%;
   min-height: 30px;
+}
+
+/* 지금 돌고 있는지 모를 때 시작 버튼이 왜 막혔는지. 상태색은 쓰지 않는다. */
+.auto-trader__unknown {
+  flex: 1 0 100%;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.4;
 }
 
 .auto-trader__stop {
@@ -5648,6 +5659,14 @@ span.sample-badge {
 .auto-trader__status[data-status='error'] {
   border-color: rgba(229, 72, 77, 0.45);
   color: #ff9b9f;
+}
+
+/*
+ * 멈춘 것과 모르는 것을 눈으로도 가른다. 상태색(초록/빨강)은 쓰지 않는다 —
+ * 정상도 경고도 아니고 아직 모른다는 표시라 점선으로만 구분한다.
+ */
+.auto-trader__status[data-status='unknown'] {
+  border-style: dashed;
 }
 
 /* 실행 기록. 시각은 좁게, 내용은 넓게. */

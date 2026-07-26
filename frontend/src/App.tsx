@@ -1855,6 +1855,8 @@ export function App(): JSX.Element {
    * 돌고 있는 동안에는 주기적으로 다시 받아 실행 기록이 쌓이는 걸 보여준다.
    */
   const [autoTrader, setAutoTrader] = useState<AutoTraderState | null>(null);
+  /** 상태를 못 받아온 사유. 게이트(liveOrderGateError)와 같은 방식이다. */
+  const [autoTraderError, setAutoTraderError] = useState<string | null>(null);
   const [autoStrategies, setAutoStrategies] = useState<
     Array<{ key: string; label: string; backtestNote?: string; verdict?: 'no_edge' | 'unproven' }>
   >([]);
@@ -1929,11 +1931,24 @@ export function App(): JSX.Element {
       .catch(() => setAutoStrategies([]));
   }, []);
 
+  /*
+   * 조회 실패를 `멈춤`으로 바꾸지 않는다.
+   *
+   * 예전에는 `.catch(() => setAutoTrader(null))`이었고 화면은
+   * `autoTrader?.status ?? 'stopped'`를 읽었다. 그래서 상태 조회가 502로
+   * 떨어지면 카드가 `멈춤`이라고 적고 시작 버튼까지 켜졌다 — 실제로 돌고
+   * 있는데도 멈춘 것으로 보인다. 502를 흉내 내 브라우저에서 재현했다.
+   * 예약주문·주문기록이 이미 쓰는 방식대로, 받아 둔 값은 그대로 두고
+   * 모른다는 사실을 따로 들고 있는다.
+   */
   const refreshAutoTrader = useCallback(() => {
     if (!kisAccountId) return;
     fetchAutoTraderState(kisAccountId)
-      .then(setAutoTrader)
-      .catch(() => setAutoTrader(null));
+      .then((state) => {
+        setAutoTrader(state);
+        setAutoTraderError(null);
+      })
+      .catch((e) => setAutoTraderError(toErrorMessage(e)));
   }, [kisAccountId]);
 
   useEffect(() => {
@@ -2682,6 +2697,15 @@ export function App(): JSX.Element {
    * 문구를 계속 띄웠다.
    */
   const gateUnknownLabel = liveOrderGateError ? '확인 실패' : '확인 중';
+  /*
+   * 자동매매 상태도 같은 두 가지로 모른다. 게이트와 같은 말을 쓴다.
+   *
+   * 받아 둔 값이 있어도 마지막 조회가 실패했으면 `아는` 것이 아니다. 2초 전
+   * 값으로 `멈춤`이라고 단정하면, 그 사이 돌기 시작한 경우를 멈춘 것으로
+   * 읽는다. 성공하면 error가 지워지므로 일시적 실패는 저절로 낫는다.
+   */
+  const autoTraderUnknownLabel = autoTraderError ? '확인 실패' : '확인 중';
+  const isAutoTraderKnown = autoTrader !== null && autoTraderError === null;
   const modeChipLabel = !liveOrderGate
     ? gateUnknownLabel
     : liveOrderArmed
@@ -5803,8 +5827,12 @@ export function App(): JSX.Element {
                     </span>
                   </div>
                   <div className="portfolio-card__actions">
-                    <em className="auto-trader__status" data-status={autoTrader?.status ?? 'stopped'}>
-                      {AUTO_TRADER_STATUS_LABEL[autoTrader?.status ?? 'stopped']}
+                    {/*
+                      상태를 모르는 것과 멈춘 것을 구별한다. 예전에는 둘 다
+                      `멈춤`이라 조회가 실패해도 멈춘 것처럼 보였다.
+                    */}
+                    <em className="auto-trader__status" data-status={isAutoTraderKnown ? autoTrader.status : 'unknown'}>
+                      {isAutoTraderKnown ? AUTO_TRADER_STATUS_LABEL[autoTrader.status] : autoTraderUnknownLabel}
                     </em>
                   </div>
                 </div>
@@ -5891,12 +5919,24 @@ export function App(): JSX.Element {
                       <button
                         className="auto-trader__start"
                         data-mode={autoMode}
-                        disabled={isAutoSubmitting}
+                        /*
+                          지금 돌고 있는지 모를 때는 시작을 막는다. 조회가
+                          실패한 것을 `멈춤`으로 읽고 또 시작하면 같은 계좌에
+                          두 번 걸린다. 모르면 막힌 쪽에 둔다.
+                        */
+                        disabled={isAutoSubmitting || !isAutoTraderKnown}
                         onClick={() => void submitAutoTraderStart()}
                         type="button"
                       >
                         {isAutoSubmitting ? '처리 중' : autoMode === 'live' ? '실제 매매 시작' : '연습 시작'}
                       </button>
+                    )}
+                    {!isAutoTraderKnown && (
+                      <em className="auto-trader__unknown">
+                        {autoTraderError
+                          ? `지금 돌고 있는지 확인하지 못해 시작을 막았습니다 — ${autoTraderError}`
+                          : '지금 돌고 있는지 확인하는 중입니다'}
+                      </em>
                     )}
                   </div>
                 </div>
