@@ -3205,6 +3205,13 @@ export function App(): JSX.Element {
     const cards = selectedNews.slice(0, 12).map(terminalNewsCardFromItem);
     return cards.length > 0 ? cards : FALLBACK_TERMINAL_NEWS;
   }, [selectedNews]);
+  /*
+   * 종목 뉴스를 못 찾으면 시장 주제 검색 링크로 대신한다. 그 사실을 화면이
+   * 말하지 않으면 머리글의 `자동 큐레이션 · 4건 · 삼성전자 야간 환산가`가
+   * 그 종목 뉴스 4건으로 읽힌다. 실제로는 어느 종목에서든 같은 링크 네 개다.
+   * 폴백 배열을 그대로 돌려주므로 참조로 구별할 수 있다.
+   */
+  const isTerminalNewsFallback = terminalNewsCards === FALLBACK_TERMINAL_NEWS;
   const filteredTerminalNews = useMemo(
     () =>
       newsFilter === 'all'
@@ -4358,10 +4365,14 @@ export function App(): JSX.Element {
                 <section className="terminal-page terminal-page--news" aria-label="뉴스룸">
                   <div className="terminal-page__header">
                     <div>
-                      <span>자동 큐레이션</span>
+                      <span>{isTerminalNewsFallback ? '종목 뉴스 없음 · 주제 검색' : '자동 큐레이션'}</span>
                       <strong>뉴스룸</strong>
                     </div>
-                    <small>{filteredTerminalNews.length}건 · {selectedInstrument?.name ?? '시장 전체'}</small>
+                    <small>
+                      {isTerminalNewsFallback
+                        ? `${selectedInstrument?.name ?? '이 종목'}의 뉴스를 찾지 못했습니다 · 아래는 시장 주제 검색 링크입니다`
+                        : `${filteredTerminalNews.length}건 · ${selectedInstrument?.name ?? '시장 전체'}`}
+                    </small>
                   </div>
                   {/*
                     이 셋은 눌러도 아무 일도 일어나지 않았다 — onClick이 없다.
