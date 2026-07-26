@@ -295,6 +295,35 @@ const SIDE_PANEL_OPTIONS: Array<{ key: SidePanelTab; label: string }> = [
 ];
 
 /** 자동매매 상태를 사람 말로. 코드값을 그대로 보여주면 무슨 뜻인지 알 수 없다. */
+/*
+ * 전문용어 사전.
+ *
+ * 처음 보는 사람은 `예수금`이 어떤 돈인지, `미체결`이 무슨 상태인지 알 수 없다.
+ * 그렇다고 설명을 라벨 옆에 다 적으면 화면이 빽빽해진다 — 줄이려는 것과 반대다.
+ * 점선 밑줄로 "설명이 있다"는 것만 보이게 하고 뜻은 툴팁에 둔다.
+ */
+const GLOSSARY: Record<string, string> = {
+  예수금: '계좌에 들어 있는 현금입니다. 주식을 살 때 이 돈을 씁니다.',
+  '총 평가': '현금과 보유 주식을 지금 값으로 합친 금액입니다.',
+  '주식 평가': '보유 주식만 지금 값으로 계산한 금액입니다.',
+  '평가 손익': '지금 팔면 생기는 이익이나 손실입니다. 팔기 전까지는 확정된 값이 아닙니다.',
+  미체결: '주문은 냈지만 아직 사거나 팔리지 않은 것입니다. 값을 고치거나 취소할 수 있습니다.',
+  지정가: '살(팔) 값을 직접 정하는 주문입니다. 그 값이 와야 체결됩니다.',
+  시장가: '지금 시장에 나와 있는 값으로 바로 사고파는 주문입니다. 즉시 체결되지만 값을 고를 수 없습니다.',
+  예약주문: '장이 닫혀 있을 때 미리 넣어 두는 주문입니다. 다음 개장일에 나갑니다.',
+};
+
+/** 사전에 있는 말이면 뜻을 달아 준다. 없으면 그냥 글자 그대로 둔다. */
+function Term({ children }: { children: string }): JSX.Element {
+  const meaning = GLOSSARY[children];
+  if (!meaning) return <>{children}</>;
+  return (
+    <abbr className="term" title={meaning}>
+      {children}
+    </abbr>
+  );
+}
+
 const AUTO_TRADER_STATUS_LABEL: Record<string, string> = {
   stopped: '멈춤',
   running: '돌고 있음',
@@ -4390,7 +4419,7 @@ export function App(): JSX.Element {
                   </div>
                   <div className="terminal-sim-metrics">
                     <div>
-                      <span>총 평가</span>
+                      <span><Term>총 평가</Term></span>
                       <strong>{formatPrice(Math.round(simulationEquity))} pt</strong>
                     </div>
                     <div>
@@ -4957,19 +4986,19 @@ export function App(): JSX.Element {
                   <>
                     <div className="portfolio-page__metrics portfolio-page__metrics--broker">
                       <div>
-                        <span>예수금</span>
+                        <span><Term>예수금</Term></span>
                         <strong>{formatMoney(kisAccountSnapshot.cashBalance, kisAccountSnapshot.baseCurrency)}</strong>
                       </div>
                       <div>
-                        <span>총 평가</span>
+                        <span><Term>총 평가</Term></span>
                         <strong>{formatMoney(kisAccountSnapshot.totalEvaluation, kisAccountSnapshot.baseCurrency)}</strong>
                       </div>
                       <div>
-                        <span>주식 평가</span>
+                        <span><Term>주식 평가</Term></span>
                         <strong>{formatMoney(kisAccountSnapshot.stockEvaluation, kisAccountSnapshot.baseCurrency)}</strong>
                       </div>
                       <div>
-                        <span>평가 손익</span>
+                        <span><Term>평가 손익</Term></span>
                         <strong data-tone={kisAccountPnlTone}>
                           {formatMoney(kisAccountSnapshot.unrealizedPnl, kisAccountSnapshot.baseCurrency)}
                         </strong>
@@ -5043,7 +5072,7 @@ export function App(): JSX.Element {
                         <strong>{formatMoney(kisExecutionSnapshot.totalFilledAmount)}</strong>
                       </div>
                       <div>
-                        <span>미체결</span>
+                        <span><Term>미체결</Term></span>
                         <strong>{kisOpenExecutionCount}건</strong>
                       </div>
                     </div>
@@ -5703,16 +5732,17 @@ export function App(): JSX.Element {
                   onChange={(event) => setOrderType(event.target.value as OrderType)}
                   value={orderType}
                 >
-                  <option value="market">시장가</option>
-                  <option value="limit">지정가</option>
+                  {/* option 안에는 툴팁을 붙일 수 없어 선택지 글 자체로 뜻을 밝힌다. */}
+                  <option value="market">시장가 — 지금 값에 바로</option>
+                  <option value="limit">지정가 — 값을 정해서</option>
                 </select>
                 <select
                   aria-label="주문 유효기간"
                   onChange={(event) => setOrderTimeInForce(event.target.value as OrderTimeInForce)}
                   value={orderTimeInForce}
                 >
-                  <option value="day">DAY</option>
-                  <option value="ioc">IOC</option>
+                  <option value="day">오늘 안에</option>
+                  <option value="ioc">즉시, 안 되면 취소</option>
                 </select>
                 <label>
                   <span>수량</span>
@@ -5725,7 +5755,7 @@ export function App(): JSX.Element {
                   />
                 </label>
                 <label>
-                  <span>지정가</span>
+                  <span><Term>지정가</Term></span>
                   <input
                     disabled={orderType !== 'limit'}
                     min="0"
