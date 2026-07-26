@@ -186,6 +186,37 @@ export function backtest(
 }
 
 /**
+ * 구간을 이어 붙여 여러 번 잰다 (walk-forward).
+ *
+ * in/out-of-sample 한 번으로는 그 한 시점의 장세에 맞은 결과인지 알 수 없다.
+ * 이 전략들은 학습하는 파라미터가 없으므로 walk-forward는 "같은 규칙을 서로
+ * 다른 기간에 걸어 보고 결과가 유지되는지" 보는 것이 된다.
+ *
+ * 각 구간은 독립이다 — 앞 구간에서 들고 있던 것을 다음으로 넘기지 않는다.
+ * 넘기면 구간별 성적이 아니라 누적 성적이 되어, 어느 기간이 좋았는지가 흐려진다.
+ */
+export function backtestWindows(
+  strategyKey: string,
+  instrument: Instrument,
+  candles: Candle[],
+  startCash: number,
+  costs: BacktestCosts = DEFAULT_COSTS,
+  windowCount = 3,
+): BacktestResult[] {
+  if (windowCount < 1) return [];
+  const size = Math.floor(candles.length / windowCount);
+  if (size === 0) return [];
+
+  const results: BacktestResult[] = [];
+  for (let i = 0; i < windowCount; i += 1) {
+    // 마지막 구간은 나머지를 모두 가져간다. 버리면 최근 데이터가 사라진다.
+    const end = i === windowCount - 1 ? candles.length : (i + 1) * size;
+    results.push(backtest(strategyKey, instrument, candles.slice(i * size, end), startCash, costs));
+  }
+  return results;
+}
+
+/**
  * 앞뒤로 갈라 잰다.
  *
  * 앞 구간에서만 좋고 뒤 구간에서 무너지면 그 전략은 과거에 맞춘 것이지

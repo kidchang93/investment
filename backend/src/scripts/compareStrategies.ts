@@ -15,7 +15,12 @@
 
 import { getInstrument } from '../db/instruments.js';
 import { getDailyCandleHistory, getInstrumentCandles } from '../kis/rest.js';
-import { DEFAULT_COSTS, backtestSplit, type BacktestResult } from '../trading/backtest.js';
+import {
+  DEFAULT_COSTS,
+  backtestSplit,
+  backtestWindows,
+  type BacktestResult,
+} from '../trading/backtest.js';
 import { getStrategy, listStrategies } from '../trading/strategy.js';
 
 /*
@@ -54,6 +59,12 @@ const MIN_TRADES_TO_JUDGE = 10;
  * 20종목에서 5%p면 종목 한둘의 큰 수익/손실이 평균을 움직인 정도다.
  */
 const OUTLIER_GAP = 0.05;
+
+/*
+ * walk-forward 구간 수. 349봉을 셋으로 나누면 구간당 116봉으로, MA(20)의
+ * 63봉 기준을 넘긴다. 넷으로 나누면 87봉이라 아슬아슬하다.
+ */
+const WALK_WINDOWS = 3;
 
 /** 중앙값. 짝수 개면 가운데 둘의 평균. */
 function median(values: number[]): number {
@@ -113,6 +124,12 @@ async function main(): Promise<void> {
     unmeasurable: number;
   }>();
 
+  /*
+   * walk-forward. 전략별 · 구간별로 종목 수익률을 모은다.
+   * 한 구간에서만 좋았던 것인지, 기간이 바뀌어도 유지되는지 보려는 것이다.
+   */
+  const walk = new Map<string, Array<{ returns: number[]; trades: number }>>();
+
   for (const symbol of symbols) {
     const instrument = await getInstrument(`KR:KOSPI:${symbol}`) ?? await getInstrument(`KR:KOSDAQ:${symbol}`);
     if (!instrument) {
@@ -145,6 +162,15 @@ async function main(): Promise<void> {
     console.log(`  구간 나눔 ${SPLIT_RATIO * 100}% — 앞 ${windows.앞}봉 / 뒤 ${windows.뒤}봉`);
 
     for (const { key, label } of listStrategies()) {
+      const walkResults = backtestWindows(key, instrument, candles, startCash, DEFAULT_COSTS, WALK_WINDOWS);
+      const slot = walk.get(key) ?? Array.from({ length: WALK_WINDOWS }, () => ({ returns: [], trades: 0 }));
+      walk.set(key, slot);
+      walkResults.forEach((result, index) => {
+        if (!slot[index]) return;
+        slot[index].returns.push(result.returnRate);
+        slot[index].trades += result.tradeCount;
+      });
+
       const minBars = getStrategy(key)?.minBars ?? 0;
       const need = minBars * MEASURABLE_MULTIPLE;
       console.log(`  ${label} (최소 ${minBars}봉 필요)`);
@@ -224,6 +250,19 @@ async function main(): Promise<void> {
           + ' 소수 종목이 평균을 끌고 있다'
         : ''),
     );
+  }
+
+  console.log(`\n═══ 구간을 옮겨 가며 (${WALK_WINDOWS}구간) ═══`);
+  console.log('전체 기간을 셋으로 잘라 각각 따로 쟀다. 한 시점의 장세에 맞은 결과인지 본다.');
+  for (const [key, slots] of walk) {
+    const label = listStrategies().find((item) => item.key === key)?.label ?? key;
+    const parts = slots.map((slot, index) => {
+      if (slot.returns.length === 0) return `${index + 1}구간 —`;
+      const mid = median(slot.returns);
+      const positive = slot.returns.filter((r) => r > 0).length;
+      return `${index + 1}구간 중앙값 ${pct(mid).padStart(8)} (플러스 ${positive}/${slot.returns.length}·매매 ${slot.trades}회)`;
+    });
+    console.log(`  ${label.padEnd(10)} ${parts.join(' · ')}`);
   }
 }
 

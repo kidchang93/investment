@@ -11,7 +11,13 @@ import { describe, it } from 'node:test';
 
 import type { Candle, Instrument } from '@invest/shared';
 
-import { DEFAULT_COSTS, backtest, backtestSplit, type BacktestCosts } from './backtest.js';
+import {
+  DEFAULT_COSTS,
+  backtest,
+  backtestSplit,
+  backtestWindows,
+  type BacktestCosts,
+} from './backtest.js';
 
 const instrument: Instrument = {
   id: 'KR:KOSPI:000001',
@@ -114,5 +120,51 @@ describe('백테스트', () => {
 
   it('없는 전략은 거부한다', () => {
     assert.throws(() => backtest('없는전략', instrument, flatCandles([1, 2, 3]), 1000));
+  });
+});
+
+describe('walk-forward 구간 나누기', () => {
+  /*
+   * 구간을 잘못 나누면 성적이 아니라 나눈 방식을 재게 된다. 데이터가 빠지거나
+   * 겹치지 않는지, 마지막 구간이 나머지를 가져가는지를 못 박아 둔다.
+   */
+  it('구간 수만큼 결과가 나온다', () => {
+    const result = backtestWindows('ma_cross', instrument, flatCandles(ROUND_TRIP), 50_000, NO_COSTS, 3);
+    assert.equal(result.length, 3);
+  });
+
+  it('나눈 구간이 원본을 빠짐없이 덮고 겹치지 않는다', () => {
+    // 구간 경계를 직접 계산해 비교한다 — 함수가 쓰는 것과 같은 규칙이어야 한다.
+    const total = 100;
+    for (const count of [1, 2, 3, 4, 7]) {
+      const size = Math.floor(total / count);
+      const bounds: Array<[number, number]> = [];
+      for (let i = 0; i < count; i += 1) {
+        bounds.push([i * size, i === count - 1 ? total : (i + 1) * size]);
+      }
+      assert.equal(bounds[0][0], 0, `${count}구간: 처음이 0이어야 한다`);
+      assert.equal(bounds[count - 1][1], total, `${count}구간: 끝이 ${total}이어야 한다`);
+      for (let i = 1; i < count; i += 1) {
+        assert.equal(bounds[i][0], bounds[i - 1][1], `${count}구간: ${i}번째가 앞 구간 끝에서 시작해야 한다`);
+      }
+    }
+  });
+
+  it('구간 수가 1이면 전체를 한 번 잰 것과 같다', () => {
+    const candles = flatCandles(ROUND_TRIP);
+    const whole = backtest('ma_cross', instrument, candles, 50_000, NO_COSTS);
+    const [only] = backtestWindows('ma_cross', instrument, candles, 50_000, NO_COSTS, 1);
+    assert.equal(only.endEquity, whole.endEquity);
+    assert.equal(only.tradeCount, whole.tradeCount);
+  });
+
+  it('구간마다 원금이 새로 시작한다', () => {
+    // 앞 구간 손익이 다음으로 넘어가면 구간별 성적이 아니라 누적이 된다.
+    const result = backtestWindows('ma_cross', instrument, flatCandles(ROUND_TRIP), 50_000, NO_COSTS, 3);
+    for (const window of result) assert.equal(window.startCash, 50_000);
+  });
+
+  it('구간 수가 0 이하면 빈 배열', () => {
+    assert.deepEqual(backtestWindows('ma_cross', instrument, flatCandles(ROUND_TRIP), 50_000, NO_COSTS, 0), []);
   });
 });

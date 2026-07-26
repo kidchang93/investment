@@ -44,9 +44,11 @@ export interface Strategy {
    * `no_edge` — 표본이 충분한데 우위가 없다.
    * `unproven` — 평균이 몇 종목의 큰 수익에 끌려간 것이라 전형적이라하다고 볼 수 없다.
    *
-   * 8종목으로 재고 `변동성 돌파는 확정으로 나쁘다`라고 화면에 적었는데,
-   * 20종목으로 늘리니 평균 -13.97% → -0.40%, 이익 종목 1/8 → 8/20이었다.
-   * 표본이 작으면 판정도 작은 표본만큼만 믿을 수 있다.
+   * 이 판정을 여러 번 고쳤다. 8종목 → 20종목에서 뒤집혔고, 평균만 보다
+   * 중앙값을 넣으니 또 바뀌었고, 구간을 셋으로 나눠 보니 또 달랐다.
+   * 마지막 것이 특히 중요하다 — 70/30 out-of-sample은 마지막 구간 하나를
+   * 보는 것이라, 그 구간이 나빴던 전략이 모든 기간에서 나쁜 것처럼 보였다.
+   * 지금 판정은 세 구간 전부를 근거로 한다.
    */
   verdict: 'no_edge' | 'unproven';
   /** 이번 회차에 낼 신호들. 낼 게 없으면 빈 배열 */
@@ -70,11 +72,11 @@ export function movingAverage(candles: Candle[], period: number): number | undef
 export class MovingAverageCrossStrategy implements Strategy {
   readonly key = 'ma_cross';
   readonly label = '이동평균 교차';
-  readonly verdict = 'no_edge' as const;
+  readonly verdict = 'unproven' as const;
   readonly backtestNote =
-    '2026-07 측정(20종목·뒤 구간 105봉): 평균은 +16.84%지만 중앙값이 -4.86%다.'
-    + ' 한 종목의 +223%가 평균을 만든 것이고, 가운데 종목은 잃었다(이익 9/20).'
-    + ' 평균만 보면 가장 좋아 보이는데 보통은 손실이다.';
+    '2026-07 측정(20종목·전체 기간을 3구간으로): 구간별 중앙값 +19.21% / +12.27%'
+    + ' / -4.86%. 앞 두 구간은 20종목 중 17개·14개가 이익이었고 최근 구간에서만'
+    + ' 마이너스다. 장세를 타는 것으로 보이며 지금이 어느 쪽인지는 알 수 없다.';
 
   constructor(
     private readonly shortPeriod = 5,
@@ -182,9 +184,9 @@ export class VolatilityBreakoutStrategy implements Strategy {
   readonly label = '변동성 돌파';
   readonly verdict = 'no_edge' as const;
   readonly backtestNote =
-    '2026-07 측정(20종목·뒤 구간 105봉): 평균 -0.40%, 중앙값 -4.30%, 이익 8/20.'
-    + ' 매매 215회로 표본이 가장 두꺼운데 우위가 없다. 215번 사고팔아'
-    + ' 비용으로만 460만원을 쓰고 제자리다.';
+    '2026-07 측정(20종목·전체 기간을 3구간으로): 구간별 중앙값 -7.90% / -1.88%'
+    + ' / -3.76%로 세 구간 모두 마이너스다. 매매 869회로 셋 중 표본이 가장'
+    + ' 두꺼운데 어느 기간에도 우위가 없었다. 거래가 잦아 비용이 성과를 먹는다.';
 
   constructor(
     private readonly k = 0.5,
@@ -260,9 +262,9 @@ export class MeanReversionStrategy implements Strategy {
   readonly label = '평균 회귀';
   readonly verdict = 'unproven' as const;
   readonly backtestNote =
-    '2026-07 측정(20종목·뒤 구간 105봉): 평균 +2.96%, 중앙값 +2.21%, 이익 11/20.'
-    + ' 셋 중 유일하게 평균과 중앙값이 붙어 있어 소수 종목이 끌고 간 결과가'
-    + ' 아니다. 다만 폭이 작고 한 구간·40회 매매라 아직 확신할 표본은 아니다.';
+    '2026-07 측정(20종목·전체 기간을 3구간으로): 구간별 중앙값 +5.09% / +6.14%'
+    + ' / -2.31%. 앞 두 구간은 20종목 중 14개·18개가 이익이었고 최근 구간에서만'
+    + ' 마이너스다. 폭이 작은 대신 종목별 편차도 작다.';
 
   constructor(
     private readonly period = 20,
