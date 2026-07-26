@@ -616,6 +616,17 @@ const CHAT_MESSAGES: ChatMessage[] = [
   { id: 'chat-4', author: 'oil-desk', message: 'WTI 하락은 정유보다 항공/운송 쪽 반응도 같이 체크 중입니다.', time: '08:45', tone: 'normal' },
 ];
 
+/*
+ * 증권사 수수료율.
+ *
+ * 확인된 값이 아니다. 어디서 언제 가져왔다는 기록 없이 들어와 있었고, 실제
+ * 요율은 상품·이벤트·계좌 개설 경로에 따라 다르고 수시로 바뀐다. 그런데
+ * 화면은 실존 증권사 이름 옆에 소수 넷째 자리까지 적고 `BEST`까지 붙여
+ * 추천처럼 보였다 — 초보자가 이걸 보고 계좌를 열 수 있는 자리다.
+ *
+ * 지우지는 않는다. 계산기 자체는 쓸모가 있고, 값을 바꿔 가며 비교하는 데
+ * 출발점이 필요하다. 대신 화면에서 확인된 값이 아니라고 밝힌다.
+ */
 const FEE_BROKERS: FeeBroker[] = [
   { name: '대신증권', product: '표준', commissionRate: 0.00008, institutionRate: 0.00003, supportsDerivatives: true },
   { name: '미래에셋증권', product: '온라인', commissionRate: 0.00014, institutionRate: 0.00003, supportsDerivatives: true },
@@ -4710,10 +4721,10 @@ export function App(): JSX.Element {
                 <section className="terminal-page terminal-page--fees" aria-label="수수료 계산기">
                   <div className="terminal-page__header">
                     <div>
-                      <span>국내주식 왕복 거래 기준</span>
+                      <span>국내주식 왕복 거래 기준 · {feeMarketOption.label} · {feeMarketOption.unit}</span>
                       <strong>수수료 비교 계산기</strong>
                     </div>
-                    <small>{feeMarketOption.label} · {feeMarketOption.unit}</small>
+                    <SampleBadge note="증권사 요율은 확인된 값이 아닙니다. 상품·이벤트·개설 경로에 따라 다르고 수시로 바뀌니, 실제 요율은 본인 계좌에서 확인하세요." />
                   </div>
                   <div className="terminal-filterbar" role="tablist" aria-label="수수료 시장 선택">
                     {FEE_MARKET_OPTIONS.map((option) => (
@@ -4746,12 +4757,12 @@ export function App(): JSX.Element {
                       />
                     </label>
                     <div>
-                      <span>최저 비용</span>
+                      <span>이 표에서 최저</span>
                       <strong>{bestFeeRow ? bestFeeRow.broker.name : '-'}</strong>
                       <em>{bestFeeRow ? `${formatPrice(Math.round(bestFeeRow.totalFee))}원` : '-'}</em>
                     </div>
                     <div>
-                      <span>최고 비용</span>
+                      <span>이 표에서 최고</span>
                       <strong>{worstFeeRow ? worstFeeRow.broker.name : '-'}</strong>
                       <em>{worstFeeRow && bestFeeRow ? `${formatPrice(Math.round(worstFeeRow.totalFee - bestFeeRow.totalFee))}원 차이` : '-'}</em>
                     </div>
@@ -4765,7 +4776,8 @@ export function App(): JSX.Element {
                     </div>
                     {feeRows.map((row, index) => (
                       <div className="terminal-fee-table__row" key={row.broker.name}>
-                        <strong>{index === 0 ? 'BEST ' : ''}{row.broker.name}<em>{row.broker.product}</em></strong>
+                        {/* `BEST`는 추천으로 읽힌다. 확인 안 된 요율로 추천할 수 없다. */}
+                        <strong>{index === 0 ? '이 표에서 최저 · ' : ''}{row.broker.name}<em>{row.broker.product}</em></strong>
                         <span>{(row.broker.commissionRate * 100).toFixed(4)}%</span>
                         <span>{formatPrice(Math.round(row.totalFee))}원</span>
                         <span data-tone={feeImpactTone(row.netPnl)}>{formatSignedPrice(Math.round(row.netPnl))}원</span>
