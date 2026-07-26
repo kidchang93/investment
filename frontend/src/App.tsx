@@ -3430,10 +3430,13 @@ export function App(): JSX.Element {
         <main className={`chart-panel chart-panel--${activePage}`}>
           {activePage !== 'portfolio' ? (
           <div className="chart-commandbar">
+            {/*
+              여기 있던 종목명·국가·시장 표기를 뺐다. 90px 아래 시세 헤더가 같은
+              것을 더 크게, 가격 옆에서 보여주고 있어 같은 말이 두 번 나왔다.
+              시장 표기(`KOSPI · KRW`)는 다른 데가 없어 시세 헤더로 옮겼다.
+              화면 상태 배지는 정체성이 아니라 도구 쪽 정보라 여기 남긴다.
+            */}
             <div className="chart-commandbar__symbol">
-              <span>{selectedInstrument?.country ?? '-'}</span>
-              <strong>{selectedName || '-'}</strong>
-              <small>{selectedInstrument ? marketLabel(selectedInstrument) : '-'}</small>
               {layoutStateBadges.length > 0 && (
                 <div className="layout-state" aria-label="화면 상태">
                   {layoutStateBadges.map((badge) => (
@@ -4522,7 +4525,9 @@ export function App(): JSX.Element {
           {activePage !== 'portfolio' && <section className="quote-header">
             <div className="quote-header__identity">
               <div className="quote-header__symbol-row">
-                <span className="quote-header__code">{selectedInstrument?.symbol ?? '-'}</span>
+                <span className="quote-header__code">
+                  {selectedInstrument ? `${selectedInstrument.symbol} · ${marketLabel(selectedInstrument)}` : '-'}
+                </span>
                 {selectedInstrument && (
                   <button
                     aria-label={watchedIds.has(selectedInstrument.id) ? '관심종목에서 제거' : '관심종목에 추가'}

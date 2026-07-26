@@ -370,37 +370,6 @@ button {
   gap: 8px;
 }
 
-.chart-commandbar__symbol span,
-.chart-commandbar__symbol small {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-/*
- * 종목명은 이 화면이 무엇을 보여주는지 말해주는 값이라 먼저 양보하는 쪽이
- * 되면 안 된다. 이전에는 strong만 overflow: hidden이라 폭이 모자랄 때 혼자
- * 잘렸다 — `SK하이닉스`가 4px 모자라 `SK하이...`가 됐다. 상한은 남겨서
- * 아주 긴 이름만 말줄임되게 한다.
- */
-.chart-commandbar__symbol strong {
-  flex-shrink: 0;
-  max-width: 240px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 14px;
-}
-
-/*
- * 시장 라벨은 두 줄로 접히며 명령 줄 높이까지 키우고 있었다(`KOSPI ·` / `KRW`).
- * 부차적인 값이니 한 줄로 두고, 폭이 모자라면 여기서 말줄임된다.
- */
-.chart-commandbar__symbol small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .layout-state {
   display: inline-flex;
   align-items: center;
