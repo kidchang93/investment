@@ -1792,7 +1792,7 @@ export function App(): JSX.Element {
    */
   const [autoTrader, setAutoTrader] = useState<AutoTraderState | null>(null);
   const [autoStrategies, setAutoStrategies] = useState<
-    Array<{ key: string; label: string; backtestNote?: string; verdict?: 'measured_loss' | 'unproven' }>
+    Array<{ key: string; label: string; backtestNote?: string; verdict?: 'no_edge' | 'unproven' }>
   >([]);
   const [autoStrategy, setAutoStrategy] = useState('ma_cross');
   const [autoMode, setAutoMode] = useState<AutoTraderMode>('dry_run');
@@ -5537,7 +5537,7 @@ export function App(): JSX.Element {
                             드롭다운이 세 전략을 동등한 선택지로 늘어놓고 있었는데,
                             하나는 8종목 표본에서 확정으로 잃는다.
                           */}
-                          {item.verdict === 'measured_loss' ? ' — 백테스트에서 잃었다' : ''}
+                          {item.verdict === 'no_edge' ? ' — 백테스트에서 우위 없음' : ''}
                         </option>
                       ))}
                     </select>

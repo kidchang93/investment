@@ -5467,8 +5467,9 @@ span.sample-badge {
  * 부모가 `repeat(auto-fit, minmax(190px, 1fr))` 그리드라 그냥 두면 한 칸에
  * 끼어 다른 필드와 나란히 눌린다. 문장이므로 한 줄을 다 쓴다.
  *
- * 확정으로 잃은 전략에는 경고색을 준다 — 이건 "설정을 바꾸면 된다"가 아니라
- * "이걸 고르면 잃는다"라서, 앰버보다 세게 말할 자리다.
+ * 우위가 없다고 확인된 전략에는 경고색을 준다. 설정을 바꿔 될 일이 아니라
+ * 전략 자체의 성질이라서다. 처음엔 `잃는다`로 적었는데 표본을 20종목으로
+ * 늘리니 평균이 -13.97%에서 -0.40%로 올라와 문구를 낮췄다.
  */
 .auto-trader__verdict {
   grid-column: 1 / -1;
@@ -5482,7 +5483,7 @@ span.sample-badge {
   line-height: 1.5;
 }
 
-.auto-trader__verdict[data-verdict='measured_loss'] {
+.auto-trader__verdict[data-verdict='no_edge'] {
   border-color: rgba(229, 72, 77, 0.34);
   background: rgba(229, 72, 77, 0.07);
   color: #f0a8aa;

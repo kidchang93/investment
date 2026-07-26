@@ -41,10 +41,14 @@ export interface Strategy {
    */
   backtestNote: string;
   /**
-   * `measured_loss` — 판단할 만한 표본에서 잃었다.
-   * `unproven` — 표본이 얇아 좋다고도 나쁘다고도 말할 수 없다.
+   * `no_edge` — 표본이 충분한데 우위가 없다.
+   * `unproven` — 평균이 몇 종목의 큰 수익에 끌려간 것이라 전형적이라하다고 볼 수 없다.
+   *
+   * 8종목으로 재고 `변동성 돌파는 확정으로 나쁘다`라고 화면에 적었는데,
+   * 20종목으로 늘리니 평균 -13.97% → -0.40%, 이익 종목 1/8 → 8/20이었다.
+   * 표본이 작으면 판정도 작은 표본만큼만 믿을 수 있다.
    */
-  verdict: 'measured_loss' | 'unproven';
+  verdict: 'no_edge' | 'unproven';
   /** 이번 회차에 낼 신호들. 낼 게 없으면 빈 배열 */
   decide(context: StrategyContext): StrategySignal[];
 }
@@ -68,8 +72,9 @@ export class MovingAverageCrossStrategy implements Strategy {
   readonly label = '이동평균 교차';
   readonly verdict = 'unproven' as const;
   readonly backtestNote =
-    '2026-07 측정(8종목·뒤 구간 105봉): 평균 +9.87%였지만 이익 종목이 3/8, 매매 18회다.'
-    + ' SK하이닉스 한 종목의 +112%가 평균을 끌어올렸다. 좋다고 말할 표본이 아니다.';
+    '2026-07 측정(20종목·뒤 구간 105봉): 평균 +16.84%, 매매 51회, 승률 31.37%.'
+    + ' 다만 이익 종목이 9/20으로 절반이 안 된다 — 몇 종목의 큰 수익이 평균을'
+    + ' 끌어올린 모양이라, 아무 종목에나 걸면 이 평균이 나온다고 보면 안 된다.';
 
   constructor(
     private readonly shortPeriod = 5,
@@ -175,10 +180,11 @@ function stdev(values: number[], mean: number): number {
 export class VolatilityBreakoutStrategy implements Strategy {
   readonly key = 'volatility_breakout';
   readonly label = '변동성 돌파';
-  readonly verdict = 'measured_loss' as const;
+  readonly verdict = 'no_edge' as const;
   readonly backtestNote =
-    '2026-07 측정(8종목·뒤 구간 105봉): 평균 -13.97%, 이익 종목 1/8, 매매 89회.'
-    + ' 표본이 충분한데 잃었다. 비용 합계가 173만원으로 수수료가 수익을 먹었다.';
+    '2026-07 측정(20종목·뒤 구간 105봉): 평균 -0.40%, 이익 종목 8/20, 매매 215회.'
+    + ' 표본은 셋 중 가장 두꺼운데 우위가 없다. 215번 사고팔아 비용으로만'
+    + ' 460만원을 쓰고 제자리다.';
 
   constructor(
     private readonly k = 0.5,
@@ -254,8 +260,9 @@ export class MeanReversionStrategy implements Strategy {
   readonly label = '평균 회귀';
   readonly verdict = 'unproven' as const;
   readonly backtestNote =
-    '2026-07 측정(8종목·뒤 구간 105봉): 승률 77.78%인데 평균 +1.01%, 이익 종목 3/8.'
-    + ' 자주 조금 이기고 드물게 크게 잃는 모양이다. 승률만 보면 안 된다.';
+    '2026-07 측정(20종목·뒤 구간 105봉): 승률 72.50%인데 평균 +2.96%, 매매 40회.'
+    + ' 이익 종목 11/20으로 셋 중 가장 고르지만 폭이 작다. 자주 조금 이기고'
+    + ' 드물게 크게 잃는 모양이라 승률만 보면 안 된다.';
 
   constructor(
     private readonly period = 20,
