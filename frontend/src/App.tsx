@@ -504,7 +504,7 @@ const MACRO_BOARD_GROUPS: Array<{ label: string; items: MacroBoardItem[] }> = [
   {
     label: '환율·금리',
     items: [
-      { key: 'usdkrw', label: 'USD/KRW', detail: '환율 조회 대기', filter: 'fx', fallback: '-' },
+      { key: 'usdkrw', label: 'USD/KRW', detail: '환율 시세 대기', filter: 'fx', fallback: '-' },
       { key: 'eurusd', label: 'EUR/USD', detail: '환율 지표 예정', filter: 'fx', fallback: '-' },
       { key: 'dxy', label: '달러인덱스', detail: '글로벌 지표 예정', filter: 'fx', fallback: '-' },
       { key: 'us10y', label: '미10년금리', detail: '금리 지표 예정', filter: 'rates', fallback: '-' },
@@ -1328,7 +1328,7 @@ function closedSessionLabel(instrument: Instrument | null | undefined): string |
 
 /** 시세 칸이 비어 있을 때 무엇을 기다리는지 적는다. */
 function pendingQuoteLabel(instrument: Instrument): string {
-  return closedSessionLabel(instrument) ?? '조회 대기';
+  return closedSessionLabel(instrument) ?? '시세 대기';
 }
 
 function toSnapshot(trade: Trade | undefined, quote: Quote | undefined): PriceSnapshot | undefined {
@@ -2441,7 +2441,7 @@ export function App(): JSX.Element {
   const activeToolOption = TOOL_OPTIONS.find((tool) => tool.key === activeTool) ?? TOOL_OPTIONS[1];
   const quoteLagMs = quoteRefreshAt ? Math.max(0, nowMs - quoteRefreshAt) : null;
   const quoteFreshnessTone = quoteLagMs === null ? 'waiting' : quoteLagMs > QUOTE_STALE_MS ? 'stale' : 'fresh';
-  const quoteFreshnessLabel = quoteLagMs === null ? '조회 대기' : `조회 ${formatElapsed(quoteLagMs)}`;
+  const quoteFreshnessLabel = quoteLagMs === null ? '갱신 대기' : `갱신 ${formatElapsed(quoteLagMs)}`;
   const latestTradeMs = tradeTimestampMs(stream.recentTrades[0]);
   const tradeLagMs = latestTradeMs ? Math.max(0, nowMs - latestTradeMs) : null;
   const tradeFreshnessTone =
@@ -2463,27 +2463,27 @@ export function App(): JSX.Element {
         : '아직 체결이 들어오지 않았습니다'
       : `마지막 체결 ${formatClock(latestTradeMs as number)}`;
   const quoteFreshnessTitle = quoteRefreshAt
-    ? `마지막 조회 ${formatClock(quoteRefreshAt)}`
+    ? `마지막 갱신 ${formatClock(quoteRefreshAt)}`
     : '아직 시세를 조회하지 않았습니다';
 
   /*
    * 이전에는 `조회 전용`이 하드코딩이라 게이트가 열려도 그대로였다. 매매 앱에서
    * 상단 배지가 사실과 어긋나면 안 된다. 게이트가 열린 쪽이 위험한 상태이므로
    * 경고 색은 그쪽에 준다(styles.css의 data-armed).
+   *
+   * 문구는 `주문 가능` / `주문 잠김` / `확인 중` 세 개로 고정한다. 같은
+   * liveOrderGate.enabled를 헤더는 `조회 전용`, 하단 도크는 `조회 전용 세션`,
+   * 주문 패널은 `전송 잠김`이라고 불러 한 화면에 세 이름이 떠 있었다.
    */
   const liveOrderArmed = liveOrderGate?.enabled === true;
   const modeChipState = liveOrderGate ? (liveOrderArmed ? 'true' : 'false') : 'unknown';
   const modeChipLabel = !liveOrderGate
-    ? '게이트 확인 중'
+    ? '확인 중'
     : liveOrderArmed
-      ? `실주문 가능 · ${liveOrderGate.isProdEnv ? '실전 서버' : '모의 서버'}`
-      : '조회 전용';
+      ? `주문 가능 · ${liveOrderGate.isProdEnv ? '실전 서버' : '모의 서버'}`
+      : '주문 잠김';
   /* 하단 도크용. 헤더 배지와 달리 환경 표기는 빼고 짧게 쓴다. */
-  const sessionModeLabel = !liveOrderGate
-    ? '게이트 확인 중'
-    : liveOrderArmed
-      ? '실주문 세션'
-      : '조회 전용 세션';
+  const sessionModeLabel = !liveOrderGate ? '확인 중' : liveOrderArmed ? '주문 가능' : '주문 잠김';
   const modeChipTitle = !liveOrderGate
     ? '실주문 게이트 상태를 확인하는 중입니다'
     : liveOrderArmed
@@ -3439,7 +3439,7 @@ export function App(): JSX.Element {
             className="freshness-chip"
             data-kind="data"
             data-tone={usdKrwRate ? 'fresh' : 'waiting'}
-            title={usdKrwRate ? `갱신 ${formatClock(usdKrwRate.fetchedAt)}` : '환율 조회 대기'}
+            title={usdKrwRate ? `갱신 ${formatClock(usdKrwRate.fetchedAt)}` : '환율 시세 대기'}
           >
             USD/KRW {usdKrwRate ? formatExchangeRate(usdKrwRate.rate) : '대기'}
           </span>
@@ -3784,9 +3784,10 @@ export function App(): JSX.Element {
               <div className="terminal-board__hero">
                 <div>
                   {/*
-                    `조회 전용`이라고 적었더니 헤더의 게이트 배지와 같은 문구가 됐다.
-                    이건 게이트 상태가 아니라 이 화면이 주문을 받지 않는다는 뜻이라,
-                    게이트가 열리면 두 표시가 서로 어긋나 읽힌다. 화면 성격만 적는다.
+                    한때 `조회 전용`이라고 적었더니 헤더의 게이트 배지와 같은 문구가
+                    됐다. 이건 게이트 상태가 아니라 이 화면이 주문을 받지 않는다는
+                    뜻이라, 게이트가 열리면 두 표시가 서로 어긋나 읽힌다.
+                    화면 성격만 적는다.
                   */}
                   <span>야간 지표 · 시세 조회</span>
                   <h2>발견</h2>
@@ -3841,8 +3842,8 @@ export function App(): JSX.Element {
                 </div>
               </section>
 
-              <section className="terminal-news-ticker" aria-label="뉴스 ticker">
-                <strong>뉴스 ticker</strong>
+              <section className="terminal-news-ticker" aria-label="실시간 뉴스">
+                <strong>실시간 뉴스</strong>
                 <div>
                   {terminalNewsCards.slice(0, 4).map((item) => (
                     <a href={item.url} key={item.id} rel="noreferrer" target="_blank">
@@ -3914,7 +3915,7 @@ export function App(): JSX.Element {
                 <section className="terminal-panel terminal-panel--news" aria-label="뉴스룸">
                   <div className="terminal-panel__header">
                     <strong>뉴스룸</strong>
-                    <span>{selectedNews.length > 0 ? `선택 종목 ${selectedNews.length}건` : '검색 기반 fallback'}</span>
+                    <span>{selectedNews.length > 0 ? `선택 종목 ${selectedNews.length}건` : '검색으로 채운 뉴스'}</span>
                   </div>
                   <div className="terminal-news">
                     {selectedNews.slice(0, 5).map((item) => (
@@ -4993,10 +4994,10 @@ export function App(): JSX.Element {
               <em>{bottomDockModeLabel}</em>
             </div>
             {/*
-              세션 종류는 게이트에서 가져온다. `조회 전용 세션`이 하드코딩이라
-              게이트가 열려도 그대로였다. 조회 전이면 갱신 시각과 신선도가 둘 다
-              빈 값이라 한 마디로 줄인다 — 예전엔 `시세 갱신 시세 연결 대기 ·
-              조회 대기`처럼 문장이 깨졌다.
+              세션 종류는 게이트에서 가져온다. 하드코딩이던 시절엔 게이트가 열려도
+              문구가 그대로였다. 조회 전이면 갱신 시각과 신선도가 둘 다 빈 값이라
+              한 마디로 줄인다 — 예전엔 `시세 갱신 시세 연결 대기 · 조회 대기`처럼
+              문장이 깨졌다.
             */}
             <span className="bottom-dock__status">
               {sessionModeLabel} ·{' '}
@@ -5915,7 +5916,7 @@ export function App(): JSX.Element {
               <div className="live-order__header">
                 <strong>이 주문은 실계좌로 나갑니다</strong>
                 <em data-open={liveOrderGate?.enabled ? 'true' : 'false'}>
-                  {liveOrderGate ? (liveOrderGate.enabled ? '전송 가능' : '전송 잠김') : '확인 중'}
+                  {liveOrderGate ? (liveOrderGate.enabled ? '주문 가능' : '주문 잠김') : '확인 중'}
                 </em>
                 <span>{liveOrderGate?.isProdEnv ? '실전 서버' : '모의 서버'}</span>
               </div>
