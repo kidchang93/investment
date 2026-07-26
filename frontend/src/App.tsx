@@ -1650,57 +1650,70 @@ function InstrumentRow({
     return undefined;
   }, [snapshot?.price]);
 
+  /*
+   * 예전엔 행 전체가 <button>이고 그 안에 <span role="button" tabIndex={0}>인
+   * 관심 토글이 들어 있었다. 버튼 안의 버튼이라 HTML로 성립하지 않고, span에는
+   * onKeyDown이 없어 키보드로는 관심종목을 켜고 끌 수 없었다 — 포커스는 가는데
+   * Enter도 Space도 아무 일도 하지 않았다(브라우저에서 눌러 확인). 마우스로만
+   * 됐다. 행을 <div>로 두고 선택과 관심 토글을 각각 진짜 <button>으로 나란히
+   * 둔다. 토글이 선택 버튼 밖으로 나왔으므로 stopPropagation도 필요 없다.
+   */
   return (
-    <button
+    <div
       className={`instrument-row${active ? ' active' : ''}${flashing ? ' is-flashing' : ''}`}
-      onClick={() => onSelect(instrument)}
       data-move={tone}
-      /* 좁은 사이드바라 이름도 부제도 말줄임된다. 전체는 여기서 본다. */
-      title={`${instrument.name} · ${instrument.symbol} · ${marketLabel(instrument)}`}
-      type="button"
     >
-      <div className="instrument-row__name">
-        <div className="instrument-row__title">
-          <strong>{instrument.name}</strong>
-          {active && <em>선택</em>}
+      <button
+        className="instrument-row__select"
+        onClick={() => onSelect(instrument)}
+        /* 좁은 사이드바라 이름도 부제도 말줄임된다. 전체는 여기서 본다. */
+        title={`${instrument.name} · ${instrument.symbol} · ${marketLabel(instrument)}`}
+        type="button"
+      >
+        <div className="instrument-row__name">
+          <div className="instrument-row__title">
+            <strong>{instrument.name}</strong>
+            {active && <em>선택</em>}
+          </div>
+          <span className="instrument-row__code">
+            {instrument.symbol} · {marketLabel(instrument)}
+          </span>
         </div>
-        <span className="instrument-row__code">
-          {instrument.symbol} · {marketLabel(instrument)}
-        </span>
-      </div>
-      <div className="instrument-row__price" style={{ color }}>
-        <span>{snapshot ? formatCurrencyPrice(snapshot.price, instrument.currency) : '-'}</span>
-        {snapshot ? (
-          <span className="instrument-row__rate">
-            {formatSignedCurrencyPrice(snapshot.change, instrument.currency)} ({formatRate(snapshot.changeRate)})
-          </span>
-        ) : (
-          /* 값이 왜 비었는지 적는다. `-`만 두면 로딩인지 휴장인지 알 수 없다. */
-          <span className="instrument-row__pending">{pendingQuoteLabel(instrument)}</span>
-        )}
-        {snapshot && rangePosition !== null && (
-          <span
-            aria-label={`당일 저가 ${formatCurrencyPrice(snapshot.low, instrument.currency)}, 고가 ${formatCurrencyPrice(snapshot.high, instrument.currency)} 범위 내 ${Math.round(rangePosition)}% 위치`}
-            className="instrument-row__range"
-            title={`저가 ${formatCurrencyPrice(snapshot.low, instrument.currency)} · 고가 ${formatCurrencyPrice(snapshot.high, instrument.currency)}`}
-          >
-            <span style={{ left: `${rangePosition}%` }} />
-          </span>
-        )}
-      </div>
-      <span
+        <div className="instrument-row__price" style={{ color }}>
+          <span>{snapshot ? formatCurrencyPrice(snapshot.price, instrument.currency) : '-'}</span>
+          {snapshot ? (
+            <span className="instrument-row__rate">
+              {formatSignedCurrencyPrice(snapshot.change, instrument.currency)} ({formatRate(snapshot.changeRate)})
+            </span>
+          ) : (
+            /* 값이 왜 비었는지 적는다. `-`만 두면 로딩인지 휴장인지 알 수 없다. */
+            <span className="instrument-row__pending">{pendingQuoteLabel(instrument)}</span>
+          )}
+          {snapshot && rangePosition !== null && (
+            <span
+              aria-label={`당일 저가 ${formatCurrencyPrice(snapshot.low, instrument.currency)}, 고가 ${formatCurrencyPrice(snapshot.high, instrument.currency)} 범위 내 ${Math.round(rangePosition)}% 위치`}
+              className="instrument-row__range"
+              title={`저가 ${formatCurrencyPrice(snapshot.low, instrument.currency)} · 고가 ${formatCurrencyPrice(snapshot.high, instrument.currency)}`}
+            >
+              <span style={{ left: `${rangePosition}%` }} />
+            </span>
+          )}
+        </div>
+      </button>
+      {/*
+        이름이 `+`·`−`뿐이라 낭독기에는 `더하기 버튼`으로만 들렸다. 어느 종목의
+        무엇인지 aria-label에 적는다. 화면에 보이는 글자는 그대로 둔다.
+      */}
+      <button
+        aria-label={`${instrument.name} ${watched ? '관심종목에서 제거' : '관심종목에 추가'}`}
         className="instrument-row__watch"
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggleWatch(instrument);
-        }}
-        role="button"
-        tabIndex={0}
+        onClick={() => onToggleWatch(instrument)}
         title={watched ? '관심종목에서 제거' : '관심종목에 추가'}
+        type="button"
       >
         {watched ? '−' : '+'}
-      </span>
-    </button>
+      </button>
+    </div>
   );
 }
 
