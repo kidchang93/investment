@@ -1218,25 +1218,6 @@ function assetTypeLabel(assetType: Instrument['assetType']): string {
   }
 }
 
-function countryLabel(country: Instrument['country']): string {
-  switch (country) {
-    case 'KR':
-      return '한국';
-    case 'US':
-      return '미국';
-    case 'CN':
-      return '중국';
-    case 'JP':
-      return '일본';
-    case 'HK':
-      return '홍콩';
-    case 'VN':
-      return '베트남';
-    case 'GLOBAL':
-      return '해외';
-  }
-}
-
 function getZonedParts(timeZone: string): { weekday: string; hour: number; minute: number; label: string } {
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone,
@@ -4602,15 +4583,14 @@ export function App(): JSX.Element {
               <strong>{marketSession.label}</strong>
               <small>{marketSession.detail}</small>
             </div>
-            <div className="market-strip__item">
-              <span>거래소</span>
-              <strong>{selectedInstrument ? selectedInstrument.market : '-'}</strong>
-              <small>{selectedInstrument ? `${countryLabel(selectedInstrument.country)} · ${selectedInstrument.currency}` : '-'}</small>
-            </div>
-            <div className="market-strip__item">
+            {/*
+              거래소 칸은 뺐다. 화면 맨 위 명령줄이 이미 `NIGHT_PROXY · KRW`를
+              보여주고 있어 같은 말이 세 줄 아래 또 나왔다.
+            */}
+            {/* 공급자 종목코드는 내부값이라 겉으로 내지 않고 툴팁에 둔다. */}
+            <div className="market-strip__item" title={selectedInstrument?.providerSymbol ?? undefined}>
               <span>종류</span>
               <strong>{selectedInstrument ? assetTypeLabel(selectedInstrument.assetType) : '-'}</strong>
-              <small>{selectedInstrument?.providerSymbol ?? '-'}</small>
             </div>
             <div className="market-strip__item">
               <span>전일종가</span>

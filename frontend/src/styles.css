@@ -2079,12 +2079,19 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * 종목 정보 줄.
+ *
+ * 예전엔 타일 6개가 각각 라벨·값·보조를 세로로 쌓아 65px씩 차지했고, 줄 전체가
+ * 82px이었다. 차트 위에 이런 층이 여섯이나 쌓여 정작 차트는 창의 32%밖에
+ * 안 됐다. 내용은 그대로 두고 한 줄로 눕힌다.
+ */
 .market-strip {
-  display: grid;
-  grid-template-columns: 116px repeat(4, minmax(92px, 1fr)) minmax(160px, 1.2fr);
-  align-items: stretch;
-  gap: 8px;
-  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 6px 14px;
   border-bottom: 1px solid var(--border);
   background: #0b0f17;
 }
@@ -2092,14 +2099,21 @@ button {
 .market-strip__status,
 .market-strip__item,
 .market-strip__range {
-  display: grid;
-  align-content: center;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px;
   min-width: 0;
-  min-height: 50px;
-  padding: 7px 9px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+/* 장 상태만 테두리를 남긴다. 지금 살 수 있는지가 이 줄에서 가장 중요하다. */
+.market-strip__status {
+  padding: 2px 8px;
   border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: rgba(15, 23, 42, 0.44);
+  border-radius: 999px;
 }
 
 .market-strip__status {
@@ -2131,9 +2145,8 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin: 2px 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
