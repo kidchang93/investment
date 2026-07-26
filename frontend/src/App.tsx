@@ -2894,6 +2894,16 @@ export function App(): JSX.Element {
   const bottomDockModeLabel =
     BOTTOM_DOCK_MODE_OPTIONS.find((option) => option.key === bottomDockMode)?.label ?? bottomDockMode;
   const orderQuantityNumber = Number(orderQuantity);
+
+  /*
+   * 지금 낼 수 있는 최대 수량. 매수는 실계좌 현금 기준, 매도는 보유 기준이다.
+   * 토스증권도 매수 가능 금액과 판매 가능 수량을 따로 주는데, 우리는 그 값을
+   * 받아 놓고 화면에 숫자로만 적어 둬서 몇 주인지는 사람이 계산해야 했다.
+   */
+  const maxOrderQuantity = useMemo(() => {
+    if (orderSide === 'sell') return kisSellability?.sellableQuantity;
+    return kisOrderability?.cashBuyQuantity;
+  }, [kisOrderability, kisSellability, orderSide]);
   const orderLimitPriceNumber = Number(orderLimitPrice);
   const orderEstimatedPrice = snapshot?.price;
   const orderEffectivePrice =
@@ -5749,15 +5759,39 @@ export function App(): JSX.Element {
                   <option value="day">오늘 안에</option>
                   <option value="ioc">즉시, 안 되면 취소</option>
                 </select>
-                <label>
+                {/*
+                  토스증권 주문 API도 `cashBuyingPower`(현금 매수 가능 금액)와
+                  `sellableQuantity`(판매 가능 수량)를 따로 준다. 우리도 같은 값을
+                  받고 있으면서 화면에는 숫자로만 적어 뒀는데, 5만원으로 몇 주를
+                  살 수 있는지 사람이 나눗셈해야 했다. 한 번에 채워 준다.
+                */}
+                <label className="order-ticket__quantity">
                   <span>수량</span>
-                  <input
-                    min="0"
-                    onChange={(event) => setOrderQuantity(event.target.value)}
-                    step="1"
-                    type="number"
-                    value={orderQuantity}
-                  />
+                  <div>
+                    <input
+                      min="0"
+                      onChange={(event) => setOrderQuantity(event.target.value)}
+                      step="1"
+                      type="number"
+                      value={orderQuantity}
+                    />
+                    <button
+                      disabled={maxOrderQuantity === undefined || maxOrderQuantity <= 0}
+                      onClick={() => setOrderQuantity(String(maxOrderQuantity ?? 0))}
+                      title={
+                        maxOrderQuantity === undefined
+                          ? '가능 수량을 조회하지 못했습니다'
+                          : maxOrderQuantity <= 0
+                            ? orderSide === 'buy'
+                              ? '예수금으로 한 주도 살 수 없습니다'
+                              : '팔 수 있는 수량이 없습니다'
+                            : `${formatNumber(maxOrderQuantity)}주`
+                      }
+                      type="button"
+                    >
+                      최대
+                    </button>
+                  </div>
                 </label>
                 <label>
                   <span><Term>지정가</Term></span>

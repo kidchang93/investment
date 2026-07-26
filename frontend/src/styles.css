@@ -5478,3 +5478,44 @@ button {
   font-size: 12px;
   line-height: 1.55;
 }
+
+/*
+ * 수량 입력 + `최대` 버튼.
+ *
+ * 매수 가능 금액과 판매 가능 수량은 이미 받아 오고 있었는데 화면에는 숫자로만
+ * 적혀 있어, 5만원으로 몇 주를 살 수 있는지 사람이 나눗셈해야 했다.
+ * 토스증권 주문 API도 두 값을 따로 주는 걸 보면 주문 화면에서 꼭 필요한 값이다.
+ */
+.order-ticket__quantity > div {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+}
+
+.order-ticket__quantity input {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.order-ticket__quantity > div > button {
+  flex-shrink: 0;
+  min-width: 40px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.order-ticket__quantity > div > button:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.order-ticket__quantity > div > button:disabled {
+  color: var(--faint);
+  cursor: default;
+}
