@@ -2408,6 +2408,17 @@ button {
   background: rgba(229, 72, 77, 0.04);
 }
 
+/*
+ * 전송 상자는 바로 위 주문 폼과 한 덩어리로 보여야 한다. 폼과 버튼이 서로 다른
+ * 상자에 있으면 어디서 주문이 나가는지 알기 어렵다 — 실제로 그렇게 갈라져 있었다.
+ * 위쪽 여백과 모서리를 없애 폼에 붙인다.
+ */
+.live-order {
+  margin-top: -6px;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
 .live-order__open {
   border-color: var(--border-soft);
   background: rgba(9, 13, 20, 0.6);

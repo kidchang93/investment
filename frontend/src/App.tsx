@@ -5816,12 +5816,17 @@ export function App(): JSX.Element {
               </div>
             </div>
 
-            {/* 실계좌 주문. paper 경로와 시각적으로도 분리해 오발주를 막는다. */}
-            <div className="live-order" aria-label="실계좌 주문 전송">
+{/*
+              위 상자에서 수량·가격을 넣는데 전송 버튼은 `실계좌 주문`이라는 다른
+              제목의 상자에 있었다. 모의계좌를 걷어낼 때 남은 자국인데, 폼과 버튼이
+              갈라져 있으니 어디서 주문이 나가는지 알기 어려웠다. 한 상자로 합치고
+              제목 대신 어디로 나가는 주문인지만 적는다.
+            */}
+            <div className="live-order" aria-label="주문 전송">
               <div className="live-order__header">
-                <strong>실계좌 주문</strong>
+                <strong>이 주문은 실계좌로 나갑니다</strong>
                 <em data-open={liveOrderGate?.enabled ? 'true' : 'false'}>
-                  {liveOrderGate ? (liveOrderGate.enabled ? '게이트 열림' : '게이트 차단') : '확인 중'}
+                  {liveOrderGate ? (liveOrderGate.enabled ? '전송 가능' : '전송 잠김') : '확인 중'}
                 </em>
                 <span>{liveOrderGate?.isProdEnv ? '실전 서버' : '모의 서버'}</span>
               </div>
@@ -5871,7 +5876,12 @@ export function App(): JSX.Element {
                     title={liveOrderBlockers.length > 0 ? liveOrderBlockers.join('\n') : undefined}
                     type="button"
                   >
-                    {orderSide === 'buy' ? '매수' : '매도'}
+                    {/*
+                      위 탭에도 `매수`/`매도`가 있어 같은 말이 한 패널에 두 번
+                      나왔다. 위는 방향을 고르는 것이고 여기는 주문을 내는 것이라
+                      동사를 붙여 구분한다.
+                    */}
+                    {orderSide === 'buy' ? '매수 주문하기' : '매도 주문하기'}
                   </button>
                 )}
               </div>
@@ -5897,11 +5907,11 @@ export function App(): JSX.Element {
 
             <div className="live-order__open" aria-label="실시간 주문·체결 통보">
               <div className="live-order__header">
-                <strong>실시간 통보</strong>
+                <strong>주문 진행 알림</strong>
                 <span>
                   {stream.orderNotices.length > 0
-                    ? `${stream.orderNotices.length}건`
-                    : 'HTS ID를 설정하면 접수·체결이 실시간으로 들어옵니다'}
+                    ? `${stream.orderNotices.length}건 · 낸 주문이 접수·체결되는 과정이 실시간으로 들어옵니다`
+                    : '낸 주문이 접수·체결되는 과정이 여기에 실시간으로 들어옵니다 (HTS ID 설정 필요)'}
                 </span>
               </div>
               {stream.orderNotices.length === 0 ? (
@@ -5936,8 +5946,9 @@ export function App(): JSX.Element {
 
             <div className="live-order__open" aria-label="실계좌 미체결 주문">
               <div className="live-order__header">
-                <strong>미체결 주문</strong>
-                <span>{kisOpenOrders.length}건</span>
+                {/* `안 팔린`이라고 적으면 매수 주문이 빠진다. 미체결은 사고파는 양쪽 다 해당한다. */}
+                <strong>체결을 기다리는 주문</strong>
+                <span>{kisOpenOrders.length}건 · 값을 고치거나 취소할 수 있습니다</span>
                 <button disabled={isKisOpenOrdersRefreshing} onClick={refreshKisOpenOrders} type="button">
                   {isKisOpenOrdersRefreshing ? '조회 중' : '새로고침'}
                 </button>
