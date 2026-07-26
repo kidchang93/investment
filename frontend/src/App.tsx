@@ -77,8 +77,14 @@ type WatchGroup = 'all' | 'kr' | 'global' | 'fund';
 type BottomDockTab = 'volume' | 'trades' | 'news';
 type BottomDockMode = 'hidden' | 'normal' | 'expanded';
 type LayoutPreset = 'balanced' | 'chart' | 'reading';
-type AppPage = 'terminal' | 'market' | 'trade' | 'portfolio';
-type SidePanelTab = 'watch' | 'discover';
+/*
+ * 화면은 셋뿐이다. 예전엔 'trade'가 더 있었는데 상단 네비에 버튼이 없어
+ * 포트폴리오 표의 행을 눌러야만 닿았고, 보유 종목도 주문 이력도 없으면
+ * 영영 갈 수 없었다. 새로고침하면 저장값 검증에서 걸러져 터미널로 돌아가기도
+ * 했다. 주문은 종목 화면(오른쪽 패널)으로 들어왔다.
+ */
+type AppPage = 'terminal' | 'market' | 'portfolio';
+type SidePanelTab = 'order' | 'watch' | 'discover';
 type TerminalTab =
   | 'overview'
   | 'news'
@@ -268,16 +274,28 @@ const TOOL_OPTIONS: Array<{ key: ChartTool; label: string; title: string }> = [
   { key: 'lock', label: '#', title: '도구 잠금' },
 ];
 
+/*
+ * 이름만 보고 무엇이 있는지 알 수 있게 적는다. `터미널`은 안에 뉴스·매크로·
+ * 캘린더가 들어 있다는 걸 이름이 전혀 알려주지 못했고, `차트`는 차트만 있고
+ * 주문은 다른 곳에 있어 실제 쓰임과 어긋났다.
+ */
 const APP_PAGE_OPTIONS: Array<{ key: AppPage; label: string; title: string }> = [
-  { key: 'terminal', label: '터미널', title: '야간 지표와 데이터 출처' },
-  { key: 'market', label: '차트', title: '차트와 관심종목' },
-  { key: 'portfolio', label: '포트폴리오', title: '계좌와 보유 현황' },
+  { key: 'market', label: '종목', title: '차트와 주문을 한 화면에서' },
+  { key: 'portfolio', label: '내 계좌', title: '잔고·주문내역·손익·리스크 룰' },
+  { key: 'terminal', label: '발견', title: '뉴스·매크로·캘린더·랭킹' },
 ];
 
 const SIDE_PANEL_OPTIONS: Array<{ key: SidePanelTab; label: string }> = [
+  { key: 'order', label: '주문' },
   { key: 'watch', label: '관심' },
   { key: 'discover', label: '탐색' },
 ];
+
+const SIDE_PANEL_TITLE: Record<SidePanelTab, string> = {
+  order: '주문',
+  watch: '관심종목',
+  discover: '종목 탐색',
+};
 
 const TERMINAL_CATEGORY_SHORTCUTS = [
   { id: 'kr-night-proxies', label: '야간 환산가', detail: 'GDR·환율 기반' },
@@ -1653,6 +1671,14 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('activePage', activePage), [activePage]);
   useEffect(() => writeStoredValue('terminalTab', terminalTab), [terminalTab]);
   useEffect(() => writeStoredValue('sidePanelTab', sidePanelTab), [sidePanelTab]);
+
+  /*
+   * 주문 패널이 실제로 열려 있는지. 매수가능금액·매도가능수량·미체결처럼
+   * KIS를 때리는 조회를 여기에 묶는다. 예전엔 전용 화면(`trade`)이 조건이었는데
+   * 주문이 종목 화면의 오른쪽 탭으로 들어왔다. 차트만 보는 동안에도 계좌 조회가
+   * 나가면 KIS 호출 제한을 그냥 태운다.
+   */
+  const isOrderPanelOpen = activePage === 'market' && sidePanelTab === 'order';
   useEffect(() => writeStoredValue('activeSavedWatchlistId', activeSavedWatchlistId), [activeSavedWatchlistId]);
   useEffect(() => writeStoredJson('recentInstruments', recentInstruments), [recentInstruments]);
   useEffect(() => writeStoredValue('simulationCash', String(simulationCash)), [simulationCash]);
@@ -1809,7 +1835,7 @@ export function App(): JSX.Element {
     const needsLimitPrice = orderType === 'limit' && (!Number.isFinite(limitPrice) || limitPrice <= 0);
     if (
       !instrument ||
-      activePage !== 'trade' ||
+      !isOrderPanelOpen ||
       orderSide !== 'buy' ||
       needsLimitPrice ||
       !isOrderableDomesticInstrument(instrument)
@@ -1843,12 +1869,12 @@ export function App(): JSX.Element {
       disposed = true;
       window.clearTimeout(timer);
     };
-  }, [activePage, kisAccountId, orderLimitPrice, orderSide, orderType, selectedInstrument]);
+  }, [isOrderPanelOpen, kisAccountId, orderLimitPrice, orderSide, orderType, selectedInstrument]);
 
   // 매도가능수량은 종목만 있으면 되지만 매도 탭에서만 의미가 있다.
   useEffect(() => {
     const instrument = selectedInstrument;
-    if (!instrument || activePage !== 'trade' || orderSide !== 'sell' || !isOrderableDomesticInstrument(instrument)) {
+    if (!instrument || !isOrderPanelOpen || orderSide !== 'sell' || !isOrderableDomesticInstrument(instrument)) {
       setKisSellability(null);
       setIsKisSellabilityLoading(false);
       return;
@@ -1873,7 +1899,7 @@ export function App(): JSX.Element {
       disposed = true;
       window.clearTimeout(timer);
     };
-  }, [activePage, kisAccountId, orderSide, selectedInstrument]);
+  }, [isOrderPanelOpen, kisAccountId, orderSide, selectedInstrument]);
 
   const refreshKisOpenOrders = useCallback((): void => {
     setIsKisOpenOrdersRefreshing(true);
@@ -1885,9 +1911,9 @@ export function App(): JSX.Element {
 
   // 미체결 주문은 매매 화면에서 계좌를 바꿀 때마다 다시 받는다.
   useEffect(() => {
-    if (activePage !== 'trade') return;
+    if (!isOrderPanelOpen) return;
     refreshKisOpenOrders();
-  }, [activePage, refreshKisOpenOrders]);
+  }, [isOrderPanelOpen, refreshKisOpenOrders]);
 
   const refreshKisReservedOrders = useCallback((): void => {
     fetchKisReservedOrders(kisAccountId ?? undefined)
@@ -1961,9 +1987,9 @@ export function App(): JSX.Element {
 
   // 주문 로그는 DB 조회라 KIS 호출이 없다. 매매·포트폴리오 양쪽에서 본다.
   useEffect(() => {
-    if (activePage !== 'portfolio' && activePage !== 'trade') return;
+    if (activePage !== 'portfolio' && !isOrderPanelOpen) return;
     refreshKisOrderLog();
-  }, [activePage, refreshKisOrderLog]);
+  }, [activePage, isOrderPanelOpen, refreshKisOrderLog]);
 
   /*
    * 실주문 게이트는 서버 설정이라 KIS 호출이 없다.
@@ -4543,355 +4569,6 @@ export function App(): JSX.Element {
             </div>
           </section>}
 
-          {activePage === 'trade' && <section className="order-ticket" aria-label="매매 주문 티켓">
-            <div className="order-ticket__header">
-              <div>
-                <span>주문 티켓</span>
-                <strong>{selectedInstrument ? `${selectedInstrument.symbol} · ${selectedInstrument.name}` : '종목 미선택'}</strong>
-              </div>
-              <div className="order-ticket__account">
-                <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
-                <em>{activeTradingAccount?.label ?? '계정 대기'}</em>
-                <span>{activeTradingAccount?.mode === 'paper' ? 'PAPER' : 'LIVE 잠금'}</span>
-              </div>
-            </div>
-            <div className="order-ticket__body">
-              <div className="order-ticket__controls">
-                <div className="order-ticket__segments" role="tablist" aria-label="매수 매도">
-                  <button
-                    aria-selected={orderSide === 'buy'}
-                    data-side="buy"
-                    onClick={() => setOrderSide('buy')}
-                    role="tab"
-                    type="button"
-                  >
-                    매수
-                  </button>
-                  <button
-                    aria-selected={orderSide === 'sell'}
-                    data-side="sell"
-                    onClick={() => setOrderSide('sell')}
-                    role="tab"
-                    type="button"
-                  >
-                    매도
-                  </button>
-                </div>
-                <select
-                  aria-label="주문 유형"
-                  onChange={(event) => setOrderType(event.target.value as OrderType)}
-                  value={orderType}
-                >
-                  <option value="market">시장가</option>
-                  <option value="limit">지정가</option>
-                </select>
-                <select
-                  aria-label="주문 유효기간"
-                  onChange={(event) => setOrderTimeInForce(event.target.value as OrderTimeInForce)}
-                  value={orderTimeInForce}
-                >
-                  <option value="day">DAY</option>
-                  <option value="ioc">IOC</option>
-                </select>
-                <label>
-                  <span>수량</span>
-                  <input
-                    min="0"
-                    onChange={(event) => setOrderQuantity(event.target.value)}
-                    step="1"
-                    type="number"
-                    value={orderQuantity}
-                  />
-                </label>
-                <label>
-                  <span>지정가</span>
-                  <input
-                    disabled={orderType !== 'limit'}
-                    min="0"
-                    onChange={(event) => setOrderLimitPrice(event.target.value)}
-                    placeholder={snapshot ? formatPrice(snapshot.price) : '현재가 대기'}
-                    step="1"
-                    type="number"
-                    value={orderLimitPrice}
-                  />
-                </label>
-              </div>
-              <div className="order-ticket__summary">
-                <div>
-                  <span>예상 단가</span>
-                  <strong>{formatMoney(orderEffectivePrice, selectedInstrument?.currency)}</strong>
-                  {orderEffectivePriceKrw && <small>{orderEffectivePriceKrw}</small>}
-                </div>
-                <div>
-                  <span>예상 주문액</span>
-                  <strong>{formatMoney(orderEstimatedNotional, selectedInstrument?.currency)}</strong>
-                  {orderEstimatedNotionalKrw && <small>{orderEstimatedNotionalKrw}</small>}
-                </div>
-                {/*
-                  모의 주문가능(971만)과 실계좌 매수가능(5만)이 나란히 놓인다.
-                  둘 다 "얼마까지 살 수 있나"라서 표시를 안 갈라두면 어느 계좌 돈인지 오해한다.
-                */}
-                <div data-account="paper">
-                  <span>모의 주문가능</span>
-                  <strong>{formatMoney(activeTradingAccount?.buyingPower, activeTradingAccount?.baseCurrency)}</strong>
-                </div>
-                <div data-account="live">
-                  <span>{orderSide === 'buy' ? '실계좌 매수가능' : '실계좌 매도가능'}</span>
-                  {orderSide === 'buy' ? (
-                    <>
-                      <strong>
-                        {isKisOrderabilityLoading
-                          ? '조회 중'
-                          : kisOrderability?.configured
-                            ? formatMoney(kisOrderability.cashBuyAmount, kisOrderability.currency)
-                            : '-'}
-                      </strong>
-                      {kisOrderability?.configured && kisOrderability.cashBuyQuantity !== undefined && (
-                        <small>최대 {formatNumber(kisOrderability.cashBuyQuantity)}주</small>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <strong>
-                        {isKisSellabilityLoading
-                          ? '조회 중'
-                          : kisSellability?.configured
-                            ? `${formatNumber(kisSellability.sellableQuantity)}주`
-                            : '-'}
-                      </strong>
-                      {kisSellability?.configured && kisSellability.holdingQuantity !== undefined && (
-                        <small>보유 {formatNumber(kisSellability.holdingQuantity)}주</small>
-                      )}
-                    </>
-                  )}
-                </div>
-                <div>
-                  <span>보유 수량</span>
-                  <strong>{selectedPosition ? formatNumber(selectedPosition.quantity) : '-'}</strong>
-                </div>
-              </div>
-              <div className="order-ticket__risk">
-                <label className="order-ticket__ack">
-                  <input
-                    checked={orderAcknowledged}
-                    onChange={(event) => setOrderAcknowledged(event.target.checked)}
-                    type="checkbox"
-                  />
-                  <span>paper 주문이며 실계좌로 전송되지 않음을 확인했습니다.</span>
-                </label>
-                <div className="order-ticket__messages">
-                  {orderRiskMessages.length === 0 ? (
-                    <em data-tone="ok">주문 의도 생성 가능</em>
-                  ) : (
-                    orderRiskMessages.map((message) => <em key={message}>{message}</em>)
-                  )}
-                  {orderLiveNotices.map((notice) => (
-                    <em data-tone="live" key={notice}>
-                      {notice}
-                    </em>
-                  ))}
-                </div>
-              </div>
-              <button
-                className="order-ticket__submit"
-                disabled={!orderCanSubmit}
-                onClick={() => void submitOrderIntent()}
-                type="button"
-              >
-                {isOrderSubmitting ? '처리 중' : orderType === 'market' ? 'Paper 즉시 체결' : 'Paper 주문 저장'}
-              </button>
-            </div>
-            {tradingOverview && (
-              <div className="order-ticket__recent" aria-label="최근 주문 의도">
-                <span>최근 주문</span>
-                {tradingOverview.recentOrders.slice(0, 3).map((order) => (
-                  <div key={order.id}>
-                    <strong>{order.instrument.symbol}</strong>
-                    <em data-status={order.status}>{orderStatusLabel(order.status)}</em>
-                    <span>
-                      {order.side === 'buy' ? '매수' : '매도'} {formatNumber(order.quantity)} ·{' '}
-                      {formatMoney(order.estimatedNotional, order.currency)}
-                    </span>
-                  </div>
-                ))}
-                {tradingOverview.recentOrders.length === 0 && <strong>저장된 주문 없음</strong>}
-                <span>최근 체결</span>
-                {tradingOverview.recentFills.slice(0, 3).map((fill) => (
-                  <div key={fill.id}>
-                    <strong>{fill.instrument.symbol}</strong>
-                    <em data-status="filled">체결</em>
-                    <span>
-                      {fill.side === 'buy' ? '매수' : '매도'} {formatNumber(fill.quantity)} ·{' '}
-                      {formatMoney(fill.notional, fill.currency)}
-                    </span>
-                  </div>
-                ))}
-                {tradingOverview.recentFills.length === 0 && <strong>체결 없음</strong>}
-              </div>
-            )}
-
-            {/* 실계좌 주문. paper 경로와 시각적으로도 분리해 오발주를 막는다. */}
-            <div className="live-order" aria-label="실계좌 주문 전송">
-              <div className="live-order__header">
-                <strong>실계좌 주문</strong>
-                <em data-open={liveOrderGate?.enabled ? 'true' : 'false'}>
-                  {liveOrderGate ? (liveOrderGate.enabled ? '게이트 열림' : '게이트 차단') : '확인 중'}
-                </em>
-                <span>{liveOrderGate?.isProdEnv ? '실전(prod)' : '모의(vts)'}</span>
-              </div>
-              <div className="live-order__body">
-                <label className="live-order__phrase">
-                  <span>확인 문구</span>
-                  <input
-                    onChange={(event) => setLiveOrderPhrase(event.target.value)}
-                    placeholder={LIVE_ORDER_CONFIRMATION}
-                    type="text"
-                    value={liveOrderPhrase}
-                  />
-                </label>
-                <button
-                  className="live-order__submit"
-                  data-side={orderSide}
-                  disabled={!liveOrderCanSubmit}
-                  onClick={() => void submitLiveOrder()}
-                  type="button"
-                >
-                  {isLiveOrderSubmitting
-                    ? '전송 중'
-                    : `실주문 ${orderSide === 'buy' ? '매수' : '매도'} ${formatNumber(orderQuantityNumber)}주`}
-                </button>
-              </div>
-              <div className="live-order__messages">
-                {liveOrderBlockers.length === 0 ? (
-                  <em data-tone="warn">전송 준비됨. 누르면 실계좌로 주문이 나갑니다.</em>
-                ) : (
-                  liveOrderBlockers.map((blocker) => <em key={blocker}>{blocker}</em>)
-                )}
-              </div>
-              {liveOrderMessage && <p className="live-order__result">{liveOrderMessage}</p>}
-            </div>
-
-            <div className="live-order__open" aria-label="실시간 주문·체결 통보">
-              <div className="live-order__header">
-                <strong>실시간 통보</strong>
-                <span>
-                  {stream.orderNotices.length > 0
-                    ? `${stream.orderNotices.length}건`
-                    : 'HTS ID를 설정하면 접수·체결이 실시간으로 들어옵니다'}
-                </span>
-              </div>
-              {stream.orderNotices.length === 0 ? (
-                <div className="portfolio-table__empty">수신된 통보 없음</div>
-              ) : (
-                <div className="portfolio-table portfolio-table--notices">
-                  <div className="portfolio-table__head">
-                    <span>시각</span>
-                    <span>종목</span>
-                    <span>구분</span>
-                    <span>수량·단가</span>
-                    <span>주문번호</span>
-                    <span>상태</span>
-                  </div>
-                  {stream.orderNotices.slice(0, 20).map((notice) => (
-                    <div className="portfolio-table__row" key={`${notice.orderNo}-${notice.receivedAt}`}>
-                      <span>{formatBrokerClock(notice.time) ?? formatClock(notice.receivedAt)}</span>
-                      <strong>{notice.name || notice.symbol}</strong>
-                      <span>{notice.side === 'buy' ? '매수' : '매도'}</span>
-                      <span>
-                        {formatNumber(notice.quantity)}주 · {formatMoney(notice.price)}
-                      </span>
-                      <span>{notice.orderNo}</span>
-                      <em data-status={notice.rejected ? 'rejected' : notice.kind === 'filled' ? 'filled' : 'open'}>
-                        {notice.rejected ? '거부' : notice.kind === 'filled' ? '체결' : '접수'}
-                      </em>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="live-order__open" aria-label="실계좌 미체결 주문">
-              <div className="live-order__header">
-                <strong>미체결 주문</strong>
-                <span>{kisOpenOrders.length}건</span>
-                <button disabled={isKisOpenOrdersRefreshing} onClick={refreshKisOpenOrders} type="button">
-                  {isKisOpenOrdersRefreshing ? '조회 중' : '새로고침'}
-                </button>
-              </div>
-              {kisOpenOrders.length === 0 ? (
-                <div className="portfolio-table__empty">정정·취소할 미체결 주문 없음</div>
-              ) : (
-                <div className="portfolio-table portfolio-table--open-orders">
-                  <div className="portfolio-table__head">
-                    <span>주문번호</span>
-                    <span>종목</span>
-                    <span>구분</span>
-                    <span>가능/주문</span>
-                    <span>주문단가</span>
-                    <span>정정·취소</span>
-                  </div>
-                  {kisOpenOrders.map((order) => (
-                    <div className="portfolio-table__row" key={order.id}>
-                      <span>{order.orderNo}</span>
-                      <strong>{order.name || order.symbol}</strong>
-                      <span>
-                        {order.side === 'buy' ? '매수' : '매도'}
-                        {order.orderTypeLabel ? ` · ${order.orderTypeLabel}` : ''}
-                      </span>
-                      <span>
-                        {formatNumber(order.amendableQuantity)} / {formatNumber(order.orderQuantity)}
-                      </span>
-                      <span>{formatMoney(order.orderPrice, order.currency)}</span>
-                      <span className="live-order__actions">
-                        {amendingOrderId === order.id ? (
-                          <>
-                            <input
-                              aria-label="정정 단가"
-                              min="0"
-                              onChange={(event) => setAmendPrice(event.target.value)}
-                              placeholder="새 단가"
-                              step="1"
-                              type="number"
-                              value={amendPrice}
-                            />
-                            <button
-                              disabled={isLiveOrderSubmitting}
-                              onClick={() => void submitAmendOrCancel(order, 'amend')}
-                              type="button"
-                            >
-                              확정
-                            </button>
-                            <button onClick={() => setAmendingOrderId(null)} type="button">
-                              닫기
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              onClick={() => {
-                                setAmendingOrderId(order.id);
-                                setAmendPrice(String(order.orderPrice || ''));
-                              }}
-                              type="button"
-                            >
-                              정정
-                            </button>
-                            <button
-                              disabled={isLiveOrderSubmitting}
-                              onClick={() => void submitAmendOrCancel(order, 'cancel')}
-                              type="button"
-                            >
-                              취소
-                            </button>
-                          </>
-                        )}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>}
 
           {activePage === 'market' && <div className="chart-toolbar">
             <div className="chart-toolbar__group">
@@ -5825,7 +5502,8 @@ export function App(): JSX.Element {
                           key={position.id}
                           onClick={() => {
                             selectInstrument(position.instrument);
-                            setActivePage('trade');
+                            setActivePage('market');
+                            setSidePanelTab('order');
                           }}
                           type="button"
                         >
@@ -5860,7 +5538,8 @@ export function App(): JSX.Element {
                         key={order.id}
                         onClick={() => {
                           selectInstrument(order.instrument);
-                          setActivePage('trade');
+                          setActivePage('market');
+                            setSidePanelTab('order');
                         }}
                         type="button"
                       >
@@ -5896,7 +5575,8 @@ export function App(): JSX.Element {
                         key={fill.id}
                         onClick={() => {
                           selectInstrument(fill.instrument);
-                          setActivePage('trade');
+                          setActivePage('market');
+                            setSidePanelTab('order');
                         }}
                         type="button"
                       >
@@ -5917,14 +5597,21 @@ export function App(): JSX.Element {
           )}
         </main>
 
-        {(activePage === 'market' || activePage === 'trade') && <aside className={`watchlist${isWatchlistCollapsed ? ' is-collapsed' : ''}${isCompactList ? ' is-compact-list' : ''}`}>
+        {activePage === 'market' && <aside
+          className={`watchlist${isWatchlistCollapsed ? ' is-collapsed' : ''}${isCompactList ? ' is-compact-list' : ''}`}
+          data-panel={sidePanelTab}
+        >
           <div className="watchlist__header">
             <div>
-              <strong>{sidePanelTab === 'watch' ? '관심종목' : '종목 탐색'}</strong>
+              <strong>{SIDE_PANEL_TITLE[sidePanelTab]}</strong>
               <span>
-                {sidePanelTab === 'watch'
-                  ? `${activeSavedWatchlist?.name ?? '기본'} · ${watchlist.length}`
-                  : `${visibleCategoryItems.length}개 후보`}
+                {sidePanelTab === 'order'
+                  ? selectedInstrument
+                    ? `${selectedInstrument.symbol} · ${selectedInstrument.name}`
+                    : '종목 미선택'
+                  : sidePanelTab === 'watch'
+                    ? `${activeSavedWatchlist?.name ?? '기본'} · ${watchlist.length}`
+                    : `${visibleCategoryItems.length}개 후보`}
               </span>
             </div>
             <button
@@ -5950,6 +5637,356 @@ export function App(): JSX.Element {
               </button>
             ))}
           </div>
+          {sidePanelTab === 'order' && <section className="order-ticket" aria-label="매매 주문 티켓">
+            {/*
+              예전엔 여기에 `주문 티켓`과 종목명이 또 있었다. 패널 헤더가 이미
+              같은 걸 보여주고 있어 좁은 폭에서 자리만 차지하다 세로로 눌렸다.
+              계좌 선택만 남긴다.
+            */}
+            <div className="order-ticket__header">
+              <div className="order-ticket__account">
+                <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
+                <em>{activeTradingAccount?.label ?? '계정 대기'}</em>
+                <span>{activeTradingAccount?.mode === 'paper' ? 'PAPER' : 'LIVE 잠금'}</span>
+              </div>
+            </div>
+            <div className="order-ticket__body">
+              <div className="order-ticket__controls">
+                <div className="order-ticket__segments" role="tablist" aria-label="매수 매도">
+                  <button
+                    aria-selected={orderSide === 'buy'}
+                    data-side="buy"
+                    onClick={() => setOrderSide('buy')}
+                    role="tab"
+                    type="button"
+                  >
+                    매수
+                  </button>
+                  <button
+                    aria-selected={orderSide === 'sell'}
+                    data-side="sell"
+                    onClick={() => setOrderSide('sell')}
+                    role="tab"
+                    type="button"
+                  >
+                    매도
+                  </button>
+                </div>
+                <select
+                  aria-label="주문 유형"
+                  onChange={(event) => setOrderType(event.target.value as OrderType)}
+                  value={orderType}
+                >
+                  <option value="market">시장가</option>
+                  <option value="limit">지정가</option>
+                </select>
+                <select
+                  aria-label="주문 유효기간"
+                  onChange={(event) => setOrderTimeInForce(event.target.value as OrderTimeInForce)}
+                  value={orderTimeInForce}
+                >
+                  <option value="day">DAY</option>
+                  <option value="ioc">IOC</option>
+                </select>
+                <label>
+                  <span>수량</span>
+                  <input
+                    min="0"
+                    onChange={(event) => setOrderQuantity(event.target.value)}
+                    step="1"
+                    type="number"
+                    value={orderQuantity}
+                  />
+                </label>
+                <label>
+                  <span>지정가</span>
+                  <input
+                    disabled={orderType !== 'limit'}
+                    min="0"
+                    onChange={(event) => setOrderLimitPrice(event.target.value)}
+                    placeholder={snapshot ? formatPrice(snapshot.price) : '현재가 대기'}
+                    step="1"
+                    type="number"
+                    value={orderLimitPrice}
+                  />
+                </label>
+              </div>
+              <div className="order-ticket__summary">
+                <div>
+                  <span>예상 단가</span>
+                  <strong>{formatMoney(orderEffectivePrice, selectedInstrument?.currency)}</strong>
+                  {orderEffectivePriceKrw && <small>{orderEffectivePriceKrw}</small>}
+                </div>
+                <div>
+                  <span>예상 주문액</span>
+                  <strong>{formatMoney(orderEstimatedNotional, selectedInstrument?.currency)}</strong>
+                  {orderEstimatedNotionalKrw && <small>{orderEstimatedNotionalKrw}</small>}
+                </div>
+                {/*
+                  모의 주문가능(971만)과 실계좌 매수가능(5만)이 나란히 놓인다.
+                  둘 다 "얼마까지 살 수 있나"라서 표시를 안 갈라두면 어느 계좌 돈인지 오해한다.
+                */}
+                <div data-account="paper">
+                  <span>모의 주문가능</span>
+                  <strong>{formatMoney(activeTradingAccount?.buyingPower, activeTradingAccount?.baseCurrency)}</strong>
+                </div>
+                <div data-account="live">
+                  <span>{orderSide === 'buy' ? '실계좌 매수가능' : '실계좌 매도가능'}</span>
+                  {orderSide === 'buy' ? (
+                    <>
+                      <strong>
+                        {isKisOrderabilityLoading
+                          ? '조회 중'
+                          : kisOrderability?.configured
+                            ? formatMoney(kisOrderability.cashBuyAmount, kisOrderability.currency)
+                            : '-'}
+                      </strong>
+                      {kisOrderability?.configured && kisOrderability.cashBuyQuantity !== undefined && (
+                        <small>최대 {formatNumber(kisOrderability.cashBuyQuantity)}주</small>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <strong>
+                        {isKisSellabilityLoading
+                          ? '조회 중'
+                          : kisSellability?.configured
+                            ? `${formatNumber(kisSellability.sellableQuantity)}주`
+                            : '-'}
+                      </strong>
+                      {kisSellability?.configured && kisSellability.holdingQuantity !== undefined && (
+                        <small>보유 {formatNumber(kisSellability.holdingQuantity)}주</small>
+                      )}
+                    </>
+                  )}
+                </div>
+                <div>
+                  <span>보유 수량</span>
+                  <strong>{selectedPosition ? formatNumber(selectedPosition.quantity) : '-'}</strong>
+                </div>
+              </div>
+              <div className="order-ticket__risk">
+                <label className="order-ticket__ack">
+                  <input
+                    checked={orderAcknowledged}
+                    onChange={(event) => setOrderAcknowledged(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span>paper 주문이며 실계좌로 전송되지 않음을 확인했습니다.</span>
+                </label>
+                <div className="order-ticket__messages">
+                  {orderRiskMessages.length === 0 ? (
+                    <em data-tone="ok">주문 의도 생성 가능</em>
+                  ) : (
+                    orderRiskMessages.map((message) => <em key={message}>{message}</em>)
+                  )}
+                  {orderLiveNotices.map((notice) => (
+                    <em data-tone="live" key={notice}>
+                      {notice}
+                    </em>
+                  ))}
+                </div>
+              </div>
+              <button
+                className="order-ticket__submit"
+                disabled={!orderCanSubmit}
+                onClick={() => void submitOrderIntent()}
+                type="button"
+              >
+                {isOrderSubmitting ? '처리 중' : orderType === 'market' ? 'Paper 즉시 체결' : 'Paper 주문 저장'}
+              </button>
+            </div>
+            {tradingOverview && (
+              <div className="order-ticket__recent" aria-label="최근 주문 의도">
+                <span>최근 주문</span>
+                {tradingOverview.recentOrders.slice(0, 3).map((order) => (
+                  <div key={order.id}>
+                    <strong>{order.instrument.symbol}</strong>
+                    <em data-status={order.status}>{orderStatusLabel(order.status)}</em>
+                    <span>
+                      {order.side === 'buy' ? '매수' : '매도'} {formatNumber(order.quantity)} ·{' '}
+                      {formatMoney(order.estimatedNotional, order.currency)}
+                    </span>
+                  </div>
+                ))}
+                {tradingOverview.recentOrders.length === 0 && <strong>저장된 주문 없음</strong>}
+                <span>최근 체결</span>
+                {tradingOverview.recentFills.slice(0, 3).map((fill) => (
+                  <div key={fill.id}>
+                    <strong>{fill.instrument.symbol}</strong>
+                    <em data-status="filled">체결</em>
+                    <span>
+                      {fill.side === 'buy' ? '매수' : '매도'} {formatNumber(fill.quantity)} ·{' '}
+                      {formatMoney(fill.notional, fill.currency)}
+                    </span>
+                  </div>
+                ))}
+                {tradingOverview.recentFills.length === 0 && <strong>체결 없음</strong>}
+              </div>
+            )}
+
+            {/* 실계좌 주문. paper 경로와 시각적으로도 분리해 오발주를 막는다. */}
+            <div className="live-order" aria-label="실계좌 주문 전송">
+              <div className="live-order__header">
+                <strong>실계좌 주문</strong>
+                <em data-open={liveOrderGate?.enabled ? 'true' : 'false'}>
+                  {liveOrderGate ? (liveOrderGate.enabled ? '게이트 열림' : '게이트 차단') : '확인 중'}
+                </em>
+                <span>{liveOrderGate?.isProdEnv ? '실전(prod)' : '모의(vts)'}</span>
+              </div>
+              <div className="live-order__body">
+                <label className="live-order__phrase">
+                  <span>확인 문구</span>
+                  <input
+                    onChange={(event) => setLiveOrderPhrase(event.target.value)}
+                    placeholder={LIVE_ORDER_CONFIRMATION}
+                    type="text"
+                    value={liveOrderPhrase}
+                  />
+                </label>
+                <button
+                  className="live-order__submit"
+                  data-side={orderSide}
+                  disabled={!liveOrderCanSubmit}
+                  onClick={() => void submitLiveOrder()}
+                  type="button"
+                >
+                  {isLiveOrderSubmitting
+                    ? '전송 중'
+                    : `실주문 ${orderSide === 'buy' ? '매수' : '매도'} ${formatNumber(orderQuantityNumber)}주`}
+                </button>
+              </div>
+              <div className="live-order__messages">
+                {liveOrderBlockers.length === 0 ? (
+                  <em data-tone="warn">전송 준비됨. 누르면 실계좌로 주문이 나갑니다.</em>
+                ) : (
+                  liveOrderBlockers.map((blocker) => <em key={blocker}>{blocker}</em>)
+                )}
+              </div>
+              {liveOrderMessage && <p className="live-order__result">{liveOrderMessage}</p>}
+            </div>
+
+            <div className="live-order__open" aria-label="실시간 주문·체결 통보">
+              <div className="live-order__header">
+                <strong>실시간 통보</strong>
+                <span>
+                  {stream.orderNotices.length > 0
+                    ? `${stream.orderNotices.length}건`
+                    : 'HTS ID를 설정하면 접수·체결이 실시간으로 들어옵니다'}
+                </span>
+              </div>
+              {stream.orderNotices.length === 0 ? (
+                <div className="portfolio-table__empty">수신된 통보 없음</div>
+              ) : (
+                <div className="portfolio-table portfolio-table--notices">
+                  <div className="portfolio-table__head">
+                    <span>시각</span>
+                    <span>종목</span>
+                    <span>구분</span>
+                    <span>수량·단가</span>
+                    <span>주문번호</span>
+                    <span>상태</span>
+                  </div>
+                  {stream.orderNotices.slice(0, 20).map((notice) => (
+                    <div className="portfolio-table__row" key={`${notice.orderNo}-${notice.receivedAt}`}>
+                      <span>{formatBrokerClock(notice.time) ?? formatClock(notice.receivedAt)}</span>
+                      <strong>{notice.name || notice.symbol}</strong>
+                      <span>{notice.side === 'buy' ? '매수' : '매도'}</span>
+                      <span>
+                        {formatNumber(notice.quantity)}주 · {formatMoney(notice.price)}
+                      </span>
+                      <span>{notice.orderNo}</span>
+                      <em data-status={notice.rejected ? 'rejected' : notice.kind === 'filled' ? 'filled' : 'open'}>
+                        {notice.rejected ? '거부' : notice.kind === 'filled' ? '체결' : '접수'}
+                      </em>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="live-order__open" aria-label="실계좌 미체결 주문">
+              <div className="live-order__header">
+                <strong>미체결 주문</strong>
+                <span>{kisOpenOrders.length}건</span>
+                <button disabled={isKisOpenOrdersRefreshing} onClick={refreshKisOpenOrders} type="button">
+                  {isKisOpenOrdersRefreshing ? '조회 중' : '새로고침'}
+                </button>
+              </div>
+              {kisOpenOrders.length === 0 ? (
+                <div className="portfolio-table__empty">정정·취소할 미체결 주문 없음</div>
+              ) : (
+                <div className="portfolio-table portfolio-table--open-orders">
+                  <div className="portfolio-table__head">
+                    <span>주문번호</span>
+                    <span>종목</span>
+                    <span>구분</span>
+                    <span>가능/주문</span>
+                    <span>주문단가</span>
+                    <span>정정·취소</span>
+                  </div>
+                  {kisOpenOrders.map((order) => (
+                    <div className="portfolio-table__row" key={order.id}>
+                      <span>{order.orderNo}</span>
+                      <strong>{order.name || order.symbol}</strong>
+                      <span>
+                        {order.side === 'buy' ? '매수' : '매도'}
+                        {order.orderTypeLabel ? ` · ${order.orderTypeLabel}` : ''}
+                      </span>
+                      <span>
+                        {formatNumber(order.amendableQuantity)} / {formatNumber(order.orderQuantity)}
+                      </span>
+                      <span>{formatMoney(order.orderPrice, order.currency)}</span>
+                      <span className="live-order__actions">
+                        {amendingOrderId === order.id ? (
+                          <>
+                            <input
+                              aria-label="정정 단가"
+                              min="0"
+                              onChange={(event) => setAmendPrice(event.target.value)}
+                              placeholder="새 단가"
+                              step="1"
+                              type="number"
+                              value={amendPrice}
+                            />
+                            <button
+                              disabled={isLiveOrderSubmitting}
+                              onClick={() => void submitAmendOrCancel(order, 'amend')}
+                              type="button"
+                            >
+                              확정
+                            </button>
+                            <button onClick={() => setAmendingOrderId(null)} type="button">
+                              닫기
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => {
+                                setAmendingOrderId(order.id);
+                                setAmendPrice(String(order.orderPrice || ''));
+                              }}
+                              type="button"
+                            >
+                              정정
+                            </button>
+                            <button
+                              disabled={isLiveOrderSubmitting}
+                              onClick={() => void submitAmendOrCancel(order, 'cancel')}
+                              type="button"
+                            >
+                              취소
+                            </button>
+                          </>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>}
           {sidePanelTab === 'watch' && <div className="watchlist__summary" aria-label="관심종목 요약">
             <div className="watchlist__summary-counts">
               <span data-tone="up">상승 {watchlistSummary.up}</span>

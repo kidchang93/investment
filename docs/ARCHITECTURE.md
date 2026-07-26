@@ -48,13 +48,31 @@ backend/src/
 ```
 frontend/src/
 ├── main.tsx           # 진입점 (createRoot)
-├── App.tsx            # 레이아웃: 감시목록 사이드바 + 차트 패널, 상태 오케스트레이션
+├── App.tsx            # 레이아웃: 본문 패널 + 오른쪽 사이드바, 상태 오케스트레이션
 ├── Chart.tsx          # lightweight-charts 캔들 차트 (일봉 + 실시간 업데이트)
 ├── useStream.ts       # /stream WebSocket 훅 (자동 재접속, 종목별 최신 체결)
 ├── api.ts             # REST 클라이언트 (watchlist, candles)
 ├── config.ts          # API_BASE / STREAM_URL 파생
 └── styles.css         # 다크 테마 스타일
 ```
+
+### 화면 구성 (`AppPage`)
+
+상단 네비게이션의 세 항목이 곧 `AppPage`다. 라벨과 실제 내용이 어긋나지 않게 둔다.
+
+| `AppPage` | 라벨 | 내용 |
+|------|------|------|
+| `market` | 종목 | 차트 + 오른쪽 사이드바(주문·관심·탐색) |
+| `portfolio` | 내 계좌 | 잔고, 주문·체결 내역, 매매손익, 리스크 룰, 예약주문 |
+| `terminal` | 발견 | 뉴스·매크로·캘린더·랭킹 등 12개 하위 탭 |
+
+오른쪽 사이드바(`SidePanelTab`)는 `order` / `watch` / `discover` 셋이며 `market`에서만 뜬다.
+주문 티켓은 `order` 탭 안에서만 렌더된다 — 차트를 보면서 주문할 수 있어야 하기 때문이다.
+
+> 예전에는 `trade` 화면이 따로 있었으나 상단 네비에 버튼이 없어 포트폴리오 표의 행을
+> 눌러야만 닿았고, 새로고침하면 저장값 검증에서 걸러졌다. 주문을 `market`의 사이드바
+> 탭으로 옮기면서 없앴다. 매수가능금액·매도가능수량·미체결처럼 KIS를 때리는 조회는
+> `isOrderPanelOpen`(= `market` + `order` 탭)에 묶어 차트만 볼 때는 나가지 않게 한다.
 
 ## 데이터 흐름
 

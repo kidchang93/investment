@@ -263,7 +263,6 @@ button {
   background: #0b0f17;
 }
 
-.chart-panel--trade,
 .chart-panel--portfolio {
   overflow-y: auto;
 }
@@ -2173,12 +2172,12 @@ button {
 }
 
 .order-ticket__header {
-  grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   min-height: 34px;
-  padding: 7px 14px;
+  padding: 7px 12px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.08);
   gap: 12px;
 }
@@ -2238,19 +2237,23 @@ button {
  * flex-wrap으로 바꿔 좁아지면 겹치거나 잘리는 대신 다음 줄로 접히게 한다.
  * 컨테이너 폭에 반응해야 해서 window 기준 media query로는 잡히지 않는다(사이드 패널이 폭을 먹는다).
  */
+/*
+ * 주문 티켓은 오른쪽 패널(384px) 안에서만 렌더된다. 예전엔 본문 전체 폭을
+ * 쓰는 전용 화면이라 가로로 늘어놓는 전제였고, 그대로 패널에 넣으니 값들이
+ * `246,...` `9,71...`처럼 잘렸다. 세로로 흐르게 바꾼다.
+ */
 .order-ticket__body {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
   gap: 10px;
   min-width: 0;
-  padding: 10px 14px;
+  padding: 10px 12px;
 }
 
 .order-ticket__controls {
   display: flex;
   align-items: end;
-  flex: 1 1 380px;
   flex-wrap: wrap;
   min-width: 0;
   gap: 7px;
@@ -2326,10 +2329,10 @@ button {
  * 하한(px)을 주면 order-ticket__body의 summary 컬럼 안에서 2열로 접히면서
  * 옆 컨트롤 영역을 밀어내 겹친다.
  */
+/* 다섯 칸을 384px에 밀어 넣으면 칸마다 70px이라 숫자가 잘린다. 폭에 맞춰 접는다. */
 .order-ticket__summary {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  flex: 1 1 470px;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   gap: 6px;
   min-width: 0;
 }
@@ -2374,9 +2377,13 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * flex-basis 260px는 가로 배치일 때의 폭이었다. 본문이 세로로 바뀌자 그대로
+ * 높이가 돼, 19px짜리 안내 칩 하나를 담은 줄이 260px을 차지했다.
+ */
 .order-ticket__risk {
   display: grid;
-  flex: 1 1 260px;
+  flex: 0 0 auto;
   gap: 6px;
   min-width: 0;
 }
@@ -2395,8 +2402,15 @@ button {
   accent-color: var(--focus);
 }
 
+/*
+ * align-items를 기본값(stretch)으로 두면 칩이 줄 높이만큼 세로로 늘어난다.
+ * 좁은 패널에서 이 줄에 여유 높이가 생기자 칩이 130x126이 됐고,
+ * border-radius: 999px가 그대로 원으로 그려졌다.
+ */
 .order-ticket__messages {
   display: flex;
+  align-items: flex-start;
+  align-content: flex-start;
   gap: 4px;
   min-width: 0;
   flex-wrap: wrap;
@@ -3939,6 +3953,24 @@ button {
   transition: width 0.18s ease, height 0.18s ease;
 }
 
+/*
+ * 주문 탭은 폼이라 목록보다 넓어야 한다. 312px에서는 수량·가격 입력과
+ * 주문가능 금액이 같은 줄에 들어가지 못하고 계속 접혔다.
+ */
+.watchlist[data-panel='order'] {
+  width: 384px;
+}
+
+/* 패널 안에서는 주문 티켓이 세로로 흐르고, 넘치면 여기서 스크롤한다. */
+.watchlist .order-ticket {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px 14px;
+}
+
 .watchlist.is-collapsed {
   width: 48px;
 }
@@ -4028,7 +4060,8 @@ button {
 
 .watchlist__tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* 주문·관심·탐색 셋. 예전엔 2로 박혀 있어 탐색이 둘째 줄로 떨어졌다. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   padding: 8px 12px 0;
 }
