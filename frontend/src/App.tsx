@@ -679,6 +679,26 @@ function BrokerAccountPicker({
  * 카드마다 따로 자르면 기준이 갈리므로 한 곳에서 처리한다.
  */
 /**
+ * 주문 기록의 종목 칸에 찍을 값. 언제나 종목코드 한 가지 형태로 맞춘다.
+ *
+ * 이 칸에 세 가지가 섞여 있었다.
+ * - `005930` — 정상
+ * - `KR:KOSPI:005930` — symbol이 없는 줄(종목을 해석하기 전에 차단된 시도)이
+ *   `requestedInstrumentId`를 그대로 찍었다. 내부 식별자다.
+ * - `LSE:BC94` — 야간 환산가 주문. 저장된 symbol이 GDR 원본 코드라
+ *   사용자가 주문한 종목과 다르게 읽힌다.
+ *
+ * 콜론이 없는 값만 종목코드로 보고, 아니면 instrumentId의 마지막 조각을 쓴다.
+ * 원본 식별자는 title에 남아 있어 잃는 정보는 없다.
+ */
+function orderLogSymbolLabel(symbol?: string, requestedInstrumentId?: string): string {
+  if (symbol && !symbol.includes(':')) return symbol;
+  const tail = requestedInstrumentId?.split(':').pop();
+  if (tail) return tail;
+  return symbol || '-';
+}
+
+/**
  * 이 숫자는 실제 시세가 아니라는 표시.
  *
  * 화면 구성을 보려고 넣어 둔 상수가 몇 군데 있는데, 종목명이 진짜라서
@@ -2485,7 +2505,7 @@ export function App(): JSX.Element {
   /* 하단 도크용. 헤더 배지와 달리 환경 표기는 빼고 짧게 쓴다. */
   const sessionModeLabel = !liveOrderGate ? '확인 중' : liveOrderArmed ? '주문 가능' : '주문 잠김';
   const modeChipTitle = !liveOrderGate
-    ? '실주문 게이트 상태를 확인하는 중입니다'
+    ? '실주문을 보낼 수 있는지 확인하는 중입니다'
     : liveOrderArmed
       ? `실주문이 열려 있습니다 · ${liveOrderGate.isProdEnv ? 'KIS 실전 서버' : 'KIS 모의 서버'}`
       : `실주문 차단됨 — ${liveOrderGate.blockers.join(' / ')}`;
@@ -2992,7 +3012,7 @@ export function App(): JSX.Element {
    */
   const liveOrderBlockers = useMemo(() => {
     const blockers: string[] = [...(liveOrderGate?.blockers ?? [])];
-    if (!liveOrderGate) blockers.push('실주문 게이트 상태를 확인하는 중입니다.');
+    if (!liveOrderGate) blockers.push('실주문을 보낼 수 있는지 확인하는 중입니다.');
     if (!isOrderableDomesticInstrument(selectedInstrument)) blockers.push('국내 주식·ETF·ETN만 주문할 수 있습니다.');
     if (!Number.isFinite(orderQuantityNumber) || orderQuantityNumber <= 0) blockers.push('수량은 0보다 커야 합니다.');
     if (orderType === 'limit' && (!Number.isFinite(orderLimitPriceNumber) || orderLimitPriceNumber <= 0)) {
@@ -5421,7 +5441,7 @@ export function App(): JSX.Element {
                   <div>
                     <strong>실주문 리스크 룰</strong>
                     <span>
-                      게이트를 통과해도 이 룰에 걸리면 주문이 나가지 않습니다
+                      주문이 열려 있어도 이 룰에 걸리면 나가지 않습니다
                       {riskRules ? '' : ' · 불러오는 중'}
                     </span>
                   </div>
@@ -5548,7 +5568,7 @@ export function App(): JSX.Element {
                 <div className="portfolio-card__header">
                   <div>
                     <strong>실계좌 주문 기록</strong>
-                    <span>{kisOrderLog.length}건 · 차단된 시도도 남는다</span>
+                    <span>{kisOrderLog.length}건 · 차단된 시도도 남습니다</span>
                   </div>
                   <button className="portfolio-card__refresh" onClick={refreshKisOrderLog} type="button">
                     새로고침
@@ -5575,7 +5595,7 @@ export function App(): JSX.Element {
                           {record.side ? ` · ${record.side === 'buy' ? '매수' : '매도'}` : ''}
                         </span>
                         <strong title={record.requestedInstrumentId ?? record.symbol ?? ''}>
-                          {record.symbol ?? record.requestedInstrumentId ?? '-'}
+                          {orderLogSymbolLabel(record.symbol, record.requestedInstrumentId)}
                         </strong>
                         <span>
                           {record.quantity !== undefined ? `${formatNumber(record.quantity)}주` : '-'}
