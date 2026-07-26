@@ -39,6 +39,10 @@ import {
 } from './api';
 import { useStream } from './useStream';
 import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } from './Chart';
+import {
+  KR_KONEX_SELL_TAX_RATE_ASSUMPTION,
+  KR_SELL_TAX_RATE_ASSUMPTION,
+} from '@invest/shared';
 import type {
   AutoTraderMode,
   AutoTraderState,
@@ -140,7 +144,6 @@ interface TerminalNewsCard {
   id: string;
   title: string;
   source: string;
-  score: number;
   publishedAt?: number;
   filters: NewsFilter[];
   url: string;
@@ -423,10 +426,14 @@ const CALENDAR_IMPACT_OPTIONS: Array<{ key: CalendarImpactFilter; label: string 
   { key: '보통', label: '보통' },
 ];
 
+/*
+ * 세율은 @invest/shared에서 가져온다. 여기 0.002, 백테스트에 0.0018이 따로
+ * 박혀 있어 같은 세금을 앱이 두 값으로 들고 있었다. 둘 다 출처가 없었다.
+ */
 const FEE_MARKET_OPTIONS: Array<{ key: FeeMarket; label: string; taxRate: number; unit: string }> = [
-  { key: 'kospi', label: '코스피', taxRate: 0.002, unit: 'KRW' },
-  { key: 'kosdaq', label: '코스닥', taxRate: 0.002, unit: 'KRW' },
-  { key: 'konex', label: '코넥스', taxRate: 0.001, unit: 'KRW' },
+  { key: 'kospi', label: '코스피', taxRate: KR_SELL_TAX_RATE_ASSUMPTION, unit: 'KRW' },
+  { key: 'kosdaq', label: '코스닥', taxRate: KR_SELL_TAX_RATE_ASSUMPTION, unit: 'KRW' },
+  { key: 'konex', label: '코넥스', taxRate: KR_KONEX_SELL_TAX_RATE_ASSUMPTION, unit: 'KRW' },
   { key: 'us_stock', label: '미국주식', taxRate: 0, unit: 'USD' },
   { key: 'kospi200_future', label: 'KOSPI200 선물', taxRate: 0, unit: 'KRW' },
   { key: 'kospi200_option', label: 'KOSPI200 옵션', taxRate: 0, unit: 'KRW' },
@@ -442,7 +449,6 @@ const FALLBACK_TERMINAL_NEWS: TerminalNewsCard[] = [
     id: 'fallback-policy',
     title: '반도체·AI 공급망 이슈 점검',
     source: '검색',
-    score: 86,
     filters: ['stocks', 'policy'],
     url: topicNewsUrl('반도체 AI 공급망 증시 뉴스'),
   },
@@ -450,7 +456,6 @@ const FALLBACK_TERMINAL_NEWS: TerminalNewsCard[] = [
     id: 'fallback-macro',
     title: '미국 금리·달러 흐름과 야간선물 영향',
     source: '검색',
-    score: 79,
     filters: ['macro', 'policy'],
     url: topicNewsUrl('미국 금리 달러 야간선물 뉴스'),
   },
@@ -458,7 +463,6 @@ const FALLBACK_TERMINAL_NEWS: TerminalNewsCard[] = [
     id: 'fallback-commodity',
     title: '원유·금 가격 변동과 원자재 섹터',
     source: '검색',
-    score: 74,
     filters: ['commodities', 'macro'],
     url: topicNewsUrl('원유 금 원자재 시장 뉴스'),
   },
@@ -466,7 +470,6 @@ const FALLBACK_TERMINAL_NEWS: TerminalNewsCard[] = [
     id: 'fallback-crypto',
     title: '비트코인과 위험자산 선호 변화',
     source: '검색',
-    score: 68,
     filters: ['crypto', 'macro'],
     url: topicNewsUrl('비트코인 위험자산 선호 뉴스'),
   },
@@ -1166,13 +1169,12 @@ function newsFiltersForTitle(title: string): NewsFilter[] {
   return [...filters];
 }
 
-function terminalNewsCardFromItem(item: NewsItem, index: number): TerminalNewsCard {
+function terminalNewsCardFromItem(item: NewsItem): TerminalNewsCard {
   const cleanTitle = cleanNewsSearchText(item.title) || item.title;
   return {
     id: item.id,
     title: cleanTitle,
     source: item.source,
-    score: Math.max(45, 92 - index * 6),
     publishedAt: item.publishedAt,
     filters: newsFiltersForTitle(cleanTitle),
     url: newsSearchUrl(item),
@@ -2939,6 +2941,11 @@ export function App(): JSX.Element {
     const grossSellAmount = feeAmountNumber * (1 + returnRate);
     const isDerivative = feeMarket === 'kospi200_future' || feeMarket === 'kospi200_option';
     return FEE_BROKERS.filter((broker) => !isDerivative || broker.supportsDerivatives).map((broker) => {
+      /*
+       * 국내 주식 요율에 곱하는 배수. 어디서 온 값인지 기록이 없다 — 해외주식과
+       * 옵션은 요율 체계가 아예 달라서 국내 요율에 배수를 곱하는 것 자체가
+       * 근사다. 화면에도 그렇게 적는다.
+       */
       const marketMultiplier = feeMarket === 'us_stock' ? 10 : feeMarket === 'kospi200_option' ? 1.4 : 1;
       const buyCommission = feeAmountNumber * broker.commissionRate * marketMultiplier;
       const sellCommission = grossSellAmount * broker.commissionRate * marketMultiplier;
@@ -4341,9 +4348,14 @@ export function App(): JSX.Element {
                     ))}
                   </div>
                   <div className="terminal-headlines">
-                    {filteredTerminalNews.slice(0, 3).map((item) => (
+                    {/*
+                      여기 `86`, `79` 같은 숫자가 중요도 점수처럼 붙어 있었다.
+                      실제로는 `Math.max(45, 92 - index * 6)` — 목록 순서를 숫자로
+                      바꾼 것뿐이었다. 순서는 사실이니 순번으로 적는다.
+                    */}
+                    {filteredTerminalNews.slice(0, 3).map((item, index) => (
                       <a href={item.url} key={item.id} rel="noreferrer" target="_blank">
-                        <span>{item.score}</span>
+                        <span>{index + 1}</span>
                         <strong>{item.title}</strong>
                         <em>{item.source} · {item.publishedAt ? formatNewsTime(item.publishedAt) : '검색 후보'}</em>
                       </a>
@@ -4724,8 +4736,15 @@ export function App(): JSX.Element {
                       <span>국내주식 왕복 거래 기준 · {feeMarketOption.label} · {feeMarketOption.unit}</span>
                       <strong>수수료 비교 계산기</strong>
                     </div>
-                    <SampleBadge note="증권사 요율은 확인된 값이 아닙니다. 상품·이벤트·개설 경로에 따라 다르고 수시로 바뀌니, 실제 요율은 본인 계좌에서 확인하세요." />
+                    <SampleBadge note="증권사 요율도 세율도 확인된 값이 아닙니다. 상품·이벤트·개설 경로에 따라 다르고 세율은 법으로 바뀌니, 실제 값은 본인 계좌와 최신 세법에서 확인하세요." />
                   </div>
+                  {/* 계산에 쓴 가정을 적는다. 결과만 보여주면 무엇을 넣어 나온 값인지 알 수 없다. */}
+                  <p className="terminal-fee-assumptions">
+                    계산에 쓴 값 — 매도 세율 {(feeMarketOption.taxRate * 100).toFixed(3)}%
+                    · 유관기관 수수료 {(FEE_BROKERS[0].institutionRate * 100).toFixed(3)}%
+                    {feeMarket === 'us_stock' && ' · 해외주식은 국내 요율의 10배로 잡음(근사)'}
+                    {feeMarket === 'kospi200_option' && ' · 옵션은 국내 요율의 1.4배로 잡음(근사)'}
+                  </p>
                   <div className="terminal-filterbar" role="tablist" aria-label="수수료 시장 선택">
                     {FEE_MARKET_OPTIONS.map((option) => (
                       <button
