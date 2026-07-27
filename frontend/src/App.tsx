@@ -1231,6 +1231,20 @@ function readStoredValue<T extends string>(key: string, fallback: T, allowed: re
   return allowed.includes(value as T) ? (value as T) : fallback;
 }
 
+/**
+ * 허용 목록을 **마운트 시점에 알 수 없는** 값을 읽는다.
+ *
+ * 종목 탐색 카테고리는 목록이 서버에서 온다(22개). `readStoredValue`처럼
+ * 프론트에 배열을 박아 두면 서버가 카테고리를 늘릴 때마다 갈라진다. 그래서
+ * 여기서는 검사 없이 읽고, **목록이 도착한 뒤에** 그 목록으로 걸러낸다.
+ */
+function readStoredString(key: string, fallback: string): string {
+  return window.localStorage.getItem(`${STORAGE_PREFIX}${key}`) ?? fallback;
+}
+
+/** 탐색 패널을 처음 열 때 보여줄 카테고리. 주문할 수 있는 국내 종목이 나온다. */
+const DEFAULT_DISCOVER_CATEGORY = 'kr-major';
+
 /** 모의투자 시드머니. 손익은 이 값을 기준으로 잰다. */
 const SIMULATION_SEED_CASH = 1_000_000;
 
@@ -2223,7 +2237,17 @@ export function App(): JSX.Element {
     () => window.localStorage.getItem(`${STORAGE_PREFIX}activeSavedWatchlistId`) ?? 'default',
   );
   const [categories, setCategories] = useState<InstrumentCategory[]>([]);
-  const [activeCategory, setActiveCategory] = useState<string>('kr-night-proxies');
+  /*
+   * 탐색 패널 기본 카테고리.
+   *
+   * 예전 기본값은 `kr-night-proxies`(야간 환산가)였다. 이 패널의 이름은
+   * `종목 탐색`이고 주문할 종목을 찾는 자리인데, 그 카테고리는 **주문이 안 되는
+   * 종목 1개**만 보여준다 — 새로 열면 "탐색이 비어 있다"로 읽혔다(실측 `1개 후보`).
+   * 국내 대표주로 연다.
+   */
+  const [activeCategory, setActiveCategory] = useState<string>(() =>
+    readStoredString('activeCategory', DEFAULT_DISCOVER_CATEGORY),
+  );
   const [categoryItems, setCategoryItems] = useState<Instrument[]>([]);
   const [terminalItems, setTerminalItems] = useState<Instrument[]>([]);
   /** 터미널 지표 fetch가 끝났는지. 초기 종목을 고를 때 순서를 정하는 데 쓴다. */
@@ -2652,6 +2676,21 @@ export function App(): JSX.Element {
       .then(setCategories)
       .catch((e) => setError(toErrorMessage(e)));
   }, []);
+
+  useEffect(() => writeStoredValue('activeCategory', activeCategory), [activeCategory]);
+
+  /*
+   * 목록이 도착하면 저장된 카테고리가 아직 있는 값인지 본다.
+   *
+   * 서버가 카테고리를 지우거나 이름을 바꾸면 저장된 id가 남는데, 그대로 두면
+   * 조회가 빈 결과로 돌아와 "후보 0개"만 뜬다 — 고장으로 보인다. 기본값으로
+   * 되돌린다. 목록이 아직 없을 때는 판단하지 않는다.
+   */
+  useEffect(() => {
+    if (categories.length === 0) return;
+    if (categories.some((category) => category.id === activeCategory)) return;
+    setActiveCategory(DEFAULT_DISCOVER_CATEGORY);
+  }, [activeCategory, categories]);
 
   // 계좌 목록을 먼저 받아 기본 계좌(시세 앱키와 같은 계좌)를 선택해 둔다.
   useEffect(() => {
