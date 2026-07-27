@@ -3348,9 +3348,12 @@ span.sample-badge {
 }
 
 /* 체결 내역은 주문시각·상태 컬럼이 더 붙어 7열이다. */
+/* 주문번호 칸이 늘어 8칸이다. 번호는 10자리라 다른 칸보다 넓게 잡는다. */
 .portfolio-table--executions .portfolio-table__head,
 .portfolio-table--executions .portfolio-table__row {
-  grid-template-columns: minmax(84px, 0.9fr) minmax(96px, 1.2fr) minmax(88px, 1fr) repeat(3, minmax(72px, 0.8fr)) minmax(64px, 0.7fr);
+  grid-template-columns:
+    minmax(84px, 0.9fr) minmax(96px, 1.2fr) minmax(88px, 1fr) minmax(96px, 1.1fr)
+    repeat(3, minmax(72px, 0.8fr)) minmax(64px, 0.7fr);
 }
 
 .portfolio-table__head {

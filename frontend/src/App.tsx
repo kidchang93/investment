@@ -6066,10 +6066,17 @@ export function App(): JSX.Element {
                       </div>
                     </div>
                     <div className="portfolio-table portfolio-table--executions">
+                      {/*
+                        주문번호가 없어서 이 표만 다른 표와 맞춰 볼 수 없었다.
+                        주문 진행 알림·주문 기록·미체결 셋은 주문번호를 보여주는데
+                        여기만 빠져 있어, 낸 주문이 어디까지 갔는지 따라가려면
+                        시각과 수량으로 눈짐작해야 했다. 값은 이미 오고 있었다.
+                      */}
                       <div className="portfolio-table__head">
                         <span>주문시각</span>
                         <span>종목</span>
                         <span>구분</span>
+                        <span>주문번호</span>
                         <span>체결/주문</span>
                         <span>체결단가</span>
                         <span>체결금액</span>
@@ -6082,6 +6089,13 @@ export function App(): JSX.Element {
                           <span>
                             {execution.side === 'buy' ? '매수' : '매도'}
                             {execution.orderTypeLabel ? ` · ${execution.orderTypeLabel}` : ''}
+                          </span>
+                          {/* 정정·취소 주문이면 원주문번호도 함께 봐야 어느 주문의 후속인지 안다. */}
+                          <span title={execution.originalOrderNo ? `원주문 ${execution.originalOrderNo}` : undefined}>
+                            {execution.orderNo || '-'}
+                            {execution.originalOrderNo && (
+                              <small>{` (원주문 ${execution.originalOrderNo})`}</small>
+                            )}
                           </span>
                           <span>
                             {formatNumber(execution.filledQuantity)} / {formatNumber(execution.orderQuantity)}
