@@ -1901,6 +1901,8 @@ export function App(): JSX.Element {
   const [terminalItems, setTerminalItems] = useState<Instrument[]>([]);
   /** 터미널 지표 fetch가 끝났는지. 초기 종목을 고를 때 순서를 정하는 데 쓴다. */
   const [isTerminalLoaded, setIsTerminalLoaded] = useState(false);
+  /** 관심목록도 도착했는지. 첫 종목을 두 목록을 다 보고 고르기 위해 필요하다. */
+  const [isWatchlistLoaded, setIsWatchlistLoaded] = useState(false);
   const [discoverQuery, setDiscoverQuery] = useState('');
   const [selectedInstrument, setSelectedInstrument] = useState<Instrument | null>(null);
   const [visibleCategoryQuoteIds, setVisibleCategoryQuoteIds] = useState<string[]>([]);
@@ -2234,7 +2236,9 @@ export function App(): JSX.Element {
   useEffect(() => {
     fetchWatchlistItems(activeSavedWatchlistId)
       .then(setWatchlist)
-      .catch((e) => setError(toErrorMessage(e)));
+      .catch((e) => setError(toErrorMessage(e)))
+      // 실패해도 표시한다. 아래 첫 종목 고르기가 둘 다 온 뒤에 결정하기 때문이다.
+      .finally(() => setIsWatchlistLoaded(true));
   }, [activeSavedWatchlistId]);
 
   useEffect(() => {
@@ -2250,17 +2254,27 @@ export function App(): JSX.Element {
    *
    * 예전에는 관심목록 fetch와 터미널 fetch가 각자 `current ?? items[0]`으로
    * 같은 자리를 채웠다. 먼저 도착한 쪽이 이기니 매번 같은 종목이 잡힌다는
-   * 보장이 없었다. 순서를 여기 한 곳에서 정한다 — 터미널 지표(야간 환산가 등)가
-   * 우선이고, 그게 비었을 때만 관심목록으로 넘어간다. 이 앱의 첫 화면이
-   * 야간 지표라 지금 실제로 잡히던 쪽을 그대로 규칙으로 굳힌 것이다.
+   * 보장이 없었다. 순서를 여기 한 곳에서 정한다.
+   *
+   * **주문할 수 있는 종목을 먼저 고른다.** 예전에는 터미널 지표가 우선이라
+   * 앱을 열면 `삼성전자 야간 환산가`가 잡혔는데, 이건 GDR 환산 참고가라
+   * 주문이 안 되고 값도 실제 삼성전자와 다르다(246,206원 vs 253,000원).
+   * 처음 온 사람이 큰 글씨 가격을 보고 사려고 하면 주문 패널이 `주문 대상이
+   * 아닙니다`로 맞는다. 지표는 발견 화면과 탐색 탭에 그대로 있다.
+   *
+   * 두 목록이 **다 온 뒤에** 고른다. 관심목록이 늦게 오면 터미널 지표로
+   * 떨어지고, 한 번 정해지면 이 효과는 다시 돌지 않아 그날 내내 그 상태다.
+   * (사용자 관점 점검에서 `탭을 옮기니 야간 환산가로 돌아갔다`는 보고가
+   * 있었는데 재현되지 않았다. 이 경합이 원인일 수 있으나 확인하지는 못했다.)
    *
    * 사용자가 한 번 고르면 이 효과는 아무것도 하지 않는다.
    */
   useEffect(() => {
-    if (selectedInstrument || !isTerminalLoaded) return;
-    const first = terminalItems[0] ?? watchlist[0];
+    if (selectedInstrument || !isTerminalLoaded || !isWatchlistLoaded) return;
+    const candidates = [...watchlist, ...terminalItems];
+    const first = candidates.find(isOrderableDomesticInstrument) ?? candidates[0];
     if (first) setSelectedInstrument(first);
-  }, [isTerminalLoaded, selectedInstrument, terminalItems, watchlist]);
+  }, [isTerminalLoaded, isWatchlistLoaded, selectedInstrument, terminalItems, watchlist]);
 
   useEffect(() => {
     fetchInstrumentCategories()
