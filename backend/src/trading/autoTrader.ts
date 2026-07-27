@@ -35,6 +35,7 @@ import {
   getInstrumentIntradayCandles,
   placeKisDomesticOrder,
 } from '../kis/rest.js';
+import { checkBuyFundamentals } from './fundamentals.js';
 import { getStrategy, type StrategyContext } from './strategy.js';
 
 /** 러너가 한 회차에 KIS를 때리는 횟수를 묶어두는 상한. 호출 제한을 태우지 않는다. */
@@ -275,6 +276,34 @@ async function executeSignal(
   }
 
   /*
+   * 매수 신호면 재무를 확인한다. 신호가 난 종목 하나만 본다 — 후보 전체를
+   * 미리 확인하면 KIS 호출이 72회 더 나가는데 걸러지는 건 순손실 한둘이다.
+   *
+   * 매도는 확인하지 않는다. 재무가 나쁘다고 팔지 못하게 하면 손실 난 종목에
+   * 갇힌다.
+   */
+  let fundamentalsNote = '';
+  if (signal.side === 'buy') {
+    const fundamentals = await checkBuyFundamentals(candidate.instrument);
+    fundamentalsNote = fundamentals.note;
+    if (!fundamentals.allowed) {
+      await recordAutoTraderRun({
+        accountId: config.accountId,
+        status: 'running',
+        message:
+          `${candidate.instrument.name} 매수 차단 · ${fundamentals.reason}`
+          + ` · ${fundamentals.note}`,
+        instrumentId: signal.instrumentId,
+        side: signal.side,
+        quantity,
+        price: candidate.price,
+        equity,
+      });
+      return;
+    }
+  }
+
+  /*
    * 시장가로 낸다. 신호가 난 순간의 가격에 붙어야 해서 지정가로는 체결을 놓친다.
    * 다만 리스크 룰에서 시장가를 막아뒀다면 그 판정이 이긴다.
    */
@@ -304,7 +333,10 @@ async function executeSignal(
     await recordAutoTraderRun({
       accountId: config.accountId,
       status: 'running',
-      message: `[모의 실행] ${candidate.instrument.name} ${signal.side === 'buy' ? '매수' : '매도'} ${quantity}주 · ${signal.reason}`,
+      message:
+        `[모의 실행] ${candidate.instrument.name} ${signal.side === 'buy' ? '매수' : '매도'} ${quantity}주`
+        + ` · ${signal.reason}`
+        + (fundamentalsNote ? ` · ${fundamentalsNote}` : ''),
       instrumentId: signal.instrumentId,
       side: signal.side,
       quantity,
@@ -369,7 +401,11 @@ async function executeSignal(
   await recordAutoTraderRun({
     accountId: config.accountId,
     status: 'running',
-    message: `${candidate.instrument.name} ${signal.side === 'buy' ? '매수' : '매도'} ${quantity}주 접수 · 주문번호 ${result.orderNo || '-'} · ${signal.reason}`,
+    message:
+      `${candidate.instrument.name} ${signal.side === 'buy' ? '매수' : '매도'} ${quantity}주 접수`
+      + ` · 주문번호 ${result.orderNo || '-'} · ${signal.reason}`
+      // 실제로 나간 주문일수록 왜 샀는지가 남아야 한다. 나중에 채점할 근거다.
+      + (fundamentalsNote ? ` · ${fundamentalsNote}` : ''),
     instrumentId: signal.instrumentId,
     side: signal.side,
     quantity,
