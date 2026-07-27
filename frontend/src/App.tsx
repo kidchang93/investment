@@ -888,6 +888,57 @@ function OrderBookPanel({
   );
 }
 
+/*
+ * 주문 한 건에 붙는 비용 어림.
+ *
+ * 예상 주문액이 단가×수량뿐이라, 10주를 사려는 사람이 수수료·세금을 0으로
+ * 여기게 된다. 매도는 특히 커서 — 증권거래세가 수수료의 열 배가 넘는다.
+ *
+ * **요율도 세율도 확인된 값이 아니다.** 이 계좌는 한국투자증권인데, 같은
+ * 증권사여도 상품·이벤트·개설 경로에 따라 요율이 다르고 세율은 법으로 바뀐다.
+ * 발견>수수료 탭이 쓰는 값을 그대로 가져다 쓰고, 화면에도 어림이라고 적는다.
+ * 안 보여 주는 것보다는 낫지만 정확한 값인 척하면 안 된다.
+ */
+const KIS_COMMISSION_RATE_ASSUMPTION = 0.00014;
+const KR_INSTITUTION_FEE_RATE_ASSUMPTION = 0.00003;
+
+interface OrderCostEstimate {
+  commission: number;
+  institutionFee: number;
+  /** 매도에만 붙는 증권거래세. 매수는 0 */
+  tax: number;
+  total: number;
+  /** 매수는 총액 + 비용, 매도는 총액 − 비용 */
+  settlement: number;
+  taxRate: number;
+}
+
+function estimateOrderCost(
+  notional: number,
+  side: OrderSide,
+  market: string | undefined,
+): OrderCostEstimate | null {
+  if (!Number.isFinite(notional) || notional <= 0) return null;
+  const taxRate =
+    side === 'sell'
+      ? market === 'KONEX'
+        ? KR_KONEX_SELL_TAX_RATE_ASSUMPTION
+        : KR_SELL_TAX_RATE_ASSUMPTION
+      : 0;
+  const commission = notional * KIS_COMMISSION_RATE_ASSUMPTION;
+  const institutionFee = notional * KR_INSTITUTION_FEE_RATE_ASSUMPTION;
+  const tax = notional * taxRate;
+  const total = commission + institutionFee + tax;
+  return {
+    commission,
+    institutionFee,
+    tax,
+    total,
+    settlement: side === 'buy' ? notional + total : notional - total,
+    taxRate,
+  };
+}
+
 /**
  * 리스크 룰로 미리 거를 수 있는 사유.
  *
@@ -3555,6 +3606,17 @@ export function App(): JSX.Element {
     Number.isFinite(orderQuantityNumber) && orderEffectivePrice !== undefined
       ? orderQuantityNumber * orderEffectivePrice
       : undefined;
+  /*
+   * 비용은 국내 원화 종목에만 어림한다. 해외주식은 요율 체계가 아예 달라서
+   * 국내 값을 갖다 대면 틀린 숫자를 보여 주게 된다 — 그럴 바엔 안 보여 준다.
+   */
+  const orderCost = useMemo(
+    () =>
+      selectedInstrument && isOrderableDomesticInstrument(selectedInstrument)
+        ? estimateOrderCost(orderEstimatedNotional ?? 0, orderSide, selectedInstrument.market)
+        : null,
+    [orderEstimatedNotional, orderSide, selectedInstrument],
+  );
   const orderEffectivePriceKrw = formatConvertedKrw(orderEffectivePrice, selectedInstrument?.currency, usdKrwRate);
   const orderEstimatedNotionalKrw = formatConvertedKrw(
     orderEstimatedNotional,
@@ -6857,6 +6919,34 @@ export function App(): JSX.Element {
                   <strong>{formatMoney(orderEstimatedNotional, selectedInstrument?.currency)}</strong>
                   {orderEstimatedNotionalKrw && <small>{orderEstimatedNotionalKrw}</small>}
                 </div>
+                {/*
+                  비용을 빼놓으면 총액만 보고 수수료·세금을 0으로 여기게 된다.
+                  매도는 특히 커서 증권거래세가 수수료의 열 배가 넘는다.
+                  요율·세율은 확인된 값이 아니라 어림이라고 함께 적는다.
+                */}
+                {orderCost && (
+                  <div className="order-ticket__cost">
+                    <span>예상 비용 (어림)</span>
+                    <strong>{formatMoney(Math.round(orderCost.total), selectedInstrument?.currency)}</strong>
+                    <small>
+                      수수료 {formatNumber(Math.round(orderCost.commission))}
+                      {' + 유관기관 '}{formatNumber(Math.round(orderCost.institutionFee))}
+                      {orderSide === 'sell'
+                        ? ` + 거래세 ${formatNumber(Math.round(orderCost.tax))}`
+                        : ' · 매수에는 거래세가 없습니다'}
+                    </small>
+                    <small>
+                      {orderSide === 'buy' ? '내야 할 돈 약 ' : '받을 돈 약 '}
+                      {formatMoney(Math.round(orderCost.settlement), selectedInstrument?.currency)}
+                    </small>
+                    <em>
+                      확인된 요율이 아닙니다 — 수수료 {(KIS_COMMISSION_RATE_ASSUMPTION * 100).toFixed(3)}%
+                      {' · 유관기관 '}{(KR_INSTITUTION_FEE_RATE_ASSUMPTION * 100).toFixed(3)}%
+                      {orderSide === 'sell' && ` · 거래세 ${(orderCost.taxRate * 100).toFixed(3)}%`}
+                      로 잡은 값이라 실제 청구액과 다를 수 있습니다.
+                    </em>
+                  </div>
+                )}
                 <div data-account="live">
                   <span>{orderSide === 'buy' ? '실계좌 매수가능' : '실계좌 매도가능'}</span>
                   {orderSide === 'buy' ? (

@@ -2645,6 +2645,26 @@ span.sample-badge {
   border-color: rgba(245, 196, 81, 0.22);
 }
 
+/*
+ * 예상 비용. 문장이 길어 auto-fit 칸 하나에 들어가면 세로로 눌린다.
+ * 부모가 auto-fit 그리드이므로 줄 전체를 쓴다.
+ *
+ * 어림이라는 걸 점선으로도 말한다 — SampleBadge와 같은 규칙이다. 상태색은
+ * 쓰지 않는다. 잘못됐다는 게 아니라 확인된 값이 아니라는 표시다.
+ */
+.order-ticket__summary .order-ticket__cost {
+  grid-column: 1 / -1;
+  border-style: dashed;
+  border-color: rgba(245, 196, 81, 0.34);
+}
+
+.order-ticket__cost em {
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
 .order-ticket__summary strong {
   overflow: hidden;
   text-overflow: ellipsis;
