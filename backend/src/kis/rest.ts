@@ -1376,7 +1376,15 @@ export async function getKisDomesticTradeProfit(
   days = 30,
 ): Promise<BrokerTradeProfitSnapshot> {
   const to = kstToday();
-  const from = kstDaysAgo(Number.isFinite(days) ? Math.min(Math.max(Math.floor(days), 1), 365) : 30);
+  /*
+   * `days = 0`이면 from = to = 오늘이라 **오늘 확정된 손익만** 나온다.
+   *
+   * 예전에는 하한이 1이라 아무리 좁혀도 어제부터였다 — 화면이 `오늘`이라고
+   * 적으면서 어제 값을 섞어 보여줄 뻔했다. 체결내역·예약주문 쪽 하한 1은
+   * 그대로 둔다. 상한이 90/365/90으로 다른 것처럼 각 API가 보는 것이 다르고,
+   * 그쪽에는 "오늘만" 선택지가 없다.
+   */
+  const from = kstDaysAgo(Number.isFinite(days) ? Math.min(Math.max(Math.floor(days), 0), 365) : 30);
 
   if (!account) {
     return {

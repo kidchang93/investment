@@ -1744,7 +1744,18 @@ function brokerOrderRecordStatusLabel(status: BrokerOrderRecord['status']): stri
   }
 }
 
+/*
+ * 매매손익 조회 기간.
+ *
+ * `오늘`(days: 0)이 없던 시절에는 가장 좁은 구간이 1개월이라 **오늘 확정한
+ * 손익이 지난 한 달치와 합산된 숫자로만** 보였다. "오늘 얼마 벌었나"를 이
+ * 화면에서 알 수 없었다.
+ *
+ * `days: 0`은 서버에서 from = to = 오늘이 된다. 하한이 1이던 시절에는 아무리
+ * 좁혀도 어제부터였다 — `오늘`이라고 적으면서 어제 값을 섞을 뻔했다.
+ */
 const TRADE_PROFIT_RANGES = [
+  { days: 0, label: '오늘' },
   { days: 30, label: '1개월' },
   { days: 90, label: '3개월' },
   { days: 365, label: '1년' },
@@ -2373,7 +2384,13 @@ export function App(): JSX.Element {
   /** 서버 상한을 넘겨 더 오래된 기록이 남아 있는지. */
   const [kisOrderLogHasMore, setKisOrderLogHasMore] = useState(false);
   const [kisTradeProfit, setKisTradeProfit] = useState<BrokerTradeProfitSnapshot | null>(null);
-  const [tradeProfitDays, setTradeProfitDays] = useState(30);
+  /*
+   * 기본값은 `오늘`이다. 이 카드에 오는 사람이 가장 먼저 묻는 것이 "오늘 얼마
+   * 벌었나"인데, 1개월로 열면 그 답이 지난 한 달치에 섞여 안 보인다.
+   * 카드 머리에 조회 구간(`2026-07-27 ~ 2026-07-27`)이 그대로 적히므로
+   * 무엇을 보고 있는지 헷갈리지 않는다.
+   */
+  const [tradeProfitDays, setTradeProfitDays] = useState(0);
   /** 서버에 저장된 리스크 룰과, 편집 중인 사본. 저장 성공 시에만 둘을 맞춘다. */
   const [riskRules, setRiskRules] = useState<RiskRuleSet | null>(null);
   /** 리스크 룰 조회 실패 사유. 게이트와 같은 이유로 null과 따로 둔다. */
