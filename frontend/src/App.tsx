@@ -3638,6 +3638,30 @@ export function App(): JSX.Element {
   ]);
   const liveOrderCanSubmit = liveOrderBlockers.length === 0 && !isLiveOrderSubmitting;
 
+  /*
+   * 정정·취소가 막힌 사유.
+   *
+   * 게이트만 본다. **리스크 룰은 일부러 보지 않는다** — 서버도 이 경로에서는
+   * checkRiskRules를 부르지 않는다(server.ts의 amend 라우트는 게이트만 본다).
+   * 이유가 있다. 취소는 위험을 줄이는 동작인데 `허용 종목이 아닙니다`로 막으면,
+   * 룰을 좁힌 뒤에 남아 있는 주문을 영영 못 거둔다. 같은 결함처럼 보인다고
+   * 수동 주문·예약주문과 똑같이 맞추면 안 되는 자리다.
+   *
+   * 예전에는 이 버튼들이 게이트가 닫혀 있어도 그냥 눌렸다. 눌러야 403을 들었다.
+   */
+  const amendCancelBlockers = useMemo(() => {
+    const blockers: string[] = [...(liveOrderGate?.blockers ?? [])];
+    if (!liveOrderGate) {
+      blockers.push(
+        liveOrderGateError
+          ? `실주문을 보낼 수 있는지 확인하지 못했습니다 (${liveOrderGateError})`
+          : '실주문을 보낼 수 있는지 확인하는 중입니다.',
+      );
+    }
+    return blockers;
+  }, [liveOrderGate, liveOrderGateError]);
+  const amendCancelBlockedReason = amendCancelBlockers.join('\n') || undefined;
+
   /** 예약주문 등록 버튼이 잠긴 이유. 화면에 그대로 보여준다. */
   const reservedOrderBlockers = useMemo(() => {
     /*
@@ -7010,6 +7034,17 @@ export function App(): JSX.Element {
                   {isKisOpenOrdersRefreshing ? '조회 중' : '새로고침'}
                 </button>
               </div>
+              {/*
+                정정·취소가 왜 잠겼는지 화면에 적는다. 버튼 title만으로는 마우스를
+                올려야 보이고, 키보드로 오면 영영 못 본다.
+              */}
+              {kisOpenOrders.length > 0 && amendCancelBlockers.length > 0 && (
+                <div className="live-order__messages live-order__messages--card">
+                  {amendCancelBlockers.map((blocker) => (
+                    <em key={blocker}>{blocker}</em>
+                  ))}
+                </div>
+              )}
               {kisOpenOrders.length === 0 ? (
                 <div className="portfolio-table__empty">아직 체결되지 않은 주문이 없습니다 · 지정가 주문을 내면 여기에서 값을 고치거나 취소할 수 있습니다</div>
               ) : (
@@ -7047,8 +7082,9 @@ export function App(): JSX.Element {
                               value={amendPrice}
                             />
                             <button
-                              disabled={isLiveOrderSubmitting}
+                              disabled={isLiveOrderSubmitting || amendCancelBlockers.length > 0}
                               onClick={() => void submitAmendOrCancel(order, 'amend')}
+                              title={amendCancelBlockedReason}
                               type="button"
                             >
                               확정
@@ -7060,17 +7096,20 @@ export function App(): JSX.Element {
                         ) : (
                           <>
                             <button
+                              disabled={amendCancelBlockers.length > 0}
                               onClick={() => {
                                 setAmendingOrderId(order.id);
                                 setAmendPrice(String(order.orderPrice || ''));
                               }}
+                              title={amendCancelBlockedReason}
                               type="button"
                             >
                               정정
                             </button>
                             <button
-                              disabled={isLiveOrderSubmitting}
+                              disabled={isLiveOrderSubmitting || amendCancelBlockers.length > 0}
                               onClick={() => void submitAmendOrCancel(order, 'cancel')}
+                              title={amendCancelBlockedReason}
                               type="button"
                             >
                               취소
