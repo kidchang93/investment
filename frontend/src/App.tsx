@@ -31,6 +31,7 @@ import {
   fetchInstrumentNews,
   fetchInstrumentQuote,
   fetchOrderBook,
+  fetchMarketMovers,
   fetchScreening,
   fetchSignalScores,
   fetchInstrumentQuotes,
@@ -70,6 +71,7 @@ import type {
   ExchangeRate,
   Instrument,
   InstrumentCategory,
+  MarketMoversSnapshot,
   NewsItem,
   OrderSide,
   OrderTimeInForce,
@@ -2320,6 +2322,9 @@ export function App(): JSX.Element {
   const [orderBookError, setOrderBookError] = useState<string | null>(null);
   const [financials, setFinancials] = useState<FinancialsResult | null>(null);
   const [screening, setScreening] = useState<ScreeningResult | null>(null);
+  const [marketMovers, setMarketMovers] = useState<MarketMoversSnapshot | null>(null);
+  const [marketMoversError, setMarketMoversError] = useState<string | null>(null);
+  const [moversDirection, setMoversDirection] = useState<'up' | 'down'>('up');
   const [screeningLoaded, setScreeningLoaded] = useState(false);
   const [screeningError, setScreeningError] = useState<string | null>(null);
   const [screeningRunning, setScreeningRunning] = useState(false);
@@ -2863,6 +2868,28 @@ export function App(): JSX.Element {
       disposed = true;
     };
   }, [activePage, terminalTab, kisAccountId]);
+
+  /*
+   * 거래소 등락률 순위. 호출 1회라 탭을 열 때 받아도 된다 —
+   * 스크리닝(종목당 1회)과 달리 비용이 거의 없다.
+   */
+  useEffect(() => {
+    if (activePage !== 'terminal' || terminalTab !== 'ranking') return undefined;
+    let disposed = false;
+    setMarketMovers(null);
+    fetchMarketMovers(moversDirection)
+      .then((snapshot) => {
+        if (disposed) return;
+        setMarketMovers(snapshot);
+        setMarketMoversError(null);
+      })
+      .catch((e) => {
+        if (!disposed) setMarketMoversError(toErrorMessage(e));
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [activePage, terminalTab, moversDirection]);
 
   // 미체결 주문은 매매 화면에서 계좌를 바꿀 때마다 다시 받는다.
   useEffect(() => {
@@ -5497,10 +5524,84 @@ export function App(): JSX.Element {
 
               {terminalTab === 'ranking' && (
                 <section className="terminal-page terminal-page--ranking" aria-label="많이 움직인 종목">
+                  {/*
+                    두 목록은 다른 물건이다. 위는 거래소가 전 종목을 대상으로 매긴
+                    순위이고, 아래는 내 관심·최근 목록 안에서의 순위다. 섞어 놓으면
+                    "시장 상위"를 봤다고 착각한다.
+                  */}
                   <div className="terminal-page__header">
                     <div>
-                      <span>최근·관심 종목 중에서 · 전일 종가 대비</span>
-                      <strong>많이 움직인 종목</strong>
+                      <span>거래소가 전 종목에서 매긴 순위 · 전일 종가 대비</span>
+                      <strong>오늘 시장에서 많이 움직인 종목</strong>
+                    </div>
+                    <div className="movers__toggle" role="tablist" aria-label="상승 하락">
+                      <button
+                        aria-selected={moversDirection === 'up'}
+                        onClick={() => setMoversDirection('up')}
+                        role="tab"
+                        type="button"
+                      >
+                        상승
+                      </button>
+                      <button
+                        aria-selected={moversDirection === 'down'}
+                        onClick={() => setMoversDirection('down')}
+                        role="tab"
+                        type="button"
+                      >
+                        하락
+                      </button>
+                    </div>
+                  </div>
+
+                  {marketMoversError && (
+                    <p className="movers__error">등락률 순위를 불러오지 못했습니다 — {marketMoversError}</p>
+                  )}
+                  {!marketMovers && !marketMoversError && <p className="movers__empty">불러오는 중</p>}
+                  {marketMovers && marketMovers.rows.length === 0 && (
+                    <p className="movers__empty">순위가 오지 않았습니다</p>
+                  )}
+
+                  {marketMovers && marketMovers.rows.length > 0 && (
+                    <>
+                      {/* 상위 N만 온다. "시장 전체를 봤다"로 읽히면 안 된다. */}
+                      <p className="movers__basis">
+                        거래소가 준 <b>상위 {marketMovers.rows.length}개</b>입니다 — 전 종목 목록이 아닙니다
+                        <small>{formatClock(marketMovers.fetchedAt)} 기준</small>
+                      </p>
+                      <div className="movers__rows">
+                        {marketMovers.rows.map((row) => {
+                          const openable = row.instrument !== undefined;
+                          return (
+                            <button
+                              className="movers__row"
+                              data-tone={moveTone(row.sign)}
+                              disabled={!openable}
+                              key={`${row.rank}-${row.symbol}`}
+                              onClick={() => row.instrument && selectInstrument(row.instrument)}
+                              /* 못 여는 이유를 적는다. 눌리지 않는 채로 두면 고장으로 보인다. */
+                              title={openable ? row.name : `${row.name} — 종목 목록에 없어 열 수 없습니다`}
+                              type="button"
+                            >
+                              <span className="movers__rank">{row.rank}</span>
+                              <strong>{row.name}</strong>
+                              <small className="movers__code">{row.symbol}</small>
+                              <em>{row.price.toLocaleString('ko-KR')}원</em>
+                              <span className="movers__rate">
+                                {row.changeRate > 0 ? '+' : ''}{row.changeRate.toFixed(2)}%
+                              </span>
+                              {!openable && <small className="movers__unopenable">목록에 없음</small>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+
+                  <div className="terminal-page__header movers__divider">
+                    <div>
+                      <span>내 관심·최근 종목 안에서 · 전일 종가 대비</span>
+                      <strong>내 목록에서 많이 움직인 종목</strong>
                     </div>
                     <small>{moversBoard.ranked.length}개</small>
                   </div>

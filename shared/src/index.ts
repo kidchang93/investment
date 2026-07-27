@@ -271,6 +271,40 @@ export interface ScreeningResult {
   };
 }
 
+/**
+ * 거래소가 매긴 등락률 순위 한 종목.
+ *
+ * 앱의 `랭킹` 탭은 관심·최근 종목 안에서만 순위를 매긴다 — "오늘 시장에서 많이
+ * 오른 **낯선** 종목"은 거기서 나올 수 없다. 스크리닝 결과로 대신하려 했지만
+ * 그건 종목코드 오름차순 앞 40개라 시장 표본이 아니다(2026-07-27 확인).
+ * 이 값은 KIS 순위분석이 전 종목을 대상으로 준 것이다.
+ */
+export interface MarketMover {
+  /** 거래소가 매긴 순위. 1이 가장 위 */
+  rank: number;
+  symbol: string;
+  name: string;
+  price: number;
+  change: number;
+  changeRate: number;
+  sign: PriceSign;
+  accVolume: number;
+  /**
+   * 우리 마스터에서 찾은 종목. 없으면 undefined — 화면이 이 종목으로 옮겨 갈
+   * 수 없다는 뜻이고, 그 사실을 적어야 한다. id만 주면 화면이 다시 찾아야 하는데
+   * 순위에 오르는 종목은 대개 관심목록 밖이라 화면에 찾을 재료가 없다.
+   */
+  instrument?: Instrument;
+}
+
+/** 등락률 순위 한 회차. 언제 잰 값인지 함께 온다. */
+export interface MarketMoversSnapshot {
+  direction: 'up' | 'down';
+  fetchedAt: number;
+  /** 거래소가 한 번에 주는 수. 전 종목이 아니라 상위 N이다 */
+  rows: MarketMover[];
+}
+
 /** 호가창 한 장. 예상 체결이 있으면 함께 온다. */
 export interface OrderBook {
   code: string;

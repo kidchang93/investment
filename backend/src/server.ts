@@ -51,6 +51,7 @@ import {
   getInstrumentNews,
   getInstrumentQuote,
   getFinancials,
+  getMarketMovers,
   getOrderBook,
   amendKisDomesticOrder,
   getKisDomesticAccountSnapshot,
@@ -1071,6 +1072,23 @@ async function main(): Promise<void> {
     } catch (err) {
       req.log.warn({ err, accountId: account.id }, '신호 채점 성적 조회 실패');
       return reply.code(502).send({ message: '채점 성적을 조회하지 못했습니다.' });
+    }
+  });
+
+  /*
+   * 거래소 등락률 순위. **상위 30만 온다 — 전 종목이 아니다.**
+   *
+   * `랭킹` 탭은 관심·최근 종목 안에서만 순위를 매겨서, "오늘 시장에서 많이 오른
+   * 낯선 종목"을 찾아주지 못했다. 이건 거래소가 전 종목을 대상으로 매긴 값이다.
+   * 호출 1회라 탭을 열 때 받아도 된다.
+   */
+  app.get<{ Querystring: { direction?: string } }>('/api/market/movers', async (req, reply) => {
+    const direction = req.query.direction === 'down' ? 'down' : 'up';
+    try {
+      return await getMarketMovers(direction);
+    } catch (err) {
+      req.log.warn({ err, direction }, '등락률 순위 조회 실패');
+      return reply.code(502).send({ message: '등락률 순위를 조회하지 못했습니다.' });
     }
   });
 

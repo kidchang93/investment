@@ -1155,6 +1155,104 @@ button {
   min-width: 0;
 }
 
+/* ── 시장 등락 순위 ─────────────────────────────────────────────── */
+
+.movers__toggle {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.movers__toggle button {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.movers__toggle button[aria-selected='true'] {
+  border-color: var(--accent, #60a5fa);
+  color: var(--text);
+}
+
+.movers__error { color: var(--down, #f2555a); font-size: 12px; }
+.movers__empty { color: var(--muted); font-size: 12px; }
+
+/*
+  상위 N만 온다는 사실을 목록 바로 위에 적는다. 목록만 보면 시장 전체를
+  본 것으로 읽힌다. 점선으로 둘러 확정 집계와 구별한다.
+*/
+.movers__basis {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.movers__basis b { color: var(--text); }
+
+.movers__rows {
+  display: grid;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden auto;
+  max-height: 360px;
+  min-height: 0;
+}
+
+.movers__row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 58px 88px 68px auto;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+}
+
+.movers__row > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.movers__row:hover:not(:disabled) { background: rgba(255, 255, 255, 0.04); }
+
+/* 열 수 없는 종목. 상태색 대신 흐리게 두고 사유를 옆에 적는다. */
+.movers__row:disabled { cursor: default; color: var(--muted); }
+
+.movers__rank { color: var(--muted); }
+.movers__code { color: var(--muted); }
+.movers__unopenable { color: var(--muted); font-size: 10px; }
+
+.movers__row[data-tone='up'] .movers__rate { color: var(--up, #f2555a); }
+.movers__row[data-tone='down'] .movers__rate { color: var(--down-text, #4c8bf5); }
+
+.movers__row em { font-style: normal; text-align: right; }
+.movers__rate { text-align: right; }
+
+/* 두 목록 사이를 눈에 띄게 갈라 둔다 — 다른 물건이다. */
+.movers__divider {
+  margin-top: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
 /* ── 스크리닝 (자동매매 후보 거르기) ────────────────────────────── */
 
 .screening__actions {

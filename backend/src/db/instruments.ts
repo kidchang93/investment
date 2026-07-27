@@ -288,6 +288,36 @@ export async function getInstrument(id: string): Promise<Instrument | null> {
   return result.rows[0] ? rowToInstrument(result.rows[0]) : null;
 }
 
+/**
+ * 종목코드 여러 개를 한 번에 찾는다. 국내만 본다.
+ *
+ * KIS 순위 API는 종목코드와 이름만 준다 — 우리 화면이 그 종목으로 옮겨 가려면
+ * `instrumentId`가 필요하다. 마스터에 없는 종목(신규 상장·우선주 일부)은 그냥
+ * 빠진다. **없는 것을 억지로 만들지 않고, 화면이 "이 종목은 열 수 없다"고 적는다.**
+ */
+export async function getDomesticInstrumentsBySymbols(
+  symbols: string[],
+): Promise<Map<string, Instrument>> {
+  const unique = [...new Set(symbols.filter((s) => s.length > 0))];
+  if (unique.length === 0) return new Map();
+  const result = await pool.query<InstrumentRow>(
+    `
+      SELECT id, symbol, name, english_name, market, country, currency, asset_type,
+             provider, provider_symbol, exchange_code, timezone
+      FROM instruments
+      WHERE symbol = ANY($1) AND country = 'KR' AND is_active = true
+    `,
+    [unique],
+  );
+  const bySymbol = new Map<string, Instrument>();
+  for (const row of result.rows) {
+    const instrument = rowToInstrument(row);
+    // 같은 코드가 여러 시장에 있으면 먼저 온 것을 쓴다. 국내는 사실상 유일하다.
+    if (!bySymbol.has(instrument.symbol)) bySymbol.set(instrument.symbol, instrument);
+  }
+  return bySymbol;
+}
+
 export async function getTerminalInstruments(): Promise<Instrument[]> {
   return getByIds([...TERMINAL_INSTRUMENT_IDS]);
 }

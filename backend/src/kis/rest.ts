@@ -1,4 +1,5 @@
 import { config, type KisAccountConfig } from '../config.js';
+import { getDomesticInstrumentsBySymbols } from '../db/instruments.js';
 import { getAccessToken, primaryCredentials, type KisCredentials } from './auth.js';
 import type {
   BrokerAccountSnapshot,
@@ -20,6 +21,8 @@ import type {
   FinancialSnapshot,
   Instrument,
   NewsItem,
+  MarketMover,
+  MarketMoversSnapshot,
   MarketSessionPhase,
   OrderBook,
   OrderBookLevel,
@@ -574,6 +577,64 @@ const SESSION_PHASE_BY_CODE: Record<string, MarketSessionPhase> = {
 
 function toSessionPhase(code: string | undefined): MarketSessionPhase {
   return SESSION_PHASE_BY_CODE[String(code ?? '').trim()] ?? 'unknown';
+}
+
+/**
+ * 거래소 등락률 순위 (국내주식 등락률 순위, tr_id: FHPST01700000).
+ *
+ * **파라미터 두 개가 정렬 기준을 정한다. 값을 바꾸면 다른 표가 나온다.**
+ *   FID_PRC_CLS_CODE      1 = 종가(전일)대비   0 = 저가대비
+ *   FID_RANK_SORT_CLS_CODE 0 = 상승률순        1 = 하락률순
+ *
+ * `0`으로 두면 **저가대비** 상승률로 정렬돼서 전일대비로는 뒤죽박죽이 된다 —
+ * 실제로 1위가 +22.28%인데 6위가 +30.00%였다(2026-07-27 실측). `1`로 둬야
+ * 전일대비 내림차순이 된다. 30행 전부가 내림차순인 것을 확인하고 넣었다.
+ *
+ * 한 번에 30행이 온다. **전 종목이 아니라 상위 30이다** — 화면이 그렇게 적어야 한다.
+ */
+export async function getMarketMovers(direction: 'up' | 'down'): Promise<MarketMoversSnapshot> {
+  const json = await kisGet('/uapi/domestic-stock/v1/ranking/fluctuation', 'FHPST01700000', {
+    fid_cond_mrkt_div_code: 'J',
+    fid_cond_scr_div_code: '20170',
+    fid_input_iscd: '0000',
+    fid_rank_sort_cls_code: direction === 'up' ? '0' : '1',
+    fid_input_cnt_1: '0',
+    // 전일 종가 대비. 0(저가대비)으로 두면 정렬이 등락률과 어긋난다.
+    fid_prc_cls_code: '1',
+    fid_input_price_1: '',
+    fid_input_price_2: '',
+    fid_vol_cnt: '',
+    fid_trgt_cls_code: '0',
+    fid_trgt_exls_cls_code: '0',
+    fid_div_cls_code: '0',
+    fid_rsfl_rate1: '',
+    fid_rsfl_rate2: '',
+  });
+
+  const raw = (json.output ?? []) as Array<Record<string, string>>;
+  const symbols = raw.map((row) => String(row.stck_shrn_iscd ?? '').trim()).filter(Boolean);
+  const bySymbol = await getDomesticInstrumentsBySymbols(symbols);
+
+  const rows = raw
+    .map((row, index): MarketMover | null => {
+      const symbol = String(row.stck_shrn_iscd ?? '').trim();
+      const price = toNumber(row.stck_prpr);
+      if (!symbol || !Number.isFinite(price)) return null;
+      return {
+        rank: Number(row.data_rank) || index + 1,
+        symbol,
+        name: String(row.hts_kor_isnm ?? symbol).trim(),
+        price,
+        change: toNumber(row.prdy_vrss),
+        changeRate: toNumber(row.prdy_ctrt),
+        sign: parseSign(row.prdy_vrss_sign),
+        accVolume: toNumber(row.acml_vol),
+        instrument: bySymbol.get(symbol),
+      } satisfies MarketMover;
+    })
+    .filter((row): row is MarketMover => row !== null);
+
+  return { direction, fetchedAt: Date.now(), rows };
 }
 
 /**

@@ -25,6 +25,7 @@ import type {
   FinancialSnapshot,
   Instrument,
   InstrumentCategory,
+  MarketMoversSnapshot,
   NewsItem,
   OrderBook,
   OrderType,
@@ -307,6 +308,22 @@ export async function runScreening(accountId?: string, lookups?: number): Promis
     throw new Error(body.message ?? `후보 거르기 실행 실패: ${res.status}`);
   }
   return ((await res.json()) as { result: ScreeningResult }).result;
+}
+
+/**
+ * 거래소가 매긴 등락률 순위 상위 30.
+ *
+ * `랭킹` 탭의 기존 목록은 관심·최근 종목 안에서만 순위를 매긴다 — 이건 전
+ * 종목이 대상이다. 다만 **상위 30만 온다.** 화면이 "시장 전체를 봤다"고
+ * 읽히지 않게 몇 개를 받은 값인지 밝혀야 한다.
+ */
+export async function fetchMarketMovers(direction: 'up' | 'down'): Promise<MarketMoversSnapshot> {
+  const res = await fetch(`${API_BASE}/api/market/movers?direction=${direction}`);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(body.message ?? `등락률 순위 조회 실패: ${res.status}`);
+  }
+  return res.json();
 }
 
 export async function fetchInstrumentQuote(id: string): Promise<Quote> {
