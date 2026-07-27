@@ -74,9 +74,11 @@ export class MovingAverageCrossStrategy implements Strategy {
   readonly label = '이동평균 교차';
   readonly verdict = 'unproven' as const;
   readonly backtestNote =
-    '2026-07 측정(20종목·전체 기간을 3구간으로): 구간별 중앙값 +19.21% / +12.27%'
-    + ' / -4.86%. 앞 두 구간은 20종목 중 17개·14개가 이익이었고 최근 구간에서만'
-    + ' 마이너스다. 장세를 타는 것으로 보이며 지금이 어느 쪽인지는 알 수 없다.';
+    '2026-07-27 재측정(예수금 49,751원으로 실제 매수 가능한 16종목·3구간):'
+    + ' 구간별 중앙값 +6.27% / -1.75% / +0.06%, out-of-sample 중앙값 -1.66%로'
+    + ' 16종목 중 7개만 이익이었다. 평균은 +0.92%지만 최고가 +71.22%인 한 종목이'
+    + ' 끌어올린 값이라 중앙값을 본다. 이전 측정(대형주 20종목, +19.21/+12.27/-4.86%)은'
+    + ' 이 계좌로 살 수 없는 종목이라 참고가 되지 않는다.';
 
   constructor(
     private readonly shortPeriod = 5,
@@ -184,9 +186,12 @@ export class VolatilityBreakoutStrategy implements Strategy {
   readonly label = '변동성 돌파';
   readonly verdict = 'no_edge' as const;
   readonly backtestNote =
-    '2026-07 측정(20종목·전체 기간을 3구간으로): 구간별 중앙값 -7.90% / -1.88%'
-    + ' / -3.76%로 세 구간 모두 마이너스다. 매매 869회로 셋 중 표본이 가장'
-    + ' 두꺼운데 어느 기간에도 우위가 없었다. 거래가 잦아 비용이 성과를 먹는다.';
+    '2026-07-27 재측정(예수금 49,751원으로 실제 매수 가능한 16종목·3구간):'
+    + ' 구간별 중앙값 -2.61% / -5.06% / -8.91%로 세 구간 모두 마이너스이고'
+    + ' 갈수록 나빠진다. 이익 종목이 5개 → 2개 → 1개로 줄었다.'
+    + ' **비용이 결정적이다** — out-of-sample 171회 매매에 비용 14,735원으로'
+    + ' 원금 49,751원의 29.6%다. 소액 계좌에서 거래가 잦은 전략은 수수료·세금이'
+    + ' 성과를 먹는 정도가 아니라 성과보다 크다.';
 
   constructor(
     private readonly k = 0.5,
@@ -262,9 +267,10 @@ export class MeanReversionStrategy implements Strategy {
   readonly label = '평균 회귀';
   readonly verdict = 'unproven' as const;
   readonly backtestNote =
-    '2026-07 측정(20종목·전체 기간을 3구간으로): 구간별 중앙값 +5.09% / +6.14%'
-    + ' / -2.31%. 앞 두 구간은 20종목 중 14개·18개가 이익이었고 최근 구간에서만'
-    + ' 마이너스다. 폭이 작은 대신 종목별 편차도 작다.';
+    '2026-07-27 재측정(예수금 49,751원으로 실제 매수 가능한 16종목·3구간):'
+    + ' 구간별 중앙값 +1.33% / +3.00% / -1.30%. out-of-sample 승률은 65.71%로'
+    + ' 셋 중 가장 높은데 수익률은 중앙값 -1.30%다 — **이기는 횟수는 많고 지는'
+    + ' 크기가 크다.** 승률만 보고 고르면 안 되는 전형적인 모양이다.';
 
   constructor(
     private readonly period = 20,

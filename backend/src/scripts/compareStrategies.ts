@@ -137,11 +137,20 @@ async function main(): Promise<void> {
       continue;
     }
     /*
-     * 국내 주식은 페이징으로 길게 받는다. 한 번 호출은 100건이 상한인데,
+     * 국내 종목은 페이징으로 길게 받는다. 한 번 호출은 100건이 상한인데,
      * 100봉으로는 in/out-of-sample을 나눠 잴 수 없다. 종목당 KIS 호출이
      * 최대 5회 나가지만 이건 손으로 돌리는 비교 도구라 화면 경로와 무관하다.
+     *
+     * 예전에는 `assetType === 'stock'`만 페이징했다. 그래서 ETF는 100봉만 받아
+     * 뒤 구간이 통째로 `잴 수 없음`으로 떨어졌다 — 실제로 매수 가능한 유니버스는
+     * 값싼 ETF가 많은데, 16종목을 재니 10종목이 그렇게 빠졌다. ETF도 같은
+     * 일봉 API가 먹는지 먼저 찍어 확인했다(probeEtfHistory.ts):
+     * 단일조회 100봉 / 페이징 348봉. 되는데 안 쓰고 있었다.
      */
-    const response = instrument.country === 'KR' && instrument.assetType === 'stock'
+    const isPagedDomestic =
+      instrument.country === 'KR'
+      && (instrument.assetType === 'stock' || instrument.assetType === 'etf' || instrument.assetType === 'etn');
+    const response = isPagedDomestic
       ? await getDailyCandleHistory(instrument.providerSymbol, TARGET_BARS)
       : await getInstrumentCandles(instrument);
     const candles = response.candles;
