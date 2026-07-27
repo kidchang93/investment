@@ -3440,11 +3440,19 @@ export function App(): JSX.Element {
    */
   const autoTraderUnknownLabel = autoTraderError ? '확인 실패' : '확인 중';
   const isAutoTraderKnown = autoTrader !== null && autoTraderError === null;
+  /*
+   * `실계좌`를 앞에 붙인다.
+   *
+   * `주문 잠김`만 있으면 "어떤 주문 기능이 꺼져 있다"로 읽힌다 — 열렸을 때
+   * 실제 돈이 나가는 계좌라는 말이 아니다. 이 칩은 모든 화면 위에 있으므로
+   * 처음 여는 사람이 만나는 유일한 자리다. `주문 가능`/`주문 잠김`이라는
+   * 공통 어휘는 그대로 두고 앞에만 붙여, 하단 도크의 짧은 표기와 어긋나지 않게 한다.
+   */
   const modeChipLabel = !liveOrderGate
     ? gateUnknownLabel
     : liveOrderArmed
-      ? `주문 가능 · ${liveOrderGate.isProdEnv ? '실전 서버' : '모의 서버'}`
-      : '주문 잠김';
+      ? `실계좌 주문 가능 · ${liveOrderGate.isProdEnv ? '실전 서버' : '모의 서버'}`
+      : '실계좌 주문 잠김';
   /* 하단 도크용. 헤더 배지와 달리 환경 표기는 빼고 짧게 쓴다. */
   const sessionModeLabel = !liveOrderGate
     ? gateUnknownLabel
@@ -5070,6 +5078,24 @@ export function App(): JSX.Element {
                     무엇인지는 설명으로 남긴다.
                   */}
                   <p>야간 지표를 띄워 두고, 아래 탭에서 시세 흐름·뉴스·커뮤니티·도구를 살펴봅니다.</p>
+                  {/*
+                    localStorage가 빈 브라우저는 이 화면으로 들어온다. 여기 문구가
+                    전부 조회에 관한 말이라, 실계좌로 주문이 나가는 도구라는 것을
+                    화면만 보고는 알기 어려웠다.
+
+                    겁주지 않는다 — 지금 나갈 수 있는지 없는지를 게이트 상태 그대로
+                    적는다. 상단 배지와 같은 값(liveOrderGate)을 쓰므로 두 자리가
+                    어긋나지 않는다.
+                  */}
+                  <p className="terminal-board__intro">
+                    이 앱은 <b>한국투자증권 실계좌로 국내 주식을 사고팔 수 있는 도구</b>입니다 —
+                    주문은 <b>종목</b> 화면에서 내고, 잔고·손익은 <b>내 계좌</b>에서 봅니다.
+                    {!liveOrderGate
+                      ? ` 지금 실주문을 보낼 수 있는지는 ${gateUnknownLabel === '확인 실패' ? '확인하지 못했습니다' : '확인하는 중입니다'}.`
+                      : liveOrderArmed
+                        ? ' 지금 실주문이 열려 있습니다.'
+                        : ' 지금은 실주문이 잠겨 있어 주문이 나가지 않습니다.'}
+                  </p>
                 </div>
                 {/*
                   화면에서 가장 큰 숫자인데 자산 유형만 적혀 있어 어느 종목인지 알 수 없었다.

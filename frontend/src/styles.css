@@ -1155,6 +1155,25 @@ button {
   min-width: 0;
 }
 
+/*
+  첫 화면에서 이 앱이 무엇인지 말하는 줄. 배너로 키우지 않고 설명문 아래에
+  한 단 두어, 겁주지 않으면서 지나치지도 않게 한다.
+*/
+.terminal-board__intro {
+  max-width: 62ch;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft, rgba(148, 163, 184, 0.18));
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.terminal-board__intro b {
+  color: var(--text);
+  font-weight: 600;
+}
+
 /* ── 시장 등락 순위 ─────────────────────────────────────────────── */
 
 .movers__toggle {
