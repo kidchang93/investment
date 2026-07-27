@@ -17,6 +17,7 @@ import type {
   CandlesResponse,
   ExchangeRate,
   ExpectedConclusion,
+  FinancialSnapshot,
   Instrument,
   NewsItem,
   MarketSessionPhase,
@@ -635,6 +636,90 @@ export async function getOrderBook(code: string): Promise<OrderBook> {
     // 'N'이 아니면 발동. 값이 안 오면 모르는 것이므로 발동으로 보지 않는다.
     volatilityInterrupted: typeof summary.vi_cls_code === 'string' && summary.vi_cls_code !== 'N',
   };
+}
+
+/**
+ * KIS 재무 API가 "값 없음"에 쓰는 표시.
+ *
+ * 규모가 전혀 다른 세 회사(삼성전자 매출 133조 / SK하이닉스 52조 / 동화약품
+ * 1,306억)가 같은 필드에서 정확히 99.99를 돌려줬다(2026-07-27 실측).
+ * 값이 아니라 표시다. 숫자로 읽으면 화면이 거짓말을 한다.
+ */
+const KIS_FINANCE_MISSING = 99.99;
+
+function financeNumber(value: string | undefined): number | undefined {
+  const parsed = toNumber(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  return parsed === KIS_FINANCE_MISSING ? undefined : parsed;
+}
+
+/** 재무 API 한 종류를 결산연월로 뽑아 온다. 실패하면 빈 맵 — 나머지는 살린다. */
+async function fetchFinanceRows(
+  path: string,
+  trId: string,
+  code: string,
+): Promise<Map<string, Record<string, string>>> {
+  const byPeriod = new Map<string, Record<string, string>>();
+  try {
+    const json = await kisGet(path, trId, {
+      FID_COND_MRKT_DIV_CODE: 'J',
+      FID_INPUT_ISCD: code,
+      FID_DIV_CLS_CODE: '1',
+    });
+    const rows = (json.output ?? []) as Array<Record<string, string>>;
+    for (const row of rows) {
+      if (typeof row.stac_yymm === 'string') byPeriod.set(row.stac_yymm, row);
+    }
+  } catch {
+    // 한 종류가 실패해도 나머지 지표는 쓸 수 있다.
+  }
+  return byPeriod;
+}
+
+/**
+ * 종목 하나의 분기별 재무 지표. 최근 분기가 앞에 온다.
+ *
+ * 세 엔드포인트(재무비율·손익계산서·대차대조표)를 결산연월로 맞춰 합친다.
+ * KIS 원본 필드명은 여기서 끝나고 밖으로는 `@invest/shared` 타입만 나간다.
+ */
+export async function getFinancials(code: string, limit = 12): Promise<FinancialSnapshot[]> {
+  const [ratio, income, balance] = await Promise.all([
+    fetchFinanceRows('/uapi/domestic-stock/v1/finance/financial-ratio', 'FHKST66430300', code),
+    fetchFinanceRows('/uapi/domestic-stock/v1/finance/income-statement', 'FHKST66430200', code),
+    fetchFinanceRows('/uapi/domestic-stock/v1/finance/balance-sheet', 'FHKST66430100', code),
+  ]);
+
+  // 결산연월 합집합. 한 종류만 있는 분기도 버리지 않는다.
+  const periods = [...new Set([...ratio.keys(), ...income.keys(), ...balance.keys()])]
+    .sort((a, b) => b.localeCompare(a))
+    .slice(0, limit);
+
+  return periods.map((period) => {
+    const r = ratio.get(period) ?? {};
+    const i = income.get(period) ?? {};
+    const b = balance.get(period) ?? {};
+    const revenue = financeNumber(i.sale_account);
+    const netIncome = financeNumber(i.thtr_ntin);
+    return {
+      period,
+      roe: financeNumber(r.roe_val),
+      eps: financeNumber(r.eps),
+      bps: financeNumber(r.bps),
+      debtRatio: financeNumber(r.lblt_rate),
+      revenueGrowth: financeNumber(r.grs),
+      // 순이익률은 KIS가 따로 주지 않아 매출과 순이익으로 계산한다. 둘 다 있을 때만.
+      netMargin:
+        revenue !== undefined && netIncome !== undefined && revenue > 0
+          ? Number(((netIncome / revenue) * 100).toFixed(2))
+          : undefined,
+      revenue,
+      operatingProfit: financeNumber(i.bsop_prti),
+      netIncome,
+      totalAssets: financeNumber(b.total_aset),
+      totalLiabilities: financeNumber(b.total_lblt),
+      totalEquity: financeNumber(b.total_cptl),
+    };
+  });
 }
 
 export async function getInstrumentCandles(

@@ -183,6 +183,39 @@ export interface OrderBook {
   volatilityInterrupted: boolean;
 }
 
+/**
+ * 재무 지표 한 분기.
+ *
+ * KIS 재무 API는 값을 안 주는 필드에 **`99.99`를 넣어 보낸다.** 실제 값이
+ * 아니다 — 삼성전자(매출 133조)·SK하이닉스(52조)·동화약품(1,306억) 셋 다
+ * `depr_cost`·`sell_mang`·`bsop_non_ernn`·`spec_prfi`가 정확히 99.99였다
+ * (2026-07-27 실측). 규모가 전혀 다른 회사가 같은 값이면 값이 아니라 표시다.
+ * 그대로 읽으면 `감가상각비 99.99억원` 같은 거짓 숫자가 화면에 뜬다.
+ * 정규화 단계에서 undefined로 지운다.
+ */
+export interface FinancialSnapshot {
+  /** 결산 연월 YYYYMM */
+  period: string;
+  /** 자기자본이익률 % */
+  roe?: number;
+  /** 주당순이익 */
+  eps?: number;
+  /** 주당순자산 */
+  bps?: number;
+  /** 부채비율 % */
+  debtRatio?: number;
+  /** 매출액 증가율 % */
+  revenueGrowth?: number;
+  /** 순이익률 % */
+  netMargin?: number;
+  revenue?: number;
+  operatingProfit?: number;
+  netIncome?: number;
+  totalAssets?: number;
+  totalLiabilities?: number;
+  totalEquity?: number;
+}
+
 /** 환율 스냅샷 */
 export interface ExchangeRate {
   pair: 'USD/KRW';

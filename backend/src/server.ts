@@ -43,6 +43,7 @@ import {
   getInstrumentIntradayCandles,
   getInstrumentNews,
   getInstrumentQuote,
+  getFinancials,
   getOrderBook,
   amendKisDomesticOrder,
   getKisDomesticAccountSnapshot,
@@ -1041,6 +1042,25 @@ async function main(): Promise<void> {
    * KRX 호가 대상이 아니라 404로 돌려주고, 화면이 "없음"과 "안 되는 종목"을
    * 구별할 수 있게 사유를 함께 준다.
    */
+  /*
+   * 분기별 재무 지표. 국내 주식만 해당한다 — ETF·ETN은 재무제표가 없고,
+   * 해외는 KIS 재무 API 대상이 아니다. 없는 것을 빈 배열로 주면 "재무가
+   * 나쁘다"로 읽히므로 사유와 함께 404로 돌려준다.
+   */
+  app.get<{ Params: { id: string } }>('/api/instruments/:id/financials', async (req, reply) => {
+    const instrument = await getInstrument(req.params.id);
+    if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
+    if (instrument.country !== 'KR' || instrument.assetType !== 'stock') {
+      return reply.code(404).send({ message: '국내 주식만 재무 지표를 조회할 수 있습니다.' });
+    }
+    try {
+      return await getFinancials(instrument.providerSymbol);
+    } catch (err) {
+      req.log.warn({ err, instrumentId: instrument.id }, '재무 지표 조회 실패');
+      return reply.code(502).send({ message: '재무 지표를 조회하지 못했습니다.' });
+    }
+  });
+
   app.get<{ Params: { id: string } }>('/api/instruments/:id/order-book', async (req, reply) => {
     const instrument = await getInstrument(req.params.id);
     if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
