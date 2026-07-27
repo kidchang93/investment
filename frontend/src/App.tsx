@@ -71,6 +71,7 @@ import type {
   ExchangeRate,
   Instrument,
   InstrumentCategory,
+  KrxSessionKind,
   MarketMoversSnapshot,
   NewsItem,
   OrderSide,
@@ -90,7 +91,7 @@ import {
   detectCumulativeReporting,
   financialPeriodWindow,
   KRX_SESSION_MINUTES,
-  krxAuctionWindow,
+  krxSessionKind,
 } from '@invest/shared';
 
 type RangeKey = '1M' | '3M' | '6M' | '1Y' | 'ALL';
@@ -155,6 +156,10 @@ interface MarketSession {
    * 화면이 그 사실을 말해야 한다.
    */
   isAuction?: boolean;
+  /** 국내 종목일 때의 KRX 구간. 주문이 나갈 수 있는 때인지 판단하는 데 쓴다 */
+  krxKind?: KrxSessionKind;
+  /** 큰 글씨가 멈춰 있을 때 옆에 적을 말 */
+  frozenNote?: { headline: string; hint: string };
 }
 
 interface MoveSummary {
@@ -287,6 +292,75 @@ const SCREENING_VERDICT: Record<ScreeningVerdict, { label: string; why: string }
   tooExpensive: { label: '1주가 예수금보다 비쌈', why: '예수금으로 1주도 살 수 없습니다' },
   illiquid: { label: '거래대금 부족', why: '그 값에 원하는 만큼 체결되지 않을 수 있습니다' },
   costHeavy: { label: '변동폭 대비 비용 과다', why: '방향을 맞혀도 왕복 비용이 남는 것을 다 먹습니다' },
+};
+
+/**
+ * KRX 구간별 화면 문구.
+ *
+ * 예전에는 15:40~18:00을 전부 `장외 · 마감 후`라고 불렀다. 그 시간에 KRX는
+ * 실제로 거래한다(장후 시간외 종가 → 시간외 단일가) — `마감 후`라고 하면
+ * 거래가 없는 줄 안다.
+ *
+ * `orderable`은 **우리 앱이** 그때 주문을 낼 수 있는지다(거래소가 여는지가
+ * 아니다). 시간외 세션은 `ORD_DVSN` 코드가 따로라 미구현이고, 서버도 리스크 룰
+ * 거래 시간대(09:00~15:30)로 막는다. 화면이 그 사실을 미리 말해야 한다.
+ */
+const KRX_SESSION_TEXT: Record<
+  KrxSessionKind,
+  {
+    label: string;
+    detail: string;
+    tone: SessionTone;
+    /** 큰 글씨 가격이 멈춰 있는가. 멈춰 있으면 왜 그런지 함께 적는다 */
+    frozen: boolean;
+    /** 멈춰 있을 때 큰 글씨 옆에 적을 말. `frozen`이면 반드시 있다 */
+    frozenNote?: { headline: string; hint: string };
+    orderable: boolean;
+  }
+> = {
+  preAuction: {
+    label: '장전 동시호가',
+    detail: '체결 없이 주문만 모입니다',
+    tone: 'pre',
+    frozen: true,
+    frozenNote: {
+      headline: '이 값은 마지막 체결가에 멈춰 있습니다',
+      hint: '예상 체결가는 주문 탭 호가창에서 봅니다',
+    },
+    orderable: false,
+  },
+  regular: { label: '정규장', detail: '거래 중', tone: 'open', frozen: false, orderable: true },
+  closeAuction: {
+    label: '마감 동시호가',
+    detail: '체결 없이 주문만 모입니다',
+    tone: 'pre',
+    frozen: true,
+    frozenNote: {
+      headline: '이 값은 마지막 체결가에 멈춰 있습니다',
+      hint: '예상 체결가는 주문 탭 호가창에서 봅니다',
+    },
+    orderable: false,
+  },
+  postOffHours: {
+    label: '장후 시간외',
+    detail: '종가로만 거래됩니다 · 이 앱은 주문을 못 냅니다',
+    tone: 'pre',
+    frozen: true,
+    /* 여기는 예상 체결가가 없다. 정규장 종가 그대로 거래된다. */
+    frozenNote: {
+      headline: '이 값은 정규장 종가입니다',
+      hint: '장후 시간외는 이 값으로만 거래됩니다',
+    },
+    orderable: false,
+  },
+  singlePrice: {
+    label: '시간외 단일가',
+    detail: '단일가로 거래됩니다 · 이 앱은 주문을 못 냅니다',
+    tone: 'pre',
+    frozen: false,
+    orderable: false,
+  },
+  closed: { label: '장외', detail: '', tone: 'closed', frozen: false, orderable: false },
 };
 
 const BOTTOM_DOCK_TAB_LABEL: Record<BottomDockTab, string> = {
@@ -1914,17 +1988,33 @@ function getMarketSession(instrument: Instrument | null): MarketSession {
    * 먼저 말한다 — 낡은 값을 현재처럼 보여주는 것보다 낫다.
    */
   if (instrument.country === 'KR') {
-    const auction = krxAuctionWindow(now);
-    if (auction) {
+    const kind = krxSessionKind(now);
+    const text = KRX_SESSION_TEXT[kind];
+    if (kind !== 'closed') {
       return {
-        tone: 'pre',
-        label: auction === 'pre' ? '장전 동시호가' : '마감 동시호가',
-        detail: '체결 없이 주문만 모입니다',
+        tone: text.tone,
+        label: text.label,
+        detail: text.detail,
         hours: session.hours,
         localTime,
-        isAuction: true,
+        isAuction: text.frozen,
+        frozenNote: text.frozenNote,
+        krxKind: kind,
       };
     }
+    return {
+      tone: 'closed',
+      label: '장외',
+      // 마감 후에도 15:40부터 시간외가 있다. `마감 후`로만 두면 그게 안 보인다.
+      detail: now < KRX_SESSION_MINUTES.preAuctionOpen
+        ? '개장 전'
+        : now < KRX_SESSION_MINUTES.postOffHoursOpen
+          ? '정규장 마감 · 15:40부터 시간외'
+          : '시간외까지 끝',
+      hours: session.hours,
+      localTime,
+      krxKind: kind,
+    };
   }
 
   if (session.pre !== undefined && now >= session.pre && now < session.open) {
@@ -6263,8 +6353,8 @@ export function App(): JSX.Element {
               */}
               {snapshot && marketSession.isAuction && (
                 <span className="quote-header__auction">
-                  {marketSession.label} · 이 값은 마지막 체결가에 멈춰 있습니다
-                  <small>예상 체결가는 주문 탭 호가창에서 봅니다</small>
+                  {marketSession.label} · {marketSession.frozenNote?.headline ?? '이 값은 멈춰 있습니다'}
+                  {marketSession.frozenNote?.hint && <small>{marketSession.frozenNote.hint}</small>}
                 </span>
               )}
               {snapshot && (

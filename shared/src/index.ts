@@ -195,7 +195,45 @@ export const KRX_SESSION_MINUTES = {
   closeAuctionOpen: 15 * 60 + 20,
   /** 마감. 15:30:45에 121 → 112로 돌아간 것을 봤다. */
   close: 15 * 60 + 30,
+  /**
+   * 장후 시간외 종가 15:40~16:00, 시간외 단일가 16:00~18:00.
+   *
+   * **KRX 규정값이고 실측이 아니다.** 이 구간에 KIS가 무엇을 주는지는 아직 찍어
+   * 보지 못했다 — 장이 닫힌 뒤에 만들었다. 내일 16:00~18:00에 재야 한다.
+   */
+  postOffHoursOpen: 15 * 60 + 40,
+  singlePriceOpen: 16 * 60,
+  singlePriceClose: 18 * 60,
 } as const;
+
+/**
+ * KRX 하루 운영 구간.
+ *
+ * 예전에는 정규장(09:00~15:30)과 동시호가만 알았고 나머지는 전부 `장외`였다.
+ * 그런데 **15:40~18:00에는 실제로 거래가 일어난다** — 장후 시간외 종가와
+ * 시간외 단일가다. 화면이 그 시간을 `마감 후`라고 부르면 거래가 없는 줄 안다.
+ *
+ * 08:30~08:40은 장전 시간외 종가와 장전 동시호가가 겹치지만 따로 두지 않는다 —
+ * 우리 앱은 어느 쪽으로도 주문을 못 내고, 사용자에게 중요한 것은 "연속 체결이
+ * 아니다"라는 사실이라 `preAuction`으로 묶는다.
+ */
+export type KrxSessionKind =
+  | 'closed'
+  | 'preAuction'
+  | 'regular'
+  | 'closeAuction'
+  | 'postOffHours'
+  | 'singlePrice';
+
+export function krxSessionKind(minutesOfDay: number): KrxSessionKind {
+  const s = KRX_SESSION_MINUTES;
+  if (minutesOfDay >= s.preAuctionOpen && minutesOfDay < s.open) return 'preAuction';
+  if (minutesOfDay >= s.open && minutesOfDay < s.closeAuctionOpen) return 'regular';
+  if (minutesOfDay >= s.closeAuctionOpen && minutesOfDay <= s.close) return 'closeAuction';
+  if (minutesOfDay >= s.postOffHoursOpen && minutesOfDay < s.singlePriceOpen) return 'postOffHours';
+  if (minutesOfDay >= s.singlePriceOpen && minutesOfDay < s.singlePriceClose) return 'singlePrice';
+  return 'closed';
+}
 
 /** 동시호가 구간 종류. 정규장·장외면 null. */
 export type KrxAuctionWindow = 'pre' | 'close';
@@ -214,9 +252,10 @@ export type KrxAuctionWindow = 'pre' | 'close';
  * 16,000원 차이를 화면이 `정규장 거래 중`이라고만 적었다.
  */
 export function krxAuctionWindow(minutesOfDay: number): KrxAuctionWindow | null {
-  const { preAuctionOpen, open, closeAuctionOpen, close } = KRX_SESSION_MINUTES;
-  if (minutesOfDay >= preAuctionOpen && minutesOfDay < open) return 'pre';
-  if (minutesOfDay >= closeAuctionOpen && minutesOfDay <= close) return 'close';
+  // 판정은 krxSessionKind 한 곳에서만 한다. 두 함수가 각자 경계를 들면 갈라진다.
+  const kind = krxSessionKind(minutesOfDay);
+  if (kind === 'preAuction') return 'pre';
+  if (kind === 'closeAuction') return 'close';
   return null;
 }
 
