@@ -6038,3 +6038,89 @@ span.sample-badge {
   color: var(--faint);
   cursor: default;
 }
+
+/*
+ * 신호 채점 성적.
+ *
+ * 백테스트 판정과 나란히 놓이므로 구분이 필요하다 — 이건 과거를 잰 값이
+ * 아니라 실제로 낸 신호를 센 값이다. 점선으로 감싸 "아직 쌓이는 중"이라는
+ * 성격을 드러낸다(어림값·모르는 상태에 쓰는 것과 같은 규칙).
+ */
+.signal-scores {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px dashed rgba(148, 163, 184, 0.3);
+  border-radius: 6px;
+}
+
+.signal-scores__head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.signal-scores__head strong {
+  font-size: 12px;
+}
+
+.signal-scores__head span,
+.signal-scores__empty,
+.signal-scores__rows em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.signal-scores__error {
+  color: #ff9b9f;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.signal-scores__rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 6px;
+}
+
+.signal-scores__rows > div {
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 5px;
+  background: rgba(9, 13, 20, 0.6);
+}
+
+.signal-scores__rows > div > span {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.signal-scores__rows > div > strong {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-scores__rows > div > strong[data-tone='up'] {
+  color: var(--up);
+}
+
+.signal-scores__rows > div > strong[data-tone='down'] {
+  color: var(--down);
+}
+
+.signal-scores__rows > div > small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+/* 문장 요소는 auto-fit 칸에 눌리지 않게 줄 전체를 쓴다. */
+.signal-scores__rows > em {
+  grid-column: 1 / -1;
+}

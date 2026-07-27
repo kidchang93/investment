@@ -27,6 +27,7 @@ import type {
   NewsItem,
   OrderBook,
   OrderType,
+  SignalScoreSummary,
   Quote,
   TradingOverview,
   WatchItem,
@@ -258,6 +259,21 @@ export async function searchInstruments(query: string): Promise<Instrument[]> {
 export async function fetchInstrumentCandles(id: string): Promise<CandlesResponse> {
   const res = await fetch(`${API_BASE}/api/instruments/${encodeURIComponent(id)}/candles`);
   if (!res.ok) throw new Error(`종목 차트 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * 자동매매 신호 채점 성적.
+ *
+ * 아직 채점된 신호가 없으면 빈 배열이 온다. 화면은 그걸 0%로 채우지 말고
+ * 아직 없다고 적어야 한다 — 빈 성적표와 0점은 다르다.
+ */
+export async function fetchSignalScores(accountId?: string): Promise<SignalScoreSummary[]> {
+  const res = await fetch(`${API_BASE}/api/trading/signal-scores${accountQuery(accountId)}`);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(body.message ?? `채점 성적 조회 실패: ${res.status}`);
+  }
   return res.json();
 }
 

@@ -23,6 +23,7 @@ import {
 } from './db/instruments.js';
 import { createOrderIntent, ensureTradingSchema, getFillByOrderId, getTradingOverview } from './db/trading.js';
 import { ensureAutoTraderSchema, getAutoTraderRuns } from './db/autoTrader.js';
+import { ensureSignalScoreSchema, getSignalScoreSummary } from './db/signalScores.js';
 import {
   claimClientOrderId,
   completeClaimedOrder,
@@ -187,6 +188,7 @@ async function main(): Promise<void> {
   await ensureBrokerOrderSchema();
   await ensureRiskRuleSchema();
   await ensureAutoTraderSchema();
+  await ensureSignalScoreSchema();
   await seedDefaultWatchlist(WATCHLIST);
 
   // ── REST ────────────────────────────────────────────────
@@ -1047,6 +1049,25 @@ async function main(): Promise<void> {
    * 해외는 KIS 재무 API 대상이 아니다. 없는 것을 빈 배열로 주면 "재무가
    * 나쁘다"로 읽히므로 사유와 함께 404로 돌려준다.
    */
+  /*
+   * 신호 채점 누적 성적.
+   *
+   * 백테스트는 과거를 말하고 이 숫자는 실제로 낸 신호가 어땠는지를 말한다.
+   * 아직 채점된 신호가 없으면 빈 배열이 온다 — 화면은 그걸 0%로 채우지 말고
+   * `아직 채점된 신호가 없습니다`로 적어야 한다.
+   */
+  app.get<{ Querystring: { accountId?: string } }>('/api/trading/signal-scores', async (req, reply) => {
+    const account = resolveAccount(req.query.accountId);
+    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+    if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
+    try {
+      return await getSignalScoreSummary(account.id);
+    } catch (err) {
+      req.log.warn({ err, accountId: account.id }, '신호 채점 성적 조회 실패');
+      return reply.code(502).send({ message: '채점 성적을 조회하지 못했습니다.' });
+    }
+  });
+
   app.get<{ Params: { id: string } }>('/api/instruments/:id/financials', async (req, reply) => {
     const instrument = await getInstrument(req.params.id);
     if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });

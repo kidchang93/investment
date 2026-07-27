@@ -216,6 +216,22 @@ export interface FinancialSnapshot {
   totalEquity?: number;
 }
 
+/**
+ * 신호 채점 누적 성적.
+ *
+ * 백테스트는 과거를 말한다. 이 값은 **실제로 낸 신호**가 어땠는지를 말한다.
+ * 왕복 비용을 뺀 뒤에 승패를 센다 — 빼지 않으면 이겼다고 착각한다.
+ */
+export interface SignalScoreSummary {
+  /** 며칠 뒤로 쟀는지 (거래일) */
+  horizonDays: number;
+  count: number;
+  winCount: number;
+  winRate: number;
+  avgNetReturn: number;
+  medianNetReturn: number;
+}
+
 /** 환율 스냅샷 */
 export interface ExchangeRate {
   pair: 'USD/KRW';

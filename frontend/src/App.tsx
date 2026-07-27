@@ -30,6 +30,7 @@ import {
   fetchInstrumentNews,
   fetchInstrumentQuote,
   fetchOrderBook,
+  fetchSignalScores,
   fetchInstrumentQuotes,
   fetchTerminalInstruments,
   fetchUsdKrwExchangeRate,
@@ -70,6 +71,7 @@ import type {
   OrderTimeInForce,
   OrderBook,
   OrderType,
+  SignalScoreSummary,
   PriceSign,
   Quote,
   Trade,
@@ -2133,6 +2135,12 @@ export function App(): JSX.Element {
   const [autoTrader, setAutoTrader] = useState<AutoTraderState | null>(null);
   /** 상태를 못 받아온 사유. 게이트(liveOrderGateError)와 같은 방식이다. */
   const [autoTraderError, setAutoTraderError] = useState<string | null>(null);
+  /*
+   * 신호 채점 성적. 백테스트는 과거를 말하고 이 값은 실제로 낸 신호가 어땠는지를
+   * 말한다. 아직 채점된 게 없으면 빈 배열이고, 그걸 0%로 채우지 않는다.
+   */
+  const [signalScores, setSignalScores] = useState<SignalScoreSummary[] | null>(null);
+  const [signalScoresError, setSignalScoresError] = useState<string | null>(null);
   const [autoStrategies, setAutoStrategies] = useState<
     Array<{ key: string; label: string; backtestNote?: string; verdict?: 'no_edge' | 'unproven' }>
   >([]);
@@ -2217,6 +2225,24 @@ export function App(): JSX.Element {
    * 예약주문·주문기록이 이미 쓰는 방식대로, 받아 둔 값은 그대로 두고
    * 모른다는 사실을 따로 들고 있는다.
    */
+  useEffect(() => {
+    if (activePage !== 'portfolio' || !kisAccountId) return;
+    let disposed = false;
+    fetchSignalScores(kisAccountId)
+      .then((rows) => {
+        if (disposed) return;
+        setSignalScores(rows);
+        setSignalScoresError(null);
+      })
+      // 못 받은 것을 빈 성적표로 바꾸지 않는다 — 없는 것과 못 받은 것은 다르다.
+      .catch((e) => {
+        if (!disposed) setSignalScoresError(toErrorMessage(e));
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [activePage, kisAccountId]);
+
   const refreshAutoTrader = useCallback(() => {
     if (!kisAccountId) return;
     fetchAutoTraderState(kisAccountId)
@@ -6428,6 +6454,44 @@ export function App(): JSX.Element {
                   카드에 있어서, 여기서 알려주지 않으면 왜 아무것도 안 사는지
                   알아내기 어렵다.
                 */}
+                {/*
+                  신호 채점 성적. 백테스트는 과거를 말하고 이 값은 실제로 낸
+                  신호가 어땠는지를 말한다. 아직 채점된 게 없으면 0%로 채우지
+                  않고 없다고 적는다 — 빈 성적표와 0점은 다르다.
+                */}
+                <div className="signal-scores">
+                  <div className="signal-scores__head">
+                    <strong>신호 채점</strong>
+                    <span>낸 신호를 며칠 뒤 값과 견줘 센 성적 · 왕복 비용을 뺀 값</span>
+                  </div>
+                  {signalScoresError ? (
+                    <em className="signal-scores__error">채점 성적을 불러오지 못했습니다 — {signalScoresError}</em>
+                  ) : signalScores === null ? (
+                    <em className="signal-scores__empty">불러오는 중입니다</em>
+                  ) : signalScores.length === 0 ? (
+                    <em className="signal-scores__empty">
+                      아직 채점된 신호가 없습니다 · 자동매매가 신호를 낸 뒤 거래일이 지나야 채점됩니다
+                    </em>
+                  ) : (
+                    <div className="signal-scores__rows">
+                      {signalScores.map((row) => (
+                        <div key={row.horizonDays}>
+                          <span>{row.horizonDays}거래일 후</span>
+                          <strong data-tone={row.medianNetReturn > 0 ? 'up' : row.medianNetReturn < 0 ? 'down' : 'flat'}>
+                            {row.medianNetReturn > 0 ? '+' : ''}{row.medianNetReturn.toFixed(2)}%
+                          </strong>
+                          <small>
+                            {row.count}건 · 승률 {(row.winRate * 100).toFixed(0)}% · 평균{' '}
+                            {row.avgNetReturn > 0 ? '+' : ''}{row.avgNetReturn.toFixed(2)}%
+                          </small>
+                        </div>
+                      ))}
+                      {/* 평균과 중앙값이 벌어지면 몇 종목이 성적을 끌고 있다는 뜻이다. */}
+                      <em>가운데 큰 숫자가 중앙값입니다. 평균과 벌어지면 몇 건이 성적을 끌고 있다는 뜻입니다.</em>
+                    </div>
+                  )}
+                </div>
+
                 {autoTrader?.status !== 'running' && autoTraderBlockers.length > 0 && (
                   <div className="auto-trader__blockers">
                     <strong>지금 설정으로는 주문이 나가지 않습니다</strong>
