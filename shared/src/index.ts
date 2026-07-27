@@ -124,6 +124,65 @@ export interface Quote {
   accVolume: number;
 }
 
+/** 호가 한 단계. 같은 층의 팔자(ask)와 사자(bid)를 마주 놓는다. */
+export interface OrderBookLevel {
+  /** 1이 최우선호가. 국내주식은 10단계까지 온다 */
+  step: number;
+  askPrice: number;
+  askQuantity: number;
+  bidPrice: number;
+  bidQuantity: number;
+}
+
+/**
+ * 예상 체결.
+ *
+ * 동시호가 구간에는 체결이 일어나지 않고 "이 값에 체결될 것 같다"는 값만 온다.
+ *
+ * 주의: 정규장이 시작돼도 KIS는 이 값을 **0으로 지우지 않고 개장 동시호가
+ * 결과를 그대로 들고 있는다**(2026-07-27 09:00 실측 — 09:00:10에 257,000이던
+ * 값이 09:00:50에도 257,000). 그래서 값의 유무로 동시호가인지 판단할 수 없다.
+ * `OrderBook.sessionPhase`가 `auction`일 때만 채워 보낸다.
+ */
+export interface ExpectedConclusion {
+  price: number;
+  change: number;
+  changeRate: number;
+  sign: PriceSign;
+  /** 지금까지 쌓인 예상 거래량 */
+  volume: number;
+}
+
+/**
+ * 장운영 상태. KIS 장운영 구분 코드를 **실측으로 확인한 값만** 옮긴다.
+ *
+ * - `auction` — 동시호가. 체결이 아니라 예상 체결가만 나온다
+ * - `regular` — 정규장
+ * - `unknown` — 확인하지 못한 코드. 이때는 예상 체결을 보내지 않는다
+ *
+ * 코드표 전체를 확보하지 못해서 모르는 코드를 아는 척하지 않는다. 모르면
+ * 예상 체결을 감추는 쪽이 낡은 값을 현재처럼 보여주는 것보다 낫다.
+ */
+export type MarketSessionPhase = 'auction' | 'regular' | 'unknown';
+
+/** 호가창 한 장. 예상 체결이 있으면 함께 온다. */
+export interface OrderBook {
+  code: string;
+  /** 받아온 시각 (ms). 호가는 금방 낡으므로 화면이 언제 값인지 말해야 한다 */
+  fetchedAt: number;
+  levels: OrderBookLevel[];
+  totalAskQuantity: number;
+  totalBidQuantity: number;
+  /** 시간외 총 잔량 */
+  afterHoursAskQuantity: number;
+  afterHoursBidQuantity: number;
+  sessionPhase: MarketSessionPhase;
+  /** 동시호가 예상 체결. `sessionPhase`가 auction일 때만 채운다 */
+  expected: ExpectedConclusion | null;
+  /** 변동성완화장치(VI) 발동 중인지 */
+  volatilityInterrupted: boolean;
+}
+
 /** 환율 스냅샷 */
 export interface ExchangeRate {
   pair: 'USD/KRW';

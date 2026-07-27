@@ -25,6 +25,7 @@ import type {
   Instrument,
   InstrumentCategory,
   NewsItem,
+  OrderBook,
   OrderType,
   Quote,
   TradingOverview,
@@ -263,6 +264,21 @@ export async function fetchInstrumentCandles(id: string): Promise<CandlesRespons
 export async function fetchInstrumentQuote(id: string): Promise<Quote> {
   const res = await fetch(`${API_BASE}/api/instruments/${encodeURIComponent(id)}/quote`);
   if (!res.ok) throw new Error(`종목 현재가 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * 호가 10단계와 동시호가 예상 체결.
+ *
+ * 국내 주식·ETF만 대상이라 그 밖의 종목은 서버가 404에 사유를 담아 준다.
+ * "없다"와 "이 종목은 대상이 아니다"를 구별해야 하므로 상태 코드를 함께 던진다.
+ */
+export async function fetchOrderBook(id: string): Promise<OrderBook> {
+  const res = await fetch(`${API_BASE}/api/instruments/${encodeURIComponent(id)}/order-book`);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(body.message ?? `호가 조회 실패: ${res.status}`);
+  }
   return res.json();
 }
 

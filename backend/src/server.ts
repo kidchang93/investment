@@ -43,6 +43,7 @@ import {
   getInstrumentIntradayCandles,
   getInstrumentNews,
   getInstrumentQuote,
+  getOrderBook,
   amendKisDomesticOrder,
   getKisDomesticAccountSnapshot,
   getKisDomesticAmendableOrders,
@@ -1033,6 +1034,27 @@ async function main(): Promise<void> {
     const instrument = await getInstrument(req.params.id);
     if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
     return getInstrumentQuote(instrument);
+  });
+
+  /*
+   * 호가와 예상 체결. 국내 현금 종목만 해당한다 — 야간 환산가·원자재·선물은
+   * KRX 호가 대상이 아니라 404로 돌려주고, 화면이 "없음"과 "안 되는 종목"을
+   * 구별할 수 있게 사유를 함께 준다.
+   */
+  app.get<{ Params: { id: string } }>('/api/instruments/:id/order-book', async (req, reply) => {
+    const instrument = await getInstrument(req.params.id);
+    if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
+    if (instrument.country !== 'KR' || !ORDERABLE_DOMESTIC_ASSET_TYPES.has(instrument.assetType)) {
+      return reply.code(404).send({ message: '국내 주식·ETF만 호가를 조회할 수 있습니다.' });
+    }
+    try {
+      // 다른 조회와 같이 화면이 쓰는 종목 id로 맞춘다. KIS 종목코드가 아니다.
+      const book = await getOrderBook(instrument.providerSymbol);
+      return { ...book, code: instrument.id };
+    } catch (err) {
+      req.log.warn({ err, instrumentId: instrument.id }, '호가 조회 실패');
+      return reply.code(502).send({ message: '호가를 조회하지 못했습니다.' });
+    }
   });
 
   await app.listen({ port: config.port, host: '0.0.0.0' });

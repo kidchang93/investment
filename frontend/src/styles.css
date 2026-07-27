@@ -2314,6 +2314,159 @@ span.sample-badge {
   font-weight: 700;
 }
 
+/*
+ * 호가창.
+ *
+ * 매도(팔자)가 위, 매수(사자)가 아래. 국내 증권사 호가창의 배치라 뒤집으면
+ * 익숙한 사람이 반대로 읽는다. 잔량 막대는 이 화면 안에서 가장 큰 잔량을
+ * 100%로 잡은 실제 비율이다.
+ */
+.order-book {
+  display: grid;
+  gap: 6px;
+  margin: 8px 12px 0;
+  padding: 8px 9px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.32);
+}
+
+.order-book__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.order-book__header strong {
+  font-size: 12px;
+}
+
+.order-book__header span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.order-book__list {
+  display: grid;
+  gap: 1px;
+}
+
+.order-book__row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+/* 막대는 글자 뒤에 깔린다. 잔량이 많은 쪽이 길다. */
+.order-book__bar {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  bottom: 1px;
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.order-book__row[data-side='ask'] .order-book__bar {
+  background: rgba(59, 130, 246, 0.16);
+}
+
+.order-book__row[data-side='bid'] .order-book__bar {
+  background: rgba(229, 72, 77, 0.16);
+}
+
+.order-book__row em,
+.order-book__row i {
+  position: relative;
+  font-style: normal;
+}
+
+.order-book__row em {
+  font-weight: 700;
+}
+
+.order-book__row[data-side='ask'] em {
+  color: #7fb0ff;
+}
+
+.order-book__row[data-side='bid'] em {
+  color: #ff9b9f;
+}
+
+.order-book__row i {
+  color: var(--muted);
+}
+
+.order-book__row:hover {
+  outline: 1px solid rgba(245, 196, 81, 0.4);
+}
+
+/*
+ * 동시호가 예상 체결. 아직 체결된 값이 아니라는 걸 테두리로도 말한다 —
+ * 실제 체결가와 같은 모양이면 확정된 값으로 읽힌다.
+ */
+.order-book__expected {
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border: 1px dashed rgba(245, 196, 81, 0.45);
+  border-radius: 5px;
+  background: rgba(245, 196, 81, 0.06);
+}
+
+.order-book__expected strong {
+  font-size: 12px;
+}
+
+.order-book__expected span {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.order-book__expected span[data-tone='up'] {
+  color: var(--up);
+}
+
+.order-book__expected span[data-tone='down'] {
+  color: var(--down);
+}
+
+.order-book__expected small,
+.order-book__totals,
+.order-book__empty {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.order-book__totals {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.order-book__vi,
+.order-book__error {
+  padding: 6px 8px;
+  border: 1px solid rgba(229, 72, 77, 0.35);
+  border-radius: 5px;
+  color: #ff9b9f;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .order-ticket__header > div:first-child {
   display: flex;
   align-items: baseline;

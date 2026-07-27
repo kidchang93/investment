@@ -29,6 +29,7 @@ import {
   fetchInstrumentIntradayCandles,
   fetchInstrumentNews,
   fetchInstrumentQuote,
+  fetchOrderBook,
   fetchInstrumentQuotes,
   fetchTerminalInstruments,
   fetchUsdKrwExchangeRate,
@@ -67,6 +68,7 @@ import type {
   NewsItem,
   OrderSide,
   OrderTimeInForce,
+  OrderBook,
   OrderType,
   PriceSign,
   Quote,
@@ -775,6 +777,114 @@ function CollapsibleRows({
         {expanded ? '접기' : (moreLabel ?? ((hidden: number) => `${hidden}건 더 보기`))(rows.length - limit)}
       </button>
     </>
+  );
+}
+
+/**
+ * 호가창.
+ *
+ * 얼마에 낼지 정하는 자리라 주문 폼 바로 위에 둔다. 값을 누르면 지정가로
+ * 채워 준다 — 손으로 옮겨 적으면 자릿수를 틀린다.
+ *
+ * 매도(팔자)를 위, 매수(사자)를 아래에 둔다. 국내 증권사 호가창의 배치라
+ * 이 순서를 바꾸면 익숙한 사람이 반대로 읽는다.
+ */
+function OrderBookPanel({
+  book,
+  error,
+  nowMs,
+  onPickPrice,
+  visible,
+}: {
+  book: OrderBook | null;
+  error: string | null;
+  nowMs: number;
+  onPickPrice: (price: number) => void;
+  visible: boolean;
+}): JSX.Element | null {
+  if (!visible) return null;
+
+  const asks = book ? [...book.levels].filter((l) => l.askPrice > 0).sort((a, b) => b.step - a.step) : [];
+  const bids = book ? book.levels.filter((l) => l.bidPrice > 0) : [];
+  // 막대 길이는 실제 비율이라야 한다. 이 호가창 안에서 가장 큰 잔량을 100%로 잡는다.
+  const maxQuantity = Math.max(
+    1,
+    ...asks.map((l) => l.askQuantity),
+    ...bids.map((l) => l.bidQuantity),
+  );
+
+  const row = (
+    key: string,
+    side: 'ask' | 'bid',
+    price: number,
+    quantity: number,
+  ): JSX.Element => (
+    <button
+      aria-label={`${formatNumber(price)}원 ${side === 'ask' ? '매도' : '매수'} 잔량 ${formatNumber(quantity)}주 · 지정가로 넣기`}
+      className="order-book__row"
+      data-side={side}
+      key={key}
+      onClick={() => onPickPrice(price)}
+      type="button"
+    >
+      <span className="order-book__bar" style={{ width: `${(quantity / maxQuantity) * 100}%` }} />
+      <em>{formatNumber(price)}</em>
+      <i>{formatNumber(quantity)}</i>
+    </button>
+  );
+
+  return (
+    <section className="order-book" aria-label="호가">
+      <div className="order-book__header">
+        <strong>호가</strong>
+        {book ? (
+          <span>
+            {formatClock(book.fetchedAt)} 기준 · {Math.max(0, Math.round((nowMs - book.fetchedAt) / 1000))}초 전
+          </span>
+        ) : (
+          <span>{error ? '조회 실패' : '조회 중'}</span>
+        )}
+      </div>
+
+      {/*
+        동시호가에는 체결이 없고 예상 체결가만 나온다. 정규장이 시작돼도 KIS는
+        이 값을 지우지 않고 개장 결과를 들고 있어서, 서버가 장운영 구분으로
+        걸러 auction일 때만 채워 보낸다.
+      */}
+      {book?.expected && (
+        <p className="order-book__expected">
+          <strong>동시호가 예상 체결 {formatNumber(book.expected.price)}원</strong>
+          <span data-tone={moveTone(book.expected.sign)}>
+            {formatSignedPrice(book.expected.change)} ({formatRate(book.expected.changeRate)})
+          </span>
+          <small>예상 거래량 {formatNumber(book.expected.volume)}주 · 아직 체결된 값이 아닙니다</small>
+        </p>
+      )}
+
+      {book?.volatilityInterrupted && (
+        <p className="order-book__vi">변동성완화장치(VI)가 걸려 있습니다. 체결이 잠시 멈춥니다.</p>
+      )}
+
+      {error && <p className="order-book__error">호가를 갱신하지 못했습니다 — {error}</p>}
+
+      {book && asks.length + bids.length === 0 && (
+        <p className="order-book__empty">호가에 남은 물량이 없습니다</p>
+      )}
+
+      {book && asks.length + bids.length > 0 && (
+        <div className="order-book__list">
+          {asks.map((l) => row(`ask-${l.step}`, 'ask', l.askPrice, l.askQuantity))}
+          {bids.map((l) => row(`bid-${l.step}`, 'bid', l.bidPrice, l.bidQuantity))}
+        </div>
+      )}
+
+      {book && (
+        <div className="order-book__totals">
+          <span>총 매도 잔량 {formatNumber(book.totalAskQuantity)}</span>
+          <span>총 매수 잔량 {formatNumber(book.totalBidQuantity)}</span>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1809,6 +1919,16 @@ export function App(): JSX.Element {
   const [isKisSellabilityLoading, setIsKisSellabilityLoading] = useState(false);
   const [kisOpenOrders, setKisOpenOrders] = useState<BrokerAmendableOrder[]>([]);
   const [isKisOpenOrdersRefreshing, setIsKisOpenOrdersRefreshing] = useState(false);
+  /*
+   * 호가 10단계와 동시호가 예상 체결.
+   *
+   * 얼마에 낼지 정하는 자리에 잔량이 없으면 값을 짐작으로 넣게 된다. 현재가만
+   * 보고 지정가를 넣으면 그 값에 물량이 있는지 알 수 없다.
+   *
+   * 조회 실패를 빈 호가로 바꾸지 않는다 — 사유를 따로 들고 있는다.
+   */
+  const [orderBook, setOrderBook] = useState<OrderBook | null>(null);
+  const [orderBookError, setOrderBookError] = useState<string | null>(null);
   const [kisReservedOrders, setKisReservedOrders] = useState<BrokerReservedOrder[]>([]);
   /*
    * 언제 받아온 값인지. 잔고 카드만 `갱신 07:27:39`를 적고 나머지는 아무것도
@@ -2218,6 +2338,42 @@ export function App(): JSX.Element {
       .catch((e) => setError(toErrorMessage(e)))
       .finally(() => setIsKisOpenOrdersRefreshing(false));
   }, [kisAccountId]);
+
+  /*
+   * 호가는 주문 패널이 열려 있는 동안, 보고 있는 종목 하나만 받는다.
+   * 종목당 KIS 호출이 1회 더 늘어나므로 관심목록 전체에는 붙이지 않는다.
+   * 3초 간격은 호가가 움직이는 속도와 호출 제한 사이에서 잡은 값이다.
+   */
+  const ORDER_BOOK_REFRESH_MS = 3_000;
+  useEffect(() => {
+    const instrument = selectedInstrument;
+    if (!isOrderPanelOpen || !instrument || !isOrderableDomesticInstrument(instrument)) {
+      setOrderBook(null);
+      setOrderBookError(null);
+      return undefined;
+    }
+    let disposed = false;
+    const load = (): void => {
+      fetchOrderBook(instrument.id)
+        .then((book) => {
+          if (disposed) return;
+          setOrderBook(book);
+          setOrderBookError(null);
+        })
+        .catch((e) => {
+          if (disposed) return;
+          // 받아 둔 호가는 그대로 두고 사유만 띄운다. 빈 호가로 바꾸면 물량이
+          // 없는 것처럼 보인다.
+          setOrderBookError(toErrorMessage(e));
+        });
+    };
+    load();
+    const timer = window.setInterval(load, ORDER_BOOK_REFRESH_MS);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [isOrderPanelOpen, selectedInstrument]);
 
   // 미체결 주문은 매매 화면에서 계좌를 바꿀 때마다 다시 받는다.
   useEffect(() => {
@@ -6430,6 +6586,16 @@ export function App(): JSX.Element {
             {!isOrderableDomesticInstrument(selectedInstrument) && (
               <UnorderableInstrumentNotice action="주문" where="위 관심·탐색 탭" />
             )}
+            <OrderBookPanel
+              book={orderBook}
+              error={orderBookError}
+              nowMs={nowMs}
+              onPickPrice={(price) => {
+                setOrderType('limit');
+                setOrderLimitPrice(String(price));
+              }}
+              visible={isOrderableDomesticInstrument(selectedInstrument)}
+            />
             <div className="order-ticket__body">
               <div className="order-ticket__controls">
                 <div className="order-ticket__segments" role="tablist" aria-label="매수 매도">
