@@ -14,7 +14,8 @@
 
 import { getCategoryInstruments } from '../db/instruments.js';
 import { getInstrumentQuote } from '../kis/rest.js';
-import type { Instrument } from '@invest/shared';
+import { screenQuote, sessionElapsedRatio } from '../trading/universe.js';
+import type { Instrument, Quote } from '@invest/shared';
 
 const SOURCE_CATEGORIES = ['kr-all', 'kr-etf'];
 /** KIS 호출 제한(EGW00201)을 태우지 않도록 조회 간격을 둔다. */
@@ -49,7 +50,7 @@ async function main(): Promise<void> {
 
   console.log(`후보 풀 ${pool.length}종목 · 현금 ${cash.toLocaleString('ko-KR')}원 · ${lookups}종목 시세 조회\n`);
 
-  const rows: Array<{ name: string; symbol: string; price: number; rate: number; volume: number }> = [];
+  const rows: Array<{ name: string; symbol: string; price: number; rate: number; volume: number; quote: Quote }> = [];
   for (const instrument of pool.slice(0, lookups)) {
     try {
       const quote = await getInstrumentQuote(instrument);
@@ -60,6 +61,7 @@ async function main(): Promise<void> {
           price: quote.price,
           rate: quote.changeRate,
           volume: quote.accVolume,
+          quote,
         });
       }
     } catch {
@@ -71,7 +73,35 @@ async function main(): Promise<void> {
   const affordable = rows.filter((row) => row.price <= cash).sort((a, b) => b.rate - a.rate);
   const tooExpensive = rows.length - affordable.length;
 
-  console.log(`조회 성공 ${rows.length} · 살 수 있음 ${affordable.length} · 1주가 예수금보다 비쌈 ${tooExpensive}\n`);
+  /*
+   * 자동매매가 실제로 쓰는 필터를 그대로 태워 본다. 살 수 있다고 다 후보가
+   * 아니라는 것을 값으로 보여 준다 — 물량이 있어야 그 값에 체결되고, 하루
+   * 변동폭이 왕복 비용보다 넉넉해야 방향을 맞혔을 때 남는다.
+   */
+  const elapsed = sessionElapsedRatio();
+  const verdicts = affordable.map((row) => ({ row, rejected: screenQuote(row.quote, elapsed) }));
+  const passed = verdicts.filter((v) => v.rejected === null);
+  const illiquid = verdicts.filter((v) => v.rejected === 'illiquid').length;
+  const costHeavy = verdicts.filter((v) => v.rejected === 'costHeavy').length;
+
+  console.log(`조회 성공 ${rows.length} · 살 수 있음 ${affordable.length} · 1주가 예수금보다 비쌈 ${tooExpensive}`);
+  console.log(
+    `자동매매 필터 통과 ${passed.length} · 거래대금 부족 ${illiquid} · 왕복 비용이 하루 변동폭의 절반 초과 ${costHeavy}`
+    + ` (장 경과 ${(elapsed * 100).toFixed(0)}%)\n`,
+  );
+  if (passed.length > 0) {
+    console.log('필터를 통과한 종목');
+    for (const { row } of passed) {
+      console.log(
+        `  ${row.symbol} ${row.name.slice(0, 18).padEnd(20)}`
+        + ` ${row.price.toLocaleString('ko-KR').padStart(9)}원`
+        + ` 거래대금 ${Math.round((row.price * row.volume) / 100_000_000).toLocaleString('ko-KR').padStart(6)}억`
+        + ` 변동폭 ${(((row.quote.high - row.quote.low) / row.price) * 100).toFixed(2)}%`,
+      );
+    }
+    console.log();
+  }
+
   console.log('살 수 있는 종목 (등락률 순)');
   console.log('종목명'.padEnd(22), '코드'.padEnd(8), '현재가'.padStart(10), '등락률'.padStart(9), '거래량'.padStart(12));
   for (const row of affordable) {
