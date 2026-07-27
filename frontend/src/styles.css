@@ -2093,6 +2093,38 @@ span.sample-badge {
   font-size: 12px;
 }
 
+/*
+  동시호가 알림. 큰 글씨 바로 아래에 붙어야 "이 숫자"가 멈춘 값이라는 게
+  읽힌다. 장 상태 배지(market-strip)는 두 줄 아래라 큰 글씨를 볼 때 눈에
+  안 들어온다 — 15:26에 화면이 `정규장 거래 중`이라고 적고 있었는데도
+  16,000원 차이를 아무도 눈치채지 못한 자리다.
+
+  테두리 색은 장 상태 배지의 `pre`(호박색)와 맞춘다. 같은 사실을 두 자리에서
+  다른 색으로 말하면 서로 다른 일처럼 보인다.
+*/
+.quote-header__auction {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  align-self: flex-end;
+  max-width: 100%;
+  margin-top: 2px;
+  padding: 3px 8px;
+  border: 1px solid rgba(245, 196, 81, 0.36);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 10px;
+  line-height: 1.3;
+  text-align: right;
+}
+
+.quote-header__auction small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
 .quote-header__price-context {
   display: flex;
   justify-content: flex-end;

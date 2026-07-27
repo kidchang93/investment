@@ -172,6 +172,54 @@ export interface ExpectedConclusion {
  */
 export type MarketSessionPhase = 'auction' | 'regular' | 'unknown';
 
+/**
+ * KRX 정규장 시각. **분 단위, Asia/Seoul 기준.**
+ *
+ * 같은 사실을 프론트(장 상태 표시)와 백엔드(유동성 문턱의 경과 비율)가 함께
+ * 쓴다. 예전에는 각자 `9 * 60`을 들고 있어서 한쪽만 고치면 갈라졌다.
+ *
+ * 리스크 룰의 `sessionStart`/`sessionEnd`는 여기에 맞추지 않는다 — 그건
+ * 거래소 시각이 아니라 **사용자가 정하는 매매 허용 시간**이라 일부러 따로 둔다.
+ */
+export const KRX_SESSION_MINUTES = {
+  /**
+   * 장전 단일가(동시호가) 시작. **KRX 규정에서 가져온 값이고 실측이 아니다.**
+   * 2026-07-27 관측은 08:53부터라 그 앞은 보지 못했다.
+   */
+  preAuctionOpen: 8 * 60 + 30,
+  open: 9 * 60,
+  /**
+   * 마감 단일가 시작. **실측이다.** 같은 날 15:20:03에 KIS 장운영 구분이
+   * 112(정규장) → 121(마감 동시호가)로 바뀌었다.
+   */
+  closeAuctionOpen: 15 * 60 + 20,
+  /** 마감. 15:30:45에 121 → 112로 돌아간 것을 봤다. */
+  close: 15 * 60 + 30,
+} as const;
+
+/** 동시호가 구간 종류. 정규장·장외면 null. */
+export type KrxAuctionWindow = 'pre' | 'close';
+
+/**
+ * 지금이 동시호가 구간인지 **시계로** 판단한다.
+ *
+ * KIS 장운영 구분 코드가 더 정확하지만 호가를 받아야 알 수 있고, 호가는 주문
+ * 패널이 열려 있을 때만 받는다(종목당 호출 1회). 장 상태 한 줄을 적자고
+ * 관심목록 전체에 호출을 붙이면 `EGW00201`에 걸린다. 그래서 이 판정은 시계로
+ * 하고, 호가를 이미 받아 둔 자리에서는 그 값을 쓴다.
+ *
+ * **왜 이걸 봐야 하는가**: 동시호가에는 연속 체결이 없어 현재가가 굳는다.
+ * 2026-07-27 15:26:18에 `000660` 큰 글씨가 1,820,000원(+3.47%, 15:19:59에
+ * 멈춤)인 동안 동시호가는 1,836,000원(+4.38%)에 지시되고 있었다 —
+ * 16,000원 차이를 화면이 `정규장 거래 중`이라고만 적었다.
+ */
+export function krxAuctionWindow(minutesOfDay: number): KrxAuctionWindow | null {
+  const { preAuctionOpen, open, closeAuctionOpen, close } = KRX_SESSION_MINUTES;
+  if (minutesOfDay >= preAuctionOpen && minutesOfDay < open) return 'pre';
+  if (minutesOfDay >= closeAuctionOpen && minutesOfDay <= close) return 'close';
+  return null;
+}
+
 /** 호가창 한 장. 예상 체결이 있으면 함께 온다. */
 export interface OrderBook {
   code: string;

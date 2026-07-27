@@ -79,7 +79,12 @@ import type {
   Trade,
   WatchlistGroup,
 } from '@invest/shared';
-import { detectCumulativeReporting, financialPeriodWindow } from '@invest/shared';
+import {
+  detectCumulativeReporting,
+  financialPeriodWindow,
+  KRX_SESSION_MINUTES,
+  krxAuctionWindow,
+} from '@invest/shared';
 
 type RangeKey = '1M' | '3M' | '6M' | '1Y' | 'ALL';
 type TimeframeKey = '1' | '5' | '15' | '1D';
@@ -137,6 +142,11 @@ interface MarketSession {
   detail: string;
   hours: string;
   localTime: string;
+  /**
+   * 동시호가 구간인가. 이때는 큰 글씨 가격이 **마지막 체결가에 멈춰 있다.**
+   * 화면이 그 사실을 말해야 한다.
+   */
+  isAuction?: boolean;
 }
 
 interface MoveSummary {
@@ -1470,7 +1480,7 @@ function formatDuration(ms: number): string {
  * 12:04에도 그렇게 떴다 — 같은 순간 종목 화면은 `정규장 거래 중`이었다.
  * 한 화면이 다른 화면과 다른 말을 하면 어느 쪽을 믿을지 알 수 없다.
  */
-const KRX_SESSION = { open: 9 * 60, close: 15 * 60 + 30, hours: '09:00-15:30' } as const;
+const KRX_SESSION = { ...KRX_SESSION_MINUTES, hours: '09:00-15:30' } as const;
 
 const KO_WEEKDAY: Record<string, string> = {
   Mon: '월', Tue: '화', Wed: '수', Thu: '목', Fri: '금', Sat: '토', Sun: '일',
@@ -1832,6 +1842,34 @@ function getMarketSession(instrument: Instrument | null): MarketSession {
   const localTime = `${parts.label} ${instrument.timezone}`;
 
   if (weekdayClosed) return { tone: 'closed', label: '휴장', detail: '주말', hours: session.hours, localTime };
+
+  /*
+   * 국내는 동시호가 구간을 따로 적는다.
+   *
+   * 이 분기가 없던 시절에는 15:20~15:30에 `정규장 · 거래 중`이라고 적혀 있었다.
+   * 그 구간에는 연속 체결이 없어 큰 글씨 가격이 15:19:59에 멈춰 있는데도
+   * 거래 중이라고 말한 것이다 — 2026-07-27 15:26:18에 000660이 1,820,000원
+   * (+3.47%)으로 굳어 있는 동안 동시호가는 1,836,000원(+4.38%)에 지시되고
+   * 있었다. 장전 08:30~09:00도 같은 이유로 `장외 · 개장 전`이 아니다.
+   *
+   * 예상 체결가까지 여기서 보여 주려면 호가를 받아야 하는데(종목당 호출 1회)
+   * 그건 주문 패널이 열려 있을 때만 받는다. 값이 멈춰 있다는 사실만이라도
+   * 먼저 말한다 — 낡은 값을 현재처럼 보여주는 것보다 낫다.
+   */
+  if (instrument.country === 'KR') {
+    const auction = krxAuctionWindow(now);
+    if (auction) {
+      return {
+        tone: 'pre',
+        label: auction === 'pre' ? '장전 동시호가' : '마감 동시호가',
+        detail: '체결 없이 주문만 모입니다',
+        hours: session.hours,
+        localTime,
+        isAuction: true,
+      };
+    }
+  }
+
   if (session.pre !== undefined && now >= session.pre && now < session.open) {
     return { tone: 'pre', label: '프리마켓', detail: '정규장 전', hours: session.hours, localTime };
   }
@@ -5817,6 +5855,17 @@ export function App(): JSX.Element {
               {snapshot && (
                 <span>
                   {formatSignedCurrencyPrice(snapshot.change, selectedCurrency)} ({formatRate(snapshot.changeRate)})
+                </span>
+              )}
+              {/*
+                동시호가에는 연속 체결이 없어 이 숫자가 멈춘다. 큰 글씨는
+                그대로 두되(마지막 체결가인 것은 맞다) 멈췄다는 것을 옆에
+                적는다. 예상 체결가는 호가창(주문 탭)에서 볼 수 있다.
+              */}
+              {snapshot && marketSession.isAuction && (
+                <span className="quote-header__auction">
+                  {marketSession.label} · 이 값은 마지막 체결가에 멈춰 있습니다
+                  <small>예상 체결가는 주문 탭 호가창에서 봅니다</small>
                 </span>
               )}
               {snapshot && (

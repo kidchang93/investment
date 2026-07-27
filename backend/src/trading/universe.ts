@@ -14,6 +14,7 @@
  */
 
 import type { Instrument, Quote } from '@invest/shared';
+import { KRX_SESSION_MINUTES } from '@invest/shared';
 
 import { getKisAccount } from '../config.js';
 import { getCategoryInstruments } from '../db/instruments.js';
@@ -61,9 +62,13 @@ const MAX_COST_SHARE_OF_RANGE = 0.5;
 const ROUND_TRIP_COST_RATE =
   DEFAULT_COSTS.commissionRate * 2 + DEFAULT_COSTS.sellTaxRate + DEFAULT_COSTS.slippageRate * 2;
 
-/** 정규장 09:00-15:30을 분으로. 장 초반에는 거래대금이 아직 안 쌓인다. */
-const SESSION_OPEN_MINUTES = 9 * 60;
-const SESSION_CLOSE_MINUTES = 15 * 60 + 30;
+/*
+ * 정규장 09:00-15:30을 분으로. 장 초반에는 거래대금이 아직 안 쌓인다.
+ * 예전에는 여기서 `9 * 60`을 따로 들고 있어 프론트의 장 상태 표시와 갈라질 수
+ * 있었다. 같은 사실이니 shared 한 곳에서 가져온다.
+ */
+const SESSION_OPEN_MINUTES = KRX_SESSION_MINUTES.open;
+const SESSION_CLOSE_MINUTES = KRX_SESSION_MINUTES.close;
 
 /**
  * 지금까지 지난 장 시간의 비율 (0~1).
