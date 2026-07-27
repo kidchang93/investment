@@ -3437,6 +3437,36 @@ span.sample-badge {
   line-height: 1.25;
 }
 
+/*
+ * 보유 종목의 평가손익. 같은 <em>이라도 상태 배지가 아니라 금액이라
+ * 알약 테두리를 벗기고 부호·색으로 읽게 한다. 옆의 작은 글씨는 수익률.
+ */
+.portfolio-table__row em.portfolio-table__pnl {
+  justify-self: stretch;
+  padding: 0;
+  border: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.portfolio-table__row em.portfolio-table__pnl[data-tone='up'] {
+  color: var(--up);
+}
+
+.portfolio-table__row em.portfolio-table__pnl[data-tone='down'] {
+  color: var(--down);
+}
+
+.portfolio-table__row em.portfolio-table__pnl small,
+.portfolio-table__row strong small {
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
 .portfolio-table__row em[data-status='filled'],
 .portfolio-table__row em[data-status='accepted'] {
   border-color: rgba(34, 197, 94, 0.28);

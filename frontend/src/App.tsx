@@ -6013,15 +6013,39 @@ export function App(): JSX.Element {
                         <span>현재가</span>
                         <span>평가손익</span>
                       </div>
-                      <CollapsibleRows rows={kisAccountSnapshot.positions.map((position) => (
-                        <div className="portfolio-table__row" key={position.symbol}>
-                          <strong>{position.symbol}</strong>
-                          <span>{formatNumber(position.quantity)}</span>
-                          <span>{formatMoney(position.averagePrice, position.currency)}</span>
-                          <span>{formatMoney(position.currentPrice, position.currency)}</span>
-                          <span>{formatMoney(position.unrealizedPnl, position.currency)}</span>
-                        </div>
-                      ))} />
+                      {/*
+                        보유 줄이 종목코드만 보여 주고 있었다 — `005930`. 이름은
+                        응답에 이미 오는데(BrokerPosition.name) 화면이 안 읽었다.
+                        평가손익도 부호·색·비율 없이 `3,000원`이라 벌었는지
+                        잃었는지 한 번에 안 보였다. 비율도 응답에 있다.
+                      */}
+                      <CollapsibleRows rows={kisAccountSnapshot.positions.map((position) => {
+                        const tone =
+                          position.unrealizedPnl === undefined || position.unrealizedPnl === 0
+                            ? 'flat'
+                            : position.unrealizedPnl > 0
+                              ? 'up'
+                              : 'down';
+                        return (
+                          <div className="portfolio-table__row" key={position.symbol}>
+                            <strong title={`${position.name} · ${position.symbol}`}>
+                              {position.name || position.symbol}
+                              <small>{position.symbol}</small>
+                            </strong>
+                            <span>{formatNumber(position.quantity)}</span>
+                            <span>{formatMoney(position.averagePrice, position.currency)}</span>
+                            <span>{formatMoney(position.currentPrice, position.currency)}</span>
+                            <em className="portfolio-table__pnl" data-tone={tone}>
+                              {position.unrealizedPnl === undefined
+                                ? '-'
+                                : `${position.unrealizedPnl > 0 ? '+' : ''}${formatMoney(position.unrealizedPnl, position.currency)}`}
+                              {position.unrealizedPnlRate !== undefined && (
+                                <small>{formatRate(position.unrealizedPnlRate)}</small>
+                              )}
+                            </em>
+                          </div>
+                        );
+                      })} />
                       {kisAccountPositionCount === 0 && <div className="portfolio-table__empty">보유 종목이 없습니다 · 종목 화면에서 매수하면 여기에 표시됩니다</div>}
                     </div>
                   </>
