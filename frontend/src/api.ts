@@ -22,6 +22,7 @@ import type {
   CreateOrderRequest,
   CreateOrderResponse,
   ExchangeRate,
+  FinancialSnapshot,
   Instrument,
   InstrumentCategory,
   NewsItem,
@@ -296,6 +297,37 @@ export async function fetchOrderBook(id: string): Promise<OrderBook> {
     throw new Error(body.message ?? `호가 조회 실패: ${res.status}`);
   }
   return res.json();
+}
+
+/**
+ * 분기별 재무 지표.
+ *
+ * ETF·ETN·해외 종목은 서버가 404로 거른다. 그건 조회가 **실패**한 게 아니라
+ * 애초에 **해당이 없는** 것이다 — 재무제표가 없는 상품을 "재무가 나쁘다"로
+ * 읽으면 안 된다. 그래서 세 상태를 타입에서 갈라 둔다. 하나의 문자열 오류로
+ * 합치면 화면이 둘을 같은 빨간 글씨로 적게 된다.
+ */
+export type FinancialsResult =
+  | { kind: 'ok'; rows: FinancialSnapshot[] }
+  | { kind: 'not-applicable'; reason: string }
+  | { kind: 'failed'; reason: string };
+
+export async function fetchInstrumentFinancials(id: string): Promise<FinancialsResult> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/instruments/${encodeURIComponent(id)}/financials`);
+  } catch (err) {
+    return { kind: 'failed', reason: err instanceof Error ? err.message : '네트워크 오류' };
+  }
+  if (res.status === 404) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    return { kind: 'not-applicable', reason: body.message ?? '재무 지표 대상이 아닙니다.' };
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    return { kind: 'failed', reason: body.message ?? `재무 지표 조회 실패: ${res.status}` };
+  }
+  return { kind: 'ok', rows: (await res.json()) as FinancialSnapshot[] };
 }
 
 export async function fetchInstrumentIntradayCandles(id: string): Promise<CandlesResponse> {

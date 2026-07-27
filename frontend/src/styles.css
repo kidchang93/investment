@@ -4278,6 +4278,223 @@ span.sample-badge {
   min-height: var(--bottom-panel-height);
 }
 
+/*
+  재무는 배너·비교·표 세 덩이라 138px에서는 표가 35px밖에 안 남아 한 줄만
+  보였다. 한 줄짜리 표는 있으나 마나라 이 패널만 필요한 만큼 준다 —
+  거래량 패널이 반대 방향으로(34px) 이미 쓰는 방식이다.
+*/
+.financials-panel.bottom-panel {
+  --bottom-panel-height: 200px;
+  max-height: var(--bottom-panel-height);
+  min-height: var(--bottom-panel-height);
+}
+
+.financials-panel.bottom-panel--expanded {
+  --bottom-panel-height: 320px;
+}
+
+/*
+  재무 패널. 뉴스 패널과 같은 2단(머리 150px + 본문) 골격을 쓰되, 본문이
+  배너·비교·표 세 덩이라 세로로 쌓고 표만 스크롤한다. 창 칸은 점선 밑줄로
+  둔다 — 12월 결산으로 읽은 표기라 확정값과 구별해야 한다.
+*/
+.financials-panel {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  /*
+   * 배너·비교는 내용만큼, 표는 남는 만큼. 세 줄을 다 auto로 두면 표가
+   * 높이 0으로 접혀 아예 안 보였다(138px을 앞 두 덩이가 다 먹었다).
+   * minmax(0, 1fr)이라야 스크롤이 생긴다 — 1fr만으로는 내용 높이가 하한이 된다.
+   */
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 200px;
+  max-height: 200px;
+  border-top: 1px solid var(--border);
+  background: #0b0f17;
+}
+
+.financials-panel__header {
+  grid-row: 1 / -1;
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  padding: 12px 14px;
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+
+.financials-panel__header strong {
+  font-size: 13px;
+}
+
+.financials-panel__header span,
+.financials-panel__header em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
+/* 한 덩이짜리 상태는 본문 전체를 쓴다. 안 적으면 첫 줄 높이에 눌린다. */
+.financials-panel__empty,
+.financials-panel__error,
+.financials-panel__na {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  height: 100%;
+  padding: 0 14px;
+  font-size: 12px;
+}
+
+.financials-panel__empty {
+  color: var(--muted);
+}
+
+.financials-panel__error {
+  color: var(--down, #f2555a);
+}
+
+/* 해당 없음은 실패가 아니다. 상태색 대신 점선으로 구분한다. */
+.financials-panel__na {
+  color: var(--muted);
+}
+
+.financials-panel__na strong {
+  color: var(--text);
+  font-size: 12px;
+  border-bottom: 1px dashed var(--border);
+  padding-bottom: 3px;
+  align-self: flex-start;
+}
+
+.financials-panel > .financials-panel__basis {
+  grid-column: 2;
+}
+
+.financials-panel__basis {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 14px 5px;
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.financials-panel__basis strong {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.financials-panel__basis span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 값으로 확인하지 못한 읽기는 점선으로 표시한다. */
+.financials-panel__basis[data-basis='unknown'] strong,
+.financials-panel__basis[data-basis='standalone'] strong {
+  border-bottom: 1px dashed var(--border);
+}
+
+.financials-panel__compare {
+  grid-column: 2;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.financials-panel__compare-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.financials-panel__compare-head strong {
+  font-size: 12px;
+}
+
+.financials-panel__compare-head em {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.financials-panel__metrics {
+  display: flex;
+  gap: 18px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.financials-panel__metric {
+  display: grid;
+  gap: 1px;
+}
+
+.financials-panel__metric span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.financials-panel__metric strong {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.financials-panel__metric em {
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.financials-panel__rows {
+  grid-column: 2;
+  overflow: auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.financials-panel__row {
+  display: grid;
+  grid-template-columns: 62px 52px repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  padding: 4px 14px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.financials-panel__row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.financials-panel__row--head {
+  position: sticky;
+  top: 0;
+  background: #0b0f17;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+/* 12월 결산으로 읽은 표기라 확정값과 점선으로 구별한다. */
+.financials-panel__window {
+  color: var(--muted);
+  border-bottom: 1px dashed var(--border);
+  justify-self: start;
+}
+
 .bottom-dock {
   display: flex;
   align-items: center;
@@ -5424,6 +5641,10 @@ span.sample-badge {
     --bottom-panel-height: 236px;
   }
 
+  .financials-panel.bottom-panel {
+    --bottom-panel-height: 210px;
+  }
+
   .trade-tape.bottom-panel,
   .news-panel.bottom-panel {
     --bottom-panel-height: 180px;
@@ -5434,6 +5655,10 @@ span.sample-badge {
   .trade-tape.bottom-panel--expanded,
   .news-panel.bottom-panel--expanded {
     --bottom-panel-height: 260px;
+  }
+
+  .financials-panel.bottom-panel--expanded {
+    --bottom-panel-height: 320px;
   }
 
   .trade-tape__header,

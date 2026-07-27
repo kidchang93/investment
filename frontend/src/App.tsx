@@ -27,6 +27,7 @@ import {
   fetchInstrumentCandles,
   fetchInstrumentCategories,
   fetchInstrumentIntradayCandles,
+  fetchInstrumentFinancials,
   fetchInstrumentNews,
   fetchInstrumentQuote,
   fetchOrderBook,
@@ -38,6 +39,7 @@ import {
   fetchWatchlists,
   removeWatchlistItem,
   searchInstruments,
+  type FinancialsResult,
 } from './api';
 import { useStream } from './useStream';
 import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } from './Chart';
@@ -77,6 +79,7 @@ import type {
   Trade,
   WatchlistGroup,
 } from '@invest/shared';
+import { detectCumulativeReporting, financialPeriodWindow } from '@invest/shared';
 
 type RangeKey = '1M' | '3M' | '6M' | '1Y' | 'ALL';
 type TimeframeKey = '1' | '5' | '15' | '1D';
@@ -85,7 +88,7 @@ type MoveFilter = 'all' | 'up' | 'down';
 type WatchSortKey = 'custom' | 'rate' | 'volume' | 'name';
 type SessionTone = 'open' | 'pre' | 'closed';
 type WatchGroup = 'all' | 'kr' | 'global' | 'fund';
-type BottomDockTab = 'volume' | 'trades' | 'news';
+type BottomDockTab = 'volume' | 'trades' | 'news' | 'financials';
 type BottomDockMode = 'hidden' | 'normal' | 'expanded';
 type LayoutPreset = 'balanced' | 'chart' | 'reading';
 /*
@@ -254,6 +257,13 @@ const WATCH_GROUP_OPTIONS: Array<{ key: WatchGroup; label: string }> = [
   { key: 'global', label: '해외' },
   { key: 'fund', label: 'ETF/ETN' },
 ];
+
+const BOTTOM_DOCK_TAB_LABEL: Record<BottomDockTab, string> = {
+  volume: '거래량',
+  trades: '체결',
+  news: '뉴스',
+  financials: '재무',
+};
 
 const BOTTOM_DOCK_MODE_OPTIONS: Array<{ key: BottomDockMode; label: string }> = [
   { key: 'hidden', label: '숨김' },
@@ -779,6 +789,170 @@ function CollapsibleRows({
         {expanded ? '접기' : (moreLabel ?? ((hidden: number) => `${hidden}건 더 보기`))(rows.length - limit)}
       </button>
     </>
+  );
+}
+
+/** KIS 재무 금액은 억원 단위로 온다. 조 단위가 넘으면 조로 접어 읽기 쉽게 한다. */
+function formatFinancialAmount(value: number | undefined): string {
+  if (value === undefined) return '값 없음';
+  if (Math.abs(value) >= 10_000) return `${(value / 10_000).toFixed(1)}조원`;
+  return `${Math.round(value).toLocaleString('ko-KR')}억원`;
+}
+
+/** 비율은 값이 없을 때 0%로 채우지 않는다. 0%와 모르는 것은 다르다. */
+function formatFinancialRate(value: number | undefined): string {
+  return value === undefined ? '값 없음' : `${value.toFixed(2)}%`;
+}
+
+/**
+ * 분기별 재무 지표.
+ *
+ * **금액은 창과 함께 읽어야 한다.** KIS는 연초부터의 누적으로 주기 때문에
+ * `202512 매출 333조` 아래에 `202603 매출 133조`가 오는데, 창을 안 적으면
+ * 회사가 3분의 1로 줄어든 것처럼 보인다. 그래서 기간 칸마다 창을 붙이고,
+ * 맨 위에는 이 종목이 정말 누적으로 오는지를 **값으로 확인한 결과**를 적는다
+ * (12월 결산이라 가정하는 대신 같은 해 매출이 커지는지를 본다).
+ *
+ * 비교는 바로 위 분기가 아니라 **1년 전 같은 창**과 한다. 3개월 누적을
+ * 1년 누적과 견주면 무조건 줄어든 것으로 나온다.
+ *
+ * ETF·ETN은 서버가 404를 준다. 그건 실패가 아니라 해당 없음이라 다르게 적는다 —
+ * 재무제표가 없는 상품을 "재무가 나쁘다"로 읽으면 안 된다.
+ */
+function FinancialsPanel({
+  className,
+  instrumentName,
+  result,
+}: {
+  className: string;
+  instrumentName: string | null;
+  result: FinancialsResult | null;
+}): JSX.Element {
+  const rows = result?.kind === 'ok' ? result.rows : [];
+  const basis = useMemo(() => detectCumulativeReporting(rows), [rows]);
+
+  const latest = rows[0];
+  const latestWindow = latest ? financialPeriodWindow(latest.period) : undefined;
+  // 1년 전 같은 결산월. 없으면 비교를 만들지 않는다 — 억지로 옆 분기를 쓰면 틀린다.
+  const yearAgo = latestWindow
+    ? rows.find((row) => {
+        const window = financialPeriodWindow(row.period);
+        return window?.month === latestWindow.month && window.year === latestWindow.year - 1;
+      })
+    : undefined;
+
+  function body(): JSX.Element {
+    if (!instrumentName) return <div className="financials-panel__empty">종목을 선택하세요</div>;
+    if (result === null) return <div className="financials-panel__empty">재무 지표 불러오는 중</div>;
+    if (result.kind === 'not-applicable') {
+      return (
+        <div className="financials-panel__na">
+          <strong>{result.reason}</strong>
+          <span>ETF·ETN은 회사가 아니라 바구니라 재무제표가 없습니다. 지표가 나쁜 게 아니라 해당이 없는 것입니다.</span>
+        </div>
+      );
+    }
+    if (result.kind === 'failed') {
+      return <div className="financials-panel__error">재무 지표를 불러오지 못했습니다 — {result.reason}</div>;
+    }
+    if (rows.length === 0) {
+      // 빈 표를 0으로 채우지 않는다.
+      return <div className="financials-panel__empty">이 종목은 재무 지표가 오지 않았습니다</div>;
+    }
+
+    return (
+      <>
+        <div className="financials-panel__basis" data-basis={basis}>
+          {basis === 'cumulative' && (
+            <>
+              <strong>연초부터의 누적으로 들어옵니다</strong>
+              <span>
+                같은 해 매출이 결산월이 갈수록 커지는 것으로 확인했습니다. 금액은 아래 <b>창</b> 칸과 함께
+                읽으세요 — 창이 다른 값끼리 세로로 비교하면 안 됩니다.
+              </span>
+            </>
+          )}
+          {basis === 'standalone' && (
+            <>
+              <strong>분기 단독 값으로 보입니다</strong>
+              <span>같은 해에서 뒤 분기 매출이 더 작았습니다. 창 칸은 12월 결산 기준 표기이니 함께 참고하세요.</span>
+            </>
+          )}
+          {basis === 'unknown' && (
+            <>
+              <strong>누적인지 분기 단독인지 확인하지 못했습니다</strong>
+              <span>
+                한 해에 두 분기 이상 매출이 있어야 값으로 가릅니다. 창 칸은 12월 결산으로 가정한 표기입니다.
+              </span>
+            </>
+          )}
+        </div>
+
+        {latest && latestWindow && (
+          <div className="financials-panel__compare">
+            <div className="financials-panel__compare-head">
+              <strong>{latestWindow.label}</strong>
+              <em>{yearAgo ? `1년 전 같은 창(${yearAgo.period})과 비교` : '1년 전 같은 창이 없어 비교하지 않습니다'}</em>
+            </div>
+            <div className="financials-panel__metrics">
+              {(
+                [
+                  ['ROE', latest.roe, yearAgo?.roe],
+                  ['순이익률', latest.netMargin, yearAgo?.netMargin],
+                  ['부채비율', latest.debtRatio, yearAgo?.debtRatio],
+                  ['매출성장률', latest.revenueGrowth, yearAgo?.revenueGrowth],
+                ] as Array<[string, number | undefined, number | undefined]>
+              ).map(([label, now, before]) => (
+                <div className="financials-panel__metric" key={label}>
+                  <span>{label}</span>
+                  <strong>{formatFinancialRate(now)}</strong>
+                  <em>{before === undefined ? '1년 전 값 없음' : `1년 전 ${formatFinancialRate(before)}`}</em>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="financials-panel__rows" role="table" aria-label="분기별 재무 지표">
+          <div className="financials-panel__row financials-panel__row--head" role="row">
+            <span role="columnheader">기간</span>
+            <span role="columnheader">창</span>
+            <span role="columnheader">매출</span>
+            <span role="columnheader">영업이익</span>
+            <span role="columnheader">순이익</span>
+            <span role="columnheader">ROE</span>
+            <span role="columnheader">부채비율</span>
+          </div>
+          {rows.map((row) => {
+            const window = financialPeriodWindow(row.period);
+            return (
+              <div className="financials-panel__row" key={row.period} role="row">
+                <span role="cell">{row.period}</span>
+                <span className="financials-panel__window" role="cell" title={window?.label}>
+                  {window?.shortLabel ?? '알 수 없음'}
+                </span>
+                <span role="cell">{formatFinancialAmount(row.revenue)}</span>
+                <span role="cell">{formatFinancialAmount(row.operatingProfit)}</span>
+                <span role="cell">{formatFinancialAmount(row.netIncome)}</span>
+                <span role="cell">{formatFinancialRate(row.roe)}</span>
+                <span role="cell">{formatFinancialRate(row.debtRatio)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <section className={`financials-panel ${className}`} aria-label="종목 재무 지표">
+      <div className="financials-panel__header">
+        <strong>재무</strong>
+        <span>{instrumentName ?? '종목 미선택'}</span>
+        <em>{result?.kind === 'ok' && rows.length > 0 ? `${rows.length}분기` : '대기'}</em>
+      </div>
+      {body()}
+    </section>
   );
 }
 
@@ -2032,7 +2206,7 @@ export function App(): JSX.Element {
   );
   const [hoveredChartReadout, setHoveredChartReadout] = useState<ChartReadout | null>(null);
   const [bottomDockTab, setBottomDockTab] = useState<BottomDockTab>(() =>
-    readStoredValue('bottomDockTab', 'volume', ['volume', 'trades', 'news']),
+    readStoredValue('bottomDockTab', 'volume', ['volume', 'trades', 'news', 'financials']),
   );
   const [bottomDockMode, setBottomDockMode] = useState<BottomDockMode>(() =>
     readStoredValue('bottomDockMode', 'normal', BOTTOM_DOCK_MODE_OPTIONS.map((option) => option.key)),
@@ -2076,6 +2250,7 @@ export function App(): JSX.Element {
    */
   const [orderBook, setOrderBook] = useState<OrderBook | null>(null);
   const [orderBookError, setOrderBookError] = useState<string | null>(null);
+  const [financials, setFinancials] = useState<FinancialsResult | null>(null);
   const [kisReservedOrders, setKisReservedOrders] = useState<BrokerReservedOrder[]>([]);
   /*
    * 언제 받아온 값인지. 잔고 카드만 `갱신 07:27:39`를 적고 나머지는 아무것도
@@ -2568,6 +2743,28 @@ export function App(): JSX.Element {
       window.clearInterval(timer);
     };
   }, [isOrderPanelOpen, selectedInstrument]);
+
+  /*
+   * 재무 지표는 하단 독의 재무 탭을 열었을 때만 받는다.
+   *
+   * 세 엔드포인트를 합쳐 오는 호출이라 관심목록을 훑을 때마다 부르면 호출
+   * 제한을 먹는다. 분기 값이라 갱신 주기도 필요 없다 — 종목이 바뀔 때만
+   * 다시 받는다.
+   */
+  useEffect(() => {
+    const instrument = selectedInstrument;
+    if (activePage !== 'market' || bottomDockMode === 'hidden' || bottomDockTab !== 'financials' || !instrument) {
+      return undefined;
+    }
+    let disposed = false;
+    setFinancials(null);
+    fetchInstrumentFinancials(instrument.id).then((result) => {
+      if (!disposed) setFinancials(result);
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [activePage, bottomDockMode, bottomDockTab, selectedInstrument]);
 
   // 미체결 주문은 매매 화면에서 계좌를 바꿀 때마다 다시 받는다.
   useEffect(() => {
@@ -3648,8 +3845,11 @@ export function App(): JSX.Element {
     isSymbolSearchPanelOpen && symbolResults[activeSymbolResultIndex]
       ? `symbol-search-result-${activeSymbolResultIndex}`
       : undefined;
-  const bottomDockTabLabel =
-    bottomDockTab === 'volume' ? '거래량' : bottomDockTab === 'trades' ? '체결' : '뉴스';
+  /*
+   * 삼항 사슬이던 시절엔 탭을 하나 늘릴 때마다 새 탭이 맨 끝 값(`뉴스`)으로
+   * 새어 나왔다. 빠뜨리면 타입이 잡도록 Record로 못 박는다.
+   */
+  const bottomDockTabLabel = BOTTOM_DOCK_TAB_LABEL[bottomDockTab];
   const bottomDockModeLabel =
     BOTTOM_DOCK_MODE_OPTIONS.find((option) => option.key === bottomDockMode)?.label ?? bottomDockMode;
   const orderQuantityNumber = Number(orderQuantity);
@@ -5950,6 +6150,14 @@ export function App(): JSX.Element {
             </section>
           )}
 
+          {activePage === 'market' && bottomDockMode !== 'hidden' && bottomDockTab === 'financials' && (
+            <FinancialsPanel
+              className={bottomPanelClass}
+              instrumentName={selectedInstrument?.name ?? null}
+              result={financials}
+            />
+          )}
+
           {activePage === 'market' && <div className="bottom-dock">
             <button
               aria-selected={bottomDockTab === 'volume' && bottomDockMode !== 'hidden'}
@@ -5971,6 +6179,13 @@ export function App(): JSX.Element {
               type="button"
             >
               뉴스 <small>{selectedNews.length}</small>
+            </button>
+            <button
+              aria-selected={bottomDockTab === 'financials' && bottomDockMode !== 'hidden'}
+              onClick={() => selectBottomDockTab('financials')}
+              type="button"
+            >
+              재무 <small>{financials?.kind === 'ok' ? financials.rows.length : '-'}</small>
             </button>
             <div className="bottom-dock__modes" role="tablist" aria-label="하단 패널 높이">
               {BOTTOM_DOCK_MODE_OPTIONS.map((option) => (

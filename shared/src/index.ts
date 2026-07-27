@@ -217,6 +217,85 @@ export interface FinancialSnapshot {
 }
 
 /**
+ * 재무 한 행이 덮는 기간.
+ *
+ * KIS 재무 API는 분기 단독이 아니라 **연초부터의 누적**으로 준다. 삼성전자
+ * 2025년 매출이 79.1조(202503) → 153.7조(202506) → 239.8조(202509) →
+ * 333.6조(202512)로 오르다 202603에 133.9조로 떨어지는데, 회사가 3분의 1로
+ * 줄어든 게 아니라 창이 1년에서 3개월로 바뀐 것이다(2026-07-27 실측).
+ *
+ * 창을 안 밝히고 세로로 늘어놓으면 매년 1월에 망하는 회사처럼 보인다.
+ * 비율(ROE·순이익률·매출성장률)은 같은 창끼리 계산돼 있어 그대로 읽어도 되지만
+ * 금액은 반드시 창과 함께 읽어야 한다.
+ *
+ * **결산월이 곧 누적 개월 수라는 건 12월 결산을 전제로 한 읽기다.** 3월 결산
+ * 회사라면 202603이 1분기가 아니라 1년치일 수 있다. 그래서 이 함수는 창을
+ * 단정하지 않고, 실제 값으로 확인하는 일은 `detectCumulativeReporting`에 맡긴다.
+ */
+export interface FinancialPeriodWindow {
+  year: number;
+  /** 결산월 (1~12) */
+  month: number;
+  /** 12월 결산으로 읽었을 때의 누적 개월 수. 3·6·9·12월이 아니면 undefined */
+  months?: number;
+  /** `2026년 1~3월 누적` */
+  label: string;
+  /** 표에 짧게 쓸 값. `3개월` / `1년` */
+  shortLabel: string;
+}
+
+export function financialPeriodWindow(period: string): FinancialPeriodWindow | undefined {
+  if (!/^\d{6}$/.test(period)) return undefined;
+  const year = Number(period.slice(0, 4));
+  const month = Number(period.slice(4, 6));
+  if (month < 1 || month > 12) return undefined;
+  /*
+   * 3·6·9·12월만 누적 개월 수가 자명하다. 그 밖의 결산월은 세지 않는다 —
+   * 모르는 것을 아는 척하면 화면이 틀린 창을 적는다.
+   */
+  const months = month % 3 === 0 ? month : undefined;
+  return {
+    year,
+    month,
+    months,
+    label: months === undefined ? `${year}년 ${month}월 결산` : `${year}년 1~${month}월 누적`,
+    shortLabel: months === undefined ? `${month}월` : months === 12 ? '1년' : `${months}개월`,
+  };
+}
+
+/**
+ * 이 회사의 재무가 정말 누적으로 오는지 **값으로 확인한다.**
+ *
+ * 12월 결산이라고 가정하고 창을 적는 대신, 같은 해 안에서 결산월이 뒤로
+ * 갈수록 매출이 커지는지를 본다. 커지면 누적이고, 작아지면 분기 단독이다.
+ * 한 해에 두 행이 없으면 판단하지 않는다 — 모르는 것을 단정하지 않는다.
+ */
+export type FinancialReportingBasis = 'cumulative' | 'standalone' | 'unknown';
+
+export function detectCumulativeReporting(rows: FinancialSnapshot[]): FinancialReportingBasis {
+  const byYear = new Map<number, Array<{ month: number; revenue: number }>>();
+  for (const row of rows) {
+    const window = financialPeriodWindow(row.period);
+    if (!window || row.revenue === undefined) continue;
+    const list = byYear.get(window.year) ?? [];
+    list.push({ month: window.month, revenue: row.revenue });
+    byYear.set(window.year, list);
+  }
+
+  let compared = 0;
+  for (const list of byYear.values()) {
+    if (list.length < 2) continue;
+    const sorted = [...list].sort((a, b) => a.month - b.month);
+    for (let i = 1; i < sorted.length; i += 1) {
+      compared += 1;
+      // 한 쌍이라도 뒤 분기가 더 작으면 누적이 아니다.
+      if (sorted[i].revenue < sorted[i - 1].revenue) return 'standalone';
+    }
+  }
+  return compared > 0 ? 'cumulative' : 'unknown';
+}
+
+/**
  * 신호 채점 누적 성적.
  *
  * 백테스트는 과거를 말한다. 이 값은 **실제로 낸 신호**가 어땠는지를 말한다.
