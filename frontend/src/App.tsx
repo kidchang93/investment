@@ -2412,9 +2412,15 @@ export function App(): JSX.Element {
     };
   }, [activePage, kisAccountId, tradeProfitDays]);
 
-  // 리스크 룰은 서버 DB 조회라 KIS 호출이 없다. 포트폴리오에서 계좌별로 받는다.
+  /*
+   * 리스크 룰은 서버 DB 조회라 KIS 호출이 없다. 계좌별로 받는다.
+   *
+   * 예전엔 포트폴리오 화면에서만 받았다. 그런데 주문 티켓은 종목 화면에 있어서,
+   * 주문을 내려는 자리에서는 룰을 손에 쥐고 있지 않았다 — 그래서 시장가가
+   * 막혀 있는데도 화면이 그 사실을 모른 채 `주문하기`를 열어 뒀다.
+   */
   useEffect(() => {
-    if (activePage !== 'portfolio') return;
+    if (activePage !== 'portfolio' && !isOrderPanelOpen) return;
     let disposed = false;
     fetchKisRiskRules(kisAccountId ?? undefined)
       .then((rules) => {
@@ -2432,7 +2438,7 @@ export function App(): JSX.Element {
     return () => {
       disposed = true;
     };
-  }, [activePage, kisAccountId]);
+  }, [activePage, isOrderPanelOpen, kisAccountId]);
 
   /*
    * 탭이 12개라 좁은 폭에서는 가로로 스크롤된다. 스크롤 위치는 0으로 돌아오는데
@@ -3536,6 +3542,53 @@ export function App(): JSX.Element {
     if (orderType === 'limit' && (!Number.isFinite(orderLimitPriceNumber) || orderLimitPriceNumber <= 0)) {
       blockers.push('지정가 주문은 단가가 필요합니다.');
     }
+
+    /*
+     * 리스크 룰도 여기서 미리 본다.
+     *
+     * 예전에는 자동매매 패널만 룰을 검사했고(autoTraderBlockers) 수동 주문
+     * 티켓은 보지 않았다. 그래서 시장가가 막혀 있고 허용 종목이 005930뿐인데도
+     * SK하이닉스 시장가 주문에 `매수 주문하기`가 열려 있었고, 확인 화면은
+     * `확인하면 그대로 접수됩니다`라고 말했다. 눌러서 서버가 거절해야 알았다.
+     *
+     * 서버가 판정의 주인이다. 여기서는 화면이 미리 말해 주는 것뿐이고, 서버만
+     * 아는 것(당일 누적 한도·휴장일·거래 시간)은 흉내 내지 않는다. 흉내 낸
+     * 값이 서버와 어긋나면 그게 더 나쁘다.
+     */
+    if (riskRules && !riskRulesError) {
+      if (!riskRules.enabled) blockers.push('이 계좌는 리스크 룰에서 실주문이 꺼져 있습니다.');
+      if (orderType === 'market' && !riskRules.allowMarketOrder) {
+        blockers.push('이 계좌는 시장가 주문이 막혀 있습니다. 지정가로 내거나 리스크 룰을 고치세요.');
+      }
+      const symbol = selectedInstrument?.providerSymbol;
+      if (symbol) {
+        if (riskRules.symbolBlocklist.includes(symbol)) blockers.push(`차단 종목입니다 (${symbol}).`);
+        if (riskRules.symbolAllowlist.length > 0 && !riskRules.symbolAllowlist.includes(symbol)) {
+          blockers.push(`허용 종목 목록에 없습니다 (${symbol}). 허용: ${riskRules.symbolAllowlist.join(', ')}`);
+        }
+      }
+      if (Number.isFinite(orderQuantityNumber) && orderQuantityNumber > riskRules.maxOrderQuantity) {
+        blockers.push(`1회 주문 수량 한도 ${formatNumber(riskRules.maxOrderQuantity)}주를 넘습니다.`);
+      }
+      // 시장가는 단가가 없으므로 서버와 같이 현재가로 금액을 어림한다.
+      const riskPrice = orderType === 'limit' ? orderLimitPriceNumber : (snapshot?.price ?? 0);
+      const notional = riskPrice * orderQuantityNumber;
+      if (Number.isFinite(notional) && notional > riskRules.maxOrderNotional) {
+        blockers.push(`1회 주문 금액 한도 ${formatNumber(riskRules.maxOrderNotional)}원을 넘습니다.`);
+      }
+    } else {
+      /*
+       * 룰을 모르면 막힌 쪽에 둔다. 게이트·자동매매를 모를 때와 같은 처리다.
+       * 받아 둔 값이 있어도 마지막 조회가 실패했으면 아는 것이 아니다 — 그 사이
+       * 룰이 조여졌으면 낡은 값으로 `괜찮습니다`라고 말하게 된다. 어차피 룰
+       * 조회가 실패할 정도면 서버도 판정하지 못해 주문이 거절된다.
+       */
+      blockers.push(
+        riskRulesError
+          ? `리스크 룰을 확인하지 못했습니다. 확인 전에는 주문이 나가지 않습니다 (${riskRulesError})`
+          : '리스크 룰을 확인하는 중입니다.',
+      );
+    }
     return blockers;
   }, [
     liveOrderGate,
@@ -3543,7 +3596,10 @@ export function App(): JSX.Element {
     orderLimitPriceNumber,
     orderQuantityNumber,
     orderType,
+    riskRules,
+    riskRulesError,
     selectedInstrument,
+    snapshot?.price,
   ]);
   const liveOrderCanSubmit = liveOrderBlockers.length === 0 && !isLiveOrderSubmitting;
 
