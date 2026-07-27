@@ -178,6 +178,16 @@ button {
   color: #ff9b9f;
 }
 
+/*
+  마지막 조회가 실패해 값이 낡았을 수 있는 상태.
+
+  상태색(data-armed)은 건드리지 않는다 — 낡았다는 이유로 색을 지우면 열려 있는
+  게이트가 경고를 잃는다. 확정되지 않은 값이라는 것만 점선으로 말한다.
+*/
+.mode-chip[data-stale='true'] {
+  border-style: dashed;
+}
+
 .freshness-chip {
   display: inline-flex;
   align-items: center;

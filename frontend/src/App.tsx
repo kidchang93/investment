@@ -3432,6 +3432,20 @@ export function App(): JSX.Element {
    */
   const gateUnknownLabel = liveOrderGateError ? '확인 실패' : '확인 중';
   /*
+   * 값은 있는데 **마지막 조회가 실패한** 상태.
+   *
+   * 실패해도 받아 둔 값을 지우지 않는 건 의도한 것이다(위 fetch의 주석) — 지우면
+   * 실패가 로딩처럼 보인다. 그런데 그 결과로, 한 번 값을 받은 뒤에는 배지가
+   * `확인 실패`를 영영 못 쓰고 낡은 값을 지금 것처럼 단언한다. 200(enabled:true)을
+   * 받은 뒤 502를 물리니 `실계좌 주문 가능 · 실전 서버`가 그대로였다(실측).
+   *
+   * **값을 뒤집지는 않는다.** 실패했다고 `잠김`으로 바꾸면 실제로 열려 있는
+   * 게이트를 닫힌 것처럼 보여준다. 값은 그대로 두고 낡았다는 사실만 덧붙인다.
+   * 자동매매의 `isAutoTraderKnown`과 같은 생각인데, 그쪽은 값을 감추고
+   * 이쪽은 값을 남긴다 — 게이트는 열려 있다는 사실 자체가 경고이기 때문이다.
+   */
+  const isGateStale = liveOrderGate !== null && liveOrderGateError !== null;
+  /*
    * 자동매매 상태도 같은 두 가지로 모른다. 게이트와 같은 말을 쓴다.
    *
    * 받아 둔 값이 있어도 마지막 조회가 실패했으면 `아는` 것이 아니다. 2초 전
@@ -3450,22 +3464,23 @@ export function App(): JSX.Element {
    */
   const modeChipLabel = !liveOrderGate
     ? gateUnknownLabel
-    : liveOrderArmed
-      ? `실계좌 주문 가능 · ${liveOrderGate.isProdEnv ? '실전 서버' : '모의 서버'}`
-      : '실계좌 주문 잠김';
+    : `${liveOrderArmed
+        ? `실계좌 주문 가능 · ${liveOrderGate.isProdEnv ? '실전 서버' : '모의 서버'}`
+        : '실계좌 주문 잠김'}${isGateStale ? ' · 확인 실패' : ''}`;
   /* 하단 도크용. 헤더 배지와 달리 환경 표기는 빼고 짧게 쓴다. */
   const sessionModeLabel = !liveOrderGate
     ? gateUnknownLabel
-    : liveOrderArmed
-      ? '주문 가능'
-      : '주문 잠김';
+    : `${liveOrderArmed ? '주문 가능' : '주문 잠김'}${isGateStale ? ' · 확인 실패' : ''}`;
   const modeChipTitle = !liveOrderGate
     ? (liveOrderGateError
         ? `실주문을 보낼 수 있는지 확인하지 못했습니다 — ${liveOrderGateError}`
         : '실주문을 보낼 수 있는지 확인하는 중입니다')
-    : liveOrderArmed
-      ? `실주문이 열려 있습니다 · ${liveOrderGate.isProdEnv ? 'KIS 실전 서버' : 'KIS 모의 서버'}`
-      : `실주문 차단됨 — ${liveOrderGate.blockers.join(' / ')}`;
+    : `${liveOrderArmed
+        ? `실주문이 열려 있습니다 · ${liveOrderGate.isProdEnv ? 'KIS 실전 서버' : 'KIS 모의 서버'}`
+        : `실주문 차단됨 — ${liveOrderGate.blockers.join(' / ')}`}${
+        isGateStale
+          ? `\n마지막 확인이 실패해 지금 값이 아닐 수 있습니다 — ${liveOrderGateError}`
+          : ''}`;
   const activeChartReadout = hoveredChartReadout ?? (
     snapshot
       ? {
@@ -4698,7 +4713,16 @@ export function App(): JSX.Element {
           ))}
         </nav>
         <div className="app__status">
-          <span className="mode-chip" data-armed={modeChipState} title={modeChipTitle}>
+          {/*
+            data-armed는 그대로 둔다 — 낡았다는 이유로 `unknown`으로 바꾸면
+            열려 있는 게이트가 경고색을 잃는다. 낡음은 점선(data-stale)으로만 말한다.
+          */}
+          <span
+            className="mode-chip"
+            data-armed={modeChipState}
+            data-stale={isGateStale ? 'true' : undefined}
+            title={modeChipTitle}
+          >
             {modeChipLabel}
           </span>
           {/* 환율은 상태가 아니라 데이터다. 신선도 배지와 같은 급으로 보이면 위계가 뭉개진다. */}
@@ -5095,6 +5119,7 @@ export function App(): JSX.Element {
                       : liveOrderArmed
                         ? ' 지금 실주문이 열려 있습니다.'
                         : ' 지금은 실주문이 잠겨 있어 주문이 나가지 않습니다.'}
+                    {isGateStale && ' 다만 마지막 확인이 실패해 지금 값이 아닐 수 있습니다.'}
                   </p>
                 </div>
                 {/*
