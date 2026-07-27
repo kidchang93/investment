@@ -1286,33 +1286,58 @@ function formatDuration(ms: number): string {
   return `${minutes}분`;
 }
 
+/**
+ * KRX 정규장 시각. 장 상태를 말하는 곳이 둘이라 여기서 한 번만 정한다.
+ *
+ * 예전에는 발견 화면의 카운트다운이 08:45를 기준으로 따로 계산했다. 그래서
+ * 평일 08:45만 지나면 무조건 `정규장 이후`라고 적었고, 정규장 한복판인
+ * 12:04에도 그렇게 떴다 — 같은 순간 종목 화면은 `정규장 거래 중`이었다.
+ * 한 화면이 다른 화면과 다른 말을 하면 어느 쪽을 믿을지 알 수 없다.
+ */
+const KRX_SESSION = { open: 9 * 60, close: 15 * 60 + 30, hours: '09:00-15:30' } as const;
+
+const KO_WEEKDAY: Record<string, string> = {
+  Mon: '월', Tue: '화', Wed: '수', Thu: '목', Fri: '금', Sat: '토', Sun: '일',
+};
+
+/**
+ * 지금 KRX가 어떤 상태인지와 다음 경계까지.
+ *
+ * 시각은 기기 시간대가 아니라 Asia/Seoul로 읽는다 — getMarketSession도 종목
+ * 시간대로 읽으므로 둘이 같은 잣대를 쓴다.
+ *
+ * 오늘 안에 오는 경계(개장·마감)까지는 남은 시간을 정확히 적고, 날을 넘기는
+ * 경우(주말·마감 후)는 다음 개장 요일과 시각만 적는다. 며칠 뒤까지 분 단위로
+ * 세는 건 틀리기 쉬운데 얻는 것이 없다.
+ */
 function getKoreanMarketCountdown(nowMs: number): { label: string; detail: string; target: string } {
-  const now = new Date(nowMs);
-  const target = new Date(now);
-  target.setHours(8, 45, 0, 0);
+  const parts = getZonedParts('Asia/Seoul', new Date(nowMs));
+  const nowMinutes = parts.hour * 60 + parts.minute;
+  const isWeekend = parts.weekday === 'Sat' || parts.weekday === 'Sun';
+  const nextOpenWeekday =
+    parts.weekday === 'Fri' || parts.weekday === 'Sat' ? '월' : parts.weekday === 'Sun' ? '월' : '내일';
 
-  const day = now.getDay();
-  const isWeekend = day === 0 || day === 6;
-  const afterOpen = !isWeekend && now.getTime() >= target.getTime();
-  if (isWeekend || afterOpen) {
-    const daysUntilMonday = day === 6 ? 2 : day === 0 ? 1 : 1;
-    target.setDate(now.getDate() + daysUntilMonday);
-    target.setHours(8, 45, 0, 0);
-    if (target.getDay() === 6) target.setDate(target.getDate() + 2);
-    if (target.getDay() === 0) target.setDate(target.getDate() + 1);
+  if (isWeekend) {
+    return { label: '주말', detail: 'KRX는 주말에 열지 않습니다', target: `다음 개장 (월) 09:00` };
   }
-
-  const targetLabel = new Intl.DateTimeFormat('ko-KR', {
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(target);
-
+  if (nowMinutes < KRX_SESSION.open) {
+    return {
+      label: '개장 전',
+      detail: `개장까지 ${formatDuration((KRX_SESSION.open - nowMinutes) * 60_000)}`,
+      target: `오늘 (${KO_WEEKDAY[parts.weekday] ?? parts.weekday}) 09:00 개장`,
+    };
+  }
+  if (nowMinutes <= KRX_SESSION.close) {
+    return {
+      label: '정규장',
+      detail: `마감까지 ${formatDuration((KRX_SESSION.close - nowMinutes) * 60_000)}`,
+      target: `오늘 15:30 마감`,
+    };
+  }
   return {
-    label: isWeekend ? '주말 모드' : afterOpen ? '정규장 이후' : '개장 전',
-    detail: `다음 기준 시각까지 ${formatDuration(target.getTime() - nowMs)}`,
-    target: targetLabel,
+    label: '정규장 마감',
+    detail: '오늘 정규장은 끝났습니다',
+    target: nextOpenWeekday === '내일' ? '다음 개장 내일 09:00' : `다음 개장 (${nextOpenWeekday}) 09:00`,
   };
 }
 
@@ -1564,7 +1589,11 @@ function assetTypeLabel(assetType: Instrument['assetType']): string {
   }
 }
 
-function getZonedParts(timeZone: string): { weekday: string; hour: number; minute: number; label: string } {
+/** 잴 시각을 받는다. 안 주면 지금. 받아야 시각을 넣고 따로 검산할 수 있다. */
+function getZonedParts(
+  timeZone: string,
+  at: Date = new Date(),
+): { weekday: string; hour: number; minute: number; label: string } {
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone,
     weekday: 'short',
@@ -1572,7 +1601,7 @@ function getZonedParts(timeZone: string): { weekday: string; hour: number; minut
     minute: '2-digit',
     hour12: false,
   });
-  const parts = Object.fromEntries(formatter.formatToParts(new Date()).map((part) => [part.type, part.value]));
+  const parts = Object.fromEntries(formatter.formatToParts(at).map((part) => [part.type, part.value]));
   return {
     weekday: parts.weekday,
     hour: Number(parts.hour),
@@ -1611,7 +1640,8 @@ function getMarketSession(instrument: Instrument | null): MarketSession {
   }
 
   const sessions: Record<Instrument['country'], { open: number; close: number; hours: string; pre?: number }> = {
-    KR: { open: 9 * 60, close: 15 * 60 + 30, hours: '09:00-15:30' },
+    // 발견 화면 카운트다운과 같은 상수를 쓴다. 둘이 갈라지면 화면끼리 다른 말을 한다.
+    KR: { open: KRX_SESSION.open, close: KRX_SESSION.close, hours: KRX_SESSION.hours },
     US: { pre: 4 * 60, open: 9 * 60 + 30, close: 16 * 60, hours: '09:30-16:00' },
     CN: { open: 9 * 60 + 30, close: 15 * 60, hours: '09:30-15:00' },
     JP: { open: 9 * 60, close: 15 * 60 + 30, hours: '09:00-15:30' },
