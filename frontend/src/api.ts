@@ -30,6 +30,7 @@ import type {
   OrderType,
   SignalScoreSummary,
   Quote,
+  ScreeningResult,
   TradingOverview,
   WatchItem,
   WatchlistGroup,
@@ -276,6 +277,36 @@ export async function fetchSignalScores(accountId?: string): Promise<SignalScore
     throw new Error(body.message ?? `채점 성적 조회 실패: ${res.status}`);
   }
   return res.json();
+}
+
+/**
+ * 마지막으로 훑은 후보 거르기 결과. 아직 안 훑었으면 null이다.
+ *
+ * 조회만 한다 — 종목 하나에 KIS 시세 1회라 화면을 열 때마다 다시 훑을 수 없다.
+ * `null`(안 훑음)과 빈 결과(훑었는데 아무것도 안 남음)는 다른 상태라 화면이
+ * 구별해야 한다.
+ */
+export async function fetchScreening(accountId?: string): Promise<ScreeningResult | null> {
+  const res = await fetch(`${API_BASE}/api/trading/screening${accountQuery(accountId)}`);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(body.message ?? `후보 거르기 조회 실패: ${res.status}`);
+  }
+  return ((await res.json()) as { result: ScreeningResult | null }).result;
+}
+
+/** 다시 훑는다. **사용자가 누를 때만 부를 것** — 종목 수만큼 KIS 호출이 나간다. */
+export async function runScreening(accountId?: string, lookups?: number): Promise<ScreeningResult> {
+  const res = await fetch(`${API_BASE}/api/trading/screening/run`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accountId, lookups }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(body.message ?? `후보 거르기 실행 실패: ${res.status}`);
+  }
+  return ((await res.json()) as { result: ScreeningResult }).result;
 }
 
 export async function fetchInstrumentQuote(id: string): Promise<Quote> {

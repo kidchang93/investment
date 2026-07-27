@@ -220,6 +220,57 @@ export function krxAuctionWindow(minutesOfDay: number): KrxAuctionWindow | null 
   return null;
 }
 
+/**
+ * 자동매매 후보 거르기 한 종목.
+ *
+ * **거른 것도 함께 온다.** 통과한 것만 보이면 왜 이것뿐인지 알 수 없다.
+ */
+export type ScreeningVerdict = 'pass' | 'tooExpensive' | 'illiquid' | 'costHeavy';
+
+export interface ScreeningRow {
+  instrumentId: string;
+  symbol: string;
+  name: string;
+  price: number;
+  changeRate: number;
+  /** 오늘 거래대금 (원). 유동성 문턱이 보는 값 */
+  turnover: number;
+  /**
+   * 오늘 고가-저가를 현재가로 나눈 비율 (%).
+   * 고가·저가가 아직 안 잡혔으면 undefined — 0으로 채우지 않는다.
+   */
+  rangeRate?: number;
+  verdict: ScreeningVerdict;
+}
+
+/**
+ * 후보 거르기 한 회차.
+ *
+ * 종목 하나에 KIS 시세 1회라 화면을 열 때마다 돌릴 수 없다. 그래서 **언제 잰
+ * 값인지**(`scannedAt`)와 **무슨 값으로 걸렀는지**(`thresholds`, `cash`,
+ * `elapsed`)를 함께 보낸다 — 값만 보면 지금 것인지 아침 것인지 알 수 없다.
+ */
+export interface ScreeningResult {
+  scannedAt: number;
+  /** 예수금. 이 값으로 1주도 못 사면 `tooExpensive` */
+  cash: number;
+  /**
+   * 장 경과 비율 (0~1). 유동성 문턱은 이 비율만큼만 요구한다 —
+   * 09:05에 하루치 거래대금을 요구하면 전부 걸린다. 장 밖이면 1이다.
+   */
+  elapsed: number;
+  poolSize: number;
+  lookups: number;
+  /** 시세를 못 받은 수. 빈 값으로 넘기지 않고 화면이 말한다 */
+  unresolved: number;
+  rows: ScreeningRow[];
+  thresholds: {
+    minDailyTurnover: number;
+    roundTripCostRate: number;
+    maxCostShareOfRange: number;
+  };
+}
+
 /** 호가창 한 장. 예상 체결이 있으면 함께 온다. */
 export interface OrderBook {
   code: string;

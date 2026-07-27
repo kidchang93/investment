@@ -37,6 +37,12 @@ import {
 } from './trading/autoTrader.js';
 import { listStrategies } from './trading/strategy.js';
 import { loadAutoTraderCandidates } from './trading/universe.js';
+import {
+  DEFAULT_SCREENING_LOOKUPS,
+  getLastScreening,
+  rememberScreening,
+  runScreening,
+} from './trading/screening.js';
 import { checkRiskRules, ensureRiskRuleSchema, getRiskRules, upsertRiskRules } from './db/riskRules.js';
 import {
   getDailyCandles,
@@ -1067,6 +1073,45 @@ async function main(): Promise<void> {
       return reply.code(502).send({ message: '채점 성적을 조회하지 못했습니다.' });
     }
   });
+
+  /*
+   * 자동매매 후보 거르기 결과.
+   *
+   * 조회는 **마지막에 잰 값**만 준다. 종목 하나에 KIS 호출 1회라 탭을 열
+   * 때마다 다시 돌리면 수십 회가 나간다. 다시 재는 것은 아래 run이 한다.
+   */
+  app.get<{ Querystring: { accountId?: string } }>('/api/trading/screening', async (req, reply) => {
+    const account = resolveAccount(req.query.accountId);
+    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+    if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
+    // 아직 안 돌렸으면 null이다. 빈 결과와 구별되어야 화면이 0으로 채우지 않는다.
+    return { result: getLastScreening(account.id) };
+  });
+
+  /*
+   * 다시 훑는다. **사용자가 누를 때만 돈다.**
+   *
+   * 예수금은 서버가 계좌에서 직접 읽는다 — 프론트가 보내면 화면에 뜬 값과
+   * 실제 계좌가 어긋났을 때 거른 사유가 틀린다.
+   */
+  app.post<{ Body: { accountId?: string; lookups?: number } }>(
+    '/api/trading/screening/run',
+    async (req, reply) => {
+      const account = resolveAccount(req.body.accountId);
+      if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+      if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
+      try {
+        const snapshot = await getKisDomesticAccountSnapshot(account);
+        const cash = snapshot.cashBalance ?? 0;
+        const result = await runScreening(cash, Number(req.body.lookups) || DEFAULT_SCREENING_LOOKUPS);
+        rememberScreening(account.id, result);
+        return { result };
+      } catch (err) {
+        req.log.warn({ err, accountId: account.id }, '후보 스크리닝 실패');
+        return reply.code(502).send({ message: '후보를 훑지 못했습니다.' });
+      }
+    },
+  );
 
   app.get<{ Params: { id: string } }>('/api/instruments/:id/financials', async (req, reply) => {
     const instrument = await getInstrument(req.params.id);

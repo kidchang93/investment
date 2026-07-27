@@ -43,7 +43,7 @@ const MAX_PRICE_LOOKUPS = 24;
  * 5천만원은 5만원짜리 주문 하나가 거래대금의 0.1%인 수준이다. 이 계좌 규모에서
  * 호가를 밀지 않고 들어갈 수 있는 최소선으로 잡았다 — 더 큰 계좌면 올려야 한다.
  */
-const MIN_DAILY_TURNOVER = 50_000_000;
+export const MIN_DAILY_TURNOVER = 50_000_000;
 
 /*
  * 왕복 비용이 하루 변동폭에서 차지하는 비중의 상한.
@@ -56,10 +56,10 @@ const MIN_DAILY_TURNOVER = 50_000_000;
  * 비용 921원 — 원금 49,751원의 1.85%를 썼다. 다른 두 전략의 다섯 배다.
  * 소액 계좌에서 비용은 전략을 고르는 문제가 아니라 후보를 고르는 문제다.
  */
-const MAX_COST_SHARE_OF_RANGE = 0.5;
+export const MAX_COST_SHARE_OF_RANGE = 0.5;
 
 /** 사고팔 때 한 번씩 드는 비용을 합친 비율. 백테스트가 쓰는 값과 같은 것을 쓴다. */
-const ROUND_TRIP_COST_RATE =
+export const ROUND_TRIP_COST_RATE =
   DEFAULT_COSTS.commissionRate * 2 + DEFAULT_COSTS.sellTaxRate + DEFAULT_COSTS.slippageRate * 2;
 
 /*

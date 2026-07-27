@@ -31,6 +31,7 @@ import {
   fetchInstrumentNews,
   fetchInstrumentQuote,
   fetchOrderBook,
+  fetchScreening,
   fetchSignalScores,
   fetchInstrumentQuotes,
   fetchTerminalInstruments,
@@ -38,6 +39,7 @@ import {
   fetchWatchlistItems,
   fetchWatchlists,
   removeWatchlistItem,
+  runScreening,
   searchInstruments,
   type FinancialsResult,
 } from './api';
@@ -73,6 +75,9 @@ import type {
   OrderTimeInForce,
   OrderBook,
   OrderType,
+  ScreeningResult,
+  ScreeningRow,
+  ScreeningVerdict,
   SignalScoreSummary,
   PriceSign,
   Quote,
@@ -112,6 +117,7 @@ type TerminalTab =
   | 'reports'
   | 'heatmap'
   | 'ranking'
+  | 'screening'
   | 'themes'
   | 'fees'
   | 'lounge'
@@ -268,6 +274,19 @@ const WATCH_GROUP_OPTIONS: Array<{ key: WatchGroup; label: string }> = [
   { key: 'fund', label: 'ETF/ETN' },
 ];
 
+/**
+ * 후보에서 빠진 사유를 사람 말로.
+ *
+ * 문턱에 걸린 것과 살 수 없는 것은 다른 일이다. 하나로 뭉쳐 `제외`라고만
+ * 적으면 예수금을 채워야 하는지 필터를 낮춰야 하는지 알 수 없다.
+ */
+const SCREENING_VERDICT: Record<ScreeningVerdict, { label: string; why: string }> = {
+  pass: { label: '통과', why: '자동매매가 후보로 삼을 수 있는 종목입니다' },
+  tooExpensive: { label: '1주가 예수금보다 비쌈', why: '예수금으로 1주도 살 수 없습니다' },
+  illiquid: { label: '거래대금 부족', why: '그 값에 원하는 만큼 체결되지 않을 수 있습니다' },
+  costHeavy: { label: '변동폭 대비 비용 과다', why: '방향을 맞혀도 왕복 비용이 남는 것을 다 먹습니다' },
+};
+
 const BOTTOM_DOCK_TAB_LABEL: Record<BottomDockTab, string> = {
   volume: '거래량',
   trades: '체결',
@@ -409,6 +428,7 @@ const TERMINAL_TAB_GROUPS: Array<{ label: string; options: TerminalTabOption[] }
     label: '도구',
     options: [
       { key: 'fees', label: '수수료', title: '증권사 비용 계산' },
+      { key: 'screening', label: '스크리닝', title: '자동매매 후보 거르기' },
       { key: 'simulation', label: '모의투자', title: '모의계좌로 연습 매매' },
     ],
   },
@@ -800,6 +820,16 @@ function CollapsibleRows({
       </button>
     </>
   );
+}
+
+/**
+ * 원 단위 금액을 억으로. 유동성 문턱이 0.5억이라 소수 한 자리를 남긴다 —
+ * 정수로 반올림하면 걸린 종목과 통과한 종목이 둘 다 `0억`으로 보인다.
+ */
+function formatOkeanAmount(won: number): string {
+  const eok = won / 100_000_000;
+  if (eok >= 100) return `${Math.round(eok).toLocaleString('ko-KR')}억`;
+  return `${eok.toFixed(1)}억`;
 }
 
 /** KIS 재무 금액은 억원 단위로 온다. 조 단위가 넘으면 조로 접어 읽기 쉽게 한다. */
@@ -2289,6 +2319,11 @@ export function App(): JSX.Element {
   const [orderBook, setOrderBook] = useState<OrderBook | null>(null);
   const [orderBookError, setOrderBookError] = useState<string | null>(null);
   const [financials, setFinancials] = useState<FinancialsResult | null>(null);
+  const [screening, setScreening] = useState<ScreeningResult | null>(null);
+  const [screeningLoaded, setScreeningLoaded] = useState(false);
+  const [screeningError, setScreeningError] = useState<string | null>(null);
+  const [screeningRunning, setScreeningRunning] = useState(false);
+  const [screeningVerdictFilter, setScreeningVerdictFilter] = useState<ScreeningVerdict | 'all'>('all');
   const [kisReservedOrders, setKisReservedOrders] = useState<BrokerReservedOrder[]>([]);
   /*
    * 언제 받아온 값인지. 잔고 카드만 `갱신 07:27:39`를 적고 나머지는 아무것도
@@ -2803,6 +2838,31 @@ export function App(): JSX.Element {
       disposed = true;
     };
   }, [activePage, bottomDockMode, bottomDockTab, selectedInstrument]);
+
+  /*
+   * 후보 거르기 결과는 **마지막에 잰 값만 읽는다.** 다시 훑는 것은 종목 수만큼
+   * KIS 호출이 나가므로 사용자가 누를 때만 한다. 탭을 열 때마다 훑으면
+   * 탭 한 번에 수십 회다.
+   */
+  useEffect(() => {
+    if (activePage !== 'terminal' || terminalTab !== 'screening') return undefined;
+    let disposed = false;
+    fetchScreening(kisAccountId ?? undefined)
+      .then((result) => {
+        if (disposed) return;
+        setScreening(result);
+        setScreeningError(null);
+      })
+      .catch((e) => {
+        if (!disposed) setScreeningError(toErrorMessage(e));
+      })
+      .finally(() => {
+        if (!disposed) setScreeningLoaded(true);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [activePage, terminalTab, kisAccountId]);
 
   // 미체결 주문은 매매 화면에서 계좌를 바꿀 때마다 다시 받는다.
   useEffect(() => {
@@ -5542,6 +5602,137 @@ export function App(): JSX.Element {
                       </article>
                     ))}
                   </div>
+                </section>
+              )}
+
+              {terminalTab === 'screening' && (
+                <section className="terminal-page terminal-page--screening" aria-label="자동매매 후보 거르기">
+                  <div className="terminal-page__header">
+                    <div>
+                      <span>
+                        자동매매가 후보를 고르는 세 문 · 예수금 → 거래대금 → 변동폭 대비 비용
+                      </span>
+                      <strong>스크리닝</strong>
+                    </div>
+                  </div>
+
+                  {/*
+                    호출 비용을 버튼에 적는다. 누르면 종목 수만큼 KIS 시세 호출이
+                    나가는데, 그걸 안 적으면 새로고침처럼 가볍게 여겨진다.
+                  */}
+                  <div className="screening__actions">
+                    <button
+                      className="screening__run"
+                      disabled={screeningRunning}
+                      onClick={() => {
+                        setScreeningRunning(true);
+                        setScreeningError(null);
+                        runScreening(kisAccountId ?? undefined, 40)
+                          .then((result) => {
+                            setScreening(result);
+                            setScreeningLoaded(true);
+                          })
+                          .catch((e) => setScreeningError(toErrorMessage(e)))
+                          .finally(() => setScreeningRunning(false));
+                      }}
+                      type="button"
+                    >
+                      {screeningRunning ? '훑는 중…' : '지금 훑기'}
+                    </button>
+                    <em>40종목 · KIS 시세 호출 40회 · 약 6초. 누를 때만 돕니다</em>
+                  </div>
+
+                  {screeningError && (
+                    <p className="screening__error">후보를 훑지 못했습니다 — {screeningError}</p>
+                  )}
+
+                  {!screening && screeningLoaded && !screeningError && (
+                    /* 안 훑은 것과 훑었는데 아무것도 안 남은 것은 다른 상태다. */
+                    <p className="screening__empty">
+                      아직 훑지 않았습니다. 위 <b>지금 훑기</b>를 누르면 자동매매가 보는 것과 같은 문으로 걸러 봅니다.
+                    </p>
+                  )}
+                  {!screening && !screeningLoaded && !screeningError && (
+                    <p className="screening__empty">불러오는 중</p>
+                  )}
+
+                  {screening && (
+                    <>
+                      {/* 언제·무슨 값으로 걸렀는지. 값만 보면 지금 것인지 아침 것인지 알 수 없다. */}
+                      <p className="screening__basis">
+                        <b>{formatClock(screening.scannedAt)}</b>에 잰 값 ·
+                        예수금 {Math.floor(screening.cash).toLocaleString('ko-KR')}원 ·
+                        장 경과 {Math.round(screening.elapsed * 100)}%
+                        <small>
+                          거래대금 문턱 {formatOkeanAmount(screening.thresholds.minDailyTurnover)}
+                          {screening.elapsed < 1 && `×${screening.elapsed.toFixed(2)}`}
+                          {' · '}왕복 비용 {(screening.thresholds.roundTripCostRate * 100).toFixed(2)}%가
+                          하루 변동폭의 {Math.round(screening.thresholds.maxCostShareOfRange * 100)}%를 넘으면 제외
+                        </small>
+                      </p>
+
+                      <div className="screening__counts" role="tablist" aria-label="판정별 보기">
+                        {(['all', 'pass', 'tooExpensive', 'illiquid', 'costHeavy'] as const).map((key) => {
+                          const count =
+                            key === 'all'
+                              ? screening.rows.length
+                              : screening.rows.filter((row) => row.verdict === key).length;
+                          return (
+                            <button
+                              aria-selected={screeningVerdictFilter === key}
+                              data-verdict={key}
+                              key={key}
+                              onClick={() => setScreeningVerdictFilter(key)}
+                              role="tab"
+                              title={key === 'all' ? '전체' : SCREENING_VERDICT[key].why}
+                              type="button"
+                            >
+                              <span>{key === 'all' ? '전체' : SCREENING_VERDICT[key].label}</span>
+                              <strong>{count}</strong>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {screening.unresolved > 0 && (
+                        /* 못 받은 것을 빈 값으로 넘기지 않는다. */
+                        <p className="screening__unresolved">
+                          시세를 받지 못한 종목 {screening.unresolved}개는 아래 표에 없습니다 — 걸러진 것이 아닙니다.
+                        </p>
+                      )}
+
+                      <div className="screening__rows" role="table" aria-label="스크리닝 결과">
+                        <div className="screening__row screening__row--head" role="row">
+                          <span role="columnheader">종목</span>
+                          <span role="columnheader">현재가</span>
+                          <span role="columnheader">등락률</span>
+                          <span role="columnheader">거래대금</span>
+                          <span role="columnheader">변동폭</span>
+                          <span role="columnheader">판정</span>
+                        </div>
+                        {screening.rows
+                          .filter((row) => screeningVerdictFilter === 'all' || row.verdict === screeningVerdictFilter)
+                          .map((row: ScreeningRow) => (
+                            <div className="screening__row" data-verdict={row.verdict} key={row.instrumentId} role="row">
+                              <span role="cell">
+                                <b>{row.name}</b>
+                                <small>{row.symbol}</small>
+                              </span>
+                              <span role="cell">{row.price.toLocaleString('ko-KR')}원</span>
+                              <span data-tone={row.changeRate >= 0 ? 'up' : 'down'} role="cell">
+                                {row.changeRate > 0 ? '+' : ''}{row.changeRate.toFixed(2)}%
+                              </span>
+                              <span role="cell">{formatOkeanAmount(row.turnover)}</span>
+                              {/* 고가·저가가 아직 없으면 0%가 아니라 없다고 적는다. */}
+                              <span role="cell">{row.rangeRate === undefined ? '없음' : `${row.rangeRate.toFixed(2)}%`}</span>
+                              <span role="cell" title={SCREENING_VERDICT[row.verdict].why}>
+                                {SCREENING_VERDICT[row.verdict].label}
+                              </span>
+                            </div>
+                          ))}
+                      </div>
+                    </>
+                  )}
                 </section>
               )}
 
