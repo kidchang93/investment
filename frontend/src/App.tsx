@@ -2079,6 +2079,17 @@ export function App(): JSX.Element {
   /* 주문 확인 단계를 보여주는 중인지. 실제 증권사 주문 화면과 같은 흐름이다. */
   const [liveOrderConfirming, setLiveOrderConfirming] = useState(false);
   /*
+   * 실계좌로 나가는 다른 두 자리도 한 번 확인받는다.
+   *
+   * 매수·매도만 `주문 확인` 단계가 있었고, 예약주문 등록과 정정·취소는 누르는
+   * 즉시 전송됐다. 단가를 한 자리 잘못 치고 `확정`을 누르면 그대로 나간다.
+   * 실계좌로 나가는 자리는 다 같은 대접을 받아야 한다.
+   *
+   * 정정·취소는 줄 안에서 확인하므로 어느 주문의 무슨 동작인지 키로 들고 있는다.
+   */
+  const [reservedConfirming, setReservedConfirming] = useState(false);
+  const [amendConfirmKey, setAmendConfirmKey] = useState<string | null>(null);
+  /*
    * 이번 주문의 멱등성 키. 확인 단계에 들어갈 때 한 번 만들고 그동안 유지한다.
    * 전송 버튼을 두 번 누르거나 네트워크가 끊겨 재시도해도 서버가 같은 키를 보고
    * 한 주문만 접수한다.
@@ -6684,6 +6695,10 @@ export function App(): JSX.Element {
                     />
                   </label>
                   <label className="risk-rules__toggle">
+                    {/*
+                      매수·매도처럼 한 번 확인받는다. 예전에는 누르는 즉시
+                      전송돼서, 단가를 한 자리 잘못 치면 그대로 나갔다.
+                    */}
                     <button
                       className="live-order__submit"
                       /*
@@ -6693,7 +6708,7 @@ export function App(): JSX.Element {
                        * 상황에서 잠기는데 여기만 달랐다.
                        */
                       disabled={reservedOrderBlockers.length > 0 || isReservedCancelling}
-                      onClick={() => void submitReservedOrder()}
+                      onClick={() => setReservedConfirming(true)}
                       title={
                         reservedOrderBlockers.length > 0 ? reservedOrderBlockers.join('\n') : undefined
                       }
@@ -6703,6 +6718,37 @@ export function App(): JSX.Element {
                     </button>
                   </label>
                 </div>
+                {reservedConfirming && (
+                  <div className="live-order__confirm live-order__confirm--card">
+                    <p>
+                      <strong>{selectedInstrument?.name ?? '-'}</strong>
+                      <span>
+                        {reservedSide === 'buy' ? '매수' : '매도'} {formatNumber(Number(reservedQuantity))}주 ·
+                        {' 지정가 '}{formatMoney(Number(reservedPrice), selectedInstrument?.currency)}
+                      </span>
+                      <em>
+                        {kisAccounts.find((account) => account.id === kisAccountId)?.label ?? kisAccountId}
+                        {' · 다음 개장일에 나갑니다'}
+                      </em>
+                    </p>
+                    <div className="live-order__confirm-actions">
+                      <button onClick={() => setReservedConfirming(false)} type="button">
+                        취소
+                      </button>
+                      <button
+                        className="live-order__submit"
+                        disabled={reservedOrderBlockers.length > 0 || isReservedCancelling}
+                        onClick={() => {
+                          setReservedConfirming(false);
+                          void submitReservedOrder();
+                        }}
+                        type="button"
+                      >
+                        {isReservedCancelling ? '전송 중' : '예약주문 확인'}
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {/* 버튼이 왜 잠겼는지 보이지 않으면 사용자가 원인을 추측해야 한다. */}
                 {reservedOrderBlockers.length > 0 && (
                   <div className="live-order__messages live-order__messages--card">
@@ -7199,16 +7245,71 @@ export function App(): JSX.Element {
                               type="number"
                               value={amendPrice}
                             />
+                            {/*
+                              바로 보내지 않고 무엇이 어떻게 바뀌는지 한 번
+                              보여준다. 단가를 한 자리 잘못 치면 그대로 나갔다.
+                            */}
+                            {amendConfirmKey === `${order.id}:amend` ? (
+                              <>
+                                <em className="live-order__inline-confirm">
+                                  {formatMoney(order.orderPrice, order.currency)} →{' '}
+                                  {formatMoney(Number(amendPrice), order.currency)}
+                                </em>
+                                <button
+                                  className="live-order__submit"
+                                  disabled={isLiveOrderSubmitting || amendCancelBlockers.length > 0}
+                                  onClick={() => {
+                                    setAmendConfirmKey(null);
+                                    void submitAmendOrCancel(order, 'amend');
+                                  }}
+                                  type="button"
+                                >
+                                  정정 확인
+                                </button>
+                                <button onClick={() => setAmendConfirmKey(null)} type="button">
+                                  아니오
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  disabled={isLiveOrderSubmitting || amendCancelBlockers.length > 0}
+                                  onClick={() => setAmendConfirmKey(`${order.id}:amend`)}
+                                  title={amendCancelBlockedReason}
+                                  type="button"
+                                >
+                                  확정
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setAmendingOrderId(null);
+                                    setAmendConfirmKey(null);
+                                  }}
+                                  type="button"
+                                >
+                                  닫기
+                                </button>
+                              </>
+                            )}
+                          </>
+                        ) : amendConfirmKey === `${order.id}:cancel` ? (
+                          <>
+                            <em className="live-order__inline-confirm">
+                              {formatNumber(order.amendableQuantity)}주 취소
+                            </em>
                             <button
+                              className="live-order__submit"
                               disabled={isLiveOrderSubmitting || amendCancelBlockers.length > 0}
-                              onClick={() => void submitAmendOrCancel(order, 'amend')}
-                              title={amendCancelBlockedReason}
+                              onClick={() => {
+                                setAmendConfirmKey(null);
+                                void submitAmendOrCancel(order, 'cancel');
+                              }}
                               type="button"
                             >
-                              확정
+                              취소 확인
                             </button>
-                            <button onClick={() => setAmendingOrderId(null)} type="button">
-                              닫기
+                            <button onClick={() => setAmendConfirmKey(null)} type="button">
+                              아니오
                             </button>
                           </>
                         ) : (
@@ -7226,7 +7327,7 @@ export function App(): JSX.Element {
                             </button>
                             <button
                               disabled={isLiveOrderSubmitting || amendCancelBlockers.length > 0}
-                              onClick={() => void submitAmendOrCancel(order, 'cancel')}
+                              onClick={() => setAmendConfirmKey(`${order.id}:cancel`)}
                               title={amendCancelBlockedReason}
                               type="button"
                             >
