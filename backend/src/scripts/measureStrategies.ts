@@ -91,11 +91,23 @@ async function main(): Promise<void> {
   const byStrategy = new Map<string, number[][]>();
   const tradeCounts = new Map<string, number>();
   const costTotals = new Map<string, number>();
+  /*
+   * 이긴 매매 수. 승률을 수익률과 **함께** 내기 위해 센다.
+   *
+   * 이걸 안 세는 바람에 판정문의 "승률은 높은데 수익률은 마이너스 — 이기는
+   * 횟수는 많고 지는 크기가 크다"를 다시 잴 수 없었다. 그 문장이 이 전략에서
+   * 가장 중요한 관찰인데 갱신할 근거가 없어 그대로 두거나 지워야 했다.
+   *
+   * **종목 단위 "플러스 N/20"과 다른 지표다.** 이건 매매 한 건 단위다 — 섞어
+   * 쓰면 "승률 65%"와 "플러스 7/20"이 같은 말인 줄 알게 된다.
+   */
+  const winCounts = new Map<string, number>();
   const strategies = listStrategies();
   for (const strategy of strategies) {
     byStrategy.set(strategy.key, Array.from({ length: WINDOW_COUNT }, () => []));
     tradeCounts.set(strategy.key, 0);
     costTotals.set(strategy.key, 0);
+    winCounts.set(strategy.key, 0);
   }
 
   let measured = 0;
@@ -117,6 +129,7 @@ async function main(): Promise<void> {
         byStrategy.get(strategy.key)?.[index]?.push(window.returnRate * 100);
         tradeCounts.set(strategy.key, (tradeCounts.get(strategy.key) ?? 0) + window.tradeCount);
         costTotals.set(strategy.key, (costTotals.get(strategy.key) ?? 0) + window.totalCost);
+        winCounts.set(strategy.key, (winCounts.get(strategy.key) ?? 0) + window.winCount);
       });
     }
     await new Promise((r) => setTimeout(r, GAP_MS));
@@ -138,6 +151,7 @@ async function main(): Promise<void> {
     const positives = windows.map((values) => values.filter((v) => v > 0).length);
     const trades = tradeCounts.get(strategy.key) ?? 0;
     const cost = costTotals.get(strategy.key) ?? 0;
+    const wins = winCounts.get(strategy.key) ?? 0;
     const allNegative = medians.every((m) => Number.isFinite(m) && m < 0);
 
     console.log(`${strategy.label} (코드 판정: ${strategy.verdict})`);
@@ -156,8 +170,14 @@ async function main(): Promise<void> {
      */
     const runCount = measured * WINDOW_COUNT;
     const costShare = runCount > 0 ? (cost / (runCount * cash)) * 100 : 0;
+    /*
+     * 매매가 없으면 승률은 0%가 아니라 **없는 값**이다. 분모가 0인데 0%라고
+     * 적으면 "다 졌다"로 읽힌다.
+     */
+    const winRate = trades > 0 ? (wins / trades) * 100 : undefined;
     console.log(
       `  매매 ${trades}회(백테스트 1회당 ${(trades / Math.max(1, runCount)).toFixed(1)}회)`
+      + ` · 승률 ${winRate === undefined ? '—' : `${winRate.toFixed(1)}%`}`
       + ` · 비용 합계 ${Math.round(cost).toLocaleString('ko-KR')}원`
       + ` · 백테스트 1회 원금 대비 ${costShare.toFixed(2)}%`,
     );
@@ -179,6 +199,8 @@ async function main(): Promise<void> {
       windowPositives: positives,
       windowSizes: windows.map((w) => w.length),
       tradeCount: trades,
+      winCount: wins,
+      winRate: winRate === undefined ? null : Number(winRate.toFixed(2)),
       totalCost: Math.round(cost),
       costSharePerRun: Number(costShare.toFixed(3)),
       tradesPerRun: Number((trades / Math.max(1, measured * WINDOW_COUNT)).toFixed(2)),

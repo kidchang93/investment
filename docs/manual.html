@@ -949,8 +949,10 @@
       <p>
         전략 드롭다운에서 각 전략을 고르면 아래에 백테스트 근거 문장이 그대로 뜬다. 아래는
         코드의 값을 그대로 옮긴 것이고 화면에 뜬 값과 같다. 세 전략 모두
-        <strong>예수금 49,751원으로 실제 매수 가능한 16종목을 3구간으로 나눠</strong> 2026-07-27에
-        다시 잰 값이다.
+        <strong>예수금 50,000원으로 실제 매수 가능한 20종목을 시간순 3구간으로 나눠</strong>
+        2026-07-29에 다시 잰 값이다(<strong>3구간이 가장 최근</strong>). 매도 거래세 0.20%·왕복
+        비용 0.43% 기준이고, 거래별 손익에서 매수 수수료까지 뺀 뒤의 값이다.
+        <strong>승률은 매매 한 건 단위, 플러스 종목 수는 종목 단위</strong>라 서로 다른 지표다.
       </p>
 
       <div class="tablewrap">
@@ -960,20 +962,20 @@
             <tr>
               <td>이동평균 교차</td>
               <td><code>unproven</code></td>
-              <td class="num"><span class="up">+6.27%</span> / <span class="down">-1.75%</span> / <span class="up">+0.06%</span></td>
-              <td>out-of-sample 중앙값 -1.66%로 16종목 중 7개만 이익. 평균은 +0.92%지만 최고가 +71.22%인 한 종목이 끌어올린 값이라 중앙값을 본다</td>
+              <td class="num"><span class="down">-3.87%</span> / <span class="up">+0.02%</span> / <span class="down">-3.75%</span></td>
+              <td>플러스 종목 6 / 10 / 8개로 세 구간 모두 절반을 못 넘겼다. 승률 23.3%(172회 중 40회)로 셋 중 가장 낮은데 중앙값은 변동성 돌파보다 낫다 — 드물게 이기고 그때 크게 버는 추세추종의 모양이다</td>
             </tr>
             <tr>
               <td>변동성 돌파</td>
               <td><code>no_edge</code></td>
-              <td class="num"><span class="down">-2.61%</span> / <span class="down">-5.06%</span> / <span class="down">-8.91%</span></td>
-              <td>세 구간 모두 마이너스이고 갈수록 나빠진다. 이익 종목이 5 → 2 → 1개로 줄었다. 종목당 매매 10.7회에 비용 921원 — 원금의 1.85%</td>
+              <td class="num"><span class="down">-4.85%</span> / <span class="down">-2.78%</span> / <span class="down">-9.39%</span></td>
+              <td>세 구간 모두 마이너스이고 가장 최근이 가장 나쁘다. 플러스 종목도 4 → 5 → 2개로 줄었다. 승률 34.5%인데 백테스트 1회당 매매 13.4회로 잦아 비용이 원금의 2.60%다(나머지 둘은 0.6%)</td>
             </tr>
             <tr>
               <td>평균 회귀</td>
               <td><code>unproven</code></td>
-              <td class="num"><span class="up">+1.33%</span> / <span class="up">+3.00%</span> / <span class="down">-1.30%</span></td>
-              <td>승률 65.71%로 셋 중 가장 높은데 수익률 중앙값은 -1.30%다 — 이기는 횟수는 많고 지는 크기가 크다</td>
+              <td class="num"><span class="up">+4.70%</span> / <span class="up">+1.30%</span> / <span class="down">-0.60%</span></td>
+              <td>승률 70.8%(168회 중 119회)로 셋 중 압도적 1위인데 가장 최근 구간 중앙값은 -0.60%다 — 이기는 횟수는 많고 지는 크기가 크다. 세율을 고치고 매수 수수료까지 뺀 뒤에도 이 모양은 그대로였다</td>
             </tr>
           </tbody>
         </table>
