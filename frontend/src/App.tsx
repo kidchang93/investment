@@ -2432,6 +2432,15 @@ export function App(): JSX.Element {
    * 새로 고쳐 실측했다(2026-07-27). 게이트·리스크 룰은 이미 이 구분을 갖고
    * 있었는데 이 셋만 빠져 있었다.
    */
+  /*
+   * 계좌 **목록** 조회가 실패한 사유. 계좌 **내역**(kisAccountError)과 다르다.
+   *
+   * 이게 실패하면 `kisAccountId`가 null로 남고, 그 값을 전제로 하는 조회들이
+   * `if (!kisAccountId) return`에 걸려 **시작조차 안 한다.** 그러면 각자의
+   * 오류 상태는 null이라 화면이 "확인하는 중입니다"라고 적는다 — 실패한 것도,
+   * 기다리는 것도 아니고 **아예 시작을 못 한 것**이다. 백엔드를 내리고 실측했다.
+   */
+  const [kisAccountsError, setKisAccountsError] = useState<string | null>(null);
   const [kisAccountError, setKisAccountError] = useState<string | null>(null);
   const [kisExecutionError, setKisExecutionError] = useState<string | null>(null);
   const [kisTradeProfitError, setKisTradeProfitError] = useState<string | null>(null);
@@ -2755,8 +2764,13 @@ export function App(): JSX.Element {
       .then((accounts) => {
         setKisAccounts(accounts);
         setKisAccountId((current) => current ?? accounts.find((a) => a.primary)?.id ?? accounts[0]?.id ?? null);
+        setKisAccountsError(null);
       })
-      .catch((e) => setError(toErrorMessage(e)));
+      .catch((e) => {
+        // 전역 배너는 8초 뒤 걷힌다. 뒤따르는 조회들이 왜 안 도는지는 남아야 한다.
+        setKisAccountsError(toErrorMessage(e));
+        setError(toErrorMessage(e));
+      });
   }, []);
 
   const refreshKisAccountSnapshot = useCallback((): void => {
@@ -3479,6 +3493,13 @@ export function App(): JSX.Element {
    * 세 곳이 각자 `!liveOrderGate ? '확인 중'`이라 실패해도 셋 다 기다리는
    * 문구를 계속 띄웠다.
    */
+  /**
+   * 계좌 목록을 못 불러와 **조회가 시작조차 못 한** 상태의 한 마디.
+   * 계좌 id를 전제로 하는 카드들이 "확인하는 중"이라고 적지 않게 한다.
+   */
+  const accountsBlockedLabel = kisAccountsError !== null && kisAccountId === null
+    ? `계좌 목록을 불러오지 못해 조회할 수 없습니다 — ${kisAccountsError}`
+    : null;
   const gateUnknownLabel = liveOrderGateError ? '확인 실패' : '확인 중';
   /*
    * 값은 있는데 **마지막 조회가 실패한** 상태.
@@ -7143,7 +7164,7 @@ export function App(): JSX.Element {
                       <em className="auto-trader__unknown">
                         {autoTraderError
                           ? `지금 돌고 있는지 확인하지 못해 시작을 막았습니다 — ${autoTraderError}`
-                          : '지금 돌고 있는지 확인하는 중입니다'}
+                          : (accountsBlockedLabel ?? '지금 돌고 있는지 확인하는 중입니다')}
                       </em>
                     )}
                   </div>
@@ -7188,7 +7209,7 @@ export function App(): JSX.Element {
                   {signalScoresError ? (
                     <em className="signal-scores__error">채점 성적을 불러오지 못했습니다 — {signalScoresError}</em>
                   ) : signalScores === null ? (
-                    <em className="signal-scores__empty">불러오는 중입니다</em>
+                    <em className="signal-scores__empty">{accountsBlockedLabel ?? '불러오는 중입니다'}</em>
                   ) : signalScores.length === 0 ? (
                     <em className="signal-scores__empty">
                       아직 채점된 신호가 없습니다 · 자동매매가 신호를 낸 뒤 거래일이 지나야 채점됩니다
