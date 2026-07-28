@@ -47,8 +47,8 @@ import {
 import { useStream } from './useStream';
 import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } from './Chart';
 import {
-  KR_KONEX_SELL_TAX_RATE_ASSUMPTION,
-  KR_SELL_TAX_RATE_ASSUMPTION,
+  KR_KONEX_SELL_TAX_RATE,
+  KR_SELL_TAX_RATE,
 } from '@invest/shared';
 import type {
   AutoTraderMode,
@@ -548,13 +548,13 @@ const CALENDAR_IMPACT_OPTIONS: Array<{ key: CalendarImpactFilter; label: string 
 ];
 
 /*
- * 세율은 @invest/shared에서 가져온다. 여기 0.002, 백테스트에 0.0018이 따로
+ * 세율은 @invest/shared에서 가져온다. 예전엔 여기 0.002, 백테스트에 0.0018이 따로
  * 박혀 있어 같은 세금을 앱이 두 값으로 들고 있었다. 둘 다 출처가 없었다.
  */
 const FEE_MARKET_OPTIONS: Array<{ key: FeeMarket; label: string; taxRate: number; unit: string }> = [
-  { key: 'kospi', label: '코스피', taxRate: KR_SELL_TAX_RATE_ASSUMPTION, unit: 'KRW' },
-  { key: 'kosdaq', label: '코스닥', taxRate: KR_SELL_TAX_RATE_ASSUMPTION, unit: 'KRW' },
-  { key: 'konex', label: '코넥스', taxRate: KR_KONEX_SELL_TAX_RATE_ASSUMPTION, unit: 'KRW' },
+  { key: 'kospi', label: '코스피', taxRate: KR_SELL_TAX_RATE, unit: 'KRW' },
+  { key: 'kosdaq', label: '코스닥', taxRate: KR_SELL_TAX_RATE, unit: 'KRW' },
+  { key: 'konex', label: '코넥스', taxRate: KR_KONEX_SELL_TAX_RATE, unit: 'KRW' },
   { key: 'us_stock', label: '미국주식', taxRate: 0, unit: 'USD' },
   { key: 'kospi200_future', label: 'KOSPI200 선물', taxRate: 0, unit: 'KRW' },
   { key: 'kospi200_option', label: 'KOSPI200 옵션', taxRate: 0, unit: 'KRW' },
@@ -1215,8 +1215,8 @@ function estimateOrderCost(
   const taxRate =
     side === 'sell'
       ? market === 'KONEX'
-        ? KR_KONEX_SELL_TAX_RATE_ASSUMPTION
-        : KR_SELL_TAX_RATE_ASSUMPTION
+        ? KR_KONEX_SELL_TAX_RATE
+        : KR_SELL_TAX_RATE
       : 0;
   const commission = notional * KIS_COMMISSION_RATE_ASSUMPTION;
   const institutionFee = notional * KR_INSTITUTION_FEE_RATE_ASSUMPTION;
@@ -1232,17 +1232,6 @@ function estimateOrderCost(
   };
 }
 
-/**
- * 리스크 룰로 미리 거를 수 있는 사유.
- *
- * 서버가 판정의 주인이다. 여기서는 화면이 미리 말해 주는 것뿐이고, 서버만 아는
- * 것(당일 누적 한도·휴장일·거래 시간)은 흉내 내지 않는다 — 흉내 낸 값이 서버와
- * 어긋나면 그게 더 나쁘다.
- *
- * 수동 주문과 예약주문이 각자 따로 검사하다 예약주문 쪽이 통째로 빠져 있었다.
- * (자동매매도 자기 것을 따로 갖고 있는데, 그쪽은 검사 대상이 룰 자체라 다르다.)
- * 한 곳에서 만들어 둘 다 쓴다. 네 번째가 생겨도 여기만 부르면 된다.
- */
 /** 국내 현금 주문이 성립하는 종목인지. 지수·선물·야간 프록시는 매수가능 조회 대상이 아니다. */
 function isOrderableDomesticInstrument(instrument: Instrument | null): boolean {
   return Boolean(

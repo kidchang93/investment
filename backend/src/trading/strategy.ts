@@ -56,6 +56,16 @@ export interface Strategy {
 }
 
 /** 단순 이동평균. 캔들이 모자라면 undefined. */
+/*
+ * **아래 전략들의 판정문(backtestNote)은 매도 거래세 0.18%로 잰 값이다.**
+ *
+ * 2026-07-27에 세율 출처를 확인해 0.20%로 고쳤다(왕복 비용 0.41% → 0.43%).
+ * 그만큼 비용이 더 나가므로 성적은 지금 적힌 것보다 조금 나쁘다.
+ *
+ * **숫자를 손으로 고치지 않는다** — 판정은 다시 재서 바꾸는 것이지 추정으로
+ * 조정하는 게 아니다. `npx tsx src/scripts/measureStrategies.ts`로 다시 재면
+ * 이 문장들이 갱신된다.
+ */
 export function movingAverage(candles: Candle[], period: number): number | undefined {
   if (candles.length < period) return undefined;
   const slice = candles.slice(-period);

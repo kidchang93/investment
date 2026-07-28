@@ -26,7 +26,7 @@ async function main(): Promise<void> {
     console.log('아직 채점된 신호가 없습니다. 자동매매를 돌려 신호를 쌓은 뒤 다음 거래일에 다시 돌리세요.');
     console.log(`채점 기간: ${SCORE_HORIZONS.join('·')}거래일 · 비용을 뺀 값으로 승패를 셉니다.`);
   } else {
-    console.log('누적 성적 (비용 왕복 0.41%를 뺀 값)');
+    console.log('누적 성적 (비용 왕복 0.43%를 뺀 값)');
     for (const row of summary) {
       console.log(
         `  ${String(row.horizonDays).padStart(2)}거래일 후`

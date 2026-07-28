@@ -16,7 +16,7 @@
  * 그래도 백테스트는 과거일 뿐이다. 여기서 좋았다고 앞으로도 된다는 뜻이 아니다.
  */
 
-import { KR_SELL_TAX_RATE_ASSUMPTION, type Candle, type Instrument } from '@invest/shared';
+import { KR_SELL_TAX_RATE, type Candle, type Instrument } from '@invest/shared';
 
 import { getStrategy, type StrategyContext } from './strategy.js';
 
@@ -39,7 +39,7 @@ export interface BacktestCosts {
  */
 export const DEFAULT_COSTS: BacktestCosts = {
   commissionRate: 0.00015,
-  sellTaxRate: KR_SELL_TAX_RATE_ASSUMPTION,
+  sellTaxRate: KR_SELL_TAX_RATE,
   slippageRate: 0.001,
 };
 
