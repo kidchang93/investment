@@ -39,11 +39,13 @@ cp .env.example .env      # KIS_APP_KEY / KIS_APP_SECRET 채우기
 
 # Postgres를 먼저 띄운다. 없으면 백엔드가 뜨지 않는다
 #   [api] Error: connect ECONNREFUSED 127.0.0.1:55432
-# 아래는 DATABASE_URL 기본값에서 뽑은 것이다(다른 방법으로 띄워도 된다 —
-# 접속 정보만 맞으면 되고, 다르면 DATABASE_URL을 고친다)
+docker start kis-postgres            # 컨테이너가 이미 있으면 이것으로 충분하다
+
+# 없으면 새로 만든다. 접속 정보는 DATABASE_URL 기본값과 맞춘 것이고,
+# 다른 방법으로 띄워도 된다 — 다르게 띄우면 DATABASE_URL을 고친다
 docker run -d --name kis-postgres -p 55432:5432 \
   -e POSTGRES_USER=kis -e POSTGRES_PASSWORD=kis_local -e POSTGRES_DB=kis \
-  postgres:16
+  postgres:16-alpine
 
 # 개발 모드: 백엔드(:4000) + 프론트(:5173) 동시 실행
 npm run dev
