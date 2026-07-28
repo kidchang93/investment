@@ -93,6 +93,39 @@ describe('백테스트', () => {
     assert.ok(paid.endEquity < free.endEquity, '비용을 뺀 쪽이 더 적어야 한다');
   });
 
+  it('거래별 손익의 합이 실제 현금 변화와 맞는다', () => {
+    /*
+     * `netPnl`은 "비용까지 뺀 손익"이다. 다 팔고 끝난 백테스트라면 그 합이
+     * 실제로 늘거나 준 돈과 같아야 한다.
+     *
+     * **이게 어긋나 있었다.** 매도 수수료·거래세만 빼고 **매수 수수료를 안
+     * 뺐다** — 왕복 1회짜리에서 합계가 7.4982원(= 매수 수수료) 컸다. `cash`는
+     * 살 때 제대로 뺐으니 총수익률은 맞았고, 틀린 것은 거래별 손익과 승률이라
+     * 눈에 잘 안 띄었다.
+     *
+     * 위의 승률 시험이 `NO_COSTS`로 도는 바람에 못 잡았다. 여기서는 반드시
+     * 비용을 켜고 잰다.
+     */
+    const result = backtest('ma_cross', instrument, flatCandles(ROUND_TRIP), 50_000, DEFAULT_COSTS);
+    assert.ok(result.tradeCount > 0, '매매가 있어야 잴 수 있다');
+    assert.equal(result.openQuantity, 0, '다 팔고 끝나야 합이 맞는다');
+
+    const summed = result.trades.reduce((total, trade) => total + trade.netPnl, 0);
+    const actual = result.endEquity - result.startCash;
+    assert.ok(
+      Math.abs(summed - actual) < 1e-6,
+      `거래별 손익 합 ${summed} 과 실제 현금 변화 ${actual} 이 다르다`,
+    );
+  });
+
+  it('비용을 켜면 승률이 공짜일 때보다 높지 않다', () => {
+    // 간신히 이긴 매매는 비용을 물리면 진 매매가 된다. 반대는 있을 수 없다.
+    const candles = flatCandles(ROUND_TRIP);
+    const free = backtest('ma_cross', instrument, candles, 50_000, NO_COSTS);
+    const paid = backtest('ma_cross', instrument, candles, 50_000, DEFAULT_COSTS);
+    assert.ok(paid.winRate <= free.winRate, `${paid.winRate} > ${free.winRate}`);
+  });
+
   it('한 주도 못 사는 원금이면 매매하지 않는다', () => {
     const result = backtest('ma_cross', instrument, flatCandles(ROUND_TRIP), 10, NO_COSTS);
     assert.equal(result.tradeCount, 0);

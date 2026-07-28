@@ -103,6 +103,19 @@ export function backtest(
   let quantity = 0;
   let entryPrice = 0;
   let entryTime = 0;
+  /*
+   * 살 때 낸 수수료. 팔 때 `netPnl`에서 빼야 한다.
+   *
+   * 이걸 안 들고 다녔더니 거래별 손익이 매수 수수료만큼 후하게 나왔다 —
+   * `netPnl`은 "비용까지 뺀 손익"이라고 적혀 있는데 매도 쪽 비용만 빠지고
+   * 있었다. 실측: 왕복 1회짜리 백테스트에서 `netPnl` 합계가 실제 현금 변화보다
+   * 정확히 7.4982원(= 매수 수수료) 컸다.
+   *
+   * `cash`는 살 때 이미 제대로 뺐으므로 총수익률·자산곡선은 맞았다. 틀린 것은
+   * **거래별 손익과 그걸로 세는 승률**이다 — 간신히 이긴 매매가 사실은 진
+   * 매매였을 수 있다.
+   */
+  let entryFee = 0;
   let totalCost = 0;
   let peakEquity = startCash;
   let maxDrawdown = 0;
@@ -136,6 +149,7 @@ export function backtest(
         totalCost += fee;
         quantity = size;
         entryPrice = buyPrice;
+        entryFee = fee;
         entryTime = candles[i + 1].time;
       } else if (signal.side === 'sell' && quantity > 0) {
         const sellPrice = fill * (1 - costs.slippageRate);
@@ -143,7 +157,7 @@ export function backtest(
         const fee = gross * costs.commissionRate + gross * costs.sellTaxRate;
         cash += gross - fee;
         totalCost += fee;
-        const netPnl = gross - fee - quantity * entryPrice;
+        const netPnl = gross - fee - entryFee - quantity * entryPrice;
         trades.push({
           entryTime,
           exitTime: candles[i + 1].time,
@@ -155,6 +169,7 @@ export function backtest(
         });
         quantity = 0;
         entryPrice = 0;
+        entryFee = 0;
       }
     }
 
