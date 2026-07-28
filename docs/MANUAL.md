@@ -30,8 +30,8 @@ Investment Monitor는 한국투자증권(KIS) 오픈API로 국내 주식 시세�
 
 `발견`의 하위 탭 13개는 네 묶음으로 나뉜다(실측: 시세[대시보드·히트맵·랭킹·테마·매크로]
 · 뉴스·일정[뉴스룸·캘린더·리포트] · 커뮤니티[라운지·채팅] · 도구[수수료·**스크리닝**·모의투자]).
-`docs/ARCHITECTURE.md`에는 이 마지막 탭이 "시뮬"이라고 적혀 있지만, 실제 화면 라벨은
-**"모의투자"**다 — 문서가 코드보다 오래됐다.
+`docs/ARCHITECTURE.md`가 이 묶음을 "수수료, 시뮬" 둘로 적고 하위 탭을 12개라 해
+**스크리닝이 통째로 빠져 있었다.** 2026-07-29에 코드와 맞췄다.
 
 `도구 > 스크리닝`은 **자동매매가 후보를 고르는 세 문을 그대로 보여 준다** —
 예수금으로 살 수 있는가 → 거래대금이 충분한가 → 하루 변동폭이 왕복 비용보다
@@ -352,8 +352,8 @@ KIS로 보내지 않는다. 실제는 게이트(`KIS_LIVE_ORDER_ENABLED`)가 열
 
 | 항목 | 값 | 근거 |
 |------|------|------|
-| 위탁수수료 | 0.014% | `frontend/src/App.tsx:904` `KIS_COMMISSION_RATE_ASSUMPTION` |
-| 유관기관 수수료 | 0.003% | `frontend/src/App.tsx:905` `KR_INSTITUTION_FEE_RATE_ASSUMPTION` |
+| 위탁수수료 | 0.014% | `frontend/src/App.tsx:1197` `KIS_COMMISSION_RATE_ASSUMPTION` |
+| 유관기관 수수료 | 0.003% | `frontend/src/App.tsx:1198` `KR_INSTITUTION_FEE_RATE_ASSUMPTION` |
 
 `shared/src/index.ts:856-865`의 주석이 이유를 그대로 적어 뒀다: "백테스트는
 0.0018, 수수료 계산기는 0.002를 쓰고 있었다 — 같은 세금인데 두 숫자가 앱 안에
@@ -363,7 +363,7 @@ KIS로 보내지 않는다. 실제는 게이트(`KIS_LIVE_ORDER_ENABLED`)가 열
 청구액은 본인 계좌와 최신 세법에서 확인해야 한다.
 
 발견 > 수수료 탭의 증권사별 비교표(대신증권·미래에셋증권·한국투자증권 등
-8곳, `frontend/src/App.tsx:643-650`)도 같은 이유로 `SampleBadge`가 붙어 있다
+8곳, `frontend/src/App.tsx:763-772` `FEE_BROKERS`)도 같은 이유로 `SampleBadge`가 붙어 있다
 — "증권사 요율도 세율도 확인된 값이 아닙니다. 상품·이벤트·개설 경로에 따라
 다르고 세율은 법으로 바뀌니, 실제 값은 본인 계좌와 최신 세법에서 확인하세요."
 
