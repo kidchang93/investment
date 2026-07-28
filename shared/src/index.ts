@@ -876,6 +876,33 @@ export interface BrokerTradeProfitSnapshot {
   message?: string;
 }
 
+/*
+ * 기간별 매매손익의 "성적" 두 칸 — 매도 확정이 0건이면 숫자를 내주지 않는다.
+ *
+ * KIS는 이 기간에 판 것이 없어도 `tot_rlzt_pfls`·`tot_pftrt`를 **둘 다 `0`으로**
+ * 내려준다(실측: rows 0건에 totalRealizedProfit=0, totalProfitRate=0). 그대로
+ * 그리면 화면이 `실현손익 0원 · 손익률 0.00%`라고 적는데, **손익률은 분모가
+ * 없는 값**이라 이건 "본전이었다"로 읽힌다. 잰 결과가 0인 게 아니라 잴 것이
+ * 없는 것이다.
+ *
+ * `undefined`를 돌려주면 화면의 `formatMoney`/`formatPercent`가 `-`를,
+ * `profitTone`이 `flat`을 준다 — 없는 값에 빨강·파랑이 붙지 않는다.
+ *
+ * **수수료·세금·거래대금에는 쓰지 않는다.** 거래가 없었으면 그 셋은 정말로
+ * 0원이다. 성질이 다르니 같이 지우지 않는다.
+ *
+ * 화면(App.tsx)이 아니라 여기 있는 이유는 `riskRuleBlockers`와 같다 — 시험으로
+ * 경계를 못 박기 위해서다. 실계좌에 확정 매도가 한 건도 없어 **값이 있는 쪽을
+ * 화면으로는 태울 수 없었다.**
+ */
+export function settledRealized(profit: BrokerTradeProfitSnapshot): number | undefined {
+  return profit.rows.length > 0 ? profit.totalRealizedProfit : undefined;
+}
+
+export function settledProfitRate(profit: BrokerTradeProfitSnapshot): number | undefined {
+  return profit.rows.length > 0 ? profit.totalProfitRate : undefined;
+}
+
 /**
  * KIS 매도가능수량 조회 결과.
  * 이 응답에는 종목명이 없다(상품번호만 온다). 이름은 화면이 이미 아는 `Instrument`를 쓴다.

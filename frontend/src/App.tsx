@@ -93,6 +93,8 @@ import {
   KRX_SESSION_MINUTES,
   krxSessionKind,
   riskRuleBlockers,
+  settledProfitRate,
+  settledRealized,
 } from '@invest/shared';
 
 type RangeKey = '1M' | '3M' | '6M' | '1Y' | 'ALL';
@@ -1783,6 +1785,7 @@ function profitTone(value: number | undefined): 'up' | 'down' | 'flat' {
 function formatPercent(value: number | undefined): string {
   return value !== undefined && Number.isFinite(value) ? `${value.toFixed(2)}%` : '-';
 }
+
 
 /**
  * 조회 구간 표시용 'YY.MM.DD'.
@@ -6983,14 +6986,14 @@ export function App(): JSX.Element {
                     <div className="portfolio-page__metrics portfolio-page__metrics--broker">
                       <div>
                         <span>실현손익</span>
-                        <strong data-tone={profitTone(kisTradeProfit.totalRealizedProfit)}>
-                          {formatMoney(kisTradeProfit.totalRealizedProfit)}
+                        <strong data-tone={profitTone(settledRealized(kisTradeProfit))}>
+                          {formatMoney(settledRealized(kisTradeProfit))}
                         </strong>
                       </div>
                       <div>
                         <span>손익률</span>
-                        <strong data-tone={profitTone(kisTradeProfit.totalProfitRate)}>
-                          {formatPercent(kisTradeProfit.totalProfitRate)}
+                        <strong data-tone={profitTone(settledProfitRate(kisTradeProfit))}>
+                          {formatPercent(settledProfitRate(kisTradeProfit))}
                         </strong>
                       </div>
                       <div>
