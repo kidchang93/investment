@@ -207,6 +207,67 @@ export const KRX_SESSION_MINUTES = {
 } as const;
 
 /**
+ * 주문을 내기 전에 **화면이 미리 걸러 보는** 리스크 룰.
+ *
+ * **서버가 최종 판정자다**(`backend/src/db/riskRules.ts`의 `checkRiskRules`).
+ * 이건 오발주를 줄이려고 같은 항목을 화면에서도 먼저 보는 것이고, 여기를
+ * 통과했다고 주문이 나간다는 뜻이 아니다.
+ *
+ * **서버만 아는 것은 일부러 안 본다** — 거래 시간대·휴장일·오늘 누적 한도.
+ * 화면이 흉내 내면 서버와 어긋난 순간 거짓말이 된다(`docs/CODE_STYLE.md`).
+ * 그래서 이 함수는 서버 검사의 **부분집합**이다. 나중에 "빠졌다"고 채우지 말 것.
+ *
+ * 룰을 모르면 막힌 쪽에 둔다. 받아 둔 값이 있어도 마지막 조회가 실패했으면
+ * 아는 것이 아니다 — 그 사이 룰이 조여졌으면 낡은 값으로 "괜찮습니다"라고
+ * 말하게 된다.
+ */
+export function riskRuleBlockers({
+  rules,
+  error,
+  symbol,
+  orderType,
+  quantity,
+  price,
+}: {
+  rules: RiskRuleSet | null;
+  error: string | null;
+  symbol: string | undefined;
+  /** 예약주문은 언제나 지정가다 */
+  orderType: OrderType;
+  quantity: number;
+  /** 금액 한도를 재는 데 쓸 단가. 시장가면 현재가로 어림한다(서버와 같은 방식) */
+  price: number;
+}): string[] {
+  if (!rules || error) {
+    return [
+      error
+        ? `리스크 룰을 확인하지 못했습니다. 확인 전에는 주문이 나가지 않습니다 (${error})`
+        : '리스크 룰을 확인하는 중입니다.',
+    ];
+  }
+
+  const blockers: string[] = [];
+  if (!rules.enabled) blockers.push('이 계좌는 리스크 룰에서 실주문이 꺼져 있습니다.');
+  if (orderType === 'market' && !rules.allowMarketOrder) {
+    blockers.push('이 계좌는 시장가 주문이 막혀 있습니다. 지정가로 내거나 리스크 룰을 고치세요.');
+  }
+  if (symbol) {
+    if (rules.symbolBlocklist.includes(symbol)) blockers.push(`차단 종목입니다 (${symbol}).`);
+    if (rules.symbolAllowlist.length > 0 && !rules.symbolAllowlist.includes(symbol)) {
+      blockers.push(`허용 종목 목록에 없습니다 (${symbol}). 허용: ${rules.symbolAllowlist.join(', ')}`);
+    }
+  }
+  if (Number.isFinite(quantity) && quantity > rules.maxOrderQuantity) {
+    blockers.push(`1회 주문 수량 한도 ${rules.maxOrderQuantity.toLocaleString('ko-KR')}주를 넘습니다.`);
+  }
+  const notional = price * quantity;
+  if (Number.isFinite(notional) && notional > rules.maxOrderNotional) {
+    blockers.push(`1회 주문 금액 한도 ${rules.maxOrderNotional.toLocaleString('ko-KR')}원을 넘습니다.`);
+  }
+  return blockers;
+}
+
+/**
  * KRX 하루 운영 구간.
  *
  * 예전에는 정규장(09:00~15:30)과 동시호가만 알았고 나머지는 전부 `장외`였다.

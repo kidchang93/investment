@@ -92,6 +92,7 @@ import {
   financialPeriodWindow,
   KRX_SESSION_MINUTES,
   krxSessionKind,
+  riskRuleBlockers,
 } from '@invest/shared';
 
 type RangeKey = '1M' | '3M' | '6M' | '1Y' | 'ALL';
@@ -1242,57 +1243,6 @@ function estimateOrderCost(
  * (자동매매도 자기 것을 따로 갖고 있는데, 그쪽은 검사 대상이 룰 자체라 다르다.)
  * 한 곳에서 만들어 둘 다 쓴다. 네 번째가 생겨도 여기만 부르면 된다.
  */
-function riskRuleBlockers({
-  rules,
-  error,
-  symbol,
-  orderType,
-  quantity,
-  price,
-}: {
-  rules: RiskRuleSet | null;
-  error: string | null;
-  symbol: string | undefined;
-  /** 예약주문은 언제나 지정가다 */
-  orderType: OrderType;
-  quantity: number;
-  /** 금액 한도를 재는 데 쓸 단가. 시장가면 현재가로 어림한다(서버와 같은 방식) */
-  price: number;
-}): string[] {
-  /*
-   * 룰을 모르면 막힌 쪽에 둔다. 받아 둔 값이 있어도 마지막 조회가 실패했으면
-   * 아는 것이 아니다 — 그 사이 룰이 조여졌으면 낡은 값으로 `괜찮습니다`라고
-   * 말하게 된다. 어차피 룰 조회가 실패할 정도면 서버도 판정하지 못한다.
-   */
-  if (!rules || error) {
-    return [
-      error
-        ? `리스크 룰을 확인하지 못했습니다. 확인 전에는 주문이 나가지 않습니다 (${error})`
-        : '리스크 룰을 확인하는 중입니다.',
-    ];
-  }
-
-  const blockers: string[] = [];
-  if (!rules.enabled) blockers.push('이 계좌는 리스크 룰에서 실주문이 꺼져 있습니다.');
-  if (orderType === 'market' && !rules.allowMarketOrder) {
-    blockers.push('이 계좌는 시장가 주문이 막혀 있습니다. 지정가로 내거나 리스크 룰을 고치세요.');
-  }
-  if (symbol) {
-    if (rules.symbolBlocklist.includes(symbol)) blockers.push(`차단 종목입니다 (${symbol}).`);
-    if (rules.symbolAllowlist.length > 0 && !rules.symbolAllowlist.includes(symbol)) {
-      blockers.push(`허용 종목 목록에 없습니다 (${symbol}). 허용: ${rules.symbolAllowlist.join(', ')}`);
-    }
-  }
-  if (Number.isFinite(quantity) && quantity > rules.maxOrderQuantity) {
-    blockers.push(`1회 주문 수량 한도 ${formatNumber(rules.maxOrderQuantity)}주를 넘습니다.`);
-  }
-  const notional = price * quantity;
-  if (Number.isFinite(notional) && notional > rules.maxOrderNotional) {
-    blockers.push(`1회 주문 금액 한도 ${formatNumber(rules.maxOrderNotional)}원을 넘습니다.`);
-  }
-  return blockers;
-}
-
 /** 국내 현금 주문이 성립하는 종목인지. 지수·선물·야간 프록시는 매수가능 조회 대상이 아니다. */
 function isOrderableDomesticInstrument(instrument: Instrument | null): boolean {
   return Boolean(
