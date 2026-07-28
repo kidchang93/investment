@@ -2424,6 +2424,17 @@ export function App(): JSX.Element {
   const [riskRules, setRiskRules] = useState<RiskRuleSet | null>(null);
   /** 리스크 룰 조회 실패 사유. 게이트와 같은 이유로 null과 따로 둔다. */
   const [riskRulesError, setRiskRulesError] = useState<string | null>(null);
+  /*
+   * 계좌 카드 셋의 조회 실패 사유.
+   *
+   * 예전에는 실패해도 값이 `null`이라 화면이 `조회하는 중입니다`라고 적었다 —
+   * 서버가 죽어 답이 영영 안 오는데 기다리라고 말한 것이다. 백엔드를 내리고
+   * 새로 고쳐 실측했다(2026-07-27). 게이트·리스크 룰은 이미 이 구분을 갖고
+   * 있었는데 이 셋만 빠져 있었다.
+   */
+  const [kisAccountError, setKisAccountError] = useState<string | null>(null);
+  const [kisExecutionError, setKisExecutionError] = useState<string | null>(null);
+  const [kisTradeProfitError, setKisTradeProfitError] = useState<string | null>(null);
   const [riskDraft, setRiskDraft] = useState<RiskRuleSet | null>(null);
   const [riskSymbolText, setRiskSymbolText] = useState({ allow: '', block: '' });
   const [isRiskSaving, setIsRiskSaving] = useState(false);
@@ -2751,8 +2762,11 @@ export function App(): JSX.Element {
   const refreshKisAccountSnapshot = useCallback((): void => {
     setIsKisAccountRefreshing(true);
     fetchKisAccountSnapshot(kisAccountId ?? undefined)
-      .then(setKisAccountSnapshot)
-      .catch((e) => setError(toErrorMessage(e)))
+      .then((snapshot) => {
+        setKisAccountSnapshot(snapshot);
+        setKisAccountError(null);
+      })
+      .catch((e) => setKisAccountError(toErrorMessage(e)))
       .finally(() => setIsKisAccountRefreshing(false));
   }, [kisAccountId]);
 
@@ -2763,8 +2777,11 @@ export function App(): JSX.Element {
   const refreshKisExecutions = useCallback((): void => {
     setIsKisExecutionRefreshing(true);
     fetchKisExecutions(undefined, kisAccountId ?? undefined)
-      .then(setKisExecutionSnapshot)
-      .catch((e) => setError(toErrorMessage(e)))
+      .then((snapshot) => {
+        setKisExecutionSnapshot(snapshot);
+        setKisExecutionError(null);
+      })
+      .catch((e) => setKisExecutionError(toErrorMessage(e)))
       .finally(() => setIsKisExecutionRefreshing(false));
   }, [kisAccountId]);
 
@@ -3003,10 +3020,13 @@ export function App(): JSX.Element {
     let disposed = false;
     fetchKisTradeProfit(kisAccountId ?? undefined, tradeProfitDays)
       .then((snapshot) => {
-        if (!disposed) setKisTradeProfit(snapshot);
+        if (disposed) return;
+        setKisTradeProfit(snapshot);
+        setKisTradeProfitError(null);
       })
-      .catch(() => {
-        if (!disposed) setKisTradeProfit(null);
+      /* 받아 둔 값은 지우지 않는다. 실패를 빈 값으로 덮으면 사유가 사라진다. */
+      .catch((e) => {
+        if (!disposed) setKisTradeProfitError(toErrorMessage(e));
       });
     return () => {
       disposed = true;
@@ -6799,7 +6819,10 @@ export function App(): JSX.Element {
                   </>
                 ) : (
                   <div className="portfolio-table__empty">
-                    {kisAccountSnapshot?.message ?? 'KIS 계좌 조회 설정을 확인하는 중입니다'}
+                    {kisAccountSnapshot?.message
+                      ?? (kisAccountError
+                        ? `KIS 실계좌를 조회하지 못했습니다 — ${kisAccountError}`
+                        : 'KIS 계좌 조회 설정을 확인하는 중입니다')}
                   </div>
                 )}
               </section>
@@ -6900,7 +6923,10 @@ export function App(): JSX.Element {
                   </>
                 ) : (
                   <div className="portfolio-table__empty">
-                    {kisExecutionSnapshot?.message ?? 'KIS 체결내역을 조회하는 중입니다'}
+                    {kisExecutionSnapshot?.message
+                      ?? (kisExecutionError
+                        ? `KIS 체결내역을 조회하지 못했습니다 — ${kisExecutionError}`
+                        : 'KIS 체결내역을 조회하는 중입니다')}
                   </div>
                 )}
               </section>
@@ -6992,7 +7018,10 @@ export function App(): JSX.Element {
                   </>
                 ) : (
                   <div className="portfolio-table__empty">
-                    {kisTradeProfit?.message ?? '기간별 매매손익을 조회하는 중입니다'}
+                    {kisTradeProfit?.message
+                      ?? (kisTradeProfitError
+                        ? `기간별 매매손익을 조회하지 못했습니다 — ${kisTradeProfitError}`
+                        : '기간별 매매손익을 조회하는 중입니다')}
                   </div>
                 )}
               </section>
