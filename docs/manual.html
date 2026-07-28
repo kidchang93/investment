@@ -1022,8 +1022,6 @@
           <tbody>
             <tr><td>위탁수수료</td><td class="num">0.014%</td><td><code>KIS_COMMISSION_RATE_ASSUMPTION</code></td></tr>
             <tr><td>유관기관 수수료</td><td class="num">0.003%</td><td><code>KR_INSTITUTION_FEE_RATE_ASSUMPTION</code></td></tr>
-            <tr><td>매도 증권거래세 (코스피·코스닥)</td><td class="num">0.18%</td><td><code>KR_SELL_TAX_RATE_ASSUMPTION</code></td></tr>
-            <tr><td>매도 증권거래세 (코넥스)</td><td class="num">0.1%</td><td><code>KR_KONEX_SELL_TAX_RATE_ASSUMPTION</code></td></tr>
           </tbody>
         </table>
       </div>
@@ -1038,6 +1036,37 @@
         <p>
           즉 실제 요율이 아니라 “일단 하나로 맞춘 값”이다. 화면에도 “확인된 요율이 아닙니다”라고
           그대로 적혀 있다. <strong>실제 청구액은 본인 계좌와 최신 세법에서 확인해야 한다.</strong>
+        </p>
+      </div>
+
+      <h3><span class="chip chip--measured">실측</span> 매도 세금 — 출처를 확인했다</h3>
+      <p>
+        <strong>2026-07-27에 출처를 확인했다.</strong> 2026-01-02 양도분부터 적용된다.
+      </p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>시장</th><th class="num">매도 세율 (증권거래세 + 농어촌특별세)</th></tr></thead>
+          <tbody>
+            <tr><td>코스피 · 코스닥</td><td class="num"><strong>0.20%</strong></td></tr>
+            <tr><td>코넥스</td><td class="num">0.10% (인상에서 제외)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        세 곳이 같은 합계를 말했다(증권사 공지 · 뉴스 · 정부 발표 정리). 시장별 구성은
+        출처마다 다르게 적혀 있지만 합계는 같고, 앱이 쓰는 것은 합계뿐이다. 상수는
+        <code>KR_SELL_TAX_RATE</code> · <code>KR_KONEX_SELL_TAX_RATE</code>이고, 이름에서
+        <code>_ASSUMPTION</code>을 뗀 것도 더는 어림값이 아니기 때문이다.
+      </p>
+
+      <div class="note">
+        <p>
+          예전에는 이 값도 어림값이었다. 백테스트가 0.0018, 수수료 계산기가 0.002를 따로
+          들고 있어 백테스트 쪽으로 통일했는데 <strong>그때 고른 쪽이 틀렸다</strong> —
+          수수료 계산기가 쓰던 0.002가 맞는 값이었다. 두 값을 한 곳으로 모은 것은 옳았지만,
+          <strong>어느 쪽이 맞는지 확인하지 않고 고른 것이 잘못이었다.</strong>
         </p>
       </div>
 
