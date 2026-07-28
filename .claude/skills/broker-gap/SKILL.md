@@ -18,7 +18,7 @@ Investment Monitor(`/Users/kidchang/Desktop/ck/privacy/investment`)를 타 증�
 **무엇보다 먼저 한다.** 조사도 코드도 그 다음이다.
 
 ```
-mcp__notion-work__notion-fetch  id: "self"
+mcp__notion-personal__notion-fetch  id: "self"
 ```
 
 응답의 `self.workspace.name`과 `self.user.email`을 본다.
@@ -45,8 +45,12 @@ mcp__notion-work__notion-fetch  id: "self"
 > 그래서 뽑아서 다시 만드는 수밖에 없었다. 나중에 옮기는 비용이 처음에 확인하는
 > 비용보다 훨씬 크다.
 
-DB를 아직 안 만들었으면 개인 워크스페이스에 만들고, **이 파일의 data source URL을
-그 값으로 고친다.** 속성은 아래 그대로 쓴다:
+**DB는 개인 워크스페이스에 이미 있다** (2026-07-29 이관 완료):
+
+- 데이터베이스: `https://app.notion.com/p/ef1de725813545709eba2498ab569c2d`
+- data source: `collection://5178d3e8-0441-4902-8a88-18b84378b4ac`
+
+새로 만들지 말고 이것을 쓴다. 속성은 아래 그대로다:
 
 `기능`(제목) · `영역` · `우리 앱` · `우선순위` · `상태` · `본 곳`(다중) ·
 `우리 앱 근거` · `확인 방법` · `출처 URL` · `구현 커밋`
@@ -162,12 +166,16 @@ KIS 주장을 검증할 때는 공식 레포를 직접 클론해 읽는 것이 �
 
 **0절의 계정 확인을 통과했는지 먼저 본다.** 회사 계정이면 여기까지 오면 안 된다.
 
-`mcp__notion-work__notion-create-pages`로 0절에서 정한 data source에 행을 만든다.
+`mcp__notion-personal__notion-create-pages`로 0절의 data source에 행을 만든다.
 
 **필드 이름을 추측하지 마라.** 제목 칸은 `제목`이 아니라 **`기능`**이다. 전체:
 `기능`(title) · `영역` · `우리 앱` · `우선순위` · `상태` · `본 곳`(multi) ·
 `우리 앱 근거` · `확인 방법` · `출처 URL` · `구현 커밋`. 확실하지 않으면
 `notion-fetch`로 스키마부터 읽어라 — 틀리면 400으로 통째로 거부된다.
+
+**`적은 날`은 이제 자동이 아니다.** 이관하며 `created_time` → `date`로 바뀌었다
+(그래야 원본 날짜가 보존된다). 직접 채워라 —
+`"date:적은 날:start": "2026-07-29T10:00:00Z"`, `"date:적은 날:is_datetime": 1`.
 
 **긴 `content`를 여러 페이지에 한꺼번에 넣으면 JSON이 잘린다.** 나눠 보내라.
 
