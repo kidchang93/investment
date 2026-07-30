@@ -36,7 +36,8 @@ backend/src/
 └── kis/               # KIS 연동 레이어 (원본 스펙을 여기서만 다룬다)
     ├── auth.ts        # access_token(REST, 파일캐시) / approval_key(WS, 메모리)
     ├── rest.ts        # 일봉(getDailyCandles)·현재가(getQuote) 조회 + 정규화
-    └── realtime.ts    # KisRealtime: 실시간 체결 WS 클라이언트 (EventEmitter)
+    ├── realtime.ts    # KisRealtime: 실시간 체결 WS 클라이언트 (EventEmitter)
+    └── domesticMaster.ts  # 국내 종목 마스터(.mst) 고정폭 레이아웃 + 행 파서
 ```
 
 레이어 규칙:

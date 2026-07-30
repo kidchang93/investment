@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { inferDomesticAssetType } from '../db/assetTypes.js';
 import { closeDb, pool } from '../db/client.js';
 import { ensureDomesticAssetTypes, ensureInstrumentSchema } from '../db/instruments.js';
+import { DOMESTIC_MASTER_SPECS, parseDomesticMasterRow } from '../kis/domesticMaster.js';
 import type { Instrument } from '@invest/shared';
 
 /**
@@ -16,12 +17,6 @@ interface NormalizedInstrument extends Instrument {
 
 const MASTER_DIR = resolve(process.cwd(), '.cache');
 const decoder = new TextDecoder('euc-kr');
-
-const DOMESTIC_FILES = [
-  { file: 'kospi_code.mst', market: 'KOSPI', tailLength: 228 },
-  { file: 'kosdaq_code.mst', market: 'KOSDAQ', tailLength: 222 },
-  { file: 'konex_code.mst', market: 'KONEX', tailLength: 184 },
-] as const;
 
 const OVERSEAS_EXCHANGES: Record<
   string,
@@ -62,13 +57,14 @@ async function main(): Promise<void> {
 
 async function loadDomesticInstruments(): Promise<NormalizedInstrument[]> {
   const result: NormalizedInstrument[] = [];
-  for (const spec of DOMESTIC_FILES) {
+  for (const spec of DOMESTIC_MASTER_SPECS) {
     const path = resolve(MASTER_DIR, spec.file);
     const text = decoder.decode(await readFile(path));
     for (const row of text.split(/\r?\n/)) {
       if (!row.trim()) continue;
-      const symbol = row.slice(0, 9).trim();
-      const name = row.slice(21, row.length - spec.tailLength).trim();
+      const { symbol, name } = parseDomesticMasterRow(row, spec);
+      // 단축코드가 6자리가 아닌 것은 시세 API가 받지 않아 담지 않는다.
+      // KOSPI 실측(2026-07): 탈락 469건 = 7자리 ETN(`Q500093`) 385 + 9자리 수익증권 84.
       if (!/^[0-9A-Z]{6}$/.test(symbol) || !name) continue;
       result.push({
         id: `KR:${spec.market}:${symbol}`,
