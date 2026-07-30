@@ -6,12 +6,20 @@ import { ensureDomesticAssetTypes, ensureInstrumentSchema } from '../db/instrume
 import { ensureThemeSchema, replaceThemes } from '../db/themes.js';
 import { DOMESTIC_MASTER_SPECS, parseDomesticMasterRow } from '../kis/domesticMaster.js';
 import { INDEX_SECTOR_MASTER_FILE, parseIndexSectorNames } from '../kis/indexSectorMaster.js';
+import { describeMasterDownload, downloadMasters } from '../kis/masterDownload.js';
 import { parseThemeMaster, THEME_MASTER_FILE } from '../kis/themeMaster.js';
 import type { Instrument, InstrumentSector } from '@invest/shared';
 
 /**
  * KIS 종목 마스터 파일(.mst/.COD)을 로컬 Postgres instruments 테이블로 동기화한다.
  * 원본 파일은 backend/.cache에 두고 커밋하지 않는다.
+ *
+ * 국내 마스터 5종(`kospi`·`kosdaq`·`konex`·`idxcode`·`theme_code`)은 **여기서 먼저
+ * 받는다**. 예전에는 손으로 넣어서 파일이 20일~9개월 묵어도 아무도 몰랐다.
+ * 받기·검증·갈아끼우기는 `kis/masterDownload.ts`에 있고, 12시간 안에 받은 것은
+ * 다시 받지 않는다. 못 받으면 기존 파일로 계속 간다 — 마스터를 통째로 잃는 쪽이
+ * 훨씬 나쁘기 때문이다. 아예 파일이 없으면 그때 던진다.
+ * (해외·선물 마스터는 경로와 형식이 달라 아직 손으로 넣는다.)
  *
  * 테마 동기화도 여기에 붙어 있다. 별도 스크립트로 빼지 않은 이유는 테마가 종목
  * 코드를 `instruments.id`로 맞춰 저장하기 때문이다 — 종목이 먼저 들어가야 하고,
@@ -47,6 +55,8 @@ const OVERSEAS_EXCHANGES: Record<
 };
 
 async function main(): Promise<void> {
+  await refreshDomesticMasters();
+
   await ensureInstrumentSchema();
   await ensureThemeSchema();
 
@@ -72,6 +82,39 @@ async function main(): Promise<void> {
   );
 
   await syncThemes();
+}
+
+/**
+ * 국내 마스터 5종을 최신으로 맞춘다.
+ *
+ * **못 받아도 던지지 않는다.** 기존 파일이 남아 있으면 그걸로 동기화를 이어 간다 —
+ * KIS 서버가 잠깐 죽었다고 종목 테이블이 통째로 비는 쪽이 훨씬 나쁘다. 대신 무엇이
+ * 실패했는지, 그래서 쓰는 파일이 며칠 묵은 것인지 로그에 적는다.
+ *
+ * 쓸 파일이 아예 없을 때만 던진다. 그 상태로 계속 가면 아래 `readFile`이 ENOENT로
+ * 죽는데, 여기서 미리 사유를 적어 주는 편이 낫다.
+ *
+ * `--no-download`로 끌 수 있다. 네트워크 없이 지금 파일 그대로 돌려 보고 싶을 때 쓴다.
+ */
+async function refreshDomesticMasters(): Promise<void> {
+  if (process.argv.includes('--no-download')) {
+    console.log('마스터 다운로드 건너뜀 (--no-download)');
+    return;
+  }
+
+  const results = await downloadMasters({
+    dir: MASTER_DIR,
+    force: process.argv.includes('--force-download'),
+  });
+  for (const result of results) console.log(describeMasterDownload(result));
+
+  const unusable = results.filter((result) => !result.usable);
+  if (unusable.length > 0) {
+    throw new Error(
+      `마스터를 받지 못했고 기존 파일도 없습니다: ${unusable.map((r) => r.file).join(', ')}. ` +
+        `네트워크를 확인하거나 파일을 ${MASTER_DIR}에 두고 다시 실행하세요.`,
+    );
+  }
 }
 
 /**
@@ -177,7 +220,9 @@ async function loadIndexSectorNames(): Promise<Map<string, string>> {
  *
  * 코드가 있는데 표에 없으면 던진다. 마스터의 꼬리가 한 칸 밀렸거나 코드 마스터가
  * 낡았다는 뜻이라, 그대로 두면 엉뚱한 업종이 붙거나 빈 값이 섞인다.
- * (2026-07-31 실측: KOSPI·KOSDAQ의 업종 코드 4,207개가 전부 표에 있었다)
+ * (2026-07-31 실측: KOSPI·KOSDAQ의 업종 코드 4,207개가 전부 표에 있었다.
+ *  종목 마스터를 2026-07-10~11자에서 2026-07-30자로 바꿔도 등장 개수가 4,207로
+ *  같았다. 왜 같은지는 재지 않았다 — 들고 난 종목이 상쇄됐을 수 있다)
  */
 function toInstrumentSector(
   code: string | null,

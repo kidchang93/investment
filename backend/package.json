@@ -7,6 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "typecheck": "tsc --noEmit",
+    "download:masters": "tsx src/scripts/downloadMasters.ts",
     "sync:instruments": "tsx src/scripts/syncInstruments.ts",
     "test": "tsx --test \"src/**/*.test.ts\""
   },

@@ -44,7 +44,10 @@ backend/src/
     ├── domesticMaster.ts     # 국내 종목 마스터(.mst) 고정폭 레이아웃 + 행 파서
     ├── indexSectorMaster.ts  # 지수·업종 코드 마스터(idxcode.mst) 레이아웃 + 코드→이름 표
     ├── themeMaster.ts        # 테마 코드 마스터(theme_code.mst) 레이아웃 + (테마,종목) 쌍
-    └── fixtures/             # 실계좌로 받은 실제 응답 (시험이 읽는다. 지어낸 모양이 아니다)
+    ├── masterArchive.ts      # 공개 마스터 zip 풀기 (단일 엔트리 + ★내부 타임스탬프 + CRC 검증)
+    ├── masterDownload.ts     # 공개 마스터 받기: 검증 뒤 갈아끼우기, 실패하면 기존 파일 유지
+    └── fixtures/             # 실계좌로 받은 실제 응답 + 실제로 받은 마스터 zip
+                              # (시험이 읽는다. 지어낸 모양이 아니다)
 ```
 
 `multiQuote.ts`를 `rest.ts`에서 떼어 둔 이유는 마스터 파서들과 같다 — **자리(순서)를
@@ -56,9 +59,15 @@ backend/src/
 모듈들 안에서만 하고 `scripts/syncInstruments.ts`는 정규화(코드에 이름 붙이기, DB 형태로
 바꾸기)만 한다.
 
-`npm run sync:instruments` 하나가 **종목 → 업종 → 테마** 순서로 다 넣는다. 테마를
+`npm run sync:instruments` 하나가 **받기 → 종목 → 업종 → 테마** 순서로 다 넣는다. 테마를
 별도 스크립트로 빼지 않은 이유는 테마가 종목코드를 `instruments.id`로 맞춰 저장하기
 때문이다 — 순서가 뒤집히거나 한쪽만 돌면 "종목은 새것, 테마 연결은 옛것"이 된다.
+
+받기(`masterDownload.ts`)가 맨 앞에 붙은 것도 같은 이유다. 예전에는 사람이 손으로
+`backend/.cache`에 넣었고 그래서 파일이 20일~9개월 묵어도 아무도 몰랐다. 국내 5종
+(`kospi`·`kosdaq`·`konex`·`idxcode`·`theme_code`)만 받는다 — 해외(`*MST.COD`)·선물
+(`ffcode.mst`)은 경로와 형식이 달라 아직 손으로 넣는다. 자세한 규칙은
+`docs/DESIGN.md`의 「공개 마스터 파일 받기」 절.
 
 ### 종목 분류 두 축
 
