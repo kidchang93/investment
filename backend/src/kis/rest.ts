@@ -574,6 +574,14 @@ export interface QuoteBatchResult {
   quotes: Map<string, Quote>;
   blank: string[];
   failed: QuoteBatchFailure[];
+  /**
+   * 이 결과를 만드는 데 실제로 나간 KIS 호출 수.
+   *
+   * 부르는 쪽이 화면에 "이 버튼은 4회입니다"라고 적을 수 있어야 한다. 종목 수로
+   * 세면 안 된다 — 30종목이 1회고, 캐시에 있던 것은 0회다. 실패한 묶음도 센다.
+   * **호출은 이미 나갔기 때문이다.**
+   */
+  calls: number;
 }
 
 /**
@@ -587,9 +595,10 @@ export interface QuoteBatchResult {
 export async function getDomesticQuotes(codes: string[]): Promise<QuoteBatchResult> {
   // 같은 코드를 두 번 넣으면 응답도 두 행이 와서 자리 검산이 헷갈린다. 순서는 지킨다.
   const unique = [...new Set(codes.map((code) => code.trim()).filter((code) => code.length > 0))];
-  const result: QuoteBatchResult = { quotes: new Map(), blank: [], failed: [] };
+  const result: QuoteBatchResult = { quotes: new Map(), blank: [], failed: [], calls: 0 };
 
   for (const chunk of chunkQuoteCodes(unique)) {
+    result.calls += 1;
     try {
       const json = await kisGet(MULTI_QUOTE_PATH, MULTI_QUOTE_TR_ID, multiQuoteParams(chunk));
       /*
@@ -611,8 +620,13 @@ export async function getDomesticQuotes(codes: string[]): Promise<QuoteBatchResu
   return result;
 }
 
-/** 멀티시세로 묶을 수 있는 종목인가. KRX 현금 종목(주식·ETF·ETN)만 된다. */
-function isBatchableDomesticQuote(instrument: Instrument): boolean {
+/**
+ * 멀티시세로 묶을 수 있는 종목인가. KRX 현금 종목(주식·ETF·ETN)만 된다.
+ *
+ * 부르기 **전에** 호출 비용을 어림해야 하는 곳(테마 등락률의 예산 계산)이 있어
+ * 내보낸다. 묶이는 것은 30종목이 1회, 나머지는 종목당 1회다.
+ */
+export function canBatchQuote(instrument: Instrument): boolean {
   if (instrument.country !== 'KR' || instrument.provider !== 'kis') return false;
   return instrument.assetType === 'stock' || instrument.assetType === 'etf' || instrument.assetType === 'etn';
 }
@@ -622,6 +636,12 @@ export interface InstrumentQuoteBatchResult {
   quotes: Map<string, Quote>;
   blank: string[];
   failed: Array<{ instrumentIds: string[]; message: string }>;
+  /**
+   * 실제로 나간 KIS 호출 수. 묶음 호출은 정확하고, **묶을 수 없는 종목은
+   * 종목당 1회로 센다** — 야간 환산가처럼 안에서 환율까지 더 부르는 경로가 있어
+   * 그쪽은 하한이다. 테마 종목은 전부 국내 주식이라 묶음 쪽만 쓰인다.
+   */
+  calls: number;
 }
 
 /**
@@ -632,10 +652,10 @@ export interface InstrumentQuoteBatchResult {
  * `getInstrumentQuote`와 같은 값을 쓰게 한다.
  */
 export async function getInstrumentQuotes(instruments: Instrument[]): Promise<InstrumentQuoteBatchResult> {
-  const result: InstrumentQuoteBatchResult = { quotes: new Map(), blank: [], failed: [] };
+  const result: InstrumentQuoteBatchResult = { quotes: new Map(), blank: [], failed: [], calls: 0 };
 
-  const batchable = instruments.filter(isBatchableDomesticQuote);
-  const rest = instruments.filter((instrument) => !isBatchableDomesticQuote(instrument));
+  const batchable = instruments.filter(canBatchQuote);
+  const rest = instruments.filter((instrument) => !canBatchQuote(instrument));
 
   if (batchable.length > 0) {
     // 한 종목코드가 두 시장에 있을 수 있으므로 코드 하나에 종목 여럿을 매단다.
@@ -660,9 +680,11 @@ export async function getInstrumentQuotes(instruments: Instrument[]): Promise<In
     for (const failure of batch.failed) {
       result.failed.push({ instrumentIds: idsOf(failure.codes), message: failure.message });
     }
+    result.calls += batch.calls;
   }
 
   for (const instrument of rest) {
+    result.calls += 1;
     try {
       result.quotes.set(instrument.id, await getInstrumentQuote(instrument));
     } catch (err) {

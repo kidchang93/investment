@@ -1282,6 +1282,264 @@ button {
   border-top: 1px solid var(--border);
 }
 
+/* ── 테마 (분야별 등락률) ──────────────────────────────────────── */
+
+/*
+  기준일 배너. 이 명단은 낡는다 — 오늘 받아도 내용은 기준일의 것이다.
+  값이 아니라 조건이라 점선으로 두르고 색은 쓰지 않는다.
+*/
+.theme-source {
+  display: grid;
+  gap: 3px;
+  padding: 7px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.theme-source b {
+  color: var(--text);
+}
+
+.theme-source small,
+.theme-empty-note small {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.theme-picker {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.theme-picker label {
+  display: grid;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.theme-picker label span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.theme-picker input {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(8, 11, 17, 0.52);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.theme-picker em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.theme-picker__rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 6px;
+}
+
+.theme-picker__rows .portfolio-table__more {
+  grid-column: 1 / -1;
+}
+
+.theme-picker__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: rgba(8, 11, 17, 0.46);
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.theme-picker__row:hover {
+  border-color: var(--accent, #60a5fa);
+}
+
+.theme-picker__row[aria-pressed='true'] {
+  border-color: var(--accent, #60a5fa);
+  background: rgba(59, 130, 246, 0.14);
+}
+
+.theme-picker__row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-picker__row span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.theme-empty-note {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.theme-pulse-list {
+  display: grid;
+  gap: 10px;
+}
+
+.theme-pulse {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: rgba(8, 11, 17, 0.46);
+}
+
+.theme-pulse__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.theme-pulse__head div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.theme-pulse__head strong {
+  font-size: 14px;
+}
+
+.theme-pulse__head span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.theme-pulse__head em {
+  flex: 0 0 auto;
+  font-size: 18px;
+  font-style: normal;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.theme-pulse__head em[data-tone='up'] {
+  color: #ff9b9f;
+}
+
+.theme-pulse__head em[data-tone='down'] {
+  color: #93c5fd;
+}
+
+.theme-pulse__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.theme-pulse__stats div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.theme-pulse__stats dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.theme-pulse__stats dd {
+  margin: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.theme-pulse__stats dd small {
+  margin-left: 5px;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.theme-pulse__note {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.theme-pulse__note--error {
+  color: var(--down, #f2555a);
+}
+
+.theme-pulse__rows {
+  display: grid;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden auto;
+  max-height: 360px;
+  min-height: 0;
+}
+
+.theme-pulse__row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) 100px 76px 88px;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.theme-pulse__row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-pulse__row b {
+  font-weight: 600;
+}
+
+.theme-pulse__row small {
+  margin-left: 6px;
+  color: var(--muted);
+}
+
+.theme-pulse__row--head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.theme-pulse__row [data-tone='up'] {
+  color: var(--up, #f2555a);
+}
+
+.theme-pulse__row [data-tone='down'] {
+  color: var(--down-text, #4c8bf5);
+}
+
 /* ── 스크리닝 (자동매매 후보 거르기) ────────────────────────────── */
 
 .screening__actions {
@@ -1503,7 +1761,6 @@ span.sample-badge {
 }
 
 .terminal-headlines,
-.terminal-dominance,
 .terminal-fee-controls,
 .terminal-simulation-grid {
   display: grid;
@@ -1553,7 +1810,6 @@ span.sample-badge {
 }
 
 .terminal-headlines a,
-.terminal-dominance div,
 .terminal-fee-controls label,
 .terminal-fee-controls > div {
   display: grid;
@@ -1589,7 +1845,6 @@ span.sample-badge {
 
 .terminal-headlines strong,
 .terminal-news-list strong,
-.terminal-dominance strong,
 .terminal-fee-controls strong {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1616,8 +1871,6 @@ span.sample-badge {
 .terminal-headlines em,
 .terminal-news-list em,
 .terminal-news-list span,
-.terminal-dominance span,
-.terminal-dominance em,
 .terminal-fee-controls span,
 .terminal-fee-controls em {
   overflow: hidden;
@@ -1686,7 +1939,6 @@ span.sample-badge {
 }
 
 .terminal-calendar-grid,
-.terminal-theme-list,
 .terminal-fee-table,
 .terminal-report-grid,
 .terminal-ranking-list,
@@ -1987,7 +2239,6 @@ span.sample-badge {
   opacity: 0.55;
 }
 
-.terminal-theme-list article,
 .terminal-fee-table__head,
 .terminal-fee-table__row {
   display: grid;
@@ -2001,31 +2252,14 @@ span.sample-badge {
   background: rgba(8, 11, 17, 0.46);
 }
 
-.terminal-theme-list article[data-tone='up'],
 .terminal-fee-table__row span[data-tone='up'] {
   color: #ff9b9f;
 }
 
-.terminal-theme-list article[data-tone='down'],
 .terminal-fee-table__row span[data-tone='down'] {
   color: #93c5fd;
 }
 
-/*
- * 아직 구성 종목 시세가 다 안 온 테마.
- *
- * `[data-tone]`들보다 뒤에 둬야 색을 덮는다 — 특이도가 같아 순서로 결정된다.
- * 값이 없는데 오르내림 색이 칠해져 있으면 잰 것처럼 보인다.
- */
-.terminal-theme-list article[data-pending='true'] {
-  color: var(--faint);
-  opacity: 0.65;
-}
-
-.terminal-theme-list article strong,
-.terminal-theme-list article span,
-.terminal-theme-list article em,
-.terminal-theme-list article small,
 .terminal-fee-table span,
 .terminal-fee-table strong,
 .terminal-fee-table em {
@@ -2034,19 +2268,11 @@ span.sample-badge {
   white-space: nowrap;
 }
 
-.terminal-theme-list article span,
-.terminal-theme-list article small,
 .terminal-fee-table__head,
 .terminal-fee-table em {
   color: var(--muted);
   font-size: 12px;
   font-style: normal;
-}
-
-.terminal-theme-list article em {
-  font-size: 18px;
-  font-style: normal;
-  font-weight: 900;
 }
 
 .terminal-fee-controls input {
@@ -5789,7 +6015,6 @@ span.sample-badge {
   }
 
   .terminal-headlines,
-  .terminal-dominance,
   .terminal-fee-controls,
   .terminal-macro-grid,
   .terminal-calendar-grid,
@@ -5912,7 +6137,6 @@ span.sample-badge {
   .terminal-news-list p,
   .terminal-macro-list button[data-tone],
   .terminal-leaderboard div,
-  .terminal-theme-list article,
   .terminal-ranking-list button:not(.portfolio-table__more),
   .terminal-ranking-list p,
   .terminal-sim-ticket,
@@ -5928,7 +6152,6 @@ span.sample-badge {
   }
 
   .terminal-headlines,
-  .terminal-dominance,
   .terminal-fee-controls,
   .terminal-macro-grid,
   .terminal-calendar-grid,

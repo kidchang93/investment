@@ -32,6 +32,8 @@ import type {
   SignalScoreSummary,
   Quote,
   ScreeningResult,
+  ThemeList,
+  ThemePulseBatch,
   TradingOverview,
   WatchItem,
   WatchlistGroup,
@@ -294,6 +296,31 @@ export async function fetchScreening(accountId?: string): Promise<ScreeningResul
     throw new Error(body.message ?? `후보 거르기 조회 실패: ${res.status}`);
   }
   return ((await res.json()) as { result: ScreeningResult | null }).result;
+}
+
+/**
+ * 테마 목록. **시세 조회가 나가지 않는다** (서버가 DB만 본다).
+ *
+ * 종목을 하나도 못 찾은 테마는 `emptyThemes`로 갈라져 온다. 지워서 오지 않는
+ * 이유는 이 목록이 낡았다는 사실 자체이기 때문이다.
+ */
+export async function fetchThemes(): Promise<ThemeList> {
+  const res = await fetch(`${API_BASE}/api/themes`);
+  if (!res.ok) throw new Error(`테마 목록 조회 실패: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * 테마들의 지금 등락률. **사용자가 누를 때만 부를 것** — 30종목마다 시세 조회
+ * 1회가 나간다. 실제로 몇 회가 나갔는지는 응답의 `quoteCalls`에 온다.
+ */
+export async function fetchThemePulses(codes: string[]): Promise<ThemePulseBatch> {
+  const res = await fetch(`${API_BASE}/api/themes/pulse?codes=${encodeURIComponent(codes.join(','))}`);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(body.message ?? `테마 등락률 조회 실패: ${res.status}`);
+  }
+  return res.json();
 }
 
 /** 다시 훑는다. **사용자가 누를 때만 부를 것** — 종목 수만큼 KIS 호출이 나간다. */

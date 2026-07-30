@@ -21,7 +21,8 @@ import {
   searchInstruments,
   seedDefaultWatchlist,
 } from './db/instruments.js';
-import { ensureThemeSchema } from './db/themes.js';
+import { ensureThemeSchema, getThemeList, getThemeMembers } from './db/themes.js';
+import { getThemePulses, THEME_PULSE_MAX_THEMES } from './themes/pulse.js';
 import { createOrderIntent, ensureTradingSchema, getFillByOrderId, getTradingOverview } from './db/trading.js';
 import { ensureAutoTraderSchema, getAutoTraderRuns } from './db/autoTrader.js';
 import { ensureSignalScoreSchema, getSignalScoreSummary } from './db/signalScores.js';
@@ -71,6 +72,7 @@ import {
 } from './kis/rest.js';
 import { KisRealtime } from './kis/realtime.js';
 import { WATCHLIST } from './watchlist.js';
+import { INSTRUMENT_QUOTE_BATCH } from '@invest/shared';
 import type {
   AmendLiveOrderRequest,
   AutoTraderConfig,
@@ -92,7 +94,19 @@ import type {
   Quote,
 } from '@invest/shared';
 
-const BATCH_QUOTE_LIMIT = 360;
+/*
+ * `/api/instruments/quotes` 한 요청의 종목 수 상한.
+ *
+ * 예전에는 360이었다 — 뜻은 "시세 조회 12회"인데 숫자로는 종목 수뿐이라 몇 회가
+ * 나가는지 아무도 몰랐다. 스크리닝·후보 고르기는 이미 호출 수로 상한을 잡는다
+ * (`MAX_SCREENING_CALLS` · `MAX_PRICE_LOOKUP_CALLS`). 여기만 종목 수였다.
+ *
+ * 상한을 10회로 낮춘 이유: 실측해 본 최대가 10묶음 300종목 1.08초다
+ * (`docs/DESIGN.md`). 12회는 재 보지 않은 값이었다.
+ *
+ * 프런트가 쓰는 값은 `INSTRUMENT_QUOTE_BATCH`(shared)에 함께 두어 갈라지지 않게 한다.
+ */
+const BATCH_QUOTE_LIMIT = INSTRUMENT_QUOTE_BATCH.limit;
 const QUOTE_CACHE_TTL_MS = 45_000;
 const STREAM_SUBSCRIBE_LIMIT = 80;
 /** 매수가능 조회가 성립하는 국내 자산 유형. 지수·선물·야간 프록시는 주문 대상이 아니다. */
@@ -978,11 +992,18 @@ async function main(): Promise<void> {
   app.post<{ Body: { ids?: string[] } }>('/api/instruments/quotes', async (req, reply) => {
     if (!Array.isArray(req.body.ids)) return reply.code(400).send({ message: 'ids 배열이 필요합니다.' });
 
-    const ids = [...new Set(req.body.ids.filter((id) => typeof id === 'string' && id.length > 0))].slice(
-      0,
-      BATCH_QUOTE_LIMIT,
-    );
+    const ids = [...new Set(req.body.ids.filter((id) => typeof id === 'string' && id.length > 0))];
     if (ids.length === 0) return [];
+    /*
+     * 넘치면 잘라내지 않고 거절한다. 예전에는 `.slice(0, BATCH_QUOTE_LIMIT)`이라
+     * 상한을 넘긴 요청이 200으로 답하면서 뒤가 사라졌다 — 멀티시세가 31종목을
+     * `rt_cd=0`으로 잘라 버리는 것과 같은 함정을 우리 API가 한 겹 더 만든 셈이다.
+     */
+    if (ids.length > BATCH_QUOTE_LIMIT) {
+      return reply.code(400).send({
+        message: `한 번에 ${BATCH_QUOTE_LIMIT}종목까지 물을 수 있습니다 (${ids.length}종목을 보냈습니다).`,
+      });
+    }
 
     /*
      * 캐시에 없는 것만 모아 한 번에 받는다. 예전에는 종목당 1회씩 때리며
@@ -1022,6 +1043,49 @@ async function main(): Promise<void> {
 
   app.get('/api/instruments/terminal', async () => {
     return getTerminalInstruments();
+  });
+
+  /*
+   * ── 테마 ─────────────────────────────────────────────
+   *
+   * 업종에는 `반도체`라는 칸이 없다. 분야별로 돈이 어디로 도는지는 테마로만 볼 수
+   * 있다 (`docs/DESIGN.md`의 「테마 분류」).
+   *
+   * 목록·구성종목은 **DB만 본다 (KIS 호출 0회)**. 등락률만 시세를 부르고, 그
+   * 비용을 응답에 담는다.
+   */
+  app.get('/api/themes', async () => {
+    return getThemeList();
+  });
+
+  /*
+   * 테마 여러 개의 지금 등락률. **누를 때만 돈다.**
+   *
+   * `/api/themes/:code`보다 먼저 등록해도 Fastify는 고정 경로를 먼저 맞춘다.
+   * 그래도 읽는 사람이 헷갈리지 않게 위에 둔다.
+   */
+  app.get<{ Querystring: { codes?: string } }>('/api/themes/pulse', async (req, reply) => {
+    const codes = (req.query.codes ?? '')
+      .split(',')
+      .map((code) => code.trim())
+      .filter((code) => code.length > 0);
+    if (codes.length === 0) {
+      return reply.code(400).send({
+        message: `테마 코드가 필요합니다. codes=004,012 처럼 ${THEME_PULSE_MAX_THEMES}개까지 넣습니다.`,
+      });
+    }
+    try {
+      return await getThemePulses(codes);
+    } catch (err) {
+      req.log.warn({ err, codes }, '테마 등락률 조회 실패');
+      return reply.code(502).send({ message: '테마 등락률을 조회하지 못했습니다.' });
+    }
+  });
+
+  app.get<{ Params: { code: string } }>('/api/themes/:code', async (req, reply) => {
+    const members = await getThemeMembers(req.params.code);
+    if (!members) return reply.code(404).send({ message: '그런 테마 코드가 없습니다.' });
+    return members;
   });
 
   app.get<{ Params: { id: string } }>('/api/instruments/:id/candles', async (req, reply) => {

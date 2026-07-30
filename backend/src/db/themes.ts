@@ -1,6 +1,6 @@
 import { pool } from './client.js';
 import { instrumentColumns, rowToInstrument, type InstrumentRow } from './instruments.js';
-import type { Theme, ThemeMembers } from '@invest/shared';
+import type { Theme, ThemeList, ThemeMembers } from '@invest/shared';
 
 /**
  * KIS 테마 분류 저장소.
@@ -180,6 +180,26 @@ export async function listThemes(): Promise<Theme[]> {
     ORDER BY t.name
   `);
   return result.rows.map(rowToTheme);
+}
+
+/**
+ * 화면에 내보낼 테마 목록. **KIS를 부르지 않는다.**
+ *
+ * 종목을 하나도 못 찾은 테마를 지우지 않고 갈라 담는다. 2026-07-31 실측으로
+ * 302개 중 셋(`062 와이브로` · `260 2차전지` · `321 건설사(대형)`)이 그렇다 —
+ * 지우면 이 목록이 낡았다는 사실까지 사라지고, 섞어 두면 빈 `2차전지`와 진짜
+ * `2차전지(소재,부품,장비)`가 나란히 떠서 어느 쪽이 진짜인지 알 수 없다.
+ */
+export async function getThemeList(): Promise<ThemeList> {
+  const all = await listThemes();
+  // 전부 한 파일에서 오므로 실제로는 같다. 갈렸을 때 낡은 쪽이 가려지지 않게 최솟값을 쓴다.
+  const dates = all.map((theme) => theme.sourceDate).sort();
+  return {
+    sourceDate: dates[0] ?? null,
+    themes: all.filter((theme) => theme.instrumentCount > 0),
+    emptyThemes: all.filter((theme) => theme.instrumentCount === 0),
+    themeCount: all.length,
+  };
 }
 
 /**

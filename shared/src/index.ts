@@ -124,6 +124,144 @@ export interface ThemeMembers {
   missingSymbols: string[];
 }
 
+/**
+ * 테마 목록 한 벌.
+ *
+ * **종목을 하나도 못 찾은 테마를 목록에서 지우지 않는다.** 2026-07-31 실측으로
+ * 302개 중 셋(`062 와이브로` · `260 2차전지` · `321 건설사(대형)`)이 그렇다.
+ * 지우면 "이 목록이 낡았다"는 사실까지 함께 사라지고, 남겨서 섞어 두면
+ * `2차전지`(빈 것)와 `2차전지(소재,부품,장비)`(에코프로비엠이 든 진짜)가 나란히
+ * 떠서 어느 쪽이 진짜인지 알 수 없다. 그래서 **가르되 버리지 않는다.**
+ */
+export interface ThemeList {
+  /**
+   * 이 목록에서 **가장 낡은** 기준일 (ISO 8601). 302개가 한 파일에서 오므로
+   * 실제로는 전부 같다. 그래도 최솟값을 적는 이유는, 언젠가 갈렸을 때
+   * 낡은 쪽이 "지금 것"으로 보이지 않게 하기 위해서다. 테마가 없으면 `null`.
+   */
+  sourceDate: string | null;
+  /** 지금 종목을 하나 이상 찾은 테마. 등락률을 잴 수 있는 것들 */
+  themes: Theme[];
+  /** 마스터에는 있는데 지금 종목을 하나도 못 찾은 테마. 잴 수 없다 */
+  emptyThemes: Theme[];
+  /** 마스터의 테마 수 = `themes.length + emptyThemes.length` */
+  themeCount: number;
+}
+
+/** 테마 등락률에 들어간 종목 하나 */
+export interface ThemePulseMember {
+  instrumentId: string;
+  symbol: string;
+  name: string;
+  price: number;
+  change: number;
+  changeRate: number;
+  sign: PriceSign;
+  /**
+   * 당일 누적 거래대금(원). **없으면 없는 채로 둔다** — `현재가 × 거래량`으로
+   * 어림해 채우면 거래대금 가중평균이 어림값에 끌려간다.
+   */
+  turnover?: number;
+}
+
+/**
+ * 테마 하나가 지금 어떻게 움직이는지.
+ *
+ * ## 대표값을 왜 중앙값으로 뒀는가
+ *
+ * 셋(중앙값·단순평균·거래대금 가중평균)을 **다 담고** 그중 중앙값을 대표로 쓴다.
+ *
+ * - **중앙값** — 테마 종목 수가 1~110으로 제각각이라(실측), 작은 테마에서는
+ *   한 종목의 상한가(+30%)가 단순평균을 통째로 끌어간다. 중앙값은 "이 테마
+ *   종목의 절반이 이보다 위"라는 **셀 수 있는 사실**이다.
+ * - **단순평균** — 중앙값과 크게 갈리면 그 자체가 정보다(한 종목 쏠림).
+ * - **거래대금 가중평균** — 물음이 "돈이 어디로 도는지"라 돈이 실린 쪽에 무게를
+ *   준 값이 따로 필요하다. 다만 **성질이 다른 값이라 대표값과 섞지 않는다** —
+ *   삼성전자가 든 테마는 이 값이 사실상 삼성전자 등락률이 된다.
+ *
+ * ## 표본이 전체가 아니다
+ *
+ * 마스터가 넣어 둔 수(`theme.symbolCount`) ≥ 지금 찾은 종목 수
+ * (`theme.instrumentCount`) ≥ 시세가 온 수(`quotedCount`) ≥ 거래대금까지 온 수
+ * (`turnoverCount`)로 줄어든다. 넷을 하나로 합치면 어디서 줄었는지 알 수 없다.
+ */
+export interface ThemePulse {
+  theme: Theme;
+  /** 시세가 온 종목. 등락률 내림차순 */
+  members: ThemePulseMember[];
+  /** 마스터에는 있는데 지금 종목 마스터에서 못 찾은 종목코드 */
+  missingSymbols: string[];
+  /** 종목은 찾았는데 시세가 빈 값으로 온 것. "그런 종목이 없다"에 가깝다 */
+  blankSymbols: string[];
+  /** 조회가 깨져서 못 받은 것. **값이 없는 것이 아니라 못 받은 것이다** */
+  failedSymbols: string[];
+  /** 위 실패의 사유. 같은 사유는 한 번만 담는다 */
+  failureMessages: string[];
+  /** 등락률 계산에 쓴 종목 수 = `members.length` */
+  quotedCount: number;
+  /** 대표값. 시세가 하나도 없으면 없다 — **0으로 채우지 않는다** */
+  changeRateMedian?: number;
+  changeRateMean?: number;
+  /** 거래대금 가중평균. 거래대금이 온 종목만으로 낸다 */
+  changeRateWeighted?: number;
+  /** 가중평균·거래대금 합에 쓴 종목 수. `quotedCount`보다 작을 수 있다 */
+  turnoverCount: number;
+  /** 위 종목들의 거래대금 합(원). **테마 전체가 아니라 부분합이다** */
+  turnover?: number;
+  /** 오른 종목 수 (등락률 > 0) */
+  advancing: number;
+  /** 내린 종목 수 (등락률 < 0) */
+  declining: number;
+  /** 보합 (등락률 = 0). 오름·내림에 섞지 않는다 */
+  unchanged: number;
+}
+
+/**
+ * 테마 등락률 한 회차.
+ *
+ * **호출 비용을 응답에 담는다.** 반도체 101종목이면 시세 조회 4회다. 부르는
+ * 쪽이 모르면 탭을 열 때마다 도는 새로고침처럼 쓰이고, 그러면 하루 호출
+ * 한도를 여기서 다 태운다.
+ */
+export interface ThemePulseBatch {
+  measuredAt: number;
+  /** 이번 요청이 실제로 낸 시세 조회 횟수 */
+  quoteCalls: number;
+  /** 한 요청이 낼 수 있는 상한 */
+  maxQuoteCalls: number;
+  pulses: ThemePulse[];
+  /**
+   * 재지 못한 테마. **반쪽으로 재느니 안 잰다** — 110종목 중 30종목만 보고
+   * 낸 값을 "반도체 테마 등락률"이라 부를 수 없다.
+   */
+  skipped: ThemePulseSkip[];
+}
+
+export interface ThemePulseSkip {
+  code: string;
+  /** 목록에 없는 코드면 이름을 모른다 */
+  name?: string;
+  reason: string;
+}
+
+/**
+ * `/api/instruments/quotes`의 묶음 규약.
+ *
+ * 서버는 이 요청 하나를 **`chunk`종목마다 시세 조회 1회**로 처리한다. 그래서
+ * 프런트가 `chunk`보다 작게 잘라 보내면 조회 횟수가 그만큼 늘어난다 — 8종목씩
+ * 보내던 때 120종목 목록이 15요청 15조회였고, 30종목씩이면 4요청 4조회다.
+ *
+ * 여기 두는 이유는 `KRX_SESSION_MINUTES`와 같다. 프런트와 백엔드가 각자 숫자를
+ * 들고 있으면 한쪽만 고쳤을 때 조용히 갈라진다. **KIS 스펙이 아니라 우리 API의
+ * 계약이다** — 프런트는 이 뒤에 무엇이 있는지 몰라도 된다.
+ */
+export const INSTRUMENT_QUOTE_BATCH = {
+  /** 서버가 한 번의 조회로 처리하는 종목 수. 이 배수로 보내는 것이 가장 싸다 */
+  chunk: 30,
+  /** 한 요청에 넣을 수 있는 종목 수 (= `chunk` × 조회 10회). 넘으면 서버가 거절한다 */
+  limit: 300,
+} as const;
+
 /** 종목 탐색용 추천 카테고리 */
 export interface InstrumentCategory {
   id: string;

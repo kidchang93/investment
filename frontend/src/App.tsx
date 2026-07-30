@@ -36,6 +36,8 @@ import {
   fetchSignalScores,
   fetchInstrumentQuotes,
   fetchTerminalInstruments,
+  fetchThemePulses,
+  fetchThemes,
   fetchUsdKrwExchangeRate,
   fetchWatchlistItems,
   fetchWatchlists,
@@ -84,12 +86,17 @@ import type {
   SignalScoreSummary,
   PriceSign,
   Quote,
+  Theme,
+  ThemeList,
+  ThemePulse,
+  ThemePulseBatch,
   Trade,
   WatchlistGroup,
 } from '@invest/shared';
 import {
   detectCumulativeReporting,
   financialPeriodWindow,
+  INSTRUMENT_QUOTE_BATCH,
   KRX_SESSION_MINUTES,
   krxSessionKind,
   riskRuleBlockers,
@@ -198,13 +205,6 @@ interface EconomicEvent {
   title: string;
   impact: '최고' | '높음' | '보통';
   scope: CalendarRegionFilter;
-}
-
-interface ThemeFlowItem {
-  name: string;
-  /** 이 테마의 등락률을 계산할 구성 종목. 히트맵과 같은 12종목을 나눠 쓴다. */
-  symbols: string[];
-  tags: string[];
 }
 
 interface FeeBroker {
@@ -428,6 +428,9 @@ const GLOSSARY: Record<string, string> = {
   지정가: '살(팔) 값을 직접 정하는 주문입니다. 그 값이 와야 체결됩니다.',
   시장가: '지금 시장에 나와 있는 값으로 바로 사고파는 주문입니다. 즉시 체결되지만 값을 고를 수 없습니다.',
   예약주문: '장이 닫혀 있을 때 미리 넣어 두는 주문입니다. 다음 개장일에 나갑니다.',
+  중앙값: '값을 순서대로 늘어놓았을 때 한가운데 오는 값입니다. 한 종목이 크게 튀어도 끌려가지 않습니다.',
+  '거래대금 가중': '거래된 돈이 많은 종목의 등락률에 더 큰 무게를 준 평균입니다. 대형주 한 종목이 값을 좌우할 수 있습니다.',
+  거래대금: '오늘 그 종목에서 사고팔린 금액의 합입니다. 거래량(주식 수)과 다릅니다.',
 };
 
 /** 사전에 있는 말이면 뜻을 달아 준다. 없으면 그냥 글자 그대로 둔다. */
@@ -484,7 +487,8 @@ const TERMINAL_TAB_GROUPS: Array<{ label: string; options: TerminalTabOption[] }
       { key: 'overview', label: '대시보드', title: '핵심 지표와 출처' },
       { key: 'heatmap', label: '히트맵', title: '시총 상위 종목 등락 지도' },
       { key: 'ranking', label: '랭킹', title: '많이 움직인 종목' },
-      { key: 'themes', label: '테마', title: '도미넌스와 테마 흐름' },
+      // 테마 수는 서버가 세어 준다. 여기 박아 두면 동기화 뒤에 조용히 틀린 값이 된다.
+      { key: 'themes', label: '테마', title: '분야별 등락률' },
       { key: 'macro', label: '매크로', title: '원자재·환율·금리·지수' },
     ],
   },
@@ -660,23 +664,13 @@ const ECONOMIC_EVENTS: EconomicEvent[] = [
 ];
 
 /*
- * 테마 보드.
+ * 여기 `THEME_FLOW_ITEMS`가 있었다 — 6테마 × 종목 2개가 DB와 무관하게 박힌
+ * 보드다. 화면의 `반도체`는 005930·000660 둘이었고, 같은 제품의 DB에는
+ * `반도체/반도체장비` 110(101)종목이 따로 있었다. 같은 이름의 테마가 한
+ * 제품에 둘 있으면 어느 쪽이 진짜인지 알 수 없어 지웠다.
  *
- * 예전에는 `score`(92·81·76…)와 `change`(+18.4%…)가 박혀 있었다. score는
- * 무엇을 잰 값인지 정의가 없었고 change는 지어낸 등락률이었다. score는
- * 지우고, 등락률은 구성 종목의 실제 등락률 평균으로 계산한다.
- *
- * 구성 종목은 히트맵과 같은 12개다 — 이미 조회가 되는 것을 확인한 종목이라
- * 새로 해석할 위험이 없고, 두 탭이 같은 종목을 본다는 점도 말이 된다.
+ * 지금 테마 탭은 `GET /api/themes`(302개)와 `GET /api/themes/pulse`가 그린다.
  */
-const THEME_FLOW_ITEMS: ThemeFlowItem[] = [
-  { name: '반도체', symbols: ['005930', '000660'], tags: ['HBM', 'AI'] },
-  { name: '2차전지', symbols: ['373220', '051910'], tags: ['IRA', '소재'] },
-  { name: '바이오', symbols: ['207940', '068270'], tags: ['CDMO', '실적'] },
-  { name: '자동차', symbols: ['005380', '000270'], tags: ['수출', '전기차'] },
-  { name: '조선·방산', symbols: ['329180', '012450'], tags: ['수주', '정책'] },
-  { name: '플랫폼', symbols: ['035420', '035720'], tags: ['광고', 'AI'] },
-];
 
 /*
  * 히트맵에 올릴 종목.
@@ -776,8 +770,19 @@ const LIST_QUOTE_REFRESH_MS = 60_000;
 const FX_REFRESH_MS = 60_000;
 const QUOTE_STALE_MS = LIST_QUOTE_REFRESH_MS * 2;
 const TRADE_STALE_MS = 10_000;
-// 탐색 리스트는 전체 현재가를 선조회하지 않는다. 첫 화면과 스크롤로 보인 종목만 점진적으로 채운다.
-const LIST_QUOTE_REQUEST_CHUNK_SIZE = 8;
+/*
+ * 탐색 리스트는 전체 현재가를 선조회하지 않는다. 첫 화면과 스크롤로 보인 종목만
+ * 점진적으로 채운다.
+ *
+ * **묶는 크기는 서버 규약에 맞춘다.** 8이던 시절에는 120종목 목록이 15요청이었고,
+ * 서버가 한 요청을 30종목 1회로 처리하므로 그대로 시세 조회 15회였다. 30으로
+ * 맞추면 같은 목록이 4요청 4회다 — 종전(종목당 1회) 대비 8배가 아니라 30배다.
+ *
+ * 더 크게 묶지 않는 이유는 화면이다. 한 요청이 끝나야 그만큼 값이 채워지므로
+ * 60·90으로 묶으면 첫 값이 늦게 뜬다. 조회 횟수는 서버가 어차피 30종목마다
+ * 1회라 묶음을 키워도 줄지 않는다.
+ */
+const LIST_QUOTE_REQUEST_CHUNK_SIZE = INSTRUMENT_QUOTE_BATCH.chunk;
 const DISCOVER_INITIAL_QUOTE_TARGETS = 24;
 const SEARCH_QUOTE_TARGETS = 10;
 const RECENT_INSTRUMENT_LIMIT = 8;
@@ -898,6 +903,134 @@ function CollapsibleRows({
         {expanded ? '접기' : (moreLabel ?? ((hidden: number) => `${hidden}건 더 보기`))(rows.length - limit)}
       </button>
     </>
+  );
+}
+
+/**
+ * 테마 하나의 지금 움직임.
+ *
+ * **대표값은 중앙값이다.** 셋(중앙값·단순평균·거래대금 가중)을 나란히 두는
+ * 이유는 성질이 다르기 때문이다 — 거래대금 가중은 대형주 한 종목에 끌려가고,
+ * 단순평균은 소형주 상한가 하나에 끌려간다. 셋이 크게 갈리면 그 자체가
+ * "한 종목이 끌고 있다"는 정보다.
+ *
+ * **표본이 전체가 아니면 몇 개를 봤는지 밝힌다.** 마스터 110 → 지금 찾은 101 →
+ * 시세 온 101 → 거래대금까지 온 98로 줄어드는데, 이 사슬을 접으면 화면이
+ * `반도체 110종목`이라 적고 98개로 낸 값을 보여주게 된다.
+ */
+function ThemePulseCard({ pulse }: { pulse: ThemePulse }): JSX.Element {
+  const { theme } = pulse;
+  const measured = pulse.changeRateMedian !== undefined;
+  const unquoted = theme.instrumentCount - pulse.quotedCount;
+
+  return (
+    <article className="theme-pulse" data-tone={measured ? feeImpactTone(pulse.changeRateMedian as number) : 'flat'}>
+      <header className="theme-pulse__head">
+        <div>
+          <strong>{theme.name}</strong>
+          {/* 표본 사슬. 어디서 줄었는지 알 수 있어야 한다. */}
+          <span>
+            명단 {theme.symbolCount}종목 · 지금 찾은 종목 {theme.instrumentCount} · 시세 {pulse.quotedCount}
+          </span>
+        </div>
+        <em data-tone={measured ? feeImpactTone(pulse.changeRateMedian as number) : undefined}>
+          {measured ? formatRate(pulse.changeRateMedian as number) : '잴 수 없음'}
+        </em>
+      </header>
+
+      {measured ? (
+        <dl className="theme-pulse__stats">
+          <div>
+            <dt><Term>중앙값</Term></dt>
+            <dd>{formatRate(pulse.changeRateMedian as number)}</dd>
+          </div>
+          <div>
+            <dt>단순평균</dt>
+            <dd>{formatRate(pulse.changeRateMean as number)}</dd>
+          </div>
+          <div>
+            <dt><Term>거래대금 가중</Term></dt>
+            <dd>
+              {pulse.changeRateWeighted === undefined ? '값 없음' : formatRate(pulse.changeRateWeighted)}
+              <small>{pulse.turnoverCount}종목</small>
+            </dd>
+          </div>
+          <div>
+            <dt>상승·하락</dt>
+            <dd>
+              {pulse.advancing} · {pulse.declining}
+              <small>보합 {pulse.unchanged}</small>
+            </dd>
+          </div>
+          <div>
+            <dt><Term>거래대금</Term> 합</dt>
+            <dd>
+              {pulse.turnover === undefined ? '값 없음' : formatOkeanAmount(pulse.turnover)}
+              <small>{pulse.turnoverCount}종목</small>
+            </dd>
+          </div>
+        </dl>
+      ) : (
+        /* 시세가 하나도 없는 것을 0%로 채우지 않는다. 왜 못 쟀는지 적는다. */
+        <p className="theme-pulse__note">
+          {theme.instrumentCount === 0
+            ? '이 명단의 종목을 지금 종목 마스터에서 하나도 못 찾았습니다.'
+            : '시세가 하나도 오지 않아 등락률을 내지 못했습니다.'}
+        </p>
+      )}
+
+      {/* 줄어든 자리마다 사유를 적는다. 안 적으면 표본이 준 것이 안 보인다. */}
+      {theme.symbolCount > theme.instrumentCount && (
+        <p className="theme-pulse__note">
+          명단의 {theme.symbolCount - theme.instrumentCount}종목은 지금 종목 마스터에 없습니다
+          {pulse.missingSymbols.length > 0 && ` (${pulse.missingSymbols.slice(0, 6).join(', ')}${pulse.missingSymbols.length > 6 ? ' …' : ''})`}.
+        </p>
+      )}
+      {pulse.blankSymbols.length > 0 && (
+        <p className="theme-pulse__note">
+          시세가 빈 값으로 온 {pulse.blankSymbols.length}종목은 계산에서 빠졌습니다 — 0%로 넣지 않았습니다.
+        </p>
+      )}
+      {pulse.failedSymbols.length > 0 && (
+        <p className="theme-pulse__note theme-pulse__note--error">
+          {pulse.failedSymbols.length}종목은 조회가 깨져 못 받았습니다 — {pulse.failureMessages.join(' / ')}
+        </p>
+      )}
+      {unquoted > 0 && pulse.blankSymbols.length + pulse.failedSymbols.length !== unquoted && (
+        <p className="theme-pulse__note">시세가 오지 않은 종목 {unquoted}개는 계산에 없습니다.</p>
+      )}
+
+      {pulse.members.length > 0 && (
+        <div className="theme-pulse__rows" role="table" aria-label={`${theme.name} 구성 종목`}>
+          <div className="theme-pulse__row theme-pulse__row--head" role="row">
+            <span role="columnheader">종목</span>
+            <span role="columnheader">현재가</span>
+            <span role="columnheader">등락률</span>
+            <span role="columnheader">거래대금</span>
+          </div>
+          <CollapsibleRows
+            limit={8}
+            moreLabel={(hidden) => `구성 종목 ${hidden}개 더 보기`}
+            rows={pulse.members.map((member) => (
+              <div className="theme-pulse__row" key={member.instrumentId} role="row">
+                <span role="cell">
+                  <b>{member.name}</b>
+                  <small>{member.symbol}</small>
+                </span>
+                <span role="cell">{member.price.toLocaleString('ko-KR')}원</span>
+                <span data-tone={feeImpactTone(member.changeRate)} role="cell">
+                  {formatRate(member.changeRate)}
+                </span>
+                {/* 거래대금이 없는 것을 0억으로 적지 않는다. */}
+                <span role="cell">
+                  {member.turnover === undefined ? '값 없음' : formatOkeanAmount(member.turnover)}
+                </span>
+              </div>
+            ))}
+          />
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -2396,6 +2529,22 @@ export function App(): JSX.Element {
   const [screeningError, setScreeningError] = useState<string | null>(null);
   const [screeningRunning, setScreeningRunning] = useState(false);
   const [screeningVerdictFilter, setScreeningVerdictFilter] = useState<ScreeningVerdict | 'all'>('all');
+  /*
+   * 테마.
+   *
+   * 목록(`themeList`)은 DB만 보므로 탭을 열 때 한 번 받는다. 등락률
+   * (`themePulses`)은 시세 조회가 나가므로 **누를 때만** 받는다 — 반도체
+   * 하나가 101종목 4회다.
+   *
+   * 조회 실패를 빈 목록으로 바꾸지 않는다. 못 받은 것과 없는 것은 다르다.
+   */
+  const [themeList, setThemeList] = useState<ThemeList | null>(null);
+  const [themeListError, setThemeListError] = useState<string | null>(null);
+  const [themeQuery, setThemeQuery] = useState('');
+  const [selectedThemeCodes, setSelectedThemeCodes] = useState<string[]>([]);
+  const [themePulses, setThemePulses] = useState<ThemePulseBatch | null>(null);
+  const [themePulseError, setThemePulseError] = useState<string | null>(null);
+  const [themePulseLoading, setThemePulseLoading] = useState(false);
   const [kisReservedOrders, setKisReservedOrders] = useState<BrokerReservedOrder[]>([]);
   /*
    * 언제 받아온 값인지. 잔고 카드만 `갱신 07:27:39`를 적고 나머지는 아무것도
@@ -2989,6 +3138,28 @@ export function App(): JSX.Element {
   }, [activePage, terminalTab, kisAccountId]);
 
   /*
+   * 테마 목록. **시세 조회가 나가지 않는다**(서버가 DB만 본다). 한 번 받으면
+   * 다시 받지 않는다 — 명단은 종목 마스터를 동기화할 때만 바뀐다.
+   */
+  useEffect(() => {
+    if (activePage !== 'terminal' || terminalTab !== 'themes' || themeList) return undefined;
+    let disposed = false;
+    fetchThemes()
+      .then((list) => {
+        if (disposed) return;
+        setThemeList(list);
+        setThemeListError(null);
+      })
+      .catch((e) => {
+        // 빈 목록으로 바꾸지 않는다. 못 받은 것과 테마가 없는 것은 다르다.
+        if (!disposed) setThemeListError(toErrorMessage(e));
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [activePage, terminalTab, themeList]);
+
+  /*
    * 거래소 등락률 순위. 호출 1회라 탭을 열 때 받아도 된다 —
    * 스크리닝(종목당 1회)과 달리 비용이 거의 없다.
    */
@@ -3313,9 +3484,11 @@ export function App(): JSX.Element {
       /*
        * 히트맵 12종목. 그 탭이 열려 있을 때만 넣는다 — 발견 화면에 머무는
        * 동안 계속 12건을 더 부르면 KIS 조회 한도를 그만큼 빨리 쓴다.
+       *
+       * 테마 탭은 여기 없다. 예전에는 이 12종목을 테마 보드가 나눠 썼지만,
+       * 지금 테마 등락률은 DB 명단으로 사용자가 누를 때만 잰다.
        */
-      /* 히트맵과 테마 보드가 같은 12종목을 쓴다. 둘 중 하나가 열려 있을 때만 부른다. */
-      if (terminalTab === 'heatmap' || terminalTab === 'themes') {
+      if (terminalTab === 'heatmap') {
         for (const id of HEATMAP_INSTRUMENT_IDS) addId(id);
       }
     }
@@ -3709,53 +3882,38 @@ export function App(): JSX.Element {
     [calendarImpactFilter, calendarRegionFilter],
   );
   /*
-   * 테마 등락률 = 구성 종목 등락률의 평균. 한 종목이라도 시세가 안 왔으면
-   * 평균을 내지 않는다 — 반쪽만으로 낸 값을 테마 등락률이라 부를 수 없다.
+   * 테마 목록에서 지금 보고 있는 것만 추린다. 302개를 한 번에 늘어놓으면
+   * 찾을 수가 없다. 검색은 이름으로만 한다 — 테마코드(`004`)는 우리 화면에서
+   * 쓰는 말이 아니다.
    */
-  const themeRows = useMemo(
-    () =>
-      THEME_FLOW_ITEMS.map((item) => {
-        const rates = item.symbols.map(
-          (symbol) => toSnapshot(undefined, quotesByCode[`KR:KOSPI:${symbol}`])?.changeRate,
-        );
-        const ready = rates.every((rate) => rate !== undefined);
-        return {
-          ...item,
-          changeRate: ready
-            ? (rates as number[]).reduce((sum, rate) => sum + rate, 0) / rates.length
-            : undefined,
-        };
-      }),
-    [quotesByCode],
+  const themeMatches = useMemo(() => {
+    if (!themeList) return [];
+    const query = themeQuery.trim();
+    const rows = query.length === 0
+      ? themeList.themes
+      : themeList.themes.filter((item) => item.name.includes(query));
+    // 종목이 많은 테마가 위로. 같으면 이름순이라 화면이 실행마다 흔들리지 않는다.
+    return [...rows].sort((a, b) => b.instrumentCount - a.instrumentCount || a.name.localeCompare(b.name, 'ko'));
+  }, [themeList, themeQuery]);
+
+  const themeByCode = useMemo(() => {
+    const map = new Map<string, Theme>();
+    for (const item of themeList?.themes ?? []) map.set(item.code, item);
+    for (const item of themeList?.emptyThemes ?? []) map.set(item.code, item);
+    return map;
+  }, [themeList]);
+
+  /*
+   * 누르기 전에 비용을 적는다. **최대치다** — 테마끼리 종목이 겹치면(종목당
+   * 평균 2.37개 테마) 서버가 합집합으로 묻기 때문에 실제로는 이보다 적게
+   * 나간다. 실제 횟수는 응답의 `quoteCalls`로 받아 잰 뒤에 적는다.
+   */
+  const themeSelectedCount = useMemo(
+    () => selectedThemeCodes.reduce((sum, code) => sum + (themeByCode.get(code)?.instrumentCount ?? 0), 0),
+    [selectedThemeCodes, themeByCode],
   );
+  const themeMaxCalls = Math.ceil(themeSelectedCount / INSTRUMENT_QUOTE_BATCH.chunk);
 
-  /** 가장 많이 오른 테마. 시세가 없으면 고르지 않는다. */
-  const themeTop = useMemo(() => {
-    const measured = themeRows.filter((item) => item.changeRate !== undefined);
-    if (measured.length === 0) return undefined;
-    return measured.reduce((best, item) =>
-      (item.changeRate as number) > (best.changeRate as number) ? item : best,
-    );
-  }, [themeRows]);
-
-  /** 가장 많이 내린 테마. 상위만 보여주면 오른 쪽만 눈에 남는다. */
-  const themeBottom = useMemo(() => {
-    const measured = themeRows.filter((item) => item.changeRate !== undefined);
-    if (measured.length === 0) return undefined;
-    return measured.reduce((worst, item) =>
-      (item.changeRate as number) < (worst.changeRate as number) ? item : worst,
-    );
-  }, [themeRows]);
-
-  const themeBreadth = useMemo(() => {
-    const measured = themeRows.filter((item) => item.changeRate !== undefined);
-    return {
-      up: measured.filter((item) => (item.changeRate as number) > 0).length,
-      down: measured.filter((item) => (item.changeRate as number) < 0).length,
-      measured: measured.length,
-      total: themeRows.length,
-    };
-  }, [themeRows]);
   const marketCountdown = useMemo(() => getKoreanMarketCountdown(nowMs), [nowMs]);
   const moversBoard = useMemo(() => {
     const seen = new Set<string>();
@@ -5824,65 +5982,166 @@ export function App(): JSX.Element {
               )}
 
               {terminalTab === 'themes' && (
-                <section className="terminal-page terminal-page--themes" aria-label="테마와 도미넌스">
+                <section className="terminal-page terminal-page--themes" aria-label="테마">
                   <div className="terminal-page__header">
                     <div>
                       <span>
-                        구성 종목 등락률 평균 · 전일 종가 대비
-                        {themeBreadth.measured > 0 && ` · 상승 ${themeBreadth.up} · 하락 ${themeBreadth.down}`}
+                        업종에는 `반도체`라는 칸이 없습니다. 분야는 테마로만 갈립니다
+                        {themeList && ` · 테마 ${themeList.themeCount}개`}
                       </span>
-                      <strong>테마 보드</strong>
+                      <strong>테마</strong>
                     </div>
-                    {/* 등락률은 실제 시세다. 어떤 종목을 묶었는지가 사람이 정한 부분이다. */}
-                    <SampleBadge note="등락률은 구성 종목의 실제 시세로 계산합니다. 어떤 종목을 한 테마로 묶을지는 사람이 정한 것이라 분류 기준이 따로 있지는 않습니다." />
                   </div>
+
                   {/*
-                    `삼닉 관심도 36%`가 있던 자리다. 무엇을 잰 값인지 정의가
-                    없었고 계산할 소스도 없어서, 셀 수 있는 것으로 바꿨다.
-                    설명도 고정 문구를 쓰지 않는다 — `시장 폭`이 1/6인데
-                    `주요 테마 상승 우위`라고 적혀 있었다.
+                    기준일을 늘 보이게 둔다. 이 명단은 낡는다 — 2026-07-31에 받은
+                    파일이 2025-11-06자였다. `지금 반도체 테마`라고 적으면서 9개월
+                    전 명단을 보여주면 거짓말이 된다. 등락률은 지금 시세지만
+                    **누구를 그 테마로 볼지는 이 날짜의 판단**이다.
                   */}
-                  <div className="terminal-dominance">
-                    <div>
-                      <span>시장 폭</span>
-                      <strong>{themeBreadth.up}/{themeBreadth.measured || themeBreadth.total}</strong>
-                      <em>
-                        {themeBreadth.measured === 0
-                          ? '시세 대기'
-                          : themeBreadth.up > themeBreadth.down
-                            ? '오른 테마가 더 많다'
-                            : themeBreadth.up < themeBreadth.down
-                              ? '내린 테마가 더 많다'
-                              : '오른 테마와 내린 테마가 같다'}
-                      </em>
-                    </div>
-                    <div>
-                      <span>가장 오른 테마</span>
-                      <strong>{themeTop?.name ?? '-'}</strong>
-                      <em>{themeTop ? formatRate(themeTop.changeRate as number) : '시세 대기'}</em>
-                    </div>
-                    <div>
-                      <span>가장 내린 테마</span>
-                      <strong>{themeBottom?.name ?? '-'}</strong>
-                      <em>{themeBottom ? formatRate(themeBottom.changeRate as number) : '시세 대기'}</em>
-                    </div>
-                  </div>
-                  <div className="terminal-theme-list">
-                    {themeRows.map((item) => (
-                      <article
-                        data-pending={item.changeRate === undefined ? 'true' : undefined}
-                        data-tone={item.changeRate === undefined ? 'flat' : feeImpactTone(item.changeRate)}
-                        key={item.name}
-                      >
-                        <div>
-                          <strong>{item.name}</strong>
-                          <span>{item.symbols.join(' · ')}</span>
-                        </div>
-                        <em>{item.changeRate === undefined ? '시세 대기' : formatRate(item.changeRate)}</em>
-                        <span>{item.tags.join(' · ')}</span>
-                      </article>
-                    ))}
-                  </div>
+                  {themeList?.sourceDate && (
+                    <p className="theme-source">
+                      이 명단의 기준일은 <b>{new Date(themeList.sourceDate).toLocaleDateString('ko-KR')}</b>입니다
+                      <small>
+                        등락률은 지금 시세로 잽니다. 다만 어떤 종목이 이 테마인지는 그날의 명단이라,
+                        그 뒤에 상장한 종목은 들어 있지 않습니다.
+                      </small>
+                    </p>
+                  )}
+
+                  {themeListError && (
+                    <p className="screening__error">테마 목록을 불러오지 못했습니다 — {themeListError}</p>
+                  )}
+                  {!themeList && !themeListError && <p className="screening__empty">불러오는 중</p>}
+
+                  {themeList && (
+                    <>
+                      <div className="theme-picker">
+                        <label>
+                          <span>테마 찾기</span>
+                          <input
+                            onChange={(event) => setThemeQuery(event.target.value)}
+                            placeholder="반도체, 방위산업, 2차전지 …"
+                            value={themeQuery}
+                          />
+                        </label>
+                        <em>
+                          {themeQuery.trim().length === 0
+                            ? `${themeMatches.length}개`
+                            : `${themeMatches.length}개 찾음`}
+                        </em>
+                      </div>
+
+                      <div className="theme-picker__rows">
+                        {/* 보간값 뒤에 `이/가`를 붙이지 않는다 — `LNG이 든`이 된다. */}
+                        {themeMatches.length === 0 && (
+                          <p className="screening__empty">
+                            이름에 이 글자가 든 테마가 없습니다 ({themeQuery.trim()}).
+                          </p>
+                        )}
+                        <CollapsibleRows
+                          limit={12}
+                          moreLabel={(hidden) => `테마 ${hidden}개 더 보기`}
+                          rows={themeMatches.map((item) => (
+                            <button
+                              aria-pressed={selectedThemeCodes.includes(item.code)}
+                              className="theme-picker__row"
+                              key={item.code}
+                              onClick={() =>
+                                setSelectedThemeCodes((codes) =>
+                                  codes.includes(item.code)
+                                    ? codes.filter((code) => code !== item.code)
+                                    : [...codes, item.code],
+                                )
+                              }
+                              type="button"
+                            >
+                              <strong>{item.name}</strong>
+                              {/*
+                                마스터가 넣어 둔 수와 지금 찾은 수를 둘 다 적는다.
+                                하나만 적으면 `110종목`이라 써 놓고 101개를 보여준다.
+                              */}
+                              <span>
+                                {item.symbolCount === item.instrumentCount
+                                  ? `${item.instrumentCount}종목`
+                                  : `${item.symbolCount}종목 중 ${item.instrumentCount}종목`}
+                              </span>
+                            </button>
+                          ))}
+                        />
+                      </div>
+
+                      {/*
+                        종목을 하나도 못 찾은 테마. 지우지 않고 접어 둔다 —
+                        빈 `2차전지`와 진짜 `2차전지(소재,부품,장비)`가 목록에
+                        나란히 뜨면 어느 쪽이 진짜인지 알 수 없다.
+                      */}
+                      {themeList.emptyThemes.length > 0 && (
+                        <p className="theme-empty-note">
+                          잴 수 없는 테마 {themeList.emptyThemes.length}개 —{' '}
+                          {themeList.emptyThemes.map((item) => item.name).join(' · ')}.
+                          <small>
+                            명단에 있는 종목을 지금 종목 마스터에서 하나도 못 찾았습니다. 종목이 없는 것이
+                            아니라 이 명단이 낡아서 코드가 맞지 않는 것입니다.
+                          </small>
+                        </p>
+                      )}
+
+                      {/*
+                        호출 비용을 버튼 옆에 적는다. 안 적으면 새로고침처럼
+                        가볍게 눌린다 — 반도체 하나가 시세 조회 4회다.
+                      */}
+                      <div className="screening__actions">
+                        <button
+                          className="screening__run"
+                          disabled={selectedThemeCodes.length === 0 || themePulseLoading}
+                          onClick={() => {
+                            setThemePulseLoading(true);
+                            setThemePulseError(null);
+                            fetchThemePulses(selectedThemeCodes)
+                              .then((batch) => setThemePulses(batch))
+                              .catch((e) => setThemePulseError(toErrorMessage(e)))
+                              .finally(() => setThemePulseLoading(false));
+                          }}
+                          type="button"
+                        >
+                          {themePulseLoading ? '재는 중…' : '지금 재기'}
+                        </button>
+                        <em>
+                          {selectedThemeCodes.length === 0
+                            ? '위에서 테마를 고르면 그 테마의 지금 등락률을 잽니다'
+                            : `테마 ${selectedThemeCodes.length}개 · ${themeSelectedCount}종목 · KIS 시세 최대 ${themeMaxCalls}회 (테마끼리 겹치는 종목은 한 번만 묻습니다)`}
+                        </em>
+                      </div>
+
+                      {themePulseError && (
+                        <p className="screening__error">테마 등락률을 재지 못했습니다 — {themePulseError}</p>
+                      )}
+
+                      {themePulses && (
+                        <>
+                          {/* 언제 잰 값인지, 몇 회가 나갔는지. 값만 보면 지금 것인지 알 수 없다. */}
+                          <p className="screening__basis">
+                            <b>{formatClock(themePulses.measuredAt)}</b>에 잰 값 ·
+                            KIS 시세 {themePulses.quoteCalls}회 나감
+                            <small>상한 {themePulses.maxQuoteCalls}회 · 전일 종가 대비 등락률입니다</small>
+                          </p>
+
+                          {themePulses.skipped.map((skip) => (
+                            <p className="screening__unresolved" key={skip.code}>
+                              {skip.name ?? skip.code} — {skip.reason}
+                            </p>
+                          ))}
+
+                          <div className="theme-pulse-list">
+                            {themePulses.pulses.map((pulse) => (
+                              <ThemePulseCard key={pulse.theme.code} pulse={pulse} />
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </>
+                  )}
                 </section>
               )}
 
