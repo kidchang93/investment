@@ -37,8 +37,14 @@ backend/src/
     ├── auth.ts        # access_token(REST, 파일캐시) / approval_key(WS, 메모리)
     ├── rest.ts        # 일봉(getDailyCandles)·현재가(getQuote) 조회 + 정규화
     ├── realtime.ts    # KisRealtime: 실시간 체결 WS 클라이언트 (EventEmitter)
-    └── domesticMaster.ts  # 국내 종목 마스터(.mst) 고정폭 레이아웃 + 행 파서
+    ├── domesticMaster.ts     # 국내 종목 마스터(.mst) 고정폭 레이아웃 + 행 파서
+    └── indexSectorMaster.ts  # 지수·업종 코드 마스터(idxcode.mst) 레이아웃 + 코드→이름 표
 ```
+
+마스터 파일은 **파일 하나에 모듈 하나**다. 파일마다 고정폭 레이아웃이 다르고, 한 자리만
+밀려도 뒤 필드가 전부 어긋나기 때문에 자리 계산을 한곳에 모아 둔다. 자리 계산은 이
+모듈들 안에서만 하고 `scripts/syncInstruments.ts`는 정규화(코드에 이름 붙이기, DB 형태로
+바꾸기)만 한다.
 
 레이어 규칙:
 - **`kis/`만 KIS 원본 필드·엔드포인트·TR_ID를 안다.** 바깥(`server.ts`)은 정규화된 `@invest/shared` 타입만 받는다.

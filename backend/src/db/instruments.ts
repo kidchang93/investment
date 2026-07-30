@@ -1,14 +1,24 @@
 import { randomUUID } from 'node:crypto';
 import { inferDomesticAssetType } from './assetTypes.js';
 import { pool } from './client.js';
-import type { Instrument, InstrumentCategory, WatchItem, WatchlistGroup } from '@invest/shared';
+import type {
+  Instrument,
+  InstrumentCategory,
+  InstrumentSector,
+  WatchItem,
+  WatchlistGroup,
+} from '@invest/shared';
 
 /**
  * 국내/해외 종목 마스터 저장소.
  * KIS 원본 종목 파일은 sync 스크립트에서 정규화하고, 서버는 이 타입만 조회한다.
  */
 
-interface InstrumentRow {
+/**
+ * `rowToInstrument`가 읽는 열. 이 목록과 `instrumentColumns()`는 짝이라 함께 고친다.
+ * `db/trading.ts`도 같은 것을 쓰므로 여기서 내보낸다 — 사본을 두면 한쪽만 늘어난다.
+ */
+export interface InstrumentRow {
   id: string;
   symbol: string;
   name: string;
@@ -21,6 +31,37 @@ interface InstrumentRow {
   provider_symbol: string;
   exchange_code: string;
   timezone: string;
+  sector_large_code: string | null;
+  sector_large_name: string | null;
+  sector_mid_code: string | null;
+  sector_mid_name: string | null;
+}
+
+const INSTRUMENT_COLUMN_NAMES = [
+  'id',
+  'symbol',
+  'name',
+  'english_name',
+  'market',
+  'country',
+  'currency',
+  'asset_type',
+  'provider',
+  'provider_symbol',
+  'exchange_code',
+  'timezone',
+  'sector_large_code',
+  'sector_large_name',
+  'sector_mid_code',
+  'sector_mid_name',
+] as const;
+
+/**
+ * `SELECT` 열 목록을 만든다. 조인한 질의는 `instrumentColumns('i.')`처럼 별칭을 넘긴다.
+ * 열을 하나 더할 때 여덟 군데 질의를 손으로 고치다 한 곳을 빠뜨리는 일을 막는다.
+ */
+export function instrumentColumns(prefix = ''): string {
+  return INSTRUMENT_COLUMN_NAMES.map((column) => `${prefix}${column}`).join(', ');
 }
 
 interface WatchlistRow {
@@ -200,6 +241,13 @@ export async function ensureInstrumentSchema(): Promise<void> {
     );
 
     CREATE INDEX IF NOT EXISTS watchlist_items_position_idx ON watchlist_items (watchlist_id, position);
+
+    -- 지수업종 대·중분류. 국내 KOSPI/KOSDAQ 종목에만 붙고 나머지는 NULL이다.
+    -- 코드는 시장마다 다른 체계라(제조 = KOSPI 0027 / KOSDAQ 1009) 이름도 함께 둔다.
+    ALTER TABLE instruments ADD COLUMN IF NOT EXISTS sector_large_code text;
+    ALTER TABLE instruments ADD COLUMN IF NOT EXISTS sector_large_name text;
+    ALTER TABLE instruments ADD COLUMN IF NOT EXISTS sector_mid_code text;
+    ALTER TABLE instruments ADD COLUMN IF NOT EXISTS sector_mid_name text;
   `);
   await pool.query(
     `
@@ -252,8 +300,7 @@ export async function searchInstruments(query: string, limit = 30): Promise<Inst
 
   const result = await pool.query<InstrumentRow>(
     `
-      SELECT id, symbol, name, english_name, market, country, currency, asset_type,
-             provider, provider_symbol, exchange_code, timezone
+      SELECT ${instrumentColumns()}
       FROM instruments
       WHERE is_active = true
         AND (
@@ -278,8 +325,7 @@ export async function searchInstruments(query: string, limit = 30): Promise<Inst
 export async function getInstrument(id: string): Promise<Instrument | null> {
   const result = await pool.query<InstrumentRow>(
     `
-      SELECT id, symbol, name, english_name, market, country, currency, asset_type,
-             provider, provider_symbol, exchange_code, timezone
+      SELECT ${instrumentColumns()}
       FROM instruments
       WHERE id = $1 AND is_active = true
     `,
@@ -302,8 +348,7 @@ export async function getDomesticInstrumentsBySymbols(
   if (unique.length === 0) return new Map();
   const result = await pool.query<InstrumentRow>(
     `
-      SELECT id, symbol, name, english_name, market, country, currency, asset_type,
-             provider, provider_symbol, exchange_code, timezone
+      SELECT ${instrumentColumns()}
       FROM instruments
       WHERE symbol = ANY($1) AND country = 'KR' AND is_active = true
     `,
@@ -455,8 +500,7 @@ export async function deleteWatchlist(id: string): Promise<boolean> {
 export async function getWatchlistItems(watchlistId: string): Promise<Instrument[]> {
   const result = await pool.query<InstrumentRow>(
     `
-      SELECT i.id, i.symbol, i.name, i.english_name, i.market, i.country, i.currency,
-             i.asset_type, i.provider, i.provider_symbol, i.exchange_code, i.timezone
+      SELECT ${instrumentColumns('i.')}
       FROM watchlist_items wi
       JOIN instruments i ON i.id = wi.instrument_id
       WHERE wi.watchlist_id = $1 AND i.is_active = true
@@ -535,9 +579,7 @@ export async function removeWatchlistItem(watchlistId: string, instrumentId: str
 async function getBySymbols(symbols: string[], markets: string[]): Promise<Instrument[]> {
   const result = await pool.query<InstrumentRow>(
     `
-      SELECT DISTINCT ON (symbol)
-             id, symbol, name, english_name, market, country, currency, asset_type,
-             provider, provider_symbol, exchange_code, timezone
+      SELECT DISTINCT ON (symbol) ${instrumentColumns()}
       FROM instruments
       WHERE is_active = true
         AND symbol = ANY($1)
@@ -557,8 +599,7 @@ async function getBySymbols(symbols: string[], markets: string[]): Promise<Instr
 async function getByIds(ids: string[]): Promise<Instrument[]> {
   const result = await pool.query<InstrumentRow>(
     `
-      SELECT id, symbol, name, english_name, market, country, currency, asset_type,
-             provider, provider_symbol, exchange_code, timezone
+      SELECT ${instrumentColumns()}
       FROM instruments
       WHERE is_active = true AND id = ANY($1)
       ORDER BY array_position($1, id)
@@ -572,8 +613,7 @@ async function getByFilter(whereSql: string, limit: number, query = ''): Promise
   const q = query.trim();
   const result = await pool.query<InstrumentRow>(
     `
-      SELECT id, symbol, name, english_name, market, country, currency, asset_type,
-             provider, provider_symbol, exchange_code, timezone
+      SELECT ${instrumentColumns()}
       FROM instruments
       WHERE is_active = true AND ${whereSql}
         AND (
@@ -606,7 +646,7 @@ function filterByQuery(instruments: Instrument[], query: string): Instrument[] {
   );
 }
 
-function rowToInstrument(row: InstrumentRow): Instrument {
+export function rowToInstrument(row: InstrumentRow): Instrument {
   return {
     id: row.id,
     symbol: row.symbol,
@@ -620,5 +660,15 @@ function rowToInstrument(row: InstrumentRow): Instrument {
     providerSymbol: row.provider_symbol,
     exchangeCode: row.exchange_code,
     timezone: row.timezone,
+    sectorLarge: toSector(row.sector_large_code, row.sector_large_name),
+    sectorMid: toSector(row.sector_mid_code, row.sector_mid_name),
   };
+}
+
+/**
+ * 코드와 이름이 둘 다 있을 때만 업종으로 친다.
+ * 한쪽만 남은 행은 동기화가 덜 된 것이므로 반쪽짜리 업종을 만들어 내지 않는다.
+ */
+function toSector(code: string | null, name: string | null): InstrumentSector | undefined {
+  return code && name ? { code, name } : undefined;
 }

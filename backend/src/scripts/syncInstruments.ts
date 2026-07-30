@@ -4,7 +4,8 @@ import { inferDomesticAssetType } from '../db/assetTypes.js';
 import { closeDb, pool } from '../db/client.js';
 import { ensureDomesticAssetTypes, ensureInstrumentSchema } from '../db/instruments.js';
 import { DOMESTIC_MASTER_SPECS, parseDomesticMasterRow } from '../kis/domesticMaster.js';
-import type { Instrument } from '@invest/shared';
+import { INDEX_SECTOR_MASTER_FILE, parseIndexSectorNames } from '../kis/indexSectorMaster.js';
+import type { Instrument, InstrumentSector } from '@invest/shared';
 
 /**
  * KIS 종목 마스터 파일(.mst/.COD)을 로컬 Postgres instruments 테이블로 동기화한다.
@@ -50,19 +51,28 @@ async function main(): Promise<void> {
     ...loadCommodityIndicators(),
   ];
 
-  await upsertInstruments(dedupe(instruments));
+  const unique = dedupe(instruments);
+  await upsertInstruments(unique);
   await ensureDomesticAssetTypes();
-  console.log(`종목 마스터 동기화 완료: ${instruments.length.toLocaleString('ko-KR')}건`);
+  console.log(`종목 마스터 동기화 완료: ${unique.length.toLocaleString('ko-KR')}건`);
+  // 업종이 몇 건에 붙었는지 남긴다. 한 칸 밀리면 여기 숫자부터 무너진다.
+  const withLarge = unique.filter((item) => item.sectorLarge).length;
+  const withMid = unique.filter((item) => item.sectorMid).length;
+  console.log(
+    `지수업종: 대분류 ${withLarge.toLocaleString('ko-KR')}건 · 중분류 ${withMid.toLocaleString('ko-KR')}건 ` +
+      `(나머지 ${(unique.length - withLarge).toLocaleString('ko-KR')}건은 분류 없음)`,
+  );
 }
 
 async function loadDomesticInstruments(): Promise<NormalizedInstrument[]> {
+  const sectorNames = await loadIndexSectorNames();
   const result: NormalizedInstrument[] = [];
   for (const spec of DOMESTIC_MASTER_SPECS) {
     const path = resolve(MASTER_DIR, spec.file);
     const text = decoder.decode(await readFile(path));
     for (const row of text.split(/\r?\n/)) {
       if (!row.trim()) continue;
-      const { symbol, name } = parseDomesticMasterRow(row, spec);
+      const { symbol, name, sector } = parseDomesticMasterRow(row, spec);
       // 단축코드가 6자리가 아닌 것은 시세 API가 받지 않아 담지 않는다.
       // KOSPI 실측(2026-07): 탈락 469건 = 7자리 ETN(`Q500093`) 385 + 9자리 수익증권 84.
       if (!/^[0-9A-Z]{6}$/.test(symbol) || !name) continue;
@@ -78,11 +88,58 @@ async function loadDomesticInstruments(): Promise<NormalizedInstrument[]> {
         providerSymbol: symbol,
         exchangeCode: 'J',
         timezone: 'Asia/Seoul',
+        sectorLarge: toInstrumentSector(sector.largeCode, sectorNames, spec.file, symbol),
+        sectorMid: toInstrumentSector(sector.midCode, sectorNames, spec.file, symbol),
         searchText: [symbol, name, spec.market, 'KR', 'KRW'].join(' '),
       });
     }
   }
   return result;
+}
+
+/**
+ * 지수업종 코드 → 이름 표를 읽는다.
+ *
+ * 파일이 없으면 던진다. 이름 없이 코드만 담아 두면 화면이 `0027`을 그대로 찍게 되고,
+ * 조용히 비워 두면 "업종이 없는 종목"과 구별되지 않는다.
+ */
+async function loadIndexSectorNames(): Promise<Map<string, string>> {
+  const path = resolve(MASTER_DIR, INDEX_SECTOR_MASTER_FILE);
+  try {
+    return parseIndexSectorNames(decoder.decode(await readFile(path)));
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== 'ENOENT') throw error;
+    throw new Error(
+      `지수업종 코드 마스터가 없습니다: ${path}. ` +
+        `KIS 공개 마스터 파일(${INDEX_SECTOR_MASTER_FILE})을 backend/.cache에 두고 다시 실행하세요.`,
+    );
+  }
+}
+
+/**
+ * 업종 코드에 이름을 붙인다. 코드가 없으면 `undefined`다 — ETF·KONEX가 그렇고,
+ * **분류가 없는 것이지 0이 아니다.**
+ *
+ * 코드가 있는데 표에 없으면 던진다. 마스터의 꼬리가 한 칸 밀렸거나 코드 마스터가
+ * 낡았다는 뜻이라, 그대로 두면 엉뚱한 업종이 붙거나 빈 값이 섞인다.
+ * (2026-07-31 실측: KOSPI·KOSDAQ의 업종 코드 4,207개가 전부 표에 있었다)
+ */
+function toInstrumentSector(
+  code: string | null,
+  names: Map<string, string>,
+  file: string,
+  symbol: string,
+): InstrumentSector | undefined {
+  if (!code) return undefined;
+  const name = names.get(code);
+  if (!name) {
+    throw new Error(
+      `${file}: 업종 코드를 ${INDEX_SECTOR_MASTER_FILE}에서 찾지 못했습니다 (종목 ${symbol}, 코드 ${code}). ` +
+        `꼬리 자리가 밀렸거나 코드 마스터가 낡았습니다.`,
+    );
+  }
+  return { code, name };
 }
 
 async function loadOverseasInstruments(): Promise<NormalizedInstrument[]> {
@@ -294,11 +351,13 @@ async function upsertInstruments(instruments: NormalizedInstrument[]): Promise<v
     const sql = `
       INSERT INTO instruments (
         id, symbol, name, english_name, market, country, currency, asset_type,
-        provider, provider_symbol, exchange_code, timezone, is_active, search_text, updated_at
+        provider, provider_symbol, exchange_code, timezone, is_active, search_text,
+        sector_large_code, sector_large_name, sector_mid_code, sector_mid_name, updated_at
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10, $11, $12, true, $13, now()
+        $9, $10, $11, $12, true, $13,
+        $14, $15, $16, $17, now()
       )
       ON CONFLICT (id) DO UPDATE SET
         symbol = EXCLUDED.symbol,
@@ -314,6 +373,11 @@ async function upsertInstruments(instruments: NormalizedInstrument[]): Promise<v
         timezone = EXCLUDED.timezone,
         is_active = true,
         search_text = EXCLUDED.search_text,
+        -- 업종이 빠진 종목은 NULL로 되돌린다. 옛 값을 남겨 두면 상장폐지·재분류를 못 따라간다.
+        sector_large_code = EXCLUDED.sector_large_code,
+        sector_large_name = EXCLUDED.sector_large_name,
+        sector_mid_code = EXCLUDED.sector_mid_code,
+        sector_mid_name = EXCLUDED.sector_mid_name,
         updated_at = now()
     `;
 
@@ -332,6 +396,10 @@ async function upsertInstruments(instruments: NormalizedInstrument[]): Promise<v
         item.exchangeCode,
         item.timezone,
         item.searchText,
+        item.sectorLarge?.code ?? null,
+        item.sectorLarge?.name ?? null,
+        item.sectorMid?.code ?? null,
+        item.sectorMid?.name ?? null,
       ]);
     }
 

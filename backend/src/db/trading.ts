@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { pool } from './client.js';
+// 종목 열 목록과 행 변환은 instruments.ts 하나만 안다. 사본을 두면 열이 늘 때 한쪽만 늘어난다.
+import { instrumentColumns, rowToInstrument, type InstrumentRow } from './instruments.js';
 import type {
   CreateOrderRequest,
   Instrument,
@@ -27,21 +29,6 @@ interface TradingAccountRow {
   buying_power: string;
   max_order_notional: string;
   live_enabled: boolean;
-}
-
-interface InstrumentRow {
-  id: string;
-  symbol: string;
-  name: string;
-  english_name: string | null;
-  market: string;
-  country: Instrument['country'];
-  currency: string;
-  asset_type: Instrument['assetType'];
-  provider: 'kis';
-  provider_symbol: string;
-  exchange_code: string;
-  timezone: string;
 }
 
 interface PositionRow extends InstrumentRow {
@@ -276,8 +263,7 @@ export async function getFillByOrderId(orderId: string): Promise<TradingFill | n
       SELECT f.id AS fill_id, f.order_intent_id AS order_id, f.account_id, f.side, f.quantity,
              f.price, f.notional, f.currency AS fill_currency,
              (extract(epoch from f.created_at) * 1000)::bigint::text AS created_at_ms,
-             i.id, i.symbol, i.name, i.english_name, i.market, i.country, i.currency, i.asset_type,
-             i.provider, i.provider_symbol, i.exchange_code, i.timezone
+             ${instrumentColumns('i.')}
       FROM trading_fills f
       JOIN instruments i ON i.id = f.instrument_id
       WHERE f.order_intent_id = $1
@@ -338,8 +324,7 @@ async function getTradingAccounts(): Promise<TradingAccount[]> {
 async function getPositions(): Promise<Position[]> {
   const result = await pool.query<PositionRow>(`
     SELECT p.id AS position_id, p.account_id, p.quantity, p.average_price, p.currency AS position_currency,
-           i.id, i.symbol, i.name, i.english_name, i.market, i.country, i.currency, i.asset_type,
-           i.provider, i.provider_symbol, i.exchange_code, i.timezone
+           ${instrumentColumns('i.')}
     FROM trading_positions p
     JOIN instruments i ON i.id = p.instrument_id
     WHERE p.quantity <> 0
@@ -362,8 +347,7 @@ async function getRecentOrders(limit = 20): Promise<OrderIntent[]> {
              o.limit_price, o.estimated_price, o.estimated_notional, o.currency AS order_currency,
              o.status, o.risk_summary::jsonb AS risk_summary,
              (extract(epoch from o.created_at) * 1000)::bigint::text AS created_at_ms,
-             i.id, i.symbol, i.name, i.english_name, i.market, i.country, i.currency, i.asset_type,
-             i.provider, i.provider_symbol, i.exchange_code, i.timezone
+             ${instrumentColumns('i.')}
       FROM trading_order_intents o
       JOIN instruments i ON i.id = o.instrument_id
       ORDER BY o.created_at DESC
@@ -380,8 +364,7 @@ async function getRecentFills(limit = 20): Promise<TradingFill[]> {
       SELECT f.id AS fill_id, f.order_intent_id AS order_id, f.account_id, f.side, f.quantity,
              f.price, f.notional, f.currency AS fill_currency,
              (extract(epoch from f.created_at) * 1000)::bigint::text AS created_at_ms,
-             i.id, i.symbol, i.name, i.english_name, i.market, i.country, i.currency, i.asset_type,
-             i.provider, i.provider_symbol, i.exchange_code, i.timezone
+             ${instrumentColumns('i.')}
       FROM trading_fills f
       JOIN instruments i ON i.id = f.instrument_id
       ORDER BY f.created_at DESC
@@ -399,8 +382,7 @@ async function getOrderIntent(id: string): Promise<OrderIntent | null> {
              o.limit_price, o.estimated_price, o.estimated_notional, o.currency AS order_currency,
              o.status, o.risk_summary::jsonb AS risk_summary,
              (extract(epoch from o.created_at) * 1000)::bigint::text AS created_at_ms,
-             i.id, i.symbol, i.name, i.english_name, i.market, i.country, i.currency, i.asset_type,
-             i.provider, i.provider_symbol, i.exchange_code, i.timezone
+             ${instrumentColumns('i.')}
       FROM trading_order_intents o
       JOIN instruments i ON i.id = o.instrument_id
       WHERE o.id = $1
@@ -413,8 +395,7 @@ async function getOrderIntent(id: string): Promise<OrderIntent | null> {
 async function getInstrumentById(id: string): Promise<Instrument | null> {
   const result = await pool.query<InstrumentRow>(
     `
-      SELECT id, symbol, name, english_name, market, country, currency, asset_type,
-             provider, provider_symbol, exchange_code, timezone
+      SELECT ${instrumentColumns()}
       FROM instruments
       WHERE id = $1 AND is_active = true
     `,
@@ -620,23 +601,6 @@ function rowToTradingFill(row: TradingFillRow): TradingFill {
     notional: Number(row.notional),
     currency: row.fill_currency,
     createdAt: Number(row.created_at_ms),
-  };
-}
-
-function rowToInstrument(row: InstrumentRow): Instrument {
-  return {
-    id: row.id,
-    symbol: row.symbol,
-    name: row.name,
-    englishName: row.english_name ?? undefined,
-    market: row.market,
-    country: row.country,
-    currency: row.currency,
-    assetType: row.asset_type,
-    provider: row.provider,
-    providerSymbol: row.provider_symbol,
-    exchangeCode: row.exchange_code,
-    timezone: row.timezone,
   };
 }
 

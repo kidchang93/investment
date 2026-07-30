@@ -105,6 +105,119 @@ describe('parseDomesticMasterRow', () => {
   });
 });
 
+/**
+ * 지수업종은 꼬리 [3,7)·[7,11)에 있다. 이 자리가 한 칸만 밀려도 **그럴듯한 4자리 숫자가
+ * 나오기 때문에** 형식 검사로는 잡히지 않는다 — 실제로 시가총액규모(`1`)를 끌어와 읽으면
+ * 삼성전자가 `1002`(코스닥 대형주)로 읽혔다. 그래서 픽스처의 시가총액규모를 `0`이 아닌
+ * 값으로 두고 코드 자체를 확인한다.
+ */
+describe('parseDomesticMasterRow 지수업종', () => {
+  it('대분류·중분류 코드를 읽는다 (005930 삼성전자 = 제조 0027 / 전기·전자 0013)', () => {
+    const row = buildRow(KOSPI, {
+      symbol: '005930',
+      standardCode: 'KR7005930003',
+      name: '삼성전자',
+      group: 'ST',
+      capSize: '1',
+      sectorLargeCode: '0027',
+      sectorMidCode: '0013',
+    });
+    assert.deepEqual(parseDomesticMasterRow(row, KOSPI).sector, {
+      largeCode: '0027',
+      midCode: '0013',
+    });
+  });
+
+  it('한 칸 밀린 값도 숫자 4자리라 형식 검사로는 못 잡는다 — 그래서 코드를 값으로 확인한다', () => {
+    const row = buildRow(KOSPI, {
+      symbol: '005930',
+      standardCode: 'KR7005930003',
+      name: '삼성전자',
+      group: 'ST',
+      capSize: '1',
+      sectorLargeCode: '0027',
+      sectorMidCode: '0013',
+    });
+    const tail = parseDomesticMasterRow(row, KOSPI).tail;
+    // 왼쪽으로 한 칸: '1002'는 idxcode.mst에 실제로 있는 코드(코스닥 대형주)다.
+    assert.match(tail.slice(2, 6), /^\d{4}$/);
+    assert.equal(tail.slice(2, 6), '1002');
+    // 오른쪽으로 한 칸: '0270'도 숫자 4자리다.
+    assert.equal(tail.slice(4, 8), '0270');
+  });
+
+  it('KOSDAQ은 1000번대 코드다 (247540 에코프로비엠 = 제조 1009 / 전기·전자 1028)', () => {
+    const row = buildRow(KOSDAQ, {
+      symbol: '247540',
+      standardCode: 'KR7247540008',
+      name: '에코프로비엠',
+      group: 'ST',
+      capSize: '1',
+      sectorLargeCode: '1009',
+      sectorMidCode: '1028',
+    });
+    assert.deepEqual(parseDomesticMasterRow(row, KOSDAQ).sector, {
+      largeCode: '1009',
+      midCode: '1028',
+    });
+  });
+
+  it('중분류가 없는 대분류가 있다 — 대분류만 남고 중분류는 null이다', () => {
+    const row = buildRow(KOSPI, {
+      symbol: '105560',
+      standardCode: 'KR7105560007',
+      name: 'KB금융',
+      group: 'ST',
+      capSize: '1',
+      sectorLargeCode: '0021',
+      sectorMidCode: '0000',
+    });
+    assert.deepEqual(parseDomesticMasterRow(row, KOSPI).sector, {
+      largeCode: '0021',
+      midCode: null,
+    });
+  });
+
+  it('업종이 없으면 null이다 — `0000`을 그대로 담지 않는다 (ETF)', () => {
+    const row = buildRow(KOSPI, {
+      symbol: '069500',
+      standardCode: 'KR7069500007',
+      name: 'KODEX 200',
+      group: 'EF',
+      sectorLargeCode: '0000',
+      sectorMidCode: '0000',
+    });
+    assert.deepEqual(parseDomesticMasterRow(row, KOSPI).sector, { largeCode: null, midCode: null });
+  });
+
+  it('KONEX는 같은 자리에 숫자가 있어도 업종으로 읽지 않는다', () => {
+    // 실측(2026-07-31) KONEX 꼬리는 레이아웃이 달라 이 자리에 `8320` 같은 값이 온다.
+    const row = buildRow(KONEX, {
+      symbol: '0070X0',
+      standardCode: 'KR70070X0000',
+      name: '에스테크엠',
+      group: 'ST',
+      capSize: '0',
+      sectorLargeCode: '0008',
+      sectorMidCode: '3200',
+    });
+    assert.deepEqual(parseDomesticMasterRow(row, KONEX).sector, { largeCode: null, midCode: null });
+  });
+
+  it('업종 자리가 숫자 4자리가 아니면 던진다', () => {
+    const row = buildRow(KOSPI, {
+      symbol: '005930',
+      standardCode: 'KR7005930003',
+      name: '삼성전자',
+      group: 'ST',
+      capSize: '1',
+      sectorLargeCode: '00Z7',
+      sectorMidCode: '0013',
+    });
+    assert.throws(() => parseDomesticMasterRow(row, KOSPI), /지수업종 자리가 어긋났습니다/);
+  });
+});
+
 function specFor(market: string): DomesticMasterSpec {
   const spec = DOMESTIC_MASTER_SPECS.find((item) => item.market === market);
   assert.ok(spec, `${market} 스펙이 없다`);
@@ -127,23 +240,43 @@ function eucKrBytes(text: string): number {
  */
 const MEASURED_TAIL_BYTES: Record<string, number> = { KOSPI: 227, KOSDAQ: 221, KONEX: 184 };
 
+interface RowFields {
+  symbol: string;
+  standardCode: string;
+  name: string;
+  group: string;
+  /** 시가총액규모 1글자. 업종 앞 칸이라 여기에 숫자를 두면 한 칸 밀림이 드러난다 */
+  capSize?: string;
+  sectorLargeCode?: string;
+  sectorMidCode?: string;
+  sectorSmallCode?: string;
+}
+
 /**
  * 마스터 한 행을 실제 파일과 같은 고정폭으로 짓는다 (개행은 붙이지 않는다).
- * 한글명은 40바이트가 되도록 공백으로 채우고, 꼬리는 증권그룹구분코드 + 채움이다.
+ * 한글명은 40바이트가 되도록 공백으로 채우고, 꼬리는 실측 필드 순서대로 이어 붙인다.
+ *
+ *   증권그룹구분코드 2 · 시가총액규모 1 · 지수업종 대 4 · 중 4 · 소 4 · 나머지 채움
+ *
+ * **자리 수(3·7·11)를 쓰지 않고 폭(2·1·4·4·4)으로 이어 붙인다.** 검사 대상인 오프셋
+ * 상수로 행을 지으면 상수가 틀려도 행이 같이 틀리게 지어져 왕복이 맞아떨어진다.
  */
-function buildRow(
-  spec: DomesticMasterSpec,
-  fields: { symbol: string; standardCode: string; name: string; group: string },
-): string {
+function buildRow(spec: DomesticMasterSpec, fields: RowFields): string {
   const padding = 40 - eucKrBytes(fields.name);
   assert.ok(padding >= 0, `${fields.name}이(가) 40바이트를 넘는다`);
   const tailBytes = MEASURED_TAIL_BYTES[spec.market];
   assert.ok(tailBytes, `${spec.market} 실측 꼬리 폭이 없다`);
+
+  const tail = (
+    fields.group.padEnd(2) +
+    (fields.capSize ?? ' ').padEnd(1) +
+    (fields.sectorLargeCode ?? '0000') +
+    (fields.sectorMidCode ?? '0000') +
+    (fields.sectorSmallCode ?? '0000')
+  ).padEnd(tailBytes, '0');
+  assert.equal(tail.length, tailBytes, '꼬리 폭이 실측과 다르다');
+
   return (
-    fields.symbol.padEnd(9) +
-    fields.standardCode.padEnd(12) +
-    fields.name +
-    ' '.repeat(padding) +
-    fields.group.padEnd(tailBytes, '0')
+    fields.symbol.padEnd(9) + fields.standardCode.padEnd(12) + fields.name + ' '.repeat(padding) + tail
   );
 }

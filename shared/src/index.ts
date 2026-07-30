@@ -41,6 +41,19 @@ export type InstrumentAssetType =
   | 'commodity'
   | 'other';
 
+/**
+ * 지수업종 분류 한 단계.
+ *
+ * 코드는 시장마다 다른 체계다 — 같은 `제조`가 KOSPI에서는 `0027`, KOSDAQ에서는 `1009`다.
+ * 그래서 시장을 넘어 묶을 때는 `name`을, 지수 시세를 조회할 때는 `code`를 쓴다.
+ */
+export interface InstrumentSector {
+  /** 지수업종 코드 4자리 */
+  code: string;
+  /** 지수업종 이름 */
+  name: string;
+}
+
 /** 국내/해외 통합 종목 마스터 */
 export interface Instrument {
   id: string;
@@ -55,6 +68,13 @@ export interface Instrument {
   providerSymbol: string;
   exchangeCode: string;
   timezone: string;
+  /**
+   * 지수업종 대분류. 없을 수 있다 — ETF·ETN·해외·KONEX에는 분류가 붙지 않는다.
+   * **분류가 없는 것이지 0이 아니다.** 값이 없으면 필드 자체가 없다.
+   */
+  sectorLarge?: InstrumentSector;
+  /** 지수업종 중분류. 대분류만 있고 중분류가 없는 종목이 있다 (KOSPI 금융·유통 등). */
+  sectorMid?: InstrumentSector;
 }
 
 /** 종목 탐색용 추천 카테고리 */

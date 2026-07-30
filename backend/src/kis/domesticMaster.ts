@@ -30,6 +30,9 @@
  * 문자 단위로 잘라도 되는 이유: 앞 21바이트(단축·표준코드)와 꼬리 전체가 ASCII라
  * 바이트 수와 글자 수가 같다. 가운데 한글종목명만 EUC-KR 2바이트 문자를 포함하므로,
  * 양끝에서 재면 글자 수 계산이 바이트 수 계산과 어긋나지 않는다.
+ *
+ * 꼬리에서 읽는 필드는 지금 지수업종(대·중분류)뿐이다. 코드→이름 매핑은 다른 마스터
+ * 파일이라 `indexSectorMaster.ts`에 있다.
  */
 
 /** 한 행에서 한글종목명 앞에 오는 고정폭(단축코드 9 + 표준코드 12). */
@@ -45,6 +48,28 @@ const NAME_MAX_CHARS = NAME_FIELD_BYTES;
 /** 꼬리 첫 필드인 증권그룹구분코드. 정렬이 맞으면 항상 대문자 2글자다. */
 const SECURITY_GROUP_CODE_PATTERN = /^[A-Z]{2}/;
 
+/**
+ * 꼬리 앞쪽 지수업종 필드의 자리.
+ *
+ *   [0,2) 증권그룹구분코드   [2,3) 시가총액규모
+ *   [3,7) 지수업종대분류     [7,11) 지수업종중분류   [11,15) 지수업종소분류
+ *
+ * 값이 없으면 `0000`으로 채워 온다. 자릿수가 4가 아니거나 숫자가 아니면 꼬리가 밀린 것이다.
+ *
+ * ⚠ **소분류는 읽지 않는다.** 필드는 3단으로 잡혀 있지만 데이터는 2단이다 —
+ * backend/.cache 실측(2026-07-31)에서 KOSPI 2,561행·KOSDAQ 1,822행·KONEX 107행이
+ * **전부** `0000`이었다. 자리를 남겨 두는 것과 값이 있는 것은 다르다.
+ */
+const SECTOR_LARGE_OFFSET = 3;
+const SECTOR_MID_OFFSET = 7;
+const SECTOR_CODE_LENGTH = 4;
+
+/** 지수업종이 붙지 않은 종목의 채움값. ETF·ETN·리츠 아닌 일반주도 중분류가 비는 경우가 있다. */
+const SECTOR_CODE_NONE = '0000';
+
+/** 정렬이 맞으면 지수업종 코드는 항상 숫자 4자리다. */
+const SECTOR_CODE_PATTERN = /^\d{4}$/;
+
 export interface DomesticMasterSpec {
   /** backend/.cache 안의 파일명 */
   file: string;
@@ -52,6 +77,25 @@ export interface DomesticMasterSpec {
   market: string;
   /** 한글종목명 뒤에 붙는 고정폭 꼬리의 길이 */
   tailLength: number;
+  /**
+   * 꼬리에 지수업종 필드가 있는가.
+   *
+   * **KONEX는 꼬리 레이아웃 자체가 다르다.** 같은 자리를 읽으면 숫자가 나오지만
+   * 업종 코드가 아니다 — 실측(2026-07-31) 107행에서 대분류 자리는 94행이 `0000`이고
+   * 나머지도 `0001 종합`·`0002 대형주`처럼 업종이 아니다. 중분류 자리는 107개 중
+   * **106개**가 `8320`·`3375`처럼 idxcode.mst에 없는 값이고, 유일한 매치(`4415`)도
+   * 전자부품 회사에 `KRX 게임 TOP 10 지수`가 붙는 꼴이라 의미가 없다.
+   * 켜면 `0102`·`8320`에서 동기화가 던진다. 조용히 엉뚱한 업종을 붙이지 않도록 끈다.
+   */
+  hasIndexSectorFields: boolean;
+}
+
+/** 한 종목의 지수업종. 분류가 없으면 `null`이다 — 빈 문자열로 채우지 않는다. */
+export interface DomesticMasterSector {
+  /** 지수업종 대분류 코드 (KOSPI `0001`~, KOSDAQ `1001`~) */
+  largeCode: string | null;
+  /** 지수업종 중분류 코드. 대분류만 있고 중분류가 없는 종목이 있다 */
+  midCode: string | null;
 }
 
 export interface DomesticMasterRow {
@@ -61,14 +105,16 @@ export interface DomesticMasterRow {
   standardCode: string;
   /** 한글종목명 (뒤 공백 제거) */
   name: string;
-  /** 꼬리 원본. 업종 등 고정폭 필드를 여기서 잘라 쓴다 */
+  /** 지수업종 코드. 이름은 `indexSectorMaster.ts`가 붙인다 */
+  sector: DomesticMasterSector;
+  /** 꼬리 원본. 아직 안 쓰는 고정폭 필드를 여기서 잘라 쓴다 */
   tail: string;
 }
 
 export const DOMESTIC_MASTER_SPECS: readonly DomesticMasterSpec[] = [
-  { file: 'kospi_code.mst', market: 'KOSPI', tailLength: 227 },
-  { file: 'kosdaq_code.mst', market: 'KOSDAQ', tailLength: 221 },
-  { file: 'konex_code.mst', market: 'KONEX', tailLength: 184 },
+  { file: 'kospi_code.mst', market: 'KOSPI', tailLength: 227, hasIndexSectorFields: true },
+  { file: 'kosdaq_code.mst', market: 'KOSDAQ', tailLength: 221, hasIndexSectorFields: true },
+  { file: 'konex_code.mst', market: 'KONEX', tailLength: 184, hasIndexSectorFields: false },
 ];
 
 /**
@@ -101,6 +147,28 @@ export function parseDomesticMasterRow(row: string, spec: DomesticMasterSpec): D
     symbol: row.slice(0, 9).trim(),
     standardCode: row.slice(9, NAME_OFFSET).trim(),
     name: row.slice(NAME_OFFSET, nameEnd).trim(),
+    sector: readSector(tail, spec),
     tail,
   };
+}
+
+/** 꼬리에서 지수업종 코드를 자른다. 시장이 업종 필드를 갖지 않으면 읽지 않는다. */
+function readSector(tail: string, spec: DomesticMasterSpec): DomesticMasterSector {
+  if (!spec.hasIndexSectorFields) return { largeCode: null, midCode: null };
+  return {
+    largeCode: readSectorCode(tail, SECTOR_LARGE_OFFSET, spec),
+    midCode: readSectorCode(tail, SECTOR_MID_OFFSET, spec),
+  };
+}
+
+function readSectorCode(tail: string, offset: number, spec: DomesticMasterSpec): string | null {
+  const raw = tail.slice(offset, offset + SECTOR_CODE_LENGTH);
+  if (!SECTOR_CODE_PATTERN.test(raw)) {
+    throw new Error(
+      `${spec.file}: 지수업종 자리가 어긋났습니다 ` +
+        `(꼬리 ${offset}~${offset + SECTOR_CODE_LENGTH}=${JSON.stringify(raw)}, 숫자 4자리여야 합니다). ` +
+        `꼬리 앞 20글자: ${tail.slice(0, 20)}`,
+    );
+  }
+  return raw === SECTOR_CODE_NONE ? null : raw;
 }
