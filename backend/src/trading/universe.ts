@@ -19,7 +19,7 @@ import { KRX_SESSION_MINUTES } from '@invest/shared';
 import { getKisAccount } from '../config.js';
 import { getCategoryInstruments } from '../db/instruments.js';
 import { getRiskRules } from '../db/riskRules.js';
-import { getInstrumentQuote } from '../kis/rest.js';
+import { getInstrumentQuotes, MULTI_QUOTE_MAX_CODES } from '../kis/rest.js';
 import { DEFAULT_COSTS } from './backtest.js';
 
 /*
@@ -29,8 +29,19 @@ import { DEFAULT_COSTS } from './backtest.js';
  */
 const SOURCE_CATEGORIES = ['kr-all', 'kr-etf'];
 
-/** 가격을 확인하려고 KIS를 때리는 종목 수 상한. 호출 제한을 태우지 않는다. */
-const MAX_PRICE_LOOKUPS = 24;
+/*
+ * 가격을 확인하려고 KIS를 때리는 종목 수 상한.
+ *
+ * **호출 수로 잡는다.** 예전 값 24는 "종목당 1회 × 24회"였다 — 종목 수가 곧
+ * 호출 수였다. 멀티시세는 30종목이 1회라, 종목 수만 적어 두면 몇 회가 나가는지
+ * 알 수 없다.
+ *
+ * 2026-07-31 실측(실전 서버, 장 마감 후): 10묶음 300종목을 1.08초에 받았고
+ * `EGW00201` 0건, 빈 자리 0건이었다. 여기는 그보다 아래인 8묶음 240종목이다.
+ * **10묶음을 넘겨서는 재 보지 않았다** — 더 올리려면 다시 재라.
+ */
+const MAX_PRICE_LOOKUP_CALLS = 8;
+const MAX_PRICE_LOOKUPS = MULTI_QUOTE_MAX_CODES * MAX_PRICE_LOOKUP_CALLS;
 
 /*
  * 유동성 문턱 — 하루 거래대금이 이만큼은 돼야 후보로 본다.
@@ -104,7 +115,24 @@ export interface UniverseRejections {
  * 백테스트는 원하는 값에 원하는 만큼 체결된다고 보지만 실제 시장은 아니다.
  */
 export function screenQuote(quote: Quote, elapsed: number): keyof UniverseRejections | null {
-  const turnover = quote.price * quote.accVolume;
+  /*
+   * 거래대금은 KIS가 실제 값(`Quote.turnover`)을 준다. 국내 주식·ETF는 단건·멀티
+   * 시세 둘 다 담아 오므로 이 문을 지나는 종목은 전부 실제 값이다.
+   *
+   * `현재가 × 누적거래량`은 어림이다 — 하루 종일의 체결을 마지막 값 하나로
+   * 곱하는 것이라, 실제로는 `VWAP × 거래량`과의 차이만큼 어긋난다.
+   *
+   * **어긋나는 크기를 한 종목으로 재지 마라.** 2026-07-30 스크리닝 풀 113종목
+   * 실측에서 중앙값은 +0.28%지만 범위가 **−6.68% ~ +6.24%**로 부호가 양쪽이다
+   * (005930 하나만 보면 +2.59%다). 등락률과의 상관이 r = −0.768이라 하락일에는
+   * 어림이 작게, 상승일에는 크게 나온다. 상·하한가를 오간 종목이면 더 벌어진다.
+   *
+   * 같은 실측에서 판정이 뒤집힌 종목은 0건이었지만 **안전하다는 뜻은 아니다** —
+   * `000105 유한양행우`가 문턱 대비 −1.9%였고, 오차가 +2%만 났어도 뒤집혔다.
+   * 값을 안 주는 경로(해외·선물·야간 환산가)를 위해 어림을 남겨 두지만, 어림이라는
+   * 사실이 사라지지 않게 여기 적어 둔다.
+   */
+  const turnover = quote.turnover ?? quote.price * quote.accVolume;
   if (turnover < MIN_DAILY_TURNOVER * elapsed) return 'illiquid';
 
   const range = quote.high - quote.low;
@@ -154,8 +182,12 @@ export async function loadAutoTraderCandidates(accountId: string, cash: number):
 
   /*
    * 카테고리를 번갈아 뽑는다. 앞 카테고리를 통째로 먼저 쓰면 조회 상한을 거기서
-   * 다 태운다 — 국내 전체 목록은 시총 순이라 앞쪽이 전부 대형주고, 예수금 5만원으로는
-   * 하나도 살 수 없어 매 회차 "후보 없음"으로 끝났다. 실제로 그렇게 돌아갔다.
+   * 다 태우고, 예수금 5만원으로는 하나도 살 수 없어 매 회차 "후보 없음"으로 끝났다.
+   * 실제로 그렇게 돌아갔다.
+   *
+   * (여기 원래 "국내 전체 목록은 **시총 순**이라 앞쪽이 전부 대형주"라고 적혀
+   * 있었는데 틀렸다 — `getByFilter`는 검색어가 없으면 `ORDER BY symbol`이라 풀
+   * 앞쪽은 `000020 동화약품`·`0000D0` ETF다. 결론은 그대로지만 근거가 달랐다.)
    */
   const pool: Instrument[] = [];
   const seen = new Set<string>();
@@ -181,41 +213,50 @@ export async function loadAutoTraderCandidates(accountId: string, cash: number):
   }
 
   /*
-   * 가격은 하나씩 조회해야 알 수 있다. 전 종목을 훑을 수는 없으니 앞에서
-   * 잘라 확인한다. 여기서 통과한 것만 전략에게 넘어간다.
+   * 값을 모르면 고를 수 없다. 전 종목을 훑을 수는 없으니 앞에서 잘라 확인하고,
+   * 확인한 것 중 통과한 것만 전략에게 넘어간다.
+   *
+   * 조회는 멀티시세로 30종목씩 묶어 나간다 — 종목당 1회이던 때는 24종목이
+   * 24회였고, 지금은 240종목이 8회다.
    */
+  const targets = pool.slice(0, MAX_PRICE_LOOKUPS);
   const prices: number[] = [];
   const rejections: UniverseRejections = { tooExpensive: 0, illiquid: 0, costHeavy: 0 };
   const elapsed = sessionElapsedRatio();
-  const checked = await Promise.all(
-    pool.slice(0, MAX_PRICE_LOOKUPS).map(async (instrument) => {
-      try {
-        const quote = await getInstrumentQuote(instrument);
-        const price = quote.price;
-        if (!Number.isFinite(price) || price <= 0) return null;
-        prices.push(price);
-        if (price > cash) {
-          rejections.tooExpensive += 1;
-          return null;
-        }
-        /*
-         * 살 수 있다고 다 후보는 아니다. 백테스트에서 나온 숫자를 실제로
-         * 거둘 수 있는 종목만 남긴다 — 물량이 있어야 그 값에 체결되고,
-         * 하루 변동폭이 왕복 비용보다 넉넉해야 방향을 맞혔을 때 남는다.
-         */
-        const rejected = screenQuote(quote, elapsed);
-        if (rejected) {
-          rejections[rejected] += 1;
-          return null;
-        }
-        return instrument;
-      } catch {
-        return null;
-      }
-    }),
-  );
-  const instruments = checked.filter((instrument): instrument is Instrument => instrument !== null);
+  const batch = await getInstrumentQuotes(targets);
+  const instruments: Instrument[] = [];
+
+  for (const instrument of targets) {
+    const quote = batch.quotes.get(instrument.id);
+    // 값을 못 받은 종목은 거절이 아니다. 아래에서 따로 센다.
+    if (!quote) continue;
+    const price = quote.price;
+    if (!Number.isFinite(price) || price <= 0) continue;
+    prices.push(price);
+    if (price > cash) {
+      rejections.tooExpensive += 1;
+      continue;
+    }
+    /*
+     * 살 수 있다고 다 후보는 아니다. 백테스트에서 나온 숫자를 실제로
+     * 거둘 수 있는 종목만 남긴다 — 물량이 있어야 그 값에 체결되고,
+     * 하루 변동폭이 왕복 비용보다 넉넉해야 방향을 맞혔을 때 남는다.
+     */
+    const rejected = screenQuote(quote, elapsed);
+    if (rejected) {
+      rejections[rejected] += 1;
+      continue;
+    }
+    instruments.push(instrument);
+  }
   if (instruments.length > 0) return { instruments };
+
+  /*
+   * 못 물어본 종목을 말하지 않으면 "물어본 것 중에 없었다"와 "물었는데 값이
+   * 안 왔다"가 같은 기록으로 남는다. 값이 안 온 것은 거절이 아니다.
+   */
+  const unresolved = targets.length - prices.length;
+  const unresolvedHint = unresolved > 0 ? ` · 시세를 못 받은 종목 ${unresolved}개` : '';
 
   /*
    * 후보가 하나도 안 남는 이유는 대부분 둘 중 하나다 — 허용 종목이 좁게 잡혀
@@ -239,14 +280,14 @@ export async function loadAutoTraderCandidates(accountId: string, cash: number):
     if (rejections.costHeavy > 0) parts.push(`왕복 비용이 하루 변동폭의 절반을 넘음 ${rejections.costHeavy}종목`);
     return {
       instruments: [],
-      note: `살 수 있는 종목은 있었지만 모두 걸러졌습니다 — ${parts.join(' · ')}. ${priceHint}`,
+      note: `살 수 있는 종목은 있었지만 모두 걸러졌습니다 — ${parts.join(' · ')}. ${priceHint}${unresolvedHint}`,
     };
   }
 
   return {
     instruments: [],
     note: allowed
-      ? `허용 종목(${rules.symbolAllowlist.join(', ')})을 현금 ${Math.floor(cash).toLocaleString()}원으로 1주도 살 수 없습니다 · ${priceHint}`
-      : `현금 ${Math.floor(cash).toLocaleString()}원으로 1주라도 살 수 있는 종목이 없습니다 · ${priceHint}`,
+      ? `허용 종목(${rules.symbolAllowlist.join(', ')})을 현금 ${Math.floor(cash).toLocaleString()}원으로 1주도 살 수 없습니다 · ${priceHint}${unresolvedHint}`
+      : `현금 ${Math.floor(cash).toLocaleString()}원으로 1주라도 살 수 있는 종목이 없습니다 · ${priceHint}${unresolvedHint}`,
   };
 }

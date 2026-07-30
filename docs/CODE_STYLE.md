@@ -33,6 +33,11 @@
 - **명시적 반환 타입.** 공개 함수는 반환 타입을 적는다. 예: `export async function getQuote(code: string): Promise<Quote>`, `function signColor(sign: string): string`.
 - 순수 헬퍼는 파일 하단 또는 사용처 근처에 작은 함수로 분리 (`yyyymmdd`, `toCandlestickData`, `formatPrice`).
 - 외부 JSON은 `as Record<string, unknown>` / `as Record<string, string>`로 받은 뒤 `Number(...)`로 좁혀 정규화한다. `any` 금지.
+- **빈 문자열을 `Number()`에 그냥 넣지 않는다.** `Number('')`은 `NaN`이 아니라 **0**이다.
+  KIS는 값이 없는 자리에 빈 문자열을 주므로 그대로 읽으면 "값 없음"이 "0"이 된다 —
+  멀티시세는 없는 종목코드를 **전 필드 빈 문자열 행**으로 돌려주고, 거래대금이 0으로
+  잡히면 "오늘 한 주도 안 거래됐다"는 사실이 지어진다. `kis/normalize.ts`의
+  `toNumberOrNaN`을 쓴다.
 - `??`(nullish)와 옵셔널 체이닝 적극 사용. 기본값은 정규화 지점에서 부여.
 
 ## React 컨벤션

@@ -28,6 +28,7 @@ KIS 오픈API 매매 기능의 구현 현황과, 막혀 있는 항목의 이유�
 | 기간별 매매손익 | `trading/inquire-period-trade-profit` | `TTTC8715R` / **모의 없음** | `GET /api/broker/kis/trade-profit` | ✅ |
 | 국내 개장일 | `quotations/chk-holiday` | `CTCA0903R` | (리스크 룰 내부) | ✅ |
 | 호가·예상체결 | `quotations/inquire-asking-price-exp-ccn` | `FHKST01010200` | `GET /api/instruments/:id/order-book` | ✅ |
+| 멀티시세 (최대 30종목) | `quotations/intstock-multprice` | `FHKST11300006` | `POST /api/instruments/quotes` (내부) | ✅ |
 
 ### 현재가에는 예상체결이 없다 (프리마켓)
 
@@ -139,14 +140,30 @@ antc_mkop_cls_code = 311    장운영 구분
 **호출 비용**: 종목당 3회. 하단 독의 `재무` 탭을 열었을 때만, 종목이 바뀔
 때만 부른다. 분기 값이라 주기 갱신이 필요 없다.
 
-### 후보 스크리닝 — 종목 수만큼 호출이 나간다
+### 후보 스크리닝 — 30종목에 호출 1회
 
 `GET /api/trading/screening`은 **마지막에 잰 값만** 준다(서버 메모리, 계좌별).
 다시 훑는 것은 `POST /api/trading/screening/run`이고 **사용자가 누를 때만** 돈다.
 
-종목 하나에 시세 1회다. 40종목이면 40회 + 120ms 간격으로 약 6초. 화면을 열
-때마다 자동으로 돌리면 탭 한 번에 수십 회가 나가 `EGW00201`에 걸린다.
-상한은 `MAX_SCREENING_LOOKUPS = 80`.
+> **2026-07-31 교체.** 여기 원래 *"종목 하나에 시세 1회다. 40종목이면 40회 +
+> 120ms 간격으로 약 6초"*라고 적혀 있었다. 멀티시세(`FHKST11300006`)로 바꿔
+> **30종목이 1회**가 됐다. 실측: 120종목 → 4회 → **0.48초**(예수금 조회 포함).
+
+상한은 종목 수가 아니라 **호출 수**로 잡는다. 종목 수만 적어 두면 몇 회가
+나가는지 알 수 없기 때문이다.
+
+| 상수 | 값 | 호출 |
+|------|------|------|
+| `MAX_SCREENING_LOOKUPS` | 300종목 | 10회 |
+| `DEFAULT_SCREENING_LOOKUPS` | 120종목 | 4회 |
+| `MAX_PRICE_LOOKUPS` (자동매매 후보) | 240종목 | 8회 |
+
+**10회를 넘겨서는 재 보지 않았다.** 실측은 10묶음 300종목 = 1.08초 · `EGW00201`
+0건까지다(`npx tsx src/scripts/probeMultiQuote.ts budget 10`). 더 올리려면 다시 잰다.
+
+시세를 못 받은 종목은 `unresolved`로 따로 센다. 실측에서 120종목 중 3종목이
+그랬는데 전부 상장 직후 TDF ETF였다 — KIS가 빈 값을 준다. **걸러진 것이 아니라
+못 본 것이므로 판정에 넣지 않는다.**
 
 예수금은 **서버가 계좌에서 직접 읽는다**(`getKisDomesticAccountSnapshot`).
 프론트가 보내면 화면에 뜬 값과 실제 계좌가 어긋났을 때 거른 사유가 틀린다.

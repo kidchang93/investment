@@ -8,13 +8,13 @@
  *
  * **거른 것도 함께 돌려준다.** 통과한 것만 보이면 왜 이것뿐인지 모른다.
  *
- * **호출 비용**: 종목 하나에 KIS 시세 1회다. 화면을 열 때마다 자동으로 돌리면
- * 탭을 누를 때마다 수십 회가 나간다. 그래서 이 함수는 사용자가 명시적으로
- * 부를 때만 돌고, 결과는 언제 잰 값인지와 함께 보관한다.
+ * **호출 비용**: 멀티시세로 **30종목에 KIS 1회**다(예전에는 종목당 1회였다).
+ * 그래도 화면을 열 때마다 자동으로 돌리면 탭을 누를 때마다 호출이 나가므로,
+ * 이 함수는 사용자가 명시적으로 부를 때만 돌고 결과는 언제 잰 값인지와 함께 보관한다.
  */
 
 import { getCategoryInstruments } from '../db/instruments.js';
-import { getInstrumentQuote } from '../kis/rest.js';
+import { getInstrumentQuotes, MULTI_QUOTE_MAX_CODES } from '../kis/rest.js';
 import {
   MAX_COST_SHARE_OF_RANGE,
   MIN_DAILY_TURNOVER,
@@ -25,11 +25,24 @@ import {
 import type { Instrument, ScreeningResult, ScreeningRow } from '@invest/shared';
 
 const SOURCE_CATEGORIES = ['kr-all', 'kr-etf'];
-/** KIS 호출 제한(EGW00201)을 태우지 않도록 조회 간격을 둔다. */
-const LOOKUP_GAP_MS = 120;
-/** 한 번에 훑을 수 있는 상한. 넘기면 호출 제한에 걸린다. */
-export const MAX_SCREENING_LOOKUPS = 80;
-export const DEFAULT_SCREENING_LOOKUPS = 40;
+
+/*
+ * 한 번에 훑을 수 있는 상한. 호출 수로 잡는다 — 종목 수를 그냥 늘리면
+ * 몇 회가 나가는지 알 수 없다.
+ *
+ * 예전에는 종목당 1회라 80종목이 80회였고 조회 사이에 120ms를 더 쉬어야 했다
+ * (80종목에 약 6초). 멀티시세는 30종목이 1회다.
+ *
+ * 2026-07-31 실측(실전 서버, 장 마감 후): 10묶음 300종목을 **1.08초**에 받았고
+ * `EGW00201` 0건, 빈 자리 0건이었다. 상한을 그 실측치인 10묶음에 맞춘다 —
+ * **그보다 많이는 재 보지 않았으므로 올리기 전에 다시 재라.**
+ */
+const MAX_SCREENING_CALLS = 10;
+const DEFAULT_SCREENING_CALLS = 4;
+/** 300종목 = 10회 */
+export const MAX_SCREENING_LOOKUPS = MULTI_QUOTE_MAX_CODES * MAX_SCREENING_CALLS;
+/** 120종목 = 4회 */
+export const DEFAULT_SCREENING_LOOKUPS = MULTI_QUOTE_MAX_CODES * DEFAULT_SCREENING_CALLS;
 
 function isOrderable(instrument: Instrument): boolean {
   if (instrument.country !== 'KR') return false;
@@ -72,31 +85,32 @@ export async function runScreening(cash: number, lookups: number): Promise<Scree
   const rows: ScreeningRow[] = [];
   let unresolved = 0;
 
+  /*
+   * 한 묶음이 실패해도 나머지는 살린다. 다만 없던 일로 하지 않고 센다 —
+   * 못 받은 것과 걸러진 것은 다른 사실이고, 화면이 그 둘을 구별해야 한다.
+   */
+  const batch = await getInstrumentQuotes(pool);
+
   for (const instrument of pool) {
-    try {
-      const quote = await getInstrumentQuote(instrument);
-      if (!Number.isFinite(quote.price) || quote.price <= 0) {
-        unresolved += 1;
-        continue;
-      }
-      const range = quote.high - quote.low;
-      rows.push({
-        instrumentId: instrument.id,
-        symbol: instrument.symbol,
-        name: instrument.name,
-        price: quote.price,
-        changeRate: quote.changeRate,
-        turnover: quote.price * quote.accVolume,
-        rangeRate: range > 0 ? (range / quote.price) * 100 : undefined,
-        // 값비싸서 못 사는 것이 먼저다. 살 수도 없는 종목을 유동성으로 거르면
-        // 사유가 뒤바뀐다 — 자동매매도 이 순서로 본다.
-        verdict: quote.price > cash ? 'tooExpensive' : (screenQuote(quote, elapsed) ?? 'pass'),
-      });
-    } catch {
-      // 하나가 실패해도 나머지는 살린다. 다만 없던 일로 하지 않고 센다.
+    const quote = batch.quotes.get(instrument.id);
+    if (!quote || !Number.isFinite(quote.price) || quote.price <= 0) {
       unresolved += 1;
+      continue;
     }
-    await new Promise((resolve) => setTimeout(resolve, LOOKUP_GAP_MS));
+    const range = quote.high - quote.low;
+    rows.push({
+      instrumentId: instrument.id,
+      symbol: instrument.symbol,
+      name: instrument.name,
+      price: quote.price,
+      changeRate: quote.changeRate,
+      // KIS가 준 실제 누적 거래대금. 값이 없는 경로만 현재가 × 거래량으로 어림한다.
+      turnover: quote.turnover ?? quote.price * quote.accVolume,
+      rangeRate: range > 0 ? (range / quote.price) * 100 : undefined,
+      // 값비싸서 못 사는 것이 먼저다. 살 수도 없는 종목을 유동성으로 거르면
+      // 사유가 뒤바뀐다 — 자동매매도 이 순서로 본다.
+      verdict: quote.price > cash ? 'tooExpensive' : (screenQuote(quote, elapsed) ?? 'pass'),
+    });
   }
 
   return {

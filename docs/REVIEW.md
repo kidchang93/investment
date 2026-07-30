@@ -25,6 +25,8 @@ npm run build                  # frontend vite build — 통과 필수
 
 ### Correctness
 - [ ] KIS 원본 필드 인덱스/이름이 스펙과 일치하는가 (`realtime.ts`의 `f[n]`, `rest.ts`의 필드명)
+- [ ] 복수 응답을 요청 순서에 **그냥 붙이지** 않았는가 — 코드로 검산했는가 (`multiQuote.ts`). 한 칸 밀려도 다른 종목의 그럴듯한 가격이 나와 형식 검사로는 안 걸린다
+- [ ] 빈 문자열을 `Number()`로 읽지 않았는가 (`Number('')`은 0이다 → `toNumberOrNaN`)
 - [ ] `Candle.time`이 UTC epoch **seconds** 인가 (ms 아님). `Date.UTC(...)/1000`
 - [ ] 캔들 배열을 **오름차순**으로 정규화했는가 (KIS output2는 내림차순)
 - [ ] `Number(...)` 변환 후 `NaN`/0 유입 가능성 (예: `Number.isFinite` + `> 0` 필터)

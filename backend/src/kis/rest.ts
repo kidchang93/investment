@@ -1,6 +1,20 @@
 import { config, type KisAccountConfig } from '../config.js';
 import { getDomesticInstrumentsBySymbols } from '../db/instruments.js';
 import { getAccessToken, primaryCredentials, type KisCredentials } from './auth.js';
+import {
+  chunkQuoteCodes,
+  MULTI_QUOTE_PATH,
+  MULTI_QUOTE_TR_ID,
+  multiQuoteParams,
+  parseMultiQuoteChunk,
+} from './multiQuote.js';
+import {
+  isNonNegativeFinite,
+  isPositiveFinite,
+  parseSign,
+  toNumber,
+  toNumberOrNaN,
+} from './normalize.js';
 import type {
   BrokerAccountSnapshot,
   BrokerExecution,
@@ -30,6 +44,12 @@ import type {
   PriceSign,
   Quote,
 } from '@invest/shared';
+
+/**
+ * 한 번의 멀티시세 호출에 들어가는 종목 수(30). 조회 상한을 정하는 쪽이
+ * "몇 회가 나가는가"를 계산하려면 이 수를 알아야 한다.
+ */
+export { MULTI_QUOTE_MAX_CODES } from './multiQuote.js';
 
 /**
  * KIS REST POST 공통 헬퍼. 주문 계열은 전부 POST이고 파라미터를 body로 보낸다.
@@ -167,25 +187,6 @@ function yyyymmdd(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}${m}${day}`;
-}
-
-function toNumber(value: string | undefined): number {
-  return Number(value?.replace(/,/g, ''));
-}
-
-function isPositiveFinite(value: number): boolean {
-  return Number.isFinite(value) && value > 0;
-}
-
-function isNonNegativeFinite(value: number): boolean {
-  return Number.isFinite(value) && value >= 0;
-}
-
-function parseSign(value: string | undefined): PriceSign {
-  if (value === '1' || value === '2' || value === '3' || value === '4' || value === '5') {
-    return value;
-  }
-  return '3';
 }
 
 function signFromChange(change: number): PriceSign {
@@ -535,6 +536,12 @@ export async function getQuote(code: string): Promise<Quote> {
     { FID_COND_MRKT_DIV_CODE: 'J', FID_INPUT_ISCD: code },
   );
   const o = (json.output ?? {}) as Record<string, string>;
+  /*
+   * 누적 거래대금은 단건·멀티시세가 같은 필드명(acml_tr_pbmn)으로 준다. 값을
+   * 못 받으면 담지 않는다 — `Number('')`은 0이라 그냥 읽으면 "오늘 한 주도
+   * 거래되지 않았다"는 사실이 지어진다.
+   */
+  const turnover = toNumberOrNaN(o.acml_tr_pbmn);
   return {
     code,
     price: requireNumber(o.stck_prpr, 'stck_prpr'),
@@ -545,7 +552,128 @@ export async function getQuote(code: string): Promise<Quote> {
     high: requireNumber(o.stck_hgpr, 'stck_hgpr'),
     low: requireNumber(o.stck_lwpr, 'stck_lwpr'),
     accVolume: requireNumber(o.acml_vol, 'acml_vol'),
+    ...(isNonNegativeFinite(turnover) ? { turnover } : {}),
   };
+}
+
+/** 한 묶음이 통째로 실패한 사실. 어느 종목이 왜 안 왔는지 남긴다. */
+export interface QuoteBatchFailure {
+  codes: string[];
+  message: string;
+}
+
+/**
+ * 여러 종목 시세를 한 번에 받은 결과.
+ *
+ * **못 받은 것을 빈 값으로 지우지 않는다.** 세 가지를 따로 담는다 —
+ * 받은 것(`quotes`), KIS가 자리만 주고 값을 비운 것(`blank`), 묶음째 못 받은 것(`failed`).
+ * 하나로 뭉치면 "그런 종목이 없다"와 "조회가 깨졌다"가 구별되지 않는다.
+ */
+export interface QuoteBatchResult {
+  /** 종목코드 → 시세 */
+  quotes: Map<string, Quote>;
+  blank: string[];
+  failed: QuoteBatchFailure[];
+}
+
+/**
+ * 국내 주식·ETF 시세를 30종목씩 묶어 받는다 (관심종목 복수시세, tr_id: FHKST11300006).
+ *
+ * 종목당 1회이던 조회가 30종목당 1회가 된다. 110종목짜리 반도체 테마가 4회로 끝난다.
+ *
+ * 한 묶음이 실패해도 나머지는 살린다. 대신 **없던 일로 하지 않고** `failed`에 담아
+ * 부른 쪽이 "몇 개를 못 봤는지" 적을 수 있게 한다.
+ */
+export async function getDomesticQuotes(codes: string[]): Promise<QuoteBatchResult> {
+  // 같은 코드를 두 번 넣으면 응답도 두 행이 와서 자리 검산이 헷갈린다. 순서는 지킨다.
+  const unique = [...new Set(codes.map((code) => code.trim()).filter((code) => code.length > 0))];
+  const result: QuoteBatchResult = { quotes: new Map(), blank: [], failed: [] };
+
+  for (const chunk of chunkQuoteCodes(unique)) {
+    try {
+      const json = await kisGet(MULTI_QUOTE_PATH, MULTI_QUOTE_TR_ID, multiQuoteParams(chunk));
+      /*
+       * rt_cd를 먼저 본다. 실패 응답에는 output이 아예 없어 "전부 빈 행"으로 보이는데,
+       * 그러면 종목이 없어진 것과 조회가 깨진 것이 같은 모양이 된다.
+       */
+      if (String(json.rt_cd ?? '') !== '0') {
+        throw new Error(`KIS 멀티시세 실패 (${json.msg_cd ?? ''}): ${json.msg1 ?? ''}`);
+      }
+      const rows = (json.output ?? []) as Array<Record<string, string>>;
+      const parsed = parseMultiQuoteChunk(chunk, Array.isArray(rows) ? rows : []);
+      for (const quote of parsed.quotes) result.quotes.set(quote.code, quote);
+      result.blank.push(...parsed.blank);
+    } catch (err) {
+      result.failed.push({ codes: chunk, message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  return result;
+}
+
+/** 멀티시세로 묶을 수 있는 종목인가. KRX 현금 종목(주식·ETF·ETN)만 된다. */
+function isBatchableDomesticQuote(instrument: Instrument): boolean {
+  if (instrument.country !== 'KR' || instrument.provider !== 'kis') return false;
+  return instrument.assetType === 'stock' || instrument.assetType === 'etf' || instrument.assetType === 'etn';
+}
+
+/** 여러 종목 시세를 받은 결과. 키는 `Instrument.id`다 (`getInstrumentQuote`와 같은 규약). */
+export interface InstrumentQuoteBatchResult {
+  quotes: Map<string, Quote>;
+  blank: string[];
+  failed: Array<{ instrumentIds: string[]; message: string }>;
+}
+
+/**
+ * 종목 목록의 시세를 한꺼번에 받는다.
+ *
+ * KRX 현금 종목은 30개씩 묶어 멀티시세로, 나머지(해외·선물·원자재·야간 환산가)는
+ * 묶을 수 없어 하나씩 부른다. 반환 키를 `Instrument.id`로 맞춰 부른 쪽이
+ * `getInstrumentQuote`와 같은 값을 쓰게 한다.
+ */
+export async function getInstrumentQuotes(instruments: Instrument[]): Promise<InstrumentQuoteBatchResult> {
+  const result: InstrumentQuoteBatchResult = { quotes: new Map(), blank: [], failed: [] };
+
+  const batchable = instruments.filter(isBatchableDomesticQuote);
+  const rest = instruments.filter((instrument) => !isBatchableDomesticQuote(instrument));
+
+  if (batchable.length > 0) {
+    // 한 종목코드가 두 시장에 있을 수 있으므로 코드 하나에 종목 여럿을 매단다.
+    const byProviderSymbol = new Map<string, Instrument[]>();
+    for (const instrument of batchable) {
+      const list = byProviderSymbol.get(instrument.providerSymbol);
+      if (list) list.push(instrument);
+      else byProviderSymbol.set(instrument.providerSymbol, [instrument]);
+    }
+
+    const batch = await getDomesticQuotes([...byProviderSymbol.keys()]);
+    const idsOf = (symbols: string[]): string[] =>
+      symbols.flatMap((symbol) => (byProviderSymbol.get(symbol) ?? []).map((instrument) => instrument.id));
+
+    for (const [symbol, list] of byProviderSymbol) {
+      const quote = batch.quotes.get(symbol);
+      if (!quote) continue;
+      // 종목 식별자는 우리 것으로 바꿔 담는다. KIS 코드는 kis/ 밖으로 나가지 않는다.
+      for (const instrument of list) result.quotes.set(instrument.id, { ...quote, code: instrument.id });
+    }
+    result.blank.push(...idsOf(batch.blank));
+    for (const failure of batch.failed) {
+      result.failed.push({ instrumentIds: idsOf(failure.codes), message: failure.message });
+    }
+  }
+
+  for (const instrument of rest) {
+    try {
+      result.quotes.set(instrument.id, await getInstrumentQuote(instrument));
+    } catch (err) {
+      result.failed.push({
+        instrumentIds: [instrument.id],
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return result;
 }
 
 /** 국내주식 호가 단계 수. KRX가 10단계까지 준다 (askp1~askp10 / bidp1~bidp10). */

@@ -51,6 +51,7 @@ import {
   getInstrumentIntradayCandles,
   getInstrumentNews,
   getInstrumentQuote,
+  getInstrumentQuotes,
   getFinancials,
   getMarketMovers,
   getOrderBook,
@@ -76,6 +77,7 @@ import type {
   ClientMessage,
   ClientSubscribeInstrument,
   CreateOrderRequest,
+  Instrument,
   InstrumentAssetType,
   LiveOrderGate,
   RiskRuleSet,
@@ -91,7 +93,6 @@ import type {
 } from '@invest/shared';
 
 const BATCH_QUOTE_LIMIT = 360;
-const BATCH_QUOTE_DELAY_MS = 120;
 const QUOTE_CACHE_TTL_MS = 45_000;
 const STREAM_SUBSCRIBE_LIMIT = 80;
 /** 매수가능 조회가 성립하는 국내 자산 유형. 지수·선물·야간 프록시는 주문 대상이 아니다. */
@@ -161,12 +162,6 @@ function resolveAccount(accountId?: string): KisAccountConfig | null | 'unknown'
 }
 
 const quoteCache = new Map<string, { quote: Quote; fetchedAt: number }>();
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
 
 function normalizeSubscribeInstruments(msg: ClientMessage): ClientSubscribeInstrument[] {
   const legacy = (msg.codes ?? []).map((code) => ({ code, market: 'KOSPI', assetType: 'stock' as const }));
@@ -989,30 +984,40 @@ async function main(): Promise<void> {
     );
     if (ids.length === 0) return [];
 
-    const quotes: Quote[] = [];
-    let remoteCallCount = 0;
+    /*
+     * 캐시에 없는 것만 모아 한 번에 받는다. 예전에는 종목당 1회씩 때리며
+     * 사이에 120ms를 쉬었다 — 관심목록 40종목이면 40회에 5초였다.
+     * 멀티시세는 국내 종목 30개가 1회다.
+     */
+    const byId = new Map<string, Quote>();
+    const stale: string[] = [];
     for (const id of ids) {
       const cached = quoteCache.get(id);
-      if (cached && Date.now() - cached.fetchedAt < QUOTE_CACHE_TTL_MS) {
-        quotes.push(cached.quote);
-        continue;
+      if (cached && Date.now() - cached.fetchedAt < QUOTE_CACHE_TTL_MS) byId.set(id, cached.quote);
+      else stale.push(id);
+    }
+
+    if (stale.length > 0) {
+      const found = (await Promise.all(stale.map((id) => getInstrument(id)))).filter(
+        (instrument): instrument is Instrument => instrument !== null,
+      );
+      const batch = await getInstrumentQuotes(found);
+      const now = Date.now();
+      for (const [id, quote] of batch.quotes) {
+        quoteCache.set(id, { quote, fetchedAt: now });
+        byId.set(id, quote);
       }
-
-      if (remoteCallCount > 0) await sleep(BATCH_QUOTE_DELAY_MS);
-      const instrument = await getInstrument(id);
-      if (!instrument) continue;
-
-      try {
-        const quote = await getInstrumentQuote(instrument);
-        quoteCache.set(id, { quote, fetchedAt: Date.now() });
-        quotes.push(quote);
-        remoteCallCount += 1;
-      } catch (err) {
-        req.log.warn({ err, instrumentId: id }, '종목 현재가 배치 조회 실패');
+      // 못 받은 것을 조용히 넘기지 않는다. 화면에는 값이 없는 자리로 남는다.
+      for (const failure of batch.failed) {
+        req.log.warn({ instrumentIds: failure.instrumentIds, message: failure.message }, '종목 현재가 배치 조회 실패');
+      }
+      if (batch.blank.length > 0) {
+        req.log.warn({ instrumentIds: batch.blank }, '종목 현재가가 빈 값으로 왔습니다');
       }
     }
 
-    return quotes;
+    // 요청 순서를 지킨다. 캐시에 있던 것과 방금 받은 것이 섞여 나가면 안 된다.
+    return ids.map((id) => byId.get(id)).filter((quote): quote is Quote => quote !== undefined);
   });
 
   app.get('/api/instruments/terminal', async () => {

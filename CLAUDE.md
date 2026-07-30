@@ -109,6 +109,8 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 2-1. **계좌 조회에 다른 계좌의 앱키를 쓰지 말 것.** KIS는 앱키에 등록된 계좌만 허용하고, 아니면 `INVALID_CHECK_ACNO`로 거부한다. 앱키/시크릿은 전역 값이 아니라 `KisAccountConfig`로 계좌와 함께 다닌다. 계좌 API를 추가할 때 `toCredentials(account)`를 `kisGetWithHeaders`에 넘겨야 한다.
 3. **두 인증 엔드포인트의 시크릿 필드명 혼동 금지.** `/oauth2/tokenP` → `appsecret`, `/oauth2/Approval` → `secretkey`. 서로 다르다.
 4. **실시간 프레임 파서의 상수를 임의로 바꾸지 말 것.** `H0STCNT0`의 `FIELDS_PER_RECORD = 46`, 필드 인덱스 매핑은 KIS 스펙에 고정돼 있다.
+
+4-1. **멀티시세(`FHKST11300006`)의 30종목 상한을 넘기지 말 것.** 31개를 보내면 **오류가 나지 않는다** — `rt_cd=0`으로 정상 응답하면서 31번째가 조용히 사라진다(2026-07-31 실측). 그대로 두면 "이 테마는 이게 전부"라고 적게 된다. `multiQuoteParams`가 던지게 해 뒀으니 그 가드를 걷어내지 않는다.
 5. **`.env`와 `.cache/`를 커밋하지 말 것.** (자격증명·토큰 포함)
 6. **`shared`를 빌드 산출물로 참조하지 말 것.** `main`/`types`가 `src/index.ts`를 직접 가리킨다. 컴파일 단계 없이 소스로 소비된다.
 7. **모의(`vts`)/실전(`prod`) 도메인을 하드코딩하지 말 것.** 반드시 `config.ts`의 분기를 통한다.

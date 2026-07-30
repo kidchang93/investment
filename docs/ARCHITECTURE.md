@@ -35,12 +35,19 @@ backend/src/
 ├── watchlist.ts       # 감시 종목 (env 오버라이드 → 없으면 기본값)
 └── kis/               # KIS 연동 레이어 (원본 스펙을 여기서만 다룬다)
     ├── auth.ts        # access_token(REST, 파일캐시) / approval_key(WS, 메모리)
-    ├── rest.ts        # 일봉(getDailyCandles)·현재가(getQuote) 조회 + 정규화
+    ├── rest.ts        # 일봉(getDailyCandles)·현재가(getQuote/getDomesticQuotes) 조회 + 정규화
+    ├── normalize.ts   # KIS 원본 문자열 → 숫자·부호 (rest/multiQuote가 같은 규칙을 쓴다)
+    ├── multiQuote.ts  # 멀티시세(FHKST11300006) 요청 조립 + 응답 자리 검산
     ├── realtime.ts    # KisRealtime: 실시간 체결 WS 클라이언트 (EventEmitter)
     ├── domesticMaster.ts     # 국내 종목 마스터(.mst) 고정폭 레이아웃 + 행 파서
     ├── indexSectorMaster.ts  # 지수·업종 코드 마스터(idxcode.mst) 레이아웃 + 코드→이름 표
-    └── themeMaster.ts        # 테마 코드 마스터(theme_code.mst) 레이아웃 + (테마,종목) 쌍
+    ├── themeMaster.ts        # 테마 코드 마스터(theme_code.mst) 레이아웃 + (테마,종목) 쌍
+    └── fixtures/             # 실계좌로 받은 실제 응답 (시험이 읽는다. 지어낸 모양이 아니다)
 ```
+
+`multiQuote.ts`를 `rest.ts`에서 떼어 둔 이유는 마스터 파서들과 같다 — **자리(순서)를
+맞추는 계산**이라 시험으로 못 박아야 하고, 그 시험이 네트워크·DB 없이 돌아야 한다.
+`rest.ts`는 HTTP만 치고 해석은 이 모듈이 한다.
 
 마스터 파일은 **파일 하나에 모듈 하나**다. 파일마다 고정폭 레이아웃이 다르고, 한 자리만
 밀려도 뒤 필드가 전부 어긋나기 때문에 자리 계산을 한곳에 모아 둔다. 자리 계산은 이
@@ -163,7 +170,8 @@ KisRealtime open/close → 'status' 이벤트 → broadcast({type:'status'})
 | access_token 발급 | REST POST | `/oauth2/tokenP` |
 | approval_key 발급 | REST POST | `/oauth2/Approval` |
 | 일봉 시세 | REST GET | `inquire-daily-itemchartprice` / `FHKST03010100` |
-| 현재가 | REST GET | `inquire-price` / `FHKST01010100` |
+| 현재가 (1종목) | REST GET | `inquire-price` / `FHKST01010100` |
+| 현재가 (최대 30종목) | REST GET | `intstock-multprice` / `FHKST11300006` |
 | 실시간 체결 | WebSocket | `H0STCNT0` |
 | 실시간 주문·체결 통보 | WebSocket | `H0STCNI0`(실전) · `H0STCNI9`(모의). payload가 AES-256-CBC 암호화 |
 | 국내주식 잔고 | REST GET | `inquire-balance` / `TTTC8434R`(실전) · `VTTC8434R`(모의) |
