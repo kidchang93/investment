@@ -278,10 +278,16 @@ KIS가 주문/계좌 TR_ID를 개편했다. 구 ID도 아직 응답하지만 **�
 
 ## 막혀 있는 항목과 해결 방법
 
-### 1. 실주문 전송은 사람이 직접 확인해야 한다
+### 1. 실주문 전송 — `live-trader` 에이전트가 낸다
 
-**이유.** AI 에이전트는 주식 매수·매도를 대신 실행하지 않는다. 그래서 `order-cash` /
-`order-rvsecncl`은 코드만 완성돼 있고 실제 전송 검증이 비어 있다(🟡).
+**누가 낸다.** 실주문은 `.claude/agents/live-trader.md` 에이전트만 보낸다. 다른 에이전트
+(`trading-dev`·`quant-strategist`·`data-analyst`·`market-researcher`)는 주문 권한이 없다.
+
+**게이트는 여전히 사용자가 연다** (`KIS_LIVE_ORDER_ENABLED=true npm run dev:api`).
+실주문이 시작되는 시점을 사람이 정한다는 뜻이고, 에이전트는 그 문을 열지 않는다.
+게이트가 닫혀 있으면 `403`을 받고 멈춘 뒤 사용자에게 알린다.
+
+`order-cash` / `order-rvsecncl`은 코드는 완성돼 있고 **실제 전송 검증은 아직 비어 있다**(🟡).
 
 **먼저 만족해야 하는 조건.**
 
