@@ -38,13 +38,29 @@ backend/src/
     ├── rest.ts        # 일봉(getDailyCandles)·현재가(getQuote) 조회 + 정규화
     ├── realtime.ts    # KisRealtime: 실시간 체결 WS 클라이언트 (EventEmitter)
     ├── domesticMaster.ts     # 국내 종목 마스터(.mst) 고정폭 레이아웃 + 행 파서
-    └── indexSectorMaster.ts  # 지수·업종 코드 마스터(idxcode.mst) 레이아웃 + 코드→이름 표
+    ├── indexSectorMaster.ts  # 지수·업종 코드 마스터(idxcode.mst) 레이아웃 + 코드→이름 표
+    └── themeMaster.ts        # 테마 코드 마스터(theme_code.mst) 레이아웃 + (테마,종목) 쌍
 ```
 
 마스터 파일은 **파일 하나에 모듈 하나**다. 파일마다 고정폭 레이아웃이 다르고, 한 자리만
 밀려도 뒤 필드가 전부 어긋나기 때문에 자리 계산을 한곳에 모아 둔다. 자리 계산은 이
 모듈들 안에서만 하고 `scripts/syncInstruments.ts`는 정규화(코드에 이름 붙이기, DB 형태로
 바꾸기)만 한다.
+
+`npm run sync:instruments` 하나가 **종목 → 업종 → 테마** 순서로 다 넣는다. 테마를
+별도 스크립트로 빼지 않은 이유는 테마가 종목코드를 `instruments.id`로 맞춰 저장하기
+때문이다 — 순서가 뒤집히거나 한쪽만 돌면 "종목은 새것, 테마 연결은 옛것"이 된다.
+
+### 종목 분류 두 축
+
+| 축 | 저장 | 관계 | 출처 |
+|------|------|------|------|
+| 지수업종 | `instruments.sector_*` 컬럼 | 종목당 대 1 + 중 1 | `kospi/kosdaq_code.mst` 꼬리 + `idxcode.mst` |
+| 테마 | `themes` + `theme_instruments` | **종목당 N개** (평균 2.37, 최대 16) | `theme_code.mst` |
+
+업종에는 `반도체`라는 칸이 아예 없다. 삼성전자와 에코프로비엠이 같은 `제조 / 전기·전자`,
+한화에어로스페이스와 한화오션이 같은 `제조 / 운송장비·부품`이다. 분야별로 돈이 어디로
+도는지 보려면 테마가 필요하다. 자세한 설계는 `docs/DESIGN.md`의 「테마 분류」 절.
 
 레이어 규칙:
 - **`kis/`만 KIS 원본 필드·엔드포인트·TR_ID를 안다.** 바깥(`server.ts`)은 정규화된 `@invest/shared` 타입만 받는다.

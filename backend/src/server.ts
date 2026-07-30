@@ -21,6 +21,7 @@ import {
   searchInstruments,
   seedDefaultWatchlist,
 } from './db/instruments.js';
+import { ensureThemeSchema } from './db/themes.js';
 import { createOrderIntent, ensureTradingSchema, getFillByOrderId, getTradingOverview } from './db/trading.js';
 import { ensureAutoTraderSchema, getAutoTraderRuns } from './db/autoTrader.js';
 import { ensureSignalScoreSchema, getSignalScoreSummary } from './db/signalScores.js';
@@ -191,6 +192,7 @@ async function main(): Promise<void> {
   await app.register(cors, { origin: true });
   await ensureInstrumentSchema();
   await ensureDomesticAssetTypes();
+  await ensureThemeSchema();
   await ensureTradingSchema();
   await ensureBrokerOrderSchema();
   await ensureRiskRuleSchema();

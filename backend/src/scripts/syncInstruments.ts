@@ -1,15 +1,22 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { inferDomesticAssetType } from '../db/assetTypes.js';
 import { closeDb, pool } from '../db/client.js';
 import { ensureDomesticAssetTypes, ensureInstrumentSchema } from '../db/instruments.js';
+import { ensureThemeSchema, replaceThemes } from '../db/themes.js';
 import { DOMESTIC_MASTER_SPECS, parseDomesticMasterRow } from '../kis/domesticMaster.js';
 import { INDEX_SECTOR_MASTER_FILE, parseIndexSectorNames } from '../kis/indexSectorMaster.js';
+import { parseThemeMaster, THEME_MASTER_FILE } from '../kis/themeMaster.js';
 import type { Instrument, InstrumentSector } from '@invest/shared';
 
 /**
  * KIS 종목 마스터 파일(.mst/.COD)을 로컬 Postgres instruments 테이블로 동기화한다.
  * 원본 파일은 backend/.cache에 두고 커밋하지 않는다.
+ *
+ * 테마 동기화도 여기에 붙어 있다. 별도 스크립트로 빼지 않은 이유는 테마가 종목
+ * 코드를 `instruments.id`로 맞춰 저장하기 때문이다 — 종목이 먼저 들어가야 하고,
+ * 둘을 따로 돌리면 "종목만 새것, 테마 연결은 옛것"인 상태가 만들어진다.
+ * 명령 하나로 묶어 반쪽 동기화를 없앤다.
  */
 
 interface NormalizedInstrument extends Instrument {
@@ -41,6 +48,7 @@ const OVERSEAS_EXCHANGES: Record<
 
 async function main(): Promise<void> {
   await ensureInstrumentSchema();
+  await ensureThemeSchema();
 
   const instruments = [
     ...(await loadDomesticInstruments()),
@@ -61,6 +69,52 @@ async function main(): Promise<void> {
   console.log(
     `지수업종: 대분류 ${withLarge.toLocaleString('ko-KR')}건 · 중분류 ${withMid.toLocaleString('ko-KR')}건 ` +
       `(나머지 ${(unique.length - withLarge).toLocaleString('ko-KR')}건은 분류 없음)`,
+  );
+
+  await syncThemes();
+}
+
+/**
+ * 테마 분류를 동기화한다. **종목을 넣은 뒤에 부른다** — 단축코드를 `instruments.id`로
+ * 맞추므로 순서가 뒤집히면 연결이 통째로 비게 된다.
+ *
+ * 기준일은 마스터 파일의 수정 시각이다. zip 내부 타임스탬프가 그대로 남는 값이고,
+ * 이 파일이 언제 만들어졌는지 알 수 있는 **유일한 단서**다. 파일을 `cp`로 옮기면
+ * 시각이 오늘로 바뀌어 실제보다 새것으로 보일 수 있다는 한계는 있지만, 아무 기준일도
+ * 없이 "지금 반도체 테마"라고 말하는 것보다는 낫다.
+ */
+async function syncThemes(): Promise<void> {
+  const path = resolve(MASTER_DIR, THEME_MASTER_FILE);
+  let text: string;
+  let sourceModifiedAt: Date;
+  try {
+    text = decoder.decode(await readFile(path));
+    sourceModifiedAt = (await stat(path)).mtime;
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== 'ENOENT') throw error;
+    throw new Error(
+      `테마 코드 마스터가 없습니다: ${path}. ` +
+        `KIS 공개 마스터 파일(${THEME_MASTER_FILE})을 backend/.cache에 두고 다시 실행하세요.`,
+    );
+  }
+
+  const master = parseThemeMaster(text);
+  const summary = await replaceThemes(master.names, master.members, sourceModifiedAt);
+
+  const sourceDate = summary.sourceModifiedAt.toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul' });
+  const ageDays = Math.floor((Date.now() - summary.sourceModifiedAt.getTime()) / 86_400_000);
+  console.log(
+    `테마 동기화 완료: ${summary.themeCount.toLocaleString('ko-KR')}개 테마 · ` +
+      `${summary.memberCount.toLocaleString('ko-KR')}쌍 (기준일 ${sourceDate}, ${ageDays.toLocaleString('ko-KR')}일 전)`,
+  );
+  // 낡음을 숫자로 남긴다. "몇 개 중 몇 개를 찾았는지"를 안 적으면 화면이 옛 목록을
+  // 오늘 목록인 것처럼 보여 주게 된다.
+  console.log(
+    `테마 종목: 고유 ${summary.symbolCount.toLocaleString('ko-KR')}종목 중 ` +
+      `${(summary.symbolCount - summary.missingSymbolCount).toLocaleString('ko-KR')}종목 연결 · ` +
+      `${summary.missingSymbolCount.toLocaleString('ko-KR')}종목은 오늘자 종목 마스터에 없음(상장폐지·코드변경) · ` +
+      `쌍 기준 ${summary.linkedMemberCount.toLocaleString('ko-KR')}/${summary.memberCount.toLocaleString('ko-KR')}`,
   );
 }
 
