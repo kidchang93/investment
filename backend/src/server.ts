@@ -11,6 +11,7 @@ import {
   ensureInstrumentSchema,
   getCategoryInstruments,
   getDefaultWatchlist,
+  getDomesticInstrumentsBySymbols,
   getInstrument,
   getInstrumentCategories,
   getTerminalInstruments,
@@ -561,7 +562,13 @@ async function main(): Promise<void> {
           intervalSeconds: Number(intervalSeconds) || 60,
           maxPositions: Number(maxPositions) || 1,
         },
-        { loadCandidates: loadAutoTraderCandidates },
+        {
+          loadCandidates: loadAutoTraderCandidates,
+          // 보유 종목은 후보 필터와 무관하게 분봉을 받아야 팔 수 있다.
+          loadHeldInstruments: async (symbols) => [
+            ...(await getDomesticInstrumentsBySymbols(symbols)).values(),
+          ],
+        },
       );
       return state;
     } catch (e) {

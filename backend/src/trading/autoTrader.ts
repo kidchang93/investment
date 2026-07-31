@@ -36,9 +36,22 @@ import {
   placeKisDomesticOrder,
 } from '../kis/rest.js';
 import { checkBuyFundamentals } from './fundamentals.js';
+import {
+  candleTargets,
+  classifyCandles,
+  describeCandleSkips,
+  type CandleCandidate,
+  type CandleSkip,
+} from './runCandles.js';
 import { getStrategy, type StrategyContext } from './strategy.js';
 
-/** 러너가 한 회차에 KIS를 때리는 횟수를 묶어두는 상한. 호출 제한을 태우지 않는다. */
+/**
+ * 후보 종목의 분봉을 받는 데 쓸 호출 예산. 호출 제한을 태우지 않는다.
+ *
+ * **보유 종목은 이 예산 밖이다.** 자르면 팔 수 없는 종목이 생긴다 — 근거는
+ * `runCandles.ts`의 `candleTargets` 주석에 있다. 한 회차 호출 수는
+ * `max(이 값, 보유 종목 수)`다.
+ */
 const MAX_CANDIDATES_PER_RUN = 8;
 
 /** 이만큼 연속으로 실패하면 멈춘다. 같은 오류로 무한히 주문을 시도하지 않게 한다. */
@@ -53,6 +66,15 @@ export interface AutoTraderDeps {
     accountId: string,
     cash: number,
   ): Promise<{ instruments: Instrument[]; note?: string }>;
+  /**
+   * 보유 종목의 `Instrument`. KIS 잔고는 종목코드만 주는데 전략은 instrumentId로
+   * 이야기한다.
+   *
+   * **후보 목록에서 찾지 않고 따로 받는다.** 후보에서 빠진 보유 종목은 매도
+   * 신호가 날 수 없어 갇히기 때문이다. 못 찾은 코드는 그냥 빠진다 —
+   * 없는 것을 지어내지 않고 회차 기록에 몇 개를 못 찾았는지 적는다.
+   */
+  loadHeldInstruments(symbols: string[]): Promise<Instrument[]>;
 }
 
 interface RunnerHandle {
@@ -197,20 +219,43 @@ async function runOnce(handle: RunnerHandle, deps: AutoTraderDeps): Promise<void
   const cash = snapshot.cashBalance ?? 0;
   /*
    * KIS 잔고는 종목코드(symbol)만 준다. 전략은 instrumentId로 이야기하므로
-   * 후보 목록에서 같은 코드를 찾아 맞춰준다. 후보에 없는 보유 종목은 이번 회차에
-   * 판단 대상이 아니다 — 분봉을 못 받았다는 뜻이라 신호를 낼 근거가 없다.
+   * 코드로 종목을 찾아 맞춰준다.
+   *
+   * **보유 종목은 후보 필터와 무관하게 분봉을 받는다.** 예전에는 후보 앞
+   * 8종목만 받고 `positions`도 그 교집합이라, 후보에서 빠진 보유 종목은 매도
+   * 신호가 아예 날 수 없었다(`runCandles.ts`의 `candleTargets` 참고).
    */
   const symbolToPosition = new Map(snapshot.positions.map((position) => [position.symbol, position]));
+  const heldSymbols = [
+    ...new Set(snapshot.positions.filter((position) => position.quantity > 0).map((position) => position.symbol)),
+  ];
 
   const picked = await deps.loadCandidates(config.accountId, cash);
-  const candidates = await loadCandles(picked.instruments.slice(0, MAX_CANDIDATES_PER_RUN));
+  const heldInstruments = await deps.loadHeldInstruments(heldSymbols);
+  const heldIds = new Set(heldInstruments.map((instrument) => instrument.id));
+  const targets = candleTargets(heldInstruments, picked.instruments, MAX_CANDIDATES_PER_RUN);
+  const loaded = await loadCandles(targets, heldIds, new Date());
+  const candidates = loaded.candidates;
+
+  /*
+   * 못 본 것을 회차 기록에 남긴다. `신호 없음`과 `볼 수가 없었다`는 다른 사실이다.
+   * 종목 마스터에 없는 보유 종목도 여기 센다 — 그 종목은 러너가 팔 수 없다.
+   */
+  const runNotes: string[] = [];
+  const unresolvedHeld = heldSymbols.length - heldInstruments.length;
+  if (unresolvedHeld > 0) {
+    runNotes.push(`보유 ${unresolvedHeld}종목은 종목 정보를 찾지 못해 판단에서 빠졌습니다`);
+  }
+  const skipNote = describeCandleSkips(loaded.skipped);
+  if (skipNote) runNotes.push(skipNote);
+
   if (candidates.length === 0) {
+    const parts = [picked.note, ...runNotes].filter((part): part is string => Boolean(part));
     await recordAutoTraderRun({
       accountId: config.accountId,
       status: 'running',
-      message: picked.note
-        ? `후보 없음 · ${picked.note}`
-        : '후보 종목의 분봉을 받지 못했습니다.',
+      message:
+        parts.length > 0 ? `후보 없음 · ${parts.join(' · ')}` : '후보 없음 · 분봉을 받은 종목이 없습니다',
       equity,
     });
     return;
@@ -228,13 +273,32 @@ async function runOnce(handle: RunnerHandle, deps: AutoTraderDeps): Promise<void
   const context: StrategyContext = { candidates, positions, maxPositions: config.maxPositions };
   const signals = strategy.decide(context);
   if (signals.length === 0) {
+    /*
+     * 보유 종목은 살 대상이 아니므로 후보 수에 섞지 않는다. 섞으면 `후보 8종목`이
+     * 실제로는 "살 수 있는 것 0 + 보유 8"인 회차와 구별되지 않는다.
+     */
+    const heldCount = candidates.filter((item) => heldIds.has(item.instrument.id)).length;
+    const scope =
+      heldCount > 0
+        ? `후보 ${candidates.length - heldCount}종목 · 보유 ${heldCount}종목`
+        : `후보 ${candidates.length}종목`;
     await recordAutoTraderRun({
       accountId: config.accountId,
       status: 'running',
-      message: `신호 없음 · 후보 ${candidates.length}종목`,
+      message: [`신호 없음 · ${scope}`, ...runNotes].join(' · '),
       equity,
     });
     return;
+  }
+
+  // 신호가 났어도 못 본 종목이 있으면 그 사실은 따로 남긴다. 아래 기록은 신호별이다.
+  if (runNotes.length > 0) {
+    await recordAutoTraderRun({
+      accountId: config.accountId,
+      status: 'running',
+      message: runNotes.join(' · '),
+      equity,
+    });
   }
 
   for (const signal of signals) {
@@ -414,20 +478,44 @@ async function executeSignal(
   });
 }
 
-/** 후보마다 분봉을 받아 온다. 한 종목이 실패해도 나머지로 계속 판단한다. */
-async function loadCandles(instruments: Instrument[]): Promise<StrategyContext['candidates']> {
+interface LoadedCandles {
+  candidates: StrategyContext['candidates'];
+  /** 분봉을 쥐지 못해 이번 회차 판단에서 빠진 종목 */
+  skipped: CandleSkip[];
+}
+
+/**
+ * 종목마다 분봉을 받아 온다. 한 종목이 실패해도 나머지로 계속 판단한다.
+ *
+ * **마지막 봉이 오늘(KST) 것이 아니면 뺀다.** 그 날짜에 봉이 없으면 KIS가 이전
+ * 거래일 것을 정상 응답으로 채워 주기 때문이다 — 그대로 쓰면 어제 15:30 종가로
+ * 신호가 나고 주문 수량이 정해진다. 판정과 근거는 `runCandles.ts`에 있다.
+ *
+ * 뺀 것은 `신호 없음`이 아니라 **제외**로 돌려준다. 둘은 다른 사실이고, 실행
+ * 기록에 사유가 남아야 한다.
+ */
+async function loadCandles(
+  targets: Instrument[],
+  heldIds: Set<string>,
+  now: Date,
+): Promise<LoadedCandles> {
   const loaded = await Promise.all(
-    instruments.map(async (instrument) => {
+    targets.map(async (instrument) => {
+      const held = heldIds.has(instrument.id);
+      // 실패를 빈 배열로 넘기지 않는다. null이 "못 받았다"는 사실을 들고 간다.
+      let candles: Candle[] | null;
       try {
-        const response = await getInstrumentIntradayCandles(instrument);
-        const candles: Candle[] = response.candles;
-        const last = candles[candles.length - 1];
-        if (!last) return null;
-        return { instrument, candles, price: last.close };
+        candles = (await getInstrumentIntradayCandles(instrument)).candles;
       } catch {
-        return null;
+        candles = null;
       }
+      return classifyCandles(instrument, candles, held, now);
     }),
   );
-  return loaded.filter((item): item is NonNullable<typeof item> => item !== null);
+  return {
+    candidates: loaded
+      .map((item) => item.candidate)
+      .filter((item): item is CandleCandidate => item !== undefined),
+    skipped: loaded.map((item) => item.skip).filter((item): item is CandleSkip => item !== undefined),
+  };
 }
