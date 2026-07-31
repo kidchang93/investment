@@ -5,15 +5,16 @@
  * `shared`의 순수 함수로 빼고 여기서 덮는다. 실계좌·장중이 아니면 화면으로 태워
  * 볼 수 없는 자리라 더 그렇다.
  *
- * 재는 것은 둘이다.
+ * 재는 것은 셋이다.
  * - 늦게 온 **묵은** 값이 방금 받은 값을 덮지 않는가 (`shouldReplaceQuote`)
  * - 목록의 나이를 **가장 묵은 것**으로 말하는가 (`oldestFetchedAt`)
+ * - **아직 안 옴**과 **못 받음**을 가르는가 (`quoteFreshnessState`)
  */
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { oldestFetchedAt, shouldReplaceQuote, type Quote } from '@invest/shared';
+import { oldestFetchedAt, quoteFreshnessState, shouldReplaceQuote, type Quote } from '@invest/shared';
 
 const T0 = Date.parse('2026-07-31T01:20:00.000Z');
 
@@ -71,5 +72,52 @@ describe('oldestFetchedAt', () => {
   it('시각이 숫자가 아닌 것은 세지 않는다', () => {
     assert.equal(oldestFetchedAt([quote(Number.NaN, 'a'), quote(T0, 'b')]), T0);
     assert.equal(oldestFetchedAt([quote(Number.NaN, 'a')]), undefined);
+  });
+});
+
+/*
+ * 화면 세 자리(헤더 칩·종목 정보 띠·하단 도크)가 이 판정으로 말한다.
+ *
+ * 실패 쪽은 실계좌·장중에도 화면으로 태우기 어렵다 — 502를 흉내 내야 나온다.
+ * 그래서 `riskRuleBlockers`처럼 판정만 떼어 여기서 덮는다.
+ */
+describe('quoteFreshnessState', () => {
+  const STALE_MS = 120_000;
+
+  it('받은 것도 없고 실패도 없으면 기다리는 중이다', () => {
+    assert.deepEqual(quoteFreshnessState(null, T0, STALE_MS, false), { kind: 'waiting', ageMs: null });
+  });
+
+  /*
+   * 예전에는 이 자리도 `waiting`이라 화면이 `갱신 대기`라고 적었다. 오지 않을
+   * 답을 기다리게 된다 — 2026-07-31 장중에 시세 조회를 502로 막고 확인했다.
+   */
+  it('받은 것이 없는데 조회가 깨졌으면 기다리는 중이 아니다', () => {
+    assert.deepEqual(quoteFreshnessState(null, T0, STALE_MS, true), { kind: 'failed', ageMs: null });
+  });
+
+  it('문턱 안이면 나이를 말한다', () => {
+    assert.deepEqual(quoteFreshnessState(T0 - 40_000, T0, STALE_MS, false), { kind: 'fresh', ageMs: 40_000 });
+  });
+
+  it('문턱을 넘으면 낡았다고 말한다', () => {
+    assert.deepEqual(quoteFreshnessState(T0 - 121_000, T0, STALE_MS, false), { kind: 'stale', ageMs: 121_000 });
+  });
+
+  it('경계에서는 아직 낡지 않았다', () => {
+    assert.equal(quoteFreshnessState(T0 - STALE_MS, T0, STALE_MS, false).kind, 'fresh');
+    assert.equal(quoteFreshnessState(T0 - STALE_MS - 1, T0, STALE_MS, false).kind, 'stale');
+  });
+
+  /*
+   * 받아 둔 값이 있어도 마지막 조회가 실패했으면 그게 지금 값인지는 아는 것이
+   * 아니다. 나이는 그대로 말하되 `fresh`라고 하지는 않는다.
+   */
+  it('값이 방금 것이어도 마지막 조회가 실패했으면 fresh가 아니다', () => {
+    assert.deepEqual(quoteFreshnessState(T0 - 1_000, T0, STALE_MS, true), { kind: 'stale', ageMs: 1_000 });
+  });
+
+  it('시계가 뒤로 가도 나이는 음수가 되지 않는다', () => {
+    assert.deepEqual(quoteFreshnessState(T0 + 5_000, T0, STALE_MS, false), { kind: 'fresh', ageMs: 0 });
   });
 });

@@ -125,6 +125,11 @@ export async function runScreening(cash: number, lookups: number): Promise<Scree
 
   return {
     scannedAt: Date.now(),
+    /*
+     * 어림하지 않고 **실제로 나간 수**를 그대로 넘긴다. `ceil(풀 크기 / 30)`으로
+     * 다시 세면 캐시·실패·묶이지 않는 종목에서 어긋난다.
+     */
+    quoteCalls: batch.calls,
     cash,
     elapsed,
     poolSize: pool.length,

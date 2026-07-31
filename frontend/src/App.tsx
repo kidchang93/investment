@@ -100,6 +100,7 @@ import {
   KRX_SESSION_MINUTES,
   krxSessionKind,
   oldestFetchedAt,
+  quoteFreshnessState,
   riskRuleBlockers,
   settledProfitRate,
   settledRealized,
@@ -803,6 +804,15 @@ const TRADE_STALE_MS = 10_000;
 const LIST_QUOTE_REQUEST_CHUNK_SIZE = INSTRUMENT_QUOTE_BATCH.chunk;
 const DISCOVER_INITIAL_QUOTE_TARGETS = 24;
 const SEARCH_QUOTE_TARGETS = 10;
+/*
+ * 스크리닝 한 번에 물어볼 종목 수. **버튼 옆 문구가 이 값에서 나온다.**
+ *
+ * 예전에는 요청은 `runScreening(…, 40)`인데 문구는 `40종목 · KIS 시세 호출 40회 ·
+ * 약 6초`라고 적혀 있었다 — 종목당 1회이던 시절의 값이 멀티시세로 바뀐 뒤에도
+ * 남은 것이다. 회수는 세지 말고 `INSTRUMENT_QUOTE_BATCH.chunk`로 계산한다.
+ */
+const SCREENING_LOOKUPS = 40;
+const SCREENING_MAX_QUOTE_CALLS = Math.ceil(SCREENING_LOOKUPS / INSTRUMENT_QUOTE_BATCH.chunk);
 const RECENT_INSTRUMENT_LIMIT = 8;
 // 매수가능 조회는 실계좌 API라 지정가를 타이핑하는 동안 매 글자마다 호출하지 않는다.
 const ORDERABILITY_DEBOUNCE_MS = 700;
@@ -2743,6 +2753,15 @@ export function App(): JSX.Element {
    * 값으로 말한다 — 한 종목만 방금 와도 목록 전체가 새것처럼 보이면 안 된다.
    */
   const [oldestQuoteFetchedAt, setOldestQuoteFetchedAt] = useState<number | null>(null);
+  /*
+   * 마지막 묶음 시세 조회가 실패한 사유. 성공하면 지운다.
+   *
+   * `oldestQuoteFetchedAt` 하나로는 **아직 안 옴**과 **못 받음**이 구별되지
+   * 않는다. 조회가 502로 깨진 뒤에도 화면은 `갱신 대기`라고 적었고, 오류 배너는
+   * 8초 뒤 걷혀서 60초 중 52초는 사유가 어디에도 없었다(2026-07-31 장중 실측).
+   * 실주문 게이트의 `확인 중` / `확인 실패`와 같은 자리다.
+   */
+  const [quoteError, setQuoteError] = useState<string | null>(null);
   const [isQuoteRefreshing, setIsQuoteRefreshing] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [intradayCandlesByCode, setIntradayCandlesByCode] = useState<Record<string, Candle[]>>({});
@@ -3611,8 +3630,20 @@ export function App(): JSX.Element {
               setOldestQuoteFetchedAt(cycleOldest);
             }
           }
+          /*
+           * 한 묶음이라도 던졌으면 여기 못 온다. 다 끝냈을 때만 지워서
+           * 뒤쪽 묶음이 깨진 회차가 성공으로 보이지 않게 한다.
+           */
+          if (shouldApply()) setQuoteError(null);
         } catch (e) {
-          if (shouldApply()) setError(toErrorMessage(e));
+          /*
+           * 배너는 8초 뒤 걷힌다. 사유를 여기 남겨 두어야 그 뒤에도 화면이
+           * `갱신 대기`가 아니라 `갱신 실패`라고 말할 수 있다.
+           */
+          if (shouldApply()) {
+            setQuoteError(toErrorMessage(e));
+            setError(toErrorMessage(e));
+          }
         } finally {
           setIsQuoteRefreshing(false);
         }
@@ -3706,10 +3737,18 @@ export function App(): JSX.Element {
   /*
    * 서버가 준 시각으로 잰다. 값이 서버 캐시에서 나왔으면 그 나이가 여기 그대로
    * 드러난다 — 예전에는 응답을 받은 시각을 찍어서 최대 45초를 감췄다.
+   *
+   * 판정은 `shared`의 `quoteFreshnessState` 한 곳에서 한다. 이 라벨을 쓰는 자리가
+   * 셋(헤더 칩·종목 정보 띠·하단 도크)이라 각자 말을 지으면 갈라진다 — 실제로
+   * 셋이 `갱신 대기`·`갱신 대기`·`시세 조회 전` 세 가지로 말하고 있었다.
    */
-  const quoteLagMs = oldestQuoteFetchedAt ? Math.max(0, nowMs - oldestQuoteFetchedAt) : null;
-  const quoteFreshnessTone = quoteLagMs === null ? 'waiting' : quoteLagMs > QUOTE_STALE_MS ? 'stale' : 'fresh';
-  const quoteFreshnessLabel = quoteLagMs === null ? '갱신 대기' : `갱신 ${formatElapsed(quoteLagMs)}`;
+  const quoteFreshness = quoteFreshnessState(oldestQuoteFetchedAt, nowMs, QUOTE_STALE_MS, quoteError !== null);
+  const quoteLagMs = quoteFreshness.ageMs;
+  const quoteFreshnessTone = quoteFreshness.kind;
+  /** 나이를 말할 값이 없을 때 쓰는 한 마디. 기다리는 중과 못 받은 것은 다른 사실이다. */
+  const quoteUnknownLabel = quoteFreshness.kind === 'failed' ? '갱신 실패' : '갱신 대기';
+  const quoteFreshnessLabel =
+    quoteLagMs === null ? quoteUnknownLabel : `갱신 ${formatElapsed(quoteLagMs)}`;
   const latestTradeMs = tradeTimestampMs(stream.recentTrades[0]);
   const tradeLagMs = latestTradeMs ? Math.max(0, nowMs - latestTradeMs) : null;
   const tradeFreshnessTone =
@@ -3732,11 +3771,17 @@ export function App(): JSX.Element {
       : `마지막 체결 ${formatClock(latestTradeMs as number)}`;
   /*
    * 무엇의 시각인지 적는다. `마지막 갱신`이라고만 하면 방금 부른 시각으로 읽히는데,
-   * 서버가 캐시에서 준 값이면 그보다 앞선다.
+   * 서버가 캐시에서 준 값이면 그보다 앞선다. 조회가 깨졌으면 사유까지 적는다 —
+   * 배너가 8초 뒤 걷힌 다음에도 여기 남아 있어야 왜 안 오는지 알 수 있다.
    */
-  const quoteFreshnessTitle = oldestQuoteFetchedAt
-    ? `화면에 있는 시세 중 가장 묵은 것 — 갱신 ${formatClock(oldestQuoteFetchedAt)}`
-    : '아직 시세를 받지 않았습니다';
+  const quoteFreshnessTitle = [
+    oldestQuoteFetchedAt
+      ? `화면에 있는 시세 중 가장 묵은 것 — 갱신 ${formatClock(oldestQuoteFetchedAt)}`
+      : '아직 시세를 받지 않았습니다',
+    quoteError ? `마지막 시세 조회 실패 — ${quoteError}` : null,
+  ]
+    .filter((line): line is string => line !== null)
+    .join('\n');
 
   /*
    * 이전에는 `조회 전용`이 하드코딩이라 게이트가 열려도 그대로였다. 매매 앱에서
@@ -3871,9 +3916,21 @@ export function App(): JSX.Element {
     selectedPriceRef.current = { id: selectedInstrument.id, price: snapshot.price };
   }, [selectedInstrument?.id, snapshot?.price]);
   const marketSession = useMemo(
-    // 시세를 받을 때마다 다시 계산한다. 현지시각을 흐르게 하려는 것이라 값 자체는 안 본다.
+    /*
+     * 시계는 시계로 흘린다. `getMarketSession`은 안에서 지금 시각을 읽으므로 이
+     * 의존성은 **다시 계산할 때를 정하는 방아쇠**다.
+     *
+     * 예전 방아쇠는 `oldestQuoteFetchedAt`이었다 — 시세를 받을 때마다 다시
+     * 계산한다는 뜻이었는데, 그러면 시세가 끊긴 동안 `현지시간`이 통째로 멈춘다.
+     * 2026-07-31 장중에 시세 조회를 502로 막고 재니 12:23:05에도 화면은
+     * `현지시간 12:21`이라고 적고 있었다(1분 44초 늦음). 성공하고 있을 때도
+     * 갱신 주기가 60초라 최대 1분 늦었다(12:24:02에 `12:23`).
+     *
+     * 같은 계산에서 장 상태(`정규장`·`동시호가`·`장외`)도 나오므로, 멈추면
+     * 15:30이 지난 뒤에도 `정규장 · 거래 중`이라고 적게 된다.
+     */
     () => getMarketSession(selectedInstrument),
-    [oldestQuoteFetchedAt, selectedInstrument],
+    [nowMs, selectedInstrument],
   );
   const previousClose = snapshot ? snapshot.price - snapshot.change : undefined;
   const dayRangePosition = snapshot ? getRangePosition(snapshot.price, snapshot.low, snapshot.high) : null;
@@ -6247,8 +6304,9 @@ export function App(): JSX.Element {
                   </div>
 
                   {/*
-                    호출 비용을 버튼에 적는다. 누르면 종목 수만큼 KIS 시세 호출이
-                    나가는데, 그걸 안 적으면 새로고침처럼 가볍게 여겨진다.
+                    호출 비용을 버튼 옆에 적는다. 안 적으면 새로고침처럼 가볍게
+                    눌린다. 회수는 `INSTRUMENT_QUOTE_BATCH.chunk`로 계산한다 —
+                    종목 수를 바꾸면 문구가 따라와야 한다.
                   */}
                   <div className="screening__actions">
                     <button
@@ -6257,7 +6315,7 @@ export function App(): JSX.Element {
                       onClick={() => {
                         setScreeningRunning(true);
                         setScreeningError(null);
-                        runScreening(kisAccountId ?? undefined, 40)
+                        runScreening(kisAccountId ?? undefined, SCREENING_LOOKUPS)
                           .then((result) => {
                             setScreening(result);
                             setScreeningLoaded(true);
@@ -6269,7 +6327,10 @@ export function App(): JSX.Element {
                     >
                       {screeningRunning ? '훑는 중…' : '지금 훑기'}
                     </button>
-                    <em>40종목 · KIS 시세 호출 40회 · 약 6초. 누를 때만 돕니다</em>
+                    <em>
+                      {SCREENING_LOOKUPS}종목 · KIS 시세 최대 {SCREENING_MAX_QUOTE_CALLS}회
+                      ({INSTRUMENT_QUOTE_BATCH.chunk}종목씩 묶어 묻습니다). 누를 때만 돕니다
+                    </em>
                   </div>
 
                   {screeningError && (
@@ -6288,9 +6349,13 @@ export function App(): JSX.Element {
 
                   {screening && (
                     <>
-                      {/* 언제·무슨 값으로 걸렀는지. 값만 보면 지금 것인지 아침 것인지 알 수 없다. */}
+                      {/*
+                        언제·무슨 값으로 걸렀는지. 값만 보면 지금 것인지 아침 것인지 알 수 없다.
+                        몇 회가 나갔는지도 함께 적는다 — 테마 등락률과 같은 규칙이다.
+                      */}
                       <p className="screening__basis">
                         <b>{formatClock(screening.scannedAt)}</b>에 잰 값 ·
+                        KIS 시세 {screening.quoteCalls}회 나감 ·
                         예수금 {Math.floor(screening.cash).toLocaleString('ko-KR')}원 ·
                         장 경과 {Math.round(screening.elapsed * 100)}%
                         <small>
@@ -6755,7 +6820,10 @@ export function App(): JSX.Element {
             <div className="market-strip__item">
               <span>현지시간</span>
               <strong>{marketSession.localTime}</strong>
-              <small>{oldestQuoteFetchedAt ? `갱신 ${formatClock(oldestQuoteFetchedAt)}` : '갱신 대기'}</small>
+              {/* 말은 헤더 칩과 같은 곳에서 가져온다. 여기만 따로 지으면 갈라진다. */}
+              <small title={quoteFreshnessTitle}>
+                {oldestQuoteFetchedAt ? `갱신 ${formatClock(oldestQuoteFetchedAt)}` : quoteUnknownLabel}
+              </small>
             </div>
           </section>}
 
@@ -7077,15 +7145,19 @@ export function App(): JSX.Element {
             </div>
             {/*
               세션 종류는 게이트에서 가져온다. 하드코딩이던 시절엔 게이트가 열려도
-              문구가 그대로였다. 조회 전이면 갱신 시각과 신선도가 둘 다 빈 값이라
-              한 마디로 줄인다 — 예전엔 `시세 갱신 시세 연결 대기 · 조회 대기`처럼
-              문장이 깨졌다.
+              문구가 그대로였다. 받아 둔 값이 없으면 갱신 시각과 신선도가 둘 다 빈
+              값이라 한 마디로 줄인다 — 예전엔 `시세 갱신 시세 연결 대기 · 조회 대기`
+              처럼 문장이 깨졌다.
+
+              그 한 마디는 헤더 칩과 같은 곳에서 가져온다. 예전엔 여기만 `시세 조회 전`
+              이라 한 화면에 `갱신 대기`·`갱신 대기`·`시세 조회 전` 세 말이 떠 있었고,
+              `조회`는 계좌·체결 데이터를 부르는 동작에만 쓰는 말이다.
             */}
-            <span className="bottom-dock__status">
+            <span className="bottom-dock__status" title={quoteFreshnessTitle}>
               {sessionModeLabel} ·{' '}
               {oldestQuoteFetchedAt
                 ? `시세 갱신 ${formatClock(oldestQuoteFetchedAt)} · ${quoteFreshnessLabel}`
-                : '시세 조회 전'}
+                : `시세 ${quoteUnknownLabel}`}
             </span>
           </div>}
 

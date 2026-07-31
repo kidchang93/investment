@@ -1165,8 +1165,9 @@ async function main(): Promise<void> {
   /*
    * 자동매매 후보 거르기 결과.
    *
-   * 조회는 **마지막에 잰 값**만 준다. 종목 하나에 KIS 호출 1회라 탭을 열
-   * 때마다 다시 돌리면 수십 회가 나간다. 다시 재는 것은 아래 run이 한다.
+   * 조회는 **마지막에 잰 값**만 준다. 멀티시세로 30종목에 KIS 1회지만, 탭을
+   * 열 때마다 다시 돌리면 그만큼 호출이 나간다. 다시 재는 것은 아래 run이 한다.
+   * 몇 회가 나갔는지는 결과의 `quoteCalls`에 담겨 있다.
    */
   app.get<{ Querystring: { accountId?: string } }>('/api/trading/screening', async (req, reply) => {
     const account = resolveAccount(req.query.accountId);

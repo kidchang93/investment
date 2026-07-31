@@ -469,6 +469,48 @@ export function oldestFetchedAt(quotes: Quote[]): number | undefined {
   return oldest;
 }
 
+/**
+ * 시세 나이를 화면이 어떻게 말할지. `fresh`·`stale`은 나이를 말할 수 있는
+ * 상태고, `waiting`·`failed`는 말할 값 자체가 없는 상태다.
+ */
+export type QuoteFreshnessKind = 'fresh' | 'stale' | 'waiting' | 'failed';
+
+export interface QuoteFreshnessState {
+  kind: QuoteFreshnessKind;
+  /** 가장 묵은 값의 나이(ms). 받아 둔 값이 하나도 없으면 null */
+  ageMs: number | null;
+}
+
+/**
+ * 시세가 지금 어떤 상태인지 한 곳에서 정한다.
+ *
+ * **`아직 안 옴`과 `못 받음`을 겸하지 않는다.** 예전에는 받아 둔 값이 없으면
+ * 무조건 `갱신 대기`였다 — 조회가 502로 깨진 뒤에도 헤더 칩·종목 정보 띠·하단
+ * 도크가 모두 기다리는 중이라고 적었고, 오류 배너는 8초 뒤 걷혀서 60초 중
+ * 52초는 사유가 화면에 없었다(2026-07-31 장중 실측, 시세 조회를 502로 막고 잼).
+ * 실주문 게이트가 `확인 중` / `확인 실패` 두 마디로 가른 것과 같은 자리다.
+ *
+ * **마지막 조회가 실패했으면 받아 둔 값이 방금 것이어도 `fresh`가 아니다.**
+ * 값은 있지만 그게 지금 값인지는 더 이상 아는 것이 아니다.
+ *
+ * 프런트에는 시험 러너가 없어 `shouldReplaceQuote`·`oldestFetchedAt`과 같은
+ * 이유로 여기 둔다. 화면은 이 판정에 말만 붙인다.
+ */
+export function quoteFreshnessState(
+  // 이름을 `oldestFetchedAt`으로 두면 바로 위 함수와 가려진다. 값은 그 함수가 낸 것이다.
+  oldestQuoteFetchedAt: number | null,
+  nowMs: number,
+  staleMs: number,
+  failed: boolean,
+): QuoteFreshnessState {
+  if (oldestQuoteFetchedAt === null || !Number.isFinite(oldestQuoteFetchedAt)) {
+    return { kind: failed ? 'failed' : 'waiting', ageMs: null };
+  }
+  const ageMs = Math.max(0, nowMs - oldestQuoteFetchedAt);
+  if (failed || ageMs > staleMs) return { kind: 'stale', ageMs };
+  return { kind: 'fresh', ageMs };
+}
+
 /** 호가 한 단계. 같은 층의 팔자(ask)와 사자(bid)를 마주 놓는다. */
 export interface OrderBookLevel {
   /** 1이 최우선호가. 국내주식은 10단계까지 온다 */
@@ -695,12 +737,22 @@ export interface ScreeningRow {
 /**
  * 후보 거르기 한 회차.
  *
- * 종목 하나에 KIS 시세 1회라 화면을 열 때마다 돌릴 수 없다. 그래서 **언제 잰
- * 값인지**(`scannedAt`)와 **무슨 값으로 걸렀는지**(`thresholds`, `cash`,
- * `elapsed`)를 함께 보낸다 — 값만 보면 지금 것인지 아침 것인지 알 수 없다.
+ * 멀티시세로 **30종목에 KIS 1회**다(예전에는 종목당 1회였다). 그래도 화면을 열
+ * 때마다 돌리면 탭을 누를 때마다 호출이 나가므로, **언제 잰 값인지**(`scannedAt`)와
+ * **무슨 값으로 걸렀는지**(`thresholds`, `cash`, `elapsed`)를 함께 보낸다 —
+ * 값만 보면 지금 것인지 아침 것인지 알 수 없다.
+ *
+ * **호출 비용도 담는다**(`quoteCalls`). `ThemePulseBatch`와 같은 규칙이다 —
+ * 부르는 쪽이 모르면 새로고침처럼 눌린다.
  */
 export interface ScreeningResult {
   scannedAt: number;
+  /**
+   * 이 회차가 실제로 낸 KIS 시세 조회 횟수.
+   *
+   * 종목 수로 세면 안 된다 — 30종목이 1회고, 실패한 묶음도 호출은 이미 나갔다.
+   */
+  quoteCalls: number;
   /** 예수금. 이 값으로 1주도 못 사면 `tooExpensive` */
   cash: number;
   /**
