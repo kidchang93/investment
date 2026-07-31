@@ -164,6 +164,7 @@ frontend/src/
 backend/src/trading/
 ├── strategy.ts    # Strategy 인터페이스 + 이동평균 교차 / 변동성 돌파 / 평균 회귀
 ├── universe.ts    # 후보 고르기 (국내 주문 가능 + 살 수 있는 가격 + 리스크 룰)
+│                  # ★사유와 그 순서는 `verdictFor` 한 곳에 있다
 ├── screening.ts   # 같은 판정을 화면에 보이게 (거른 것도 사유와 함께 돌려준다)
 ├── autoTrader.ts  # 러너 (주기 실행, 목표·중단선·연속 실패 시 자동 정지)
 ├── backtest.ts    # 성과 측정 (다음 봉 시가 체결, 비용 차감, in/out-of-sample)
@@ -188,6 +189,12 @@ backend/src/trading/
 된다는 규칙은 그대로다. 어떤 조사 경로가 화면 기능이 되면 그때 `kis/`로 옮긴다 —
 `measureRangeExpansion.ts`의 날짜 지정 분봉 조회가 그 후보다(지금
 `getInstrumentIntradayCandles`는 오늘 날짜가 박혀 있고 120봉만 준다).
+
+후보에서 빠진 사유(`ScreeningVerdict`)는 **자동매매와 화면이 같은 함수**로 낸다 —
+`verdictFor(quote, elapsed, cash)`. 예전에는 `loadAutoTraderCandidates`와
+`runScreening`이 순서를 각자 들고 있어, 한쪽만 고치면 화면의 사유와 실행 기록의
+사유가 조용히 갈라졌다. 순서는 `noOrderBook` → `tooExpensive` → `illiquid` →
+`costHeavy`이고 근거는 `docs/DESIGN.md`의 「호가가 없는 종목」 절에 있다.
 
 안전 순서는 **전략 → 러너 → 리스크 룰 → 게이트**다. 전략은 "무엇을 살지"만
 정하고 "내도 되는지"는 뒤쪽이 본다. 전략이 안전장치를 알면 두 곳에서 같은

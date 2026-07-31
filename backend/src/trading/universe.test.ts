@@ -12,8 +12,15 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import type { Quote } from '@invest/shared';
+import { hasEmptyOrderBook } from '@invest/shared';
 
-import { knownRangeRate, MIN_DAILY_TURNOVER, screenQuote, sessionElapsedRatio } from './universe.js';
+import {
+  knownRangeRate,
+  MIN_DAILY_TURNOVER,
+  screenQuote,
+  sessionElapsedRatio,
+  verdictFor,
+} from './universe.js';
 
 /** 넉넉히 통과하는 기본값. 시험마다 필요한 값만 덮어쓴다. */
 function quote(overrides: Partial<Quote> = {}): Quote {
@@ -72,8 +79,11 @@ describe('후보 거르기 — 유동성', () => {
     assert.equal(screenQuote(quote({ accVolume: 6_000 }), 1), null);
   });
 
-  it('거래대금이 0이면 값이 0인 것이지 모르는 것이 아니다', () => {
-    // 거래정지 종목이 실제로 이렇게 온다(009310 실측: 현재가 5,330 · 거래량 0).
+  it('거래대금이 0이고 호가를 모르면 유동성으로 거른다', () => {
+    /*
+     * 잔량을 안 주는 경로(단건 시세·해외·선물)다. 호가를 모르는 것을 "호가가
+     * 없다"로 단정하지 않는다 — 그러면 해외 종목이 전부 거래정지가 된다.
+     */
     assert.equal(screenQuote(quote({ accVolume: 0, turnover: 0, high: 0, low: 0 }), 1), 'illiquid');
   });
 
@@ -85,6 +95,173 @@ describe('후보 거르기 — 유동성', () => {
     const early = quote({ accVolume: 600 }); // 거래대금 600만원
     assert.equal(screenQuote(early, 1), 'illiquid', '하루치 기준으로는 부족하다');
     assert.equal(screenQuote(early, 0.1), null, '10%만 지났으면 통과해야 한다');
+  });
+});
+
+/*
+ * ── 호가가 없는 종목 ───────────────────────────────────────────────────────
+ *
+ * 값은 전부 2026-07-31 11:33~11:35 KST 실전 서버 실측이다(정규장, 300종목).
+ * 지어낸 숫자로 재면 "양쪽 다 0"이라는 모양이 실제로 오는지 알 수 없다.
+ *
+ * | 종목 | 총매도 | 총매수 | 거래대금 | 단건 `iscd_stat_cls_code` |
+ * |------|------|------|------|------|
+ * | 000880 한화 | 0 | 0 | 0 | **58 (거래정지)** |
+ * | 002070 비비안 (+29.83% 상한가 잠김) | **0** | 25,424 | 14.7억 | 정상 |
+ * | 0000Y0 HK 26-12 회사채 액티브 | 3,000 | 6,000 | **0** | 정상 |
+ */
+describe('호가창이 비었나 — hasEmptyOrderBook', () => {
+  it('잔량을 못 받았으면 모르는 것이다 — 없는 것이 아니다', () => {
+    assert.equal(hasEmptyOrderBook(quote()), undefined);
+    assert.equal(hasEmptyOrderBook(quote({ totalAskQuantity: 100 })), undefined, '한쪽만 있으면 모른다');
+    assert.equal(hasEmptyOrderBook(quote({ totalBidQuantity: 100 })), undefined);
+    assert.equal(
+      hasEmptyOrderBook(quote({ totalAskQuantity: NaN, totalBidQuantity: NaN })),
+      undefined,
+      'NaN을 0으로 읽으면 멀쩡한 종목이 호가 없음이 된다',
+    );
+  });
+
+  it('양쪽 잔량이 0이면 호가가 없다 (000880 한화 실측)', () => {
+    const halted = quote({
+      price: 83_800,
+      open: 0,
+      high: 0,
+      low: 0,
+      accVolume: 0,
+      turnover: 0,
+      totalAskQuantity: 0,
+      totalBidQuantity: 0,
+    });
+    assert.equal(hasEmptyOrderBook(halted), true);
+  });
+
+  /*
+   * 이 시험이 `ask === 0 && bid === 0`을 `||`로 바꾸는 변이를 잡는다.
+   * `002070 비비안`은 상한가에 잠겨 파는 사람이 없었을 뿐 14.7억이 거래된
+   * 멀쩡한 종목이다. 한쪽만 보면 상한가 종목이 전부 거래정지로 잡힌다.
+   */
+  it('상한가 잠김은 호가가 없는 것이 아니다 — 매도잔량만 0이다 (002070 실측)', () => {
+    const lockedUp = quote({
+      price: 5_070,
+      changeRate: 29.83,
+      turnover: 1_466_612_102,
+      totalAskQuantity: 0,
+      totalBidQuantity: 25_424,
+    });
+    assert.equal(hasEmptyOrderBook(lockedUp), false);
+  });
+
+  it('하한가 잠김도 마찬가지다 — 매수잔량만 0이다', () => {
+    const lockedDown = quote({ changeRate: -29.9, totalAskQuantity: 31_000, totalBidQuantity: 0 });
+    assert.equal(hasEmptyOrderBook(lockedDown), false);
+  });
+});
+
+describe('후보 거르기 — 호가가 없는 종목', () => {
+  /** 거래정지 종목의 실측 모양. 현재가만 있고 나머지는 전부 0이다. */
+  function halted(overrides: Partial<Quote> = {}): Quote {
+    return quote({
+      price: 83_800,
+      open: 0,
+      high: 0,
+      low: 0,
+      accVolume: 0,
+      turnover: 0,
+      totalAskQuantity: 0,
+      totalBidQuantity: 0,
+      ...overrides,
+    });
+  }
+
+  it('`거래대금 부족`이 아니라 `호가 없음`으로 돌려준다', () => {
+    /*
+     * 예전에는 거래대금 0원이라 `illiquid`로 먼저 걸렸다. 2026-07-31 10:00
+     * 실측에서 `illiquid` 17종목 중 2종목이 거래정지였는데, 실행 기록에는
+     * `거래대금 부족 17종목`이라고만 남았다. 문턱을 낮춰도 살 수 없는 종목이다.
+     */
+    assert.equal(screenQuote(halted(), 1), 'noOrderBook');
+  });
+
+  it('거래대금이 문턱을 넘어도 호가가 없으면 걸린다 — 순서가 뒤집히면 안 된다', () => {
+    // 유동성 검사를 앞에 두면 이 종목이 통과해 버린다.
+    assert.equal(screenQuote(halted({ turnover: 900_000_000 }), 1), 'noOrderBook');
+  });
+
+  /*
+   * ★ 이번 판정의 경계. 개장 직후 정상 종목은 거래정지와 **시세만으로는 똑같다** —
+   * 거래량 0, 시고저 0, 거래대금 0. 갈라주는 것은 호가뿐이다.
+   *
+   * 실측 근거: `0000Y0 HK 26-12 회사채(AA-이상)액티브`가 11:33에 거래대금 0원인데
+   * 총매도 3,000 · 총매수 6,000이었고 단건 상태는 정상(57)이었다. 아직 오늘
+   * 체결이 없을 뿐 언제든 살 수 있는 종목이다.
+   */
+  it('아직 체결이 없을 뿐인 종목은 호가 없음이 아니다 (0000Y0 실측)', () => {
+    const notTradedYet = quote({
+      price: 101_580,
+      open: 0,
+      high: 0,
+      low: 0,
+      accVolume: 0,
+      turnover: 0,
+      totalAskQuantity: 3_000,
+      totalBidQuantity: 6_000,
+    });
+    assert.equal(hasEmptyOrderBook(notTradedYet), false);
+    assert.equal(screenQuote(notTradedYet, 1), 'illiquid', '거래대금 문턱은 그대로 본다');
+    // 개장 30초에도 같다. 시간이 지나도 사유가 바뀌지 않아야 한다.
+    assert.equal(screenQuote(notTradedYet, sessionElapsedRatio(kst('09:00:30'))), 'illiquid');
+  });
+
+  it('개장 30초 시점의 두 종목을 갈라 본다 — 시세 값은 똑같고 호가만 다르다', () => {
+    const openTick = sessionElapsedRatio(kst('09:00:30'));
+    const shape = { price: 10_000, open: 0, high: 0, low: 0, accVolume: 0, turnover: 0 };
+    const stopped = quote({ ...shape, totalAskQuantity: 0, totalBidQuantity: 0 });
+    const waiting = quote({ ...shape, totalAskQuantity: 120, totalBidQuantity: 90 });
+    // 시세 필드만 보면 구별할 방법이 없다는 것을 먼저 못 박는다.
+    assert.equal(stopped.accVolume, waiting.accVolume);
+    assert.equal(stopped.turnover, waiting.turnover);
+    assert.equal(stopped.high, waiting.high);
+    assert.equal(screenQuote(stopped, openTick), 'noOrderBook');
+    assert.equal(screenQuote(waiting, openTick), 'illiquid');
+  });
+
+  it('호가가 없어도 잔량을 못 받았으면 이 사유로 거르지 않는다', () => {
+    // 단건 시세·해외·선물 경로. 모르는 것을 나쁜 것으로 단정하지 않는다.
+    const unknown = quote({ price: 83_800, open: 0, high: 0, low: 0, accVolume: 0, turnover: 0 });
+    assert.equal(screenQuote(unknown, 1), 'illiquid');
+  });
+});
+
+describe('판정 순서 — verdictFor', () => {
+  const halted = quote({
+    price: 83_800,
+    open: 0,
+    high: 0,
+    low: 0,
+    accVolume: 0,
+    turnover: 0,
+    totalAskQuantity: 0,
+    totalBidQuantity: 0,
+  });
+
+  it('예수금이 모자라도 호가 없음이 먼저다 — 돈을 넣으면 살 수 있다는 거짓말을 하지 않는다', () => {
+    /*
+     * `000880 한화`가 83,800원이라 소액 계좌에서는 실제로 `가격 초과`로 잡혔다.
+     * 예수금은 계좌마다 다른 사정이고, 호가가 없다는 것은 누구에게나 같은 사실이다.
+     */
+    assert.equal(verdictFor(halted, 1, 50_000), 'noOrderBook');
+    assert.equal(verdictFor(halted, 1, 10_000_000), 'noOrderBook');
+  });
+
+  it('호가가 있으면 가격이 유동성·비용보다 먼저다 (예전 결정 그대로)', () => {
+    const expensive = quote({ price: 83_800, accVolume: 1, totalAskQuantity: 100, totalBidQuantity: 100 });
+    assert.equal(verdictFor(expensive, 1, 50_000), 'tooExpensive');
+    assert.equal(verdictFor(expensive, 1, 1_000_000), 'illiquid');
+  });
+
+  it('아무 데도 안 걸리면 pass다', () => {
+    assert.equal(verdictFor(quote(), 1, 1_000_000), 'pass');
   });
 });
 

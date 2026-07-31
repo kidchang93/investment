@@ -1699,12 +1699,14 @@ button {
 
 /* 걸린 행은 흐리게. 통과한 것과 한눈에 갈라야 한다. */
 .screening__row[data-verdict='tooExpensive'],
+.screening__row[data-verdict='noOrderBook'],
 .screening__row[data-verdict='illiquid'],
 .screening__row[data-verdict='costHeavy'] {
   color: var(--muted);
 }
 
 .screening__row[data-verdict='tooExpensive'] b,
+.screening__row[data-verdict='noOrderBook'] b,
 .screening__row[data-verdict='illiquid'] b,
 .screening__row[data-verdict='costHeavy'] b {
   color: var(--muted);

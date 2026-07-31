@@ -36,7 +36,7 @@ function instrument(symbol: string, name: string, overrides: Partial<Instrument>
 }
 
 /** 등락률과 거래대금만 시험이 본다. 나머지는 모양을 맞추는 값이다. */
-function quote(id: string, changeRate: number, turnover?: number): Quote {
+function quote(id: string, changeRate: number, turnover?: number, overrides: Partial<Quote> = {}): Quote {
   return {
     code: id,
     // 이 시험이 나이를 보지는 않지만, 시각 없는 시세는 만들 수 없다.
@@ -50,7 +50,28 @@ function quote(id: string, changeRate: number, turnover?: number): Quote {
     low: 9_900,
     accVolume: 1_000,
     ...(turnover !== undefined ? { turnover } : {}),
+    ...overrides,
   };
+}
+
+/**
+ * 거래정지 종목의 실측 모양 — 현재가만 있고 등락률·시고저·거래량·잔량이 전부 0.
+ * (2026-07-31 정규장 실측: `000880 한화`·`009310 참엔지니어링` 등)
+ */
+function haltedQuote(id: string): Quote {
+  return quote(id, 0, 0, {
+    open: 0,
+    high: 0,
+    low: 0,
+    accVolume: 0,
+    totalAskQuantity: 0,
+    totalBidQuantity: 0,
+  });
+}
+
+/** 호가가 살아 있는 종목. 잔량이 있다는 사실만 더한다. */
+function withOrderBook(base: Quote): Quote {
+  return { ...base, totalAskQuantity: 1_200, totalBidQuantity: 3_400 };
 }
 
 function theme(overrides: Partial<Theme> = {}): Theme {
@@ -212,18 +233,127 @@ describe('aggregateThemePulse — 거래대금 가중', () => {
     assert.equal(pulse.turnoverCount, 0);
   });
 
-  it('거래대금 0인 거래정지 종목은 가중에 넣지 않는다 — 0을 곱하면 없는 것과 같다', () => {
-    // 009310 참엔지니어링 실측: 현재가는 있고 거래량·거래대금이 0.
-    const list = [instrument('000001', '가'), instrument('009310', '참엔지니어링')];
+  it('거래대금이 0이지만 호가는 있는 종목은 가중에서만 뺀다', () => {
+    /*
+     * 오늘 아직 체결이 없을 뿐 살 수 있는 종목이다 — 2026-07-31 11:33 실측에서
+     * 거래대금 0원인 8종목 중 `0000Y0`·`001067` 둘이 이랬고 단건 종목 상태도
+     * 정상(57)이었다. 이 0%는 진짜 보합에 가까우므로 등락률 표본에는 남긴다.
+     */
+    const list = [instrument('000001', '가'), instrument('001067', 'JW중외제약2우B')];
     const quotes = new Map([
-      ['KR:KOSPI:000001', quote('KR:KOSPI:000001', 3, 2_000_000_000)],
-      ['KR:KOSPI:009310', quote('KR:KOSPI:009310', 0, 0)],
+      ['KR:KOSPI:000001', withOrderBook(quote('KR:KOSPI:000001', 3, 2_000_000_000))],
+      ['KR:KOSPI:001067', quote('KR:KOSPI:001067', 0, 0, { totalAskQuantity: 36, totalBidQuantity: 35 })],
     ]);
     const pulse = aggregateThemePulse(members(list), quotes, NO_BLANK, NO_FAILURE);
-    assert.equal(pulse.turnoverCount, 1);
+    assert.equal(pulse.turnoverCount, 1, '0을 곱하면 없는 것과 같아 가중에서는 뺀다');
     assert.equal(pulse.changeRateWeighted, 3);
-    assert.equal(pulse.quotedCount, 2, '거래정지 종목도 등락률 표본에는 남는다');
+    assert.equal(pulse.quotedCount, 2);
     assert.equal(pulse.unchanged, 1);
+    assert.deepEqual(pulse.noOrderBookSymbols, []);
+  });
+});
+
+/*
+ * ── 호가가 빈 종목 ─────────────────────────────────────────────────────────
+ *
+ * `docs/DESIGN.md`에 「아직 안 고친 것」으로 남겨 뒀던 자리다. 거래가 한 건도
+ * 없는 종목의 0%가 중앙값·보합 수에 그대로 들어갔고, 가중평균만 `turnover > 0`
+ * 으로 빼고 있어서 넷 중 하나만 다른 표본을 봤다.
+ *
+ * 2026-07-31 실측으로 **거래대금 0원**과 **호가가 아예 없음**이 다른 사실임을
+ * 확인해(8종목 중 2종목은 호가가 살아 있었다) 뒤쪽만 뺀다.
+ */
+describe('aggregateThemePulse — 호가가 빈 종목', () => {
+  it('중앙값·보합 수에서 빼고 따로 센다', () => {
+    const list = [
+      instrument('000001', '가'),
+      instrument('000002', '나'),
+      instrument('000003', '다'),
+      instrument('000880', '한화'),
+    ];
+    const quotes = new Map([
+      ['KR:KOSPI:000001', withOrderBook(quote('KR:KOSPI:000001', 2, 1_000_000_000))],
+      ['KR:KOSPI:000002', withOrderBook(quote('KR:KOSPI:000002', 1, 1_000_000_000))],
+      ['KR:KOSPI:000003', withOrderBook(quote('KR:KOSPI:000003', -3, 1_000_000_000))],
+      ['KR:KOSPI:000880', haltedQuote('KR:KOSPI:000880')],
+    ]);
+
+    const pulse = aggregateThemePulse(members(list), quotes, NO_BLANK, NO_FAILURE);
+
+    // 넣으면 정렬이 -3, 0, 1, 2 → 중앙값 0.5, 보합 1. 빼면 -3, 1, 2 → 1, 보합 0.
+    assert.equal(pulse.changeRateMedian, 1);
+    assert.equal(pulse.changeRateMean, 0);
+    assert.equal(pulse.unchanged, 0, '거래정지의 0%를 보합으로 세지 않는다');
+    assert.equal(pulse.advancing, 2);
+    assert.equal(pulse.declining, 1);
+    assert.equal(pulse.quotedCount, 3);
+    assert.deepEqual(pulse.noOrderBookSymbols, ['000880']);
+    assert.equal(
+      pulse.members.some((row) => row.symbol === '000880'),
+      false,
+      '표에도 0%짜리 행으로 남기지 않는다',
+    );
+  });
+
+  it('가중평균과 같은 표본을 본다 — 넷이 갈라져 있으면 안 된다', () => {
+    const list = [instrument('000001', '가'), instrument('000880', '한화')];
+    const quotes = new Map([
+      ['KR:KOSPI:000001', withOrderBook(quote('KR:KOSPI:000001', 4, 5_000_000_000))],
+      ['KR:KOSPI:000880', haltedQuote('KR:KOSPI:000880')],
+    ]);
+    const pulse = aggregateThemePulse(members(list), quotes, NO_BLANK, NO_FAILURE);
+    assert.equal(pulse.changeRateMedian, 4);
+    assert.equal(pulse.changeRateMean, 4);
+    assert.equal(pulse.changeRateWeighted, 4);
+    assert.equal(pulse.quotedCount, 1);
+    assert.equal(pulse.turnoverCount, 1);
+  });
+
+  it('잔량을 못 받은 종목은 빼지 않는다 — 모르는 것과 없는 것은 다르다', () => {
+    // 단건 시세로 온 종목에는 잔량이 아예 없다(KIS 80필드에 없다).
+    const list = [instrument('000001', '가'), instrument('000002', '나')];
+    const quotes = new Map([
+      ['KR:KOSPI:000001', quote('KR:KOSPI:000001', 4)],
+      ['KR:KOSPI:000002', quote('KR:KOSPI:000002', 0, 0)],
+    ]);
+    const pulse = aggregateThemePulse(members(list), quotes, NO_BLANK, NO_FAILURE);
+    assert.deepEqual(pulse.noOrderBookSymbols, []);
+    assert.equal(pulse.quotedCount, 2);
+    assert.equal(pulse.unchanged, 1);
+  });
+
+  it('상한가 잠김 종목은 빼지 않는다 — 매도잔량만 0이다', () => {
+    /*
+     * `002070 비비안` 실측(+29.83%, 총매도 0 · 총매수 25,424 · 거래대금 14.7억).
+     * 한쪽만 보고 빼면 그날 가장 많이 오른 종목이 통째로 사라진다.
+     */
+    const list = [instrument('000001', '가'), instrument('002070', '비비안')];
+    const quotes = new Map([
+      ['KR:KOSPI:000001', withOrderBook(quote('KR:KOSPI:000001', 1, 1_000_000_000))],
+      [
+        'KR:KOSPI:002070',
+        quote('KR:KOSPI:002070', 29.83, 1_466_612_102, { totalAskQuantity: 0, totalBidQuantity: 25_424 }),
+      ],
+    ]);
+    const pulse = aggregateThemePulse(members(list), quotes, NO_BLANK, NO_FAILURE);
+    assert.deepEqual(pulse.noOrderBookSymbols, []);
+    assert.equal(pulse.quotedCount, 2);
+    assert.equal(pulse.advancing, 2);
+    assert.equal(pulse.changeRateMedian, (1 + 29.83) / 2);
+  });
+
+  it('테마 전체가 호가 없음이면 등락률 자체가 없다 — 0%가 아니다', () => {
+    const list = [instrument('000880', '한화'), instrument('00088K', '한화3우B')];
+    const quotes = new Map([
+      ['KR:KOSPI:000880', haltedQuote('KR:KOSPI:000880')],
+      ['KR:KOSPI:00088K', haltedQuote('KR:KOSPI:00088K')],
+    ]);
+    const pulse = aggregateThemePulse(members(list), quotes, NO_BLANK, NO_FAILURE);
+    assert.equal('changeRateMedian' in pulse, false);
+    assert.equal('changeRateMean' in pulse, false);
+    assert.equal(pulse.quotedCount, 0);
+    assert.equal(pulse.unchanged, 0);
+    assert.deepEqual(pulse.noOrderBookSymbols, ['000880', '00088K']);
   });
 });
 

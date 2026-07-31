@@ -13,8 +13,8 @@
  * 값을 모르고 고르면 후보 전부가 "1주도 못 삼"으로 끝난다.
  */
 
-import type { Instrument, Quote } from '@invest/shared';
-import { KRX_SESSION_MINUTES } from '@invest/shared';
+import type { Instrument, Quote, ScreeningVerdict } from '@invest/shared';
+import { hasEmptyOrderBook, KRX_SESSION_MINUTES } from '@invest/shared';
 
 import { getKisAccount } from '../config.js';
 import { getCategoryInstruments } from '../db/instruments.js';
@@ -119,8 +119,9 @@ const SESSION_SECONDS = SESSION_CLOSE_SECONDS - SESSION_OPEN_SECONDS;
  * 이 여섯이 09:00대에 자동매매 후보로 올라간다. 거래대금 0원은 어느 시각에도
  * 통과하면 안 된다.
  *
- * (거래정지 종목이 `illiquid`로 뭉뚱그려지는 것 자체는 아직 남은 문제다.
- *  여기서 고치는 건 "몇 시에 걸리느냐"이지 "무슨 사유로 걸리느냐"가 아니다.)
+ * (그 여섯 중 호가까지 빈 종목은 이제 `noOrderBook`으로 먼저 갈라진다. 위
+ *  문턱은 그래도 필요하다 — `0000Y0`처럼 **호가는 있는데 오늘 체결이 없는**
+ *  종목은 여전히 여기서 걸러야 한다.)
  */
 export function sessionElapsedRatio(now = new Date()): number {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -140,6 +141,8 @@ export function sessionElapsedRatio(now = new Date()): number {
 /** 후보에서 빠진 이유. 왜 비었는지 실행 기록에 적으려면 세어야 한다. */
 export interface UniverseRejections {
   tooExpensive: number;
+  /** 매도·매수 호가가 모두 없어 어떤 값에도 체결되지 않는 종목 */
+  noOrderBook: number;
   illiquid: number;
   costHeavy: number;
 }
@@ -177,6 +180,22 @@ export function knownRangeRate(quote: Quote): number | undefined {
  * 백테스트는 원하는 값에 원하는 만큼 체결된다고 보지만 실제 시장은 아니다.
  */
 export function screenQuote(quote: Quote, elapsed: number): keyof UniverseRejections | null {
+  /*
+   * ── 호가가 아예 없는 종목이 먼저다 ────────────────────────────────────────
+   *
+   * "얇다"(`illiquid`)와 "아예 못 산다"는 다른 사실인데 예전에는 한 사유로
+   * 뭉쳤다. 거래정지 종목은 거래대금이 0원이라 유동성 문턱에 먼저 걸렸고,
+   * 실행 기록에는 `거래대금 부족 17종목`이라고만 남았다 — 2026-07-31 10:00
+   * 실측에서 그 17종목 중 2종목이 거래정지였다.
+   *
+   * 유동성보다 앞에 두는 이유는 사유의 값어치다. 유동성이 모자란 종목은 문턱을
+   * 낮추면 살 수 있지만, 호가가 없는 종목은 문턱을 어떻게 잡아도 못 산다.
+   *
+   * 잔량을 못 받은 경로(단건 시세·해외·선물)는 `undefined`라 여기서 걸리지
+   * 않는다. 모르는 것을 나쁜 것으로 단정하지 않는다 — `knownRangeRate`와 같다.
+   */
+  if (hasEmptyOrderBook(quote) === true) return 'noOrderBook';
+
   /*
    * 거래대금은 KIS가 실제 값(`Quote.turnover`)을 준다. 국내 주식·ETF는 단건·멀티
    * 시세 둘 다 담아 오므로 이 문을 지나는 종목은 전부 실제 값이다.
@@ -229,6 +248,32 @@ export function screenQuote(quote: Quote, elapsed: number): keyof UniverseReject
     return 'costHeavy';
   }
   return null;
+}
+
+/**
+ * 예수금까지 넣어 한 줄로 판정한다. **자동매매와 화면이 같은 함수를 쓴다.**
+ *
+ * 예전에는 순서(`가격 → 유동성 → 비용`)를 `loadAutoTraderCandidates`와
+ * `runScreening`이 각자 들고 있었다. 같은 규칙을 두 곳에 두면 한쪽만 고쳤을 때
+ * 화면의 사유와 실행 기록의 사유가 조용히 갈라진다 — `knownRangeRate`를
+ * 떼어낸 것과 같은 이유다.
+ *
+ * ── 순서: 호가 없음 → 가격 초과 → 유동성 → 비용 ─────────────────────────
+ *
+ * `noOrderBook`이 `tooExpensive`보다 앞이다. 예수금은 **계좌마다 다른 사정**이라
+ * 같은 종목이 계좌에 따라 다른 사유로 걸리는데, 호가가 없다는 것은 누구에게나
+ * 같은 사실이다. 거래정지 종목에 `1주가 예수금보다 비쌈`이라고 적으면 "돈을 더
+ * 넣으면 살 수 있다"로 읽히는데 그건 거짓이다 — 실측 6종목 중 `000880 한화`가
+ * 83,800원이라 실제로 그렇게 걸렸다.
+ *
+ * 가격이 유동성·비용보다 앞인 것은 예전 결정 그대로다. 살 수도 없는 종목을
+ * 문턱으로 거르면 사유가 뒤바뀐다.
+ */
+export function verdictFor(quote: Quote, elapsed: number, cash: number): ScreeningVerdict {
+  const screened = screenQuote(quote, elapsed);
+  if (screened === 'noOrderBook') return 'noOrderBook';
+  if (quote.price > cash) return 'tooExpensive';
+  return screened ?? 'pass';
 }
 
 function isOrderable(instrument: Instrument): boolean {
@@ -308,7 +353,7 @@ export async function loadAutoTraderCandidates(accountId: string, cash: number):
    */
   const targets = pool.slice(0, MAX_PRICE_LOOKUPS);
   const prices: number[] = [];
-  const rejections: UniverseRejections = { tooExpensive: 0, illiquid: 0, costHeavy: 0 };
+  const rejections: UniverseRejections = { tooExpensive: 0, noOrderBook: 0, illiquid: 0, costHeavy: 0 };
   const elapsed = sessionElapsedRatio();
   const batch = await getInstrumentQuotes(targets);
   const instruments: Instrument[] = [];
@@ -320,18 +365,15 @@ export async function loadAutoTraderCandidates(accountId: string, cash: number):
     const price = quote.price;
     if (!Number.isFinite(price) || price <= 0) continue;
     prices.push(price);
-    if (price > cash) {
-      rejections.tooExpensive += 1;
-      continue;
-    }
     /*
      * 살 수 있다고 다 후보는 아니다. 백테스트에서 나온 숫자를 실제로
-     * 거둘 수 있는 종목만 남긴다 — 물량이 있어야 그 값에 체결되고,
-     * 하루 변동폭이 왕복 비용보다 넉넉해야 방향을 맞혔을 때 남는다.
+     * 거둘 수 있는 종목만 남긴다 — 호가가 있어야 애초에 체결되고, 물량이
+     * 있어야 그 값에 체결되고, 하루 변동폭이 왕복 비용보다 넉넉해야 방향을
+     * 맞혔을 때 남는다. 순서와 사유는 `verdictFor` 한 곳에 있다.
      */
-    const rejected = screenQuote(quote, elapsed);
-    if (rejected) {
-      rejections[rejected] += 1;
+    const verdict = verdictFor(quote, elapsed, cash);
+    if (verdict !== 'pass') {
+      rejections[verdict] += 1;
       continue;
     }
     instruments.push(instrument);
@@ -359,10 +401,12 @@ export async function loadAutoTraderCandidates(accountId: string, cash: number):
    * 어느 문에서 걸렸는지 세어 적는다. `후보 없음`만 쌓이면 값을 올려야 할지
    * 필터를 낮춰야 할지 알 수 없다.
    */
-  const filtered = rejections.illiquid + rejections.costHeavy;
+  const filtered = rejections.noOrderBook + rejections.illiquid + rejections.costHeavy;
   if (filtered > 0) {
     const parts: string[] = [];
     if (rejections.tooExpensive > 0) parts.push(`가격 초과 ${rejections.tooExpensive}종목`);
+    // "호가 없음"을 "거래대금 부족"에 섞지 않는다. 문턱을 낮춰도 살 수 없는 종목이다.
+    if (rejections.noOrderBook > 0) parts.push(`호가 없음 ${rejections.noOrderBook}종목`);
     if (rejections.illiquid > 0) parts.push(`거래대금 부족 ${rejections.illiquid}종목`);
     if (rejections.costHeavy > 0) parts.push(`왕복 비용이 하루 변동폭의 절반을 넘음 ${rejections.costHeavy}종목`);
     return {

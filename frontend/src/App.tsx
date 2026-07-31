@@ -295,6 +295,16 @@ const WATCH_GROUP_OPTIONS: Array<{ key: WatchGroup; label: string }> = [
 const SCREENING_VERDICT: Record<ScreeningVerdict, { label: string; why: string }> = {
   pass: { label: '통과', why: '자동매매가 후보로 삼을 수 있는 종목입니다' },
   tooExpensive: { label: '1주가 예수금보다 비쌈', why: '예수금으로 1주도 살 수 없습니다' },
+  /*
+   * `거래대금 부족`과 갈라 둔 자리다. 앞은 얇은 것이고 이건 아예 없는 것이라
+   * 문턱을 낮춰도 살 수 없다. 말은 **잰 사실까지만** 적는다 — 정규장에서는
+   * 거래정지 종목이 이렇게 왔지만(2026-07-31 300종목 중 6종목, 전부 거래정지),
+   * 장 시작 전이나 휴장일에도 그런지는 재지 않았다.
+   */
+  noOrderBook: {
+    label: '호가 없음',
+    why: '매도·매수 호가가 모두 없어 지금은 어떤 값에도 체결되지 않습니다 (거래정지 종목이 이렇게 옵니다)',
+  },
   illiquid: { label: '거래대금 부족', why: '그 값에 원하는 만큼 체결되지 않을 수 있습니다' },
   costHeavy: { label: '변동폭 대비 비용 과다', why: '방향을 맞혀도 왕복 비용이 남는 것을 다 먹습니다' },
 };
@@ -923,8 +933,8 @@ function CollapsibleRows({
  * "한 종목이 끌고 있다"는 정보다.
  *
  * **표본이 전체가 아니면 몇 개를 봤는지 밝힌다.** 마스터 110 → 지금 찾은 101 →
- * 시세 온 101 → 거래대금까지 온 98로 줄어드는데, 이 사슬을 접으면 화면이
- * `반도체 110종목`이라 적고 98개로 낸 값을 보여주게 된다.
+ * 시세 온 101 → **호가가 있는 98** → 거래대금까지 온 98로 줄어드는데, 이 사슬을
+ * 접으면 화면이 `반도체 110종목`이라 적고 98개로 낸 값을 보여주게 된다.
  */
 function ThemePulseCard({ pulse }: { pulse: ThemePulse }): JSX.Element {
   const { theme } = pulse;
@@ -936,9 +946,13 @@ function ThemePulseCard({ pulse }: { pulse: ThemePulse }): JSX.Element {
       <header className="theme-pulse__head">
         <div>
           <strong>{theme.name}</strong>
-          {/* 표본 사슬. 어디서 줄었는지 알 수 있어야 한다. */}
+          {/*
+            표본 사슬. 어디서 줄었는지 알 수 있어야 한다.
+            마지막 칸은 `시세`가 아니라 `등락률`이다 — 시세는 왔지만 호가가 비어
+            계산에서 뺀 종목이 있어서, `시세 98`이라고 적으면 못 받은 것으로 읽힌다.
+          */}
           <span>
-            명단 {theme.symbolCount}종목 · 지금 찾은 종목 {theme.instrumentCount} · 시세 {pulse.quotedCount}
+            명단 {theme.symbolCount}종목 · 지금 찾은 종목 {theme.instrumentCount} · 등락률 {pulse.quotedCount}
           </span>
         </div>
         <em data-tone={measured ? feeImpactTone(pulse.changeRateMedian as number) : undefined}>
@@ -999,14 +1013,28 @@ function ThemePulseCard({ pulse }: { pulse: ThemePulse }): JSX.Element {
           시세가 빈 값으로 온 {pulse.blankSymbols.length}종목은 계산에서 빠졌습니다 — 0%로 넣지 않았습니다.
         </p>
       )}
+      {/*
+        거래정지 종목의 0%가 중앙값과 보합 수에 섞이던 자리다. 사유를 적지 않으면
+        표본이 왜 줄었는지 알 수 없고, `거래정지`라고 단정하면 재지 않은 말이 된다.
+      */}
+      {pulse.noOrderBookSymbols.length > 0 && (
+        <p className="theme-pulse__note">
+          호가가 양쪽 다 비어 있던 {pulse.noOrderBookSymbols.length}종목은 계산에서 빠졌습니다 (
+          {pulse.noOrderBookSymbols.slice(0, 6).join(', ')}
+          {pulse.noOrderBookSymbols.length > 6 ? ' …' : ''}) — 거래정지 종목이 이렇게 옵니다. 등락률 0%를
+          보합으로 세지 않았습니다.
+        </p>
+      )}
       {pulse.failedSymbols.length > 0 && (
         <p className="theme-pulse__note theme-pulse__note--error">
           {pulse.failedSymbols.length}종목은 조회가 깨져 못 받았습니다 — {pulse.failureMessages.join(' / ')}
         </p>
       )}
-      {unquoted > 0 && pulse.blankSymbols.length + pulse.failedSymbols.length !== unquoted && (
-        <p className="theme-pulse__note">시세가 오지 않은 종목 {unquoted}개는 계산에 없습니다.</p>
-      )}
+      {/* 줄어든 자리를 전부 더해도 안 맞으면 설명되지 않은 나머지가 있다는 뜻이다. */}
+      {unquoted > 0 &&
+        pulse.blankSymbols.length + pulse.noOrderBookSymbols.length + pulse.failedSymbols.length !== unquoted && (
+          <p className="theme-pulse__note">시세가 오지 않은 종목 {unquoted}개는 계산에 없습니다.</p>
+        )}
 
       {pulse.members.length > 0 && (
         <div className="theme-pulse__rows" role="table" aria-label={`${theme.name} 구성 종목`}>
@@ -6274,7 +6302,7 @@ export function App(): JSX.Element {
                       </p>
 
                       <div className="screening__counts" role="tablist" aria-label="판정별 보기">
-                        {(['all', 'pass', 'tooExpensive', 'illiquid', 'costHeavy'] as const).map((key) => {
+                        {(['all', 'pass', 'tooExpensive', 'noOrderBook', 'illiquid', 'costHeavy'] as const).map((key) => {
                           const count =
                             key === 'all'
                               ? screening.rows.length

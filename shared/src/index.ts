@@ -182,8 +182,12 @@ export interface ThemePulseMember {
  * ## 표본이 전체가 아니다
  *
  * 마스터가 넣어 둔 수(`theme.symbolCount`) ≥ 지금 찾은 종목 수
- * (`theme.instrumentCount`) ≥ 시세가 온 수(`quotedCount`) ≥ 거래대금까지 온 수
+ * (`theme.instrumentCount`) ≥ 등락률에 쓴 수(`quotedCount`) ≥ 거래대금까지 온 수
  * (`turnoverCount`)로 줄어든다. 넷을 하나로 합치면 어디서 줄었는지 알 수 없다.
+ *
+ * `quotedCount`에서 빠지는 자리가 셋이라 각각 따로 담는다 — 종목을 못 찾음
+ * (`missingSymbols`), 시세가 빈 값(`blankSymbols`), **호가가 비어 있음**
+ * (`noOrderBookSymbols`), 조회가 깨짐(`failedSymbols`).
  */
 export interface ThemePulse {
   theme: Theme;
@@ -193,11 +197,25 @@ export interface ThemePulse {
   missingSymbols: string[];
   /** 종목은 찾았는데 시세가 빈 값으로 온 것. "그런 종목이 없다"에 가깝다 */
   blankSymbols: string[];
+  /**
+   * 시세는 왔는데 **호가가 양쪽 다 비어 있던** 종목. 거래정지 종목이 이렇게 온다.
+   *
+   * 등락률 통계(중앙값·단순평균·상승/하락/보합)에서 **뺀다.** 이 종목들은
+   * 등락률이 언제나 정확히 0%인데, 그건 "안 움직였다"가 아니라 "오늘 값이
+   * 없다"다. 2026-07-31 실측으로 2차전지 테마는 **보합 4종목이 전부 거래
+   * 0원**이라 진짜 보합이 0종목이었고, 중앙값이 +0.810 → +1.090으로
+   * 0.28%p 움직였다. 가중평균은 예전부터 `turnover > 0`으로 빼고 있었으니
+   * 이제 넷이 같은 표본을 본다.
+   *
+   * **거래대금이 0원이기만 한 종목은 여기 넣지 않는다.** 호가가 살아 있으면
+   * 지금 살 수 있는 종목이고, 오늘 아직 체결이 없을 뿐이다(실측 2종목).
+   */
+  noOrderBookSymbols: string[];
   /** 조회가 깨져서 못 받은 것. **값이 없는 것이 아니라 못 받은 것이다** */
   failedSymbols: string[];
   /** 위 실패의 사유. 같은 사유는 한 번만 담는다 */
   failureMessages: string[];
-  /** 등락률 계산에 쓴 종목 수 = `members.length` */
+  /** 등락률 계산에 쓴 종목 수 = `members.length`. 호가가 빈 종목은 빠져 있다 */
   quotedCount: number;
   /** 대표값. 시세가 하나도 없으면 없다 — **0으로 채우지 않는다** */
   changeRateMedian?: number;
@@ -212,7 +230,12 @@ export interface ThemePulse {
   advancing: number;
   /** 내린 종목 수 (등락률 < 0) */
   declining: number;
-  /** 보합 (등락률 = 0). 오름·내림에 섞지 않는다 */
+  /**
+   * 보합 (등락률 = 0). 오름·내림에 섞지 않는다.
+   *
+   * **호가가 빈 종목은 여기 세지 않는다.** 예전에는 섞여 있어서 방위산업
+   * 09:15의 `보합 2`가 실제로는 거래정지 1 + 진짜 보합 1이었다(2026-07-31 실측).
+   */
   unchanged: number;
 }
 
@@ -358,6 +381,60 @@ export interface Quote {
    * 어림한 값을 쓸 자리라면 어림한 쪽에서 그렇게 밝힌다.
    */
   turnover?: number;
+  /**
+   * 지금 쌓여 있는 **총 매도잔량 / 총 매수잔량**(주). 둘은 한 사실이라 **함께
+   * 오거나 함께 없다.**
+   *
+   * 멀티시세(`intstock-multprice`)가 `total_askp_rsqn`·`total_bidp_rsqn`으로
+   * 준다 — 호출이 늘지 않는다. **단건 현재가(`inquire-price`)에는 없다**
+   * (2026-07-31 실측: 80필드 중 `rsqn`·`askp`·`bidp`가 이름에 든 필드가 0개).
+   * 그래서 단건으로 받은 시세와 해외·선물·야간 환산가는 이 값이 없다.
+   *
+   * **무엇에 쓰는가** — 둘 다 0이면 지금 어떤 값에도 체결될 수 없다.
+   * `hasEmptyOrderBook()`이 그 판정이고, 거래정지 종목이 실제로 이렇게 온다.
+   * 0으로 채워 넣지 않는다: 값이 없는 것과 잔량이 0인 것은 정반대의 사실이다.
+   */
+  totalAskQuantity?: number;
+  totalBidQuantity?: number;
+}
+
+/**
+ * 호가창이 **양쪽 다** 비었나. 모르면 `undefined`다.
+ *
+ * 양쪽 잔량이 0이면 사자도 팔자도 없다는 뜻이라, 지금은 어떤 값에도 체결되지
+ * 않는다. "거래대금이 적다"와는 다른 사실이다 — 앞은 얇은 것이고 이건 없는 것이다.
+ *
+ * ── 2026-07-31 11:35 KST 실전 서버, 정규장 300종목 실측 ───────────────────
+ *
+ * | 무엇 | 몇 종목 | 단건의 종목상태(`iscd_stat_cls_code`) |
+ * |------|------|------|
+ * | 양쪽 잔량 0 | **6** (000300·000880·00088K·001470·001570·001840) | **6종목 전부 거래정지** |
+ * | 한쪽만 0 | 1 (002070 비비안 +29.83% 상한가 잠김) | 정상 |
+ * | 거래대금 0원인데 호가는 있음 | 2 (0000Y0·001067) | 정상 (오늘 아직 체결이 없을 뿐) |
+ * | 호가가 있는 종목 표본 15 | — | 거래정지 0건 |
+ *
+ * 여기서 세 가지가 정해졌다.
+ *
+ * 1. **양쪽을 모두 봐야 한다.** 한쪽만 0인 것을 걸면 상한가 잠김 종목
+ *    (`002070`: 총매도 0 · 총매수 25,424 · 거래대금 14.7억)이 같이 걸린다.
+ *    하한가 잠김은 반대쪽이 0이다.
+ * 2. **거래대금 0원으로는 못 가른다.** 거래대금이 0인 8종목 중 2종목은
+ *    호가가 살아 있는 멀쩡한 종목이었다.
+ * 3. **이름을 "거래정지"로 짓지 않는다.** 위 대응은 정규장에서만 쟀다.
+ *    장전 주문 접수(08:30) 전이나 휴장일에는 정상 종목도 호가가 비어 있을
+ *    텐데 **그건 재지 않았다.** 잰 사실은 "지금 호가가 없다"까지다.
+ *
+ * 거래정지 자체를 정확히 알려면 단건 현재가의 `iscd_stat_cls_code = 58`을 봐야
+ * 하는데 **종목당 1회**가 더 나간다(120종목 스크리닝이 4회 → 124회). 그래서
+ * 안 쓴다.
+ */
+export function hasEmptyOrderBook(quote: Quote): boolean | undefined {
+  const ask = quote.totalAskQuantity;
+  const bid = quote.totalBidQuantity;
+  // 값을 못 받은 경로(단건·해외·선물)를 "호가가 없다"로 단정하지 않는다.
+  if (ask === undefined || bid === undefined) return undefined;
+  if (!Number.isFinite(ask) || !Number.isFinite(bid)) return undefined;
+  return ask === 0 && bid === 0;
 }
 
 /**
@@ -597,7 +674,7 @@ export function krxAuctionWindow(minutesOfDay: number): KrxAuctionWindow | null 
  *
  * **거른 것도 함께 온다.** 통과한 것만 보이면 왜 이것뿐인지 알 수 없다.
  */
-export type ScreeningVerdict = 'pass' | 'tooExpensive' | 'illiquid' | 'costHeavy';
+export type ScreeningVerdict = 'pass' | 'tooExpensive' | 'noOrderBook' | 'illiquid' | 'costHeavy';
 
 export interface ScreeningRow {
   instrumentId: string;

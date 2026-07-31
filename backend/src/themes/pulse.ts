@@ -13,6 +13,13 @@
  * 테마에서는 한 종목의 상한가가 단순평균을 통째로 끌어가고, 큰 테마에서는
  * 거래대금 가중이 대형주 하나의 등락률로 수렴한다.
  *
+ * ## 호가가 빈 종목은 표본에서 뺀다
+ *
+ * 거래정지 종목의 등락률은 언제나 정확히 0%인데 그건 "안 움직였다"가 아니라
+ * **"오늘 값이 없다"**다. 예전에는 이 0%가 중앙값·단순평균·보합 수에 들어가고
+ * 가중평균에서만 빠져서, 넷 중 하나만 다른 표본을 보고 있었다. 판정은
+ * `@invest/shared`의 `hasEmptyOrderBook`이고 실측 근거는 그 주석에 있다.
+ *
  * ## 예산은 종목 수가 아니라 호출 수로 잡는다
  *
  * 30종목이 1회다. 종목 수로 상한을 잡으면 몇 회가 나가는지 아무도 모른다
@@ -28,7 +35,7 @@
 
 import { getThemeMembers } from '../db/themes.js';
 import { canBatchQuote, getInstrumentQuotes, MULTI_QUOTE_MAX_CODES } from '../kis/rest.js';
-import { oldestFetchedAt } from '@invest/shared';
+import { hasEmptyOrderBook, oldestFetchedAt } from '@invest/shared';
 import type {
   Instrument,
   Quote,
@@ -85,6 +92,7 @@ export function aggregateThemePulse(
 ): ThemePulse {
   const rows: ThemePulseMember[] = [];
   const blankSymbols: string[] = [];
+  const noOrderBookSymbols: string[] = [];
   const failedSymbols: string[] = [];
   const failureMessages: string[] = [];
 
@@ -108,6 +116,23 @@ export function aggregateThemePulse(
       const message = failures.get(instrument.id) ?? '이 요청에서 시세를 묻지 않았습니다.';
       failedSymbols.push(instrument.symbol);
       if (!failureMessages.includes(message)) failureMessages.push(message);
+      continue;
+    }
+    /*
+     * 호가가 양쪽 다 빈 종목은 등락률 표본에서 뺀다. 이런 종목의 등락률은
+     * 언제나 정확히 0%인데 그건 "안 움직였다"가 아니라 **"오늘 값이 없다"**다.
+     *
+     * 2026-07-31 실측: 2차전지 테마는 **보합 4종목이 전부 거래 0원**이라 진짜
+     * 보합이 0종목이었고, 이 넷을 빼면 중앙값이 +0.810 → +1.090으로 0.28%p
+     * 움직였다. 가중평균은 예전부터 `turnover > 0`으로 빼고 있어서 넷 중 하나만
+     * 다른 표본을 보고 있었다.
+     *
+     * **거래대금 0원을 기준으로 빼지는 않는다.** 같은 날 실측에서 거래대금이
+     * 0인 8종목 중 2종목(`0000Y0`·`001067`)은 호가가 살아 있는 정상 종목이었다 —
+     * 오늘 아직 체결이 없을 뿐이고, 그 0%는 진짜 보합에 가깝다.
+     */
+    if (hasEmptyOrderBook(quote) === true) {
+      noOrderBookSymbols.push(instrument.symbol);
       continue;
     }
     rows.push({
@@ -138,6 +163,7 @@ export function aggregateThemePulse(
     members: rows,
     missingSymbols: members.missingSymbols,
     blankSymbols,
+    noOrderBookSymbols,
     failedSymbols,
     failureMessages,
     quotedCount: rows.length,

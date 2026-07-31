@@ -137,6 +137,8 @@ describe('parseMultiQuoteChunk — 실제 응답 30종목', () => {
       low: 1_287_000,
       accVolume: 9_543_189,
       turnover: 12_945_505_619_452,
+      totalAskQuantity: 67_750,
+      totalBidQuantity: 150_516,
     });
     assert.deepEqual(byCode.get('005930'), {
       code: '005930',
@@ -150,6 +152,8 @@ describe('parseMultiQuoteChunk — 실제 응답 30종목', () => {
       low: 202_000,
       accVolume: 46_694_193,
       turnover: 9_915_591_555_814,
+      totalAskQuantity: 278_890,
+      totalBidQuantity: 1_017_500,
     });
   });
 
@@ -196,6 +200,55 @@ describe('parseMultiQuoteChunk — 실제 응답 30종목', () => {
     assert.equal(halted.low, 0);
     assert.equal(halted.turnover, 0);
     assert.equal(parsed.blank.includes('009310'), false);
+  });
+
+  /*
+   * 총 잔량을 담는 것 자체를 못 박는다. 안 담으면 `hasEmptyOrderBook`이 30종목
+   * 전부 "모른다"로 떨어져 판정이 조용히 사라진다 — 값이 틀리는 게 아니라
+   * 검사가 없어지는 쪽이라 화면으로는 안 보인다.
+   */
+  it('총 매도·매수 잔량을 담는다 — 30종목 중 잔량이 없는 행은 하나도 없다', () => {
+    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output, FETCHED_AT);
+    const missing = parsed.quotes.filter(
+      (q) => q.totalAskQuantity === undefined || q.totalBidQuantity === undefined,
+    );
+    assert.deepEqual(missing.map((q) => q.code), []);
+  });
+
+  it('거래정지 종목은 호가 잔량이 양쪽 다 0으로 온다 (009310 실측)', () => {
+    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output, FETCHED_AT);
+    const halted = parsed.quotes.find((q) => q.code === '009310');
+    assert.ok(halted);
+    assert.equal(halted.totalAskQuantity, 0);
+    assert.equal(halted.totalBidQuantity, 0);
+    // 나머지 29종목은 양쪽 다 0이 아니다. 이게 갈라진다는 것이 판정의 근거다.
+    const alsoEmpty = parsed.quotes.filter(
+      (q) => q.code !== '009310' && q.totalAskQuantity === 0 && q.totalBidQuantity === 0,
+    );
+    assert.deepEqual(alsoEmpty.map((q) => q.code), []);
+  });
+
+  it('한쪽 잔량만 없으면 둘 다 안 담는다 — 반쪽으로는 판정할 수 없다', () => {
+    const row = f.response.output.find((r) => r.inter_shrn_iscd === '005930');
+    assert.ok(row);
+    const parsed = parseMultiQuoteChunk(['005930'], [{ ...row, total_bidp_rsqn: '' }], FETCHED_AT);
+    assert.equal(parsed.quotes.length, 1);
+    assert.equal('totalAskQuantity' in parsed.quotes[0], false);
+    assert.equal('totalBidQuantity' in parsed.quotes[0], false);
+  });
+
+  it('잔량 빈 문자열을 0으로 읽지 않는다 — 그러면 멀쩡한 종목이 호가 없음이 된다', () => {
+    // `Number('')`은 0이다. 그대로 읽으면 잔량을 못 받은 종목이 "양쪽 0"이 되어
+    // 전 종목이 거래정지로 판정된다.
+    const row = f.response.output.find((r) => r.inter_shrn_iscd === '005930');
+    assert.ok(row);
+    const parsed = parseMultiQuoteChunk(
+      ['005930'],
+      [{ ...row, total_askp_rsqn: '', total_bidp_rsqn: '' }],
+      FETCHED_AT,
+    );
+    assert.equal(parsed.quotes[0].totalAskQuantity, undefined);
+    assert.equal(parsed.quotes[0].totalBidQuantity, undefined);
   });
 });
 

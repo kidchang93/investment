@@ -20,8 +20,8 @@ import {
   MAX_COST_SHARE_OF_RANGE,
   MIN_DAILY_TURNOVER,
   ROUND_TRIP_COST_RATE,
-  screenQuote,
   sessionElapsedRatio,
+  verdictFor,
 } from './universe.js';
 import type { Instrument, ScreeningResult, ScreeningRow } from '@invest/shared';
 
@@ -114,9 +114,12 @@ export async function runScreening(cash: number, lookups: number): Promise<Scree
       turnover: quote.turnover ?? quote.price * quote.accVolume,
       // 모르면 `undefined`, 한 값에만 체결됐으면 `0`이다. 둘은 다른 사실이다.
       rangeRate: rangeRate === undefined ? undefined : rangeRate * 100,
-      // 값비싸서 못 사는 것이 먼저다. 살 수도 없는 종목을 유동성으로 거르면
-      // 사유가 뒤바뀐다 — 자동매매도 이 순서로 본다.
-      verdict: quote.price > cash ? 'tooExpensive' : (screenQuote(quote, elapsed) ?? 'pass'),
+      /*
+       * 사유의 순서는 `verdictFor` 한 곳에서 정한다. 예전에는 여기서 가격 검사를
+       * 따로 앞에 두고 있어 `loadAutoTraderCandidates`와 같은 규칙을 두 곳이
+       * 들고 있었다 — 한쪽만 고치면 화면과 실행 기록이 조용히 갈라진다.
+       */
+      verdict: verdictFor(quote, elapsed, cash),
     });
   }
 

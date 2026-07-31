@@ -32,6 +32,19 @@
  * `현재가 0원`이라는 없는 사실을 만든다. 부르는 쪽이 `price <= 0`을 따로 걸러야 하는
  * 이유가 여기 있다.
  *
+ * ## 호가 잔량은 이쪽에만, 거래정지 플래그는 단건에만 있다
+ *
+ * 2026-07-31 11:33 KST 정규장 실측으로 확인한 것.
+ *
+ * | | 멀티시세 29필드 | 단건 현재가 80필드 |
+ * |------|------|------|
+ * | 총 매도·매수 잔량 (`total_askp_rsqn`·`total_bidp_rsqn`) | **있다** | 없다 (`rsqn`/`askp`/`bidp`가 든 필드 0개) |
+ * | 종목 상태 (`iscd_stat_cls_code`, 거래정지 = `58`) | 없다 | **있다** |
+ *
+ * 정확히 반대로 갈라져 있다. 거래정지를 플래그로 알려면 종목당 1회가 더
+ * 나가므로(120종목 스크리닝이 4회 → 124회) 잔량 쪽을 담는다. 판정은
+ * `@invest/shared`의 `hasEmptyOrderBook`에 있고 실측 근거도 그 주석에 있다.
+ *
  * ## 전일종가와 기준가는 다른 값이다
  *
  * 응답에 `inter2_prdy_clpr`(전일종가)와 `inter2_sdpr`(기준가)이 **둘 다** 있다.
@@ -184,6 +197,20 @@ function toQuote(code: string, row: Record<string, string>, fetchedAt: number): 
 
   const turnover = toNumberOrNaN(row.acml_tr_pbmn);
 
+  /*
+   * 총 매도·매수 잔량. **이 API에만 있다** — 단건 현재가(`FHKST01010100`)의
+   * 80필드에는 `rsqn`·`askp`·`bidp`가 이름에 든 필드가 하나도 없다(2026-07-31 실측).
+   * 반대로 거래정지 플래그(`iscd_stat_cls_code`)는 단건에만 있고 여기에는 없다.
+   * 두 API가 정확히 반대로 갈라져 있어서, 호출을 늘리지 않고 알 수 있는 것은 이쪽뿐이다.
+   *
+   * 둘은 한 사실이라 **함께 담거나 함께 안 담는다.** 한쪽만 담으면
+   * `hasEmptyOrderBook`이 "모른다"로 떨어져 판정이 조용히 사라진다.
+   */
+  const totalAskQuantity = toNumberOrNaN(row.total_askp_rsqn);
+  const totalBidQuantity = toNumberOrNaN(row.total_bidp_rsqn);
+  const hasBookQuantities =
+    isNonNegativeFinite(totalAskQuantity) && isNonNegativeFinite(totalBidQuantity);
+
   return {
     code,
     // 응답 하나에서 나온 30종목은 전부 같은 시각이다. 행마다 다시 재면 파싱 순서가 나이가 된다.
@@ -198,5 +225,6 @@ function toQuote(code: string, row: Record<string, string>, fetchedAt: number): 
     accVolume,
     // 누적 거래대금. 없으면 담지 않는다 — 0으로 채우면 유동성 문턱에 걸린 것처럼 보인다.
     ...(isNonNegativeFinite(turnover) ? { turnover } : {}),
+    ...(hasBookQuantities ? { totalAskQuantity, totalBidQuantity } : {}),
   };
 }

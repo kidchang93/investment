@@ -81,12 +81,20 @@ async function main(): Promise<void> {
   const elapsed = sessionElapsedRatio();
   const verdicts = affordable.map((row) => ({ row, rejected: screenQuote(row.quote, elapsed) }));
   const passed = verdicts.filter((v) => v.rejected === null);
+  /*
+   * 사유마다 따로 센다. 여기서 사유 하나를 빠뜨리면 합이 안 맞는데 화면에는
+   * 그냥 작은 숫자로 보인다 — `noOrderBook`을 더할 때 실제로 그럴 뻔했다.
+   * (이 스크립트는 단건 시세로 도는데, 단건에는 호가 잔량이 없어 `noOrderBook`이
+   *  나올 수 없다. 그래도 세어 둔다 — 0이 아니면 그것 자체가 알아야 할 사실이다.)
+   */
+  const noOrderBook = verdicts.filter((v) => v.rejected === 'noOrderBook').length;
   const illiquid = verdicts.filter((v) => v.rejected === 'illiquid').length;
   const costHeavy = verdicts.filter((v) => v.rejected === 'costHeavy').length;
 
   console.log(`조회 성공 ${rows.length} · 살 수 있음 ${affordable.length} · 1주가 예수금보다 비쌈 ${tooExpensive}`);
   console.log(
-    `자동매매 필터 통과 ${passed.length} · 거래대금 부족 ${illiquid} · 왕복 비용이 하루 변동폭의 절반 초과 ${costHeavy}`
+    `자동매매 필터 통과 ${passed.length} · 호가 없음 ${noOrderBook} · 거래대금 부족 ${illiquid}`
+    + ` · 왕복 비용이 하루 변동폭의 절반 초과 ${costHeavy}`
     + ` (장 경과 ${(elapsed * 100).toFixed(0)}%)\n`,
   );
   if (passed.length > 0) {
