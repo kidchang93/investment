@@ -13,7 +13,7 @@ import { describe, it } from 'node:test';
 
 import type { Quote } from '@invest/shared';
 
-import { screenQuote } from './universe.js';
+import { MIN_DAILY_TURNOVER, screenQuote, sessionElapsedRatio } from './universe.js';
 
 /** 넉넉히 통과하는 기본값. 시험마다 필요한 값만 덮어쓴다. */
 function quote(overrides: Partial<Quote> = {}): Quote {
@@ -111,5 +111,105 @@ describe('후보 거르기 — 왕복 비용', () => {
   it('유동성이 먼저 걸리면 그 사유로 돌려준다', () => {
     // 둘 다 걸리는 종목. 순서가 정해져 있어야 기록이 흔들리지 않는다.
     assert.equal(screenQuote(quote({ accVolume: 100, high: 10_025, low: 9_975 }), 1), 'illiquid');
+  });
+});
+
+/*
+ * ── 장 경과 비율 ──────────────────────────────────────────────────────────
+ *
+ * 시각은 `+09:00` 오프셋을 붙인 벽시계 문자열로 만든다. **`KRX_SESSION_MINUTES`로
+ * 픽스처를 짓지 않는다** — 검사 대상 상수로 데이터를 지으면 상수가 틀렸을 때
+ * 시험도 같이 틀려서 아무것도 못 잡는다. 기대값도 KRX 사실(정규장 09:00~15:30 =
+ * 390분 = 23,400초)에서 나온 숫자를 그대로 적는다.
+ */
+const SESSION_SECONDS = 23_400;
+
+/** 그날 KST 벽시계 시각. 서머타임이 없으므로 오프셋은 언제나 +09:00이다. */
+function kst(clock: string): Date {
+  return new Date(`2026-07-31T${clock}+09:00`);
+}
+
+describe('장 경과 비율 — 경계', () => {
+  it('개장 전에는 1이다 (전일 누적이 이미 하루치다)', () => {
+    assert.equal(sessionElapsedRatio(kst('00:00:00')), 1);
+    assert.equal(sessionElapsedRatio(kst('08:59:00')), 1);
+    assert.equal(sessionElapsedRatio(kst('08:59:59')), 1);
+  });
+
+  it('09:00:00은 장 시작 후다 — 1이 아니다', () => {
+    /*
+     * 2026-07-31 장중 실측으로 잡은 오프바이원. 분 단위 + `<=`이던 때는
+     * 09:00:00~09:00:59가 전부 1이었고, 유효 문턱이 하루치 5천만원이라
+     * **개장 첫 1분이 15:29보다 엄격했다.**
+     */
+    assert.equal(sessionElapsedRatio(kst('09:00:00')), 1 / SESSION_SECONDS);
+    assert.equal(sessionElapsedRatio(kst('09:00:01')), 1 / SESSION_SECONDS);
+  });
+
+  it('같은 09:00분 안에서도 초만큼 늘어난다', () => {
+    // 분 해상도로 되돌리면 이 셋이 한 값으로 뭉친다.
+    assert.equal(sessionElapsedRatio(kst('09:00:30')), 30 / SESSION_SECONDS);
+    assert.equal(sessionElapsedRatio(kst('09:00:59')), 59 / SESSION_SECONDS);
+  });
+
+  it('분 경계 값은 예전 계약 그대로다 (60k/23400 = k/390)', () => {
+    assert.equal(sessionElapsedRatio(kst('09:01:00')), 1 / 390);
+    assert.equal(sessionElapsedRatio(kst('09:05:00')), 5 / 390);
+    assert.equal(sessionElapsedRatio(kst('12:15:00')), 0.5);
+    assert.equal(sessionElapsedRatio(kst('15:29:00')), 389 / 390);
+  });
+
+  it('마감 경계는 그대로 둔다 — 15:30부터 1이다', () => {
+    // 실측으로 정상이라 확인된 쪽. 15:29:59까지는 아직 1이 아니다.
+    assert.equal(sessionElapsedRatio(kst('15:29:59')), 23_399 / SESSION_SECONDS);
+    assert.ok(sessionElapsedRatio(kst('15:29:59')) < 1);
+    assert.equal(sessionElapsedRatio(kst('15:30:00')), 1);
+    assert.equal(sessionElapsedRatio(kst('15:31:00')), 1);
+    assert.equal(sessionElapsedRatio(kst('23:59:59')), 1);
+  });
+
+  it('개장 첫 1분이 마감 직전보다 엄격하지 않다', () => {
+    /*
+     * 버그의 모양을 그대로 못 박는다. 고치기 전에는 09:00:00이 1.0,
+     * 09:01:00이 1/390이라 **한 걸음에 390배 계단**이었다.
+     */
+    const open = sessionElapsedRatio(kst('09:00:00'));
+    const nextMinute = sessionElapsedRatio(kst('09:01:00'));
+    const beforeClose = sessionElapsedRatio(kst('15:29:00'));
+    assert.ok(open < nextMinute, '개장 정각이 1분 뒤보다 커서는 안 된다');
+    assert.ok(open < beforeClose / 1000, '개장 정각 문턱은 마감 직전의 1/1000보다도 작아야 한다');
+    assert.ok(nextMinute / open < 100, '한 걸음에 100배가 넘는 계단이 있으면 안 된다');
+  });
+
+  it('장 안에서는 문턱이 0원이 아니다 — 검사가 사라지면 안 된다', () => {
+    /*
+     * `<`로만 고치면 09:00대가 0이 되고 `turnover < 0`은 언제나 거짓이라
+     * 유동성 검사가 통째로 사라진다. 거래정지 종목(거래대금 0원)까지 통과한다.
+     */
+    for (const clock of ['09:00:00', '09:00:01', '09:00:30', '09:01:00']) {
+      assert.ok(sessionElapsedRatio(kst(clock)) > 0, `${clock}의 문턱이 0이면 안 된다`);
+      assert.ok(MIN_DAILY_TURNOVER * sessionElapsedRatio(kst(clock)) >= 2_000, `${clock}`);
+    }
+  });
+});
+
+describe('장 경과 비율 — 후보 거르기에 태워 본다', () => {
+  it('개장 정각에도 거래대금 0원은 걸린다', () => {
+    // 거래정지 종목이 실제로 이렇게 온다(009310 실측: 현재가 5,330 · 거래량 0).
+    const halted = quote({ price: 5_330, accVolume: 0, turnover: 0, high: 0, low: 0 });
+    assert.equal(screenQuote(halted, sessionElapsedRatio(kst('09:00:00'))), 'illiquid');
+    assert.equal(screenQuote(halted, sessionElapsedRatio(kst('09:00:30'))), 'illiquid');
+  });
+
+  it('개장 30초에 6천만원 거래된 종목은 통과한다', () => {
+    /*
+     * 고치기 전에는 09:00:30의 문턱이 하루치 5천만원이라 이 종목도 아슬아슬했고,
+     * 3백만원짜리는 전부 `illiquid`로 버려졌다. 지금 문턱은 64,102원이다.
+     */
+    const openTick = sessionElapsedRatio(kst('09:00:30'));
+    assert.equal(screenQuote(quote({ turnover: 60_000_000 }), openTick), null);
+    assert.equal(screenQuote(quote({ turnover: 3_000_000 }), openTick), null);
+    // 그래도 문턱 아래는 거른다.
+    assert.equal(screenQuote(quote({ turnover: 60_000 }), openTick), 'illiquid');
   });
 });

@@ -74,12 +74,17 @@ export const ROUND_TRIP_COST_RATE =
   DEFAULT_COSTS.commissionRate * 2 + DEFAULT_COSTS.sellTaxRate + DEFAULT_COSTS.slippageRate * 2;
 
 /*
- * 정규장 09:00-15:30을 분으로. 장 초반에는 거래대금이 아직 안 쌓인다.
+ * 정규장 09:00-15:30. 장 초반에는 거래대금이 아직 안 쌓인다.
  * 예전에는 여기서 `9 * 60`을 따로 들고 있어 프론트의 장 상태 표시와 갈라질 수
  * 있었다. 같은 사실이니 shared 한 곳에서 가져온다.
+ *
+ * **초 단위로 잰다.** 분 단위이던 때는 09:00:00~09:00:59가 전부 한 값(540)이라
+ * 개장 첫 1분이 통째로 한 칸에 뭉쳤다. 아래 오프바이원의 원인이다.
  */
-const SESSION_OPEN_MINUTES = KRX_SESSION_MINUTES.open;
-const SESSION_CLOSE_MINUTES = KRX_SESSION_MINUTES.close;
+const SESSION_OPEN_SECONDS = KRX_SESSION_MINUTES.open * 60;
+const SESSION_CLOSE_SECONDS = KRX_SESSION_MINUTES.close * 60;
+/** 정규장 한 판의 길이(초). 09:00~15:30 = 390분 = 23,400초 */
+const SESSION_SECONDS = SESSION_CLOSE_SECONDS - SESSION_OPEN_SECONDS;
 
 /**
  * 지금까지 지난 장 시간의 비율 (0~1).
@@ -87,18 +92,49 @@ const SESSION_CLOSE_MINUTES = KRX_SESSION_MINUTES.close;
  * 유동성 문턱을 하루치로 걸면 09:05에는 모든 종목이 걸린다 — 아직 5분치만
  * 쌓였기 때문이다. 지난 만큼만 요구한다. 장 시작 전이나 마감 후에는 1로 본다
  * (전일 종가 기준 누적이 이미 하루치다).
+ *
+ * ── 개장 경계 (2026-07-31 장중 실측으로 잡은 오프바이원) ────────────────
+ *
+ * 예전에는 분 단위로 재고 `minutes <= 개장`이라, **09:00:00~09:00:59가 전부
+ * "장 시작 전"으로 분류돼 1이 됐다.** 유효 문턱이 하루치 5천만원이라 개장 첫
+ * 1분이 15:29(49,871,795원)보다 엄격했고, 09:01에 128,205원으로 **390배 계단**이
+ * 생겼다. 그 1분에 스크리닝이나 후보 선정이 돌면 거의 전 종목을 `illiquid`로
+ * 버린다. 주석의 의도는 "장 시작 전"이었는데 09:00은 장 시작 **후**다.
+ *
+ * 고칠 때 `<`로만 바꾸면 09:00대가 0이 되어 문턱이 0원이 된다. 그러면
+ * `turnover < 0`이 언제나 거짓이라 **유동성 검사가 아무도 안 거른다.**
+ * 그래서 두 가지를 함께 둔다.
+ *
+ * 1. **초까지 반영한다.** 09:00:30이 `30/23400`(문턱 약 64,103원)이다. 분 경계
+ *    값은 예전과 같다 — `60k/23400 = k/390`이라 09:01은 그대로 `1/390`이다.
+ * 2. **장이 열려 있으면 최소 한 칸(1초치)은 지난 것으로 본다.** 09:00:00
+ *    정각의 문턱이 0원이 아니라 약 2,137원이다. 개장 동시호가가 09:00:00에
+ *    체결되므로 "아직 아무것도 안 쌓였다"가 아니고, 무엇보다 문턱이 0이면
+ *    검사 자체가 사라진다.
+ *
+ * 2번이 실제로 무엇을 막는지는 쟀다 — 2026-07-31 10:46 실전 서버, `kr-all` 앞
+ * 120종목 중 **거래대금이 이 문턱 아래인 것은 정확히 "거래대금 0원" 6종목**이다
+ * (`000880 한화`·`00088K 한화3우B`·`000300 DH오토넥스`·`001067 JW중외제약2우B`·
+ * `001470 삼부토건`·`001570 금양` — 전부 현재가는 있고 거래량 0). 문턱이 0이면
+ * 이 여섯이 09:00대에 자동매매 후보로 올라간다. 거래대금 0원은 어느 시각에도
+ * 통과하면 안 된다.
+ *
+ * (거래정지 종목이 `illiquid`로 뭉뚱그려지는 것 자체는 아직 남은 문제다.
+ *  여기서 고치는 건 "몇 시에 걸리느냐"이지 "무슨 사유로 걸리느냐"가 아니다.)
  */
 export function sessionElapsedRatio(now = new Date()): number {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Seoul',
     hour: '2-digit',
     minute: '2-digit',
+    second: '2-digit',
     hour12: false,
   }).formatToParts(now);
   const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  const minutes = Number(map.hour) * 60 + Number(map.minute);
-  if (minutes <= SESSION_OPEN_MINUTES || minutes >= SESSION_CLOSE_MINUTES) return 1;
-  return (minutes - SESSION_OPEN_MINUTES) / (SESSION_CLOSE_MINUTES - SESSION_OPEN_MINUTES);
+  const seconds = Number(map.hour) * 3600 + Number(map.minute) * 60 + Number(map.second);
+  // 09:00:00은 장 시작 **후**다. 여기를 `<=`로 두면 개장 첫 순간이 장 밖이 된다.
+  if (seconds < SESSION_OPEN_SECONDS || seconds >= SESSION_CLOSE_SECONDS) return 1;
+  return Math.max(seconds - SESSION_OPEN_SECONDS, 1) / SESSION_SECONDS;
 }
 
 /** 후보에서 빠진 이유. 왜 비었는지 실행 기록에 적으려면 세어야 한다. */
