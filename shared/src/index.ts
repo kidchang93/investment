@@ -188,6 +188,10 @@ export interface ThemePulseMember {
  * `quotedCount`에서 빠지는 자리가 셋이라 각각 따로 담는다 — 종목을 못 찾음
  * (`missingSymbols`), 시세가 빈 값(`blankSymbols`), **호가가 비어 있음**
  * (`noOrderBookSymbols`), 조회가 깨짐(`failedSymbols`).
+ *
+ * `quotedCount` → `turnoverCount`로 줄어드는 자리도 둘이고, **다른 사실이다** —
+ * 거래대금을 못 받음(`turnoverMissingSymbols`), 거래대금이 0원
+ * (`turnoverZeroSymbols`). 앞은 우리 쪽 구멍이고 뒤는 그 종목에 대해 잰 사실이다.
  */
 export interface ThemePulse {
   theme: Theme;
@@ -220,11 +224,45 @@ export interface ThemePulse {
   /** 대표값. 시세가 하나도 없으면 없다 — **0으로 채우지 않는다** */
   changeRateMedian?: number;
   changeRateMean?: number;
-  /** 거래대금 가중평균. 거래대금이 온 종목만으로 낸다 */
+  /** 거래대금 가중평균. 거래대금이 0원보다 큰 종목만으로 낸다 */
   changeRateWeighted?: number;
-  /** 가중평균·거래대금 합에 쓴 종목 수. `quotedCount`보다 작을 수 있다 */
+  /**
+   * 가중평균에 실제로 들어간 종목 수(거래대금 > 0원). `quotedCount`보다 작을 수 있다.
+   *
+   * 여기서 빠진 종목은 `turnoverMissingSymbols` + `turnoverZeroSymbols`에 나뉘어
+   * 담긴다. 셋을 더하면 `quotedCount`다.
+   */
   turnoverCount: number;
-  /** 위 종목들의 거래대금 합(원). **테마 전체가 아니라 부분합이다** */
+  /**
+   * 등락률 표본에 있는데 **거래대금 값 자체가 안 온** 종목.
+   *
+   * 해외·선물·야간 환산가처럼 KIS가 `acml_tr_pbmn`을 주지 않는 경로다. 이건 그
+   * 종목에 대해 잰 사실이 아니라 **우리가 모르는 것**이라, 거래대금 합에도
+   * 넣지 않는다(0원으로 세면 합이 실제보다 작아진다).
+   *
+   * 2026-07-31 14:02·14:16 실전 서버 실측(테마 302개 합집합 2,113종목): **0종목**.
+   * 테마 명단이 전부 KRX 현금 종목이라 멀티시세로만 오고, 멀티시세는 이 값을
+   * 늘 준다. 지금은 비어 있어도 명단에 다른 경로 종목이 섞이면 채워진다.
+   */
+  turnoverMissingSymbols: string[];
+  /**
+   * 등락률 표본에 있는데 **거래대금이 0원**인 종목. 호가는 살아 있다.
+   *
+   * 위와 달리 이건 **잰 사실이다** — 오늘 아직 한 주도 안 거래됐다는 뜻이고,
+   * 그래서 거래대금 합에는 0원으로 들어간다. 가중평균에서만 빠진다(0을 곱하면
+   * 없는 것과 같다).
+   *
+   * 2026-07-31 14:02·14:16 실측: **0종목**. 거래대금 0원인 92종목은 전부 호가까지
+   * 비어 있어 `noOrderBookSymbols`에서 이미 빠졌다. 다만 장전 동시호가처럼
+   * 아직 체결이 없는 시간대는 재지 않았다.
+   */
+  turnoverZeroSymbols: string[];
+  /**
+   * 거래대금 합(원). **테마 전체가 아니라 `turnoverMissingSymbols`를 뺀 부분합이다.**
+   *
+   * 값이 하나도 안 온 경우에만 없다. **합이 0원인 것과 못 받은 것을 겸하지
+   * 않는다** — 아무도 안 거래한 테마의 `0원`은 잰 사실이라 그렇게 적는다.
+   */
   turnover?: number;
   /** 오른 종목 수 (등락률 > 0) */
   advancing: number;

@@ -215,12 +215,14 @@ describe('aggregateThemePulse — 거래대금 가중', () => {
     assert.equal(pulse.changeRateWeighted, -5, '거래대금이 온 종목만으로 낸다');
     assert.equal(pulse.turnover, 1_000_000_000);
     assert.equal(pulse.turnoverCount, 1);
+    assert.deepEqual(pulse.turnoverMissingSymbols, ['000002'], '못 받은 쪽으로 담는다');
+    assert.deepEqual(pulse.turnoverZeroSymbols, [], '0원이라고 적지 않는다');
     assert.equal(pulse.quotedCount, 2, '가중에서 빠져도 등락률 표본에는 남는다');
     assert.equal(pulse.changeRateMean, 10);
     assert.equal('turnover' in pulse.members[0], false, '없는 거래대금을 지어내지 않는다');
   });
 
-  it('거래대금이 하나도 없으면 가중평균과 합계 자체가 없다 — 0이 아니다', () => {
+  it('거래대금이 하나도 안 오면 가중평균과 합계 자체가 없다 — 0원이 아니다', () => {
     const quotes = new Map([['KR:KOSPI:000001', quote('KR:KOSPI:000001', 1.5)]]);
     const pulse = aggregateThemePulse(
       members([instrument('000001', '가')]),
@@ -229,8 +231,10 @@ describe('aggregateThemePulse — 거래대금 가중', () => {
       NO_FAILURE,
     );
     assert.equal('changeRateWeighted' in pulse, false);
-    assert.equal('turnover' in pulse, false);
+    assert.equal('turnover' in pulse, false, '못 받은 것을 0원이라 적지 않는다');
     assert.equal(pulse.turnoverCount, 0);
+    assert.deepEqual(pulse.turnoverMissingSymbols, ['000001']);
+    assert.deepEqual(pulse.turnoverZeroSymbols, []);
   });
 
   it('거래대금이 0이지만 호가는 있는 종목은 가중에서만 뺀다', () => {
@@ -250,6 +254,99 @@ describe('aggregateThemePulse — 거래대금 가중', () => {
     assert.equal(pulse.quotedCount, 2);
     assert.equal(pulse.unchanged, 1);
     assert.deepEqual(pulse.noOrderBookSymbols, []);
+    assert.deepEqual(pulse.turnoverZeroSymbols, ['001067'], '못 받은 쪽에 섞지 않는다');
+    assert.deepEqual(pulse.turnoverMissingSymbols, []);
+    assert.equal(pulse.turnover, 2_000_000_000, '0원은 합에 들어가되 값을 바꾸지 않는다');
+  });
+});
+
+/*
+ * ── 거래대금이 빠지는 이유 두 가지 ──────────────────────────────────────────
+ *
+ * `turnoverCount`는 예전에 **거래대금 필드가 안 온 종목**과 **0원인 종목**을 한
+ * 칸에 합쳐 뺐다. 앞은 우리가 값을 모르는 것이고 뒤는 그 종목에 대해 잰 사실이다.
+ *
+ * 2026-07-31 14:02·14:16 실전 서버 실측(테마 302개 합집합 2,113종목, 조회 71회, 두 번 같은 값):
+ * 필드 없음 0종목 · 0원 0종목 — 거래대금이 0원인 92종목은 **전부** 호가까지
+ * 비어 있어 `noOrderBookSymbols`에서 이미 빠졌고, 302개 테마 중 `quotedCount`와
+ * `turnoverCount`가 갈리는 테마는 0개였다. 즉 **지금 장중에는 화면 값이 달라지지
+ * 않는다.** 아래 시험은 재지 못한 시간대(장전 동시호가·개장 직후)와 명단에
+ * 다른 경로 종목이 섞이는 경우를 위해 둔다.
+ */
+describe('aggregateThemePulse — 거래대금이 빠지는 이유', () => {
+  it('필드가 안 온 것과 0원인 것을 다른 칸에 담는다', () => {
+    const list = [
+      instrument('000001', '가'),
+      instrument('000002', '나'),
+      instrument('000003', '다'),
+    ];
+    const quotes = new Map([
+      ['KR:KOSPI:000001', withOrderBook(quote('KR:KOSPI:000001', 6, 4_000_000_000))],
+      // 거래대금 필드가 아예 없다 (해외·선물·야간 환산가 경로).
+      ['KR:KOSPI:000002', withOrderBook(quote('KR:KOSPI:000002', 2))],
+      // 값은 왔고 그 값이 0원이다.
+      ['KR:KOSPI:000003', withOrderBook(quote('KR:KOSPI:000003', 0, 0))],
+    ]);
+
+    const pulse = aggregateThemePulse(members(list), quotes, NO_BLANK, NO_FAILURE);
+
+    assert.deepEqual(pulse.turnoverMissingSymbols, ['000002']);
+    assert.deepEqual(pulse.turnoverZeroSymbols, ['000003']);
+    assert.equal(pulse.turnoverCount, 1);
+    // 셋을 더하면 등락률 표본이다. 안 맞으면 설명되지 않은 종목이 있다는 뜻이다.
+    assert.equal(
+      pulse.turnoverCount + pulse.turnoverMissingSymbols.length + pulse.turnoverZeroSymbols.length,
+      pulse.quotedCount,
+    );
+    // 가중평균은 0원보다 큰 종목만으로 낸다 — 한 종목뿐이라 그 종목 등락률이다.
+    assert.equal(pulse.changeRateWeighted, 6);
+    // 합은 못 받은 종목을 빼고 0원짜리를 더한 부분합이다.
+    assert.equal(pulse.turnover, 4_000_000_000);
+  });
+
+  /*
+   * 개장 직후·장전에는 호가가 살아 있는데 아직 체결이 없는 종목이 흔하다.
+   * 그때 `값 없음`이라 적으면 "우리가 못 받았다"로 읽힌다 — 잰 사실은 0원이다.
+   * (**그 시간대는 재지 않았다.** 위 실측은 정규장 한낮 두 시점뿐이다.)
+   */
+  it('테마 전체가 0원이면 합계는 0원이다 — 값 없음이 아니다', () => {
+    const list = [instrument('000001', '가'), instrument('000002', '나')];
+    const quotes = new Map([
+      ['KR:KOSPI:000001', withOrderBook(quote('KR:KOSPI:000001', 0, 0))],
+      ['KR:KOSPI:000002', withOrderBook(quote('KR:KOSPI:000002', 0, 0))],
+    ]);
+
+    const pulse = aggregateThemePulse(members(list), quotes, NO_BLANK, NO_FAILURE);
+
+    assert.equal('turnover' in pulse, true, '0원은 잰 사실이라 값을 담는다');
+    assert.equal(pulse.turnover, 0);
+    assert.equal('changeRateWeighted' in pulse, false, '0으로 나눌 수 없다');
+    assert.equal(pulse.turnoverCount, 0);
+    assert.deepEqual(pulse.turnoverZeroSymbols, ['000001', '000002']);
+    assert.deepEqual(pulse.turnoverMissingSymbols, []);
+    // 호가는 살아 있으므로 등락률 표본에는 남는다.
+    assert.equal(pulse.quotedCount, 2);
+    assert.equal(pulse.unchanged, 2);
+  });
+
+  it('호가가 빈 종목은 거래대금 0원 칸에도 들어가지 않는다 — 앞에서 이미 빠졌다', () => {
+    /*
+     * 2026-07-31 14:02·14:16 실측에서 거래대금 0원인 92종목이 전부 이쪽이었다.
+     * 두 곳에서 같은 종목을 세면 사유를 더한 값이 표본보다 커진다.
+     */
+    const list = [instrument('000001', '가'), instrument('000880', '한화')];
+    const quotes = new Map([
+      ['KR:KOSPI:000001', withOrderBook(quote('KR:KOSPI:000001', 1, 1_000_000_000))],
+      ['KR:KOSPI:000880', haltedQuote('KR:KOSPI:000880')],
+    ]);
+
+    const pulse = aggregateThemePulse(members(list), quotes, NO_BLANK, NO_FAILURE);
+
+    assert.deepEqual(pulse.noOrderBookSymbols, ['000880']);
+    assert.deepEqual(pulse.turnoverZeroSymbols, []);
+    assert.deepEqual(pulse.turnoverMissingSymbols, []);
+    assert.equal(pulse.turnoverCount, 1);
+    assert.equal(pulse.turnover, 1_000_000_000);
   });
 });
 

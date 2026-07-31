@@ -935,6 +935,19 @@ function CollapsibleRows({
 }
 
 /**
+ * 거래대금 가중평균 칸에 적을 글.
+ *
+ * 값이 없는 이유가 둘인데 `값 없음` 한 마디로 겸하면 안 된다 — 거래대금을 하나도
+ * 못 받은 것(우리가 모르는 것)과, 받은 값이 **전부 0원**인 것(오늘 아무도 안
+ * 거래했다는 잰 사실)은 다르다. 뒤쪽은 0으로 나눌 수 없어 빠질 뿐이다.
+ */
+function weightedRateLabel(pulse: ThemePulse): string {
+  if (pulse.changeRateWeighted !== undefined) return formatRate(pulse.changeRateWeighted);
+  if (pulse.turnoverZeroSymbols.length > 0) return '전부 0원';
+  return '값 없음';
+}
+
+/**
  * 테마 하나의 지금 움직임.
  *
  * **대표값은 중앙값이다.** 셋(중앙값·단순평균·거래대금 가중)을 나란히 두는
@@ -945,11 +958,17 @@ function CollapsibleRows({
  * **표본이 전체가 아니면 몇 개를 봤는지 밝힌다.** 마스터 110 → 지금 찾은 101 →
  * 시세 온 101 → **호가가 있는 98** → 거래대금까지 온 98로 줄어드는데, 이 사슬을
  * 접으면 화면이 `반도체 110종목`이라 적고 98개로 낸 값을 보여주게 된다.
+ *
+ * **거래대금 칸의 종목 수는 둘이다.** 합에는 거래대금 값이 온 종목이 전부 들어가고
+ * (0원짜리 포함), 가중평균에는 0원보다 큰 종목만 들어간다. 성질이 다른 값이라
+ * 한 수로 합치지 않는다.
  */
 function ThemePulseCard({ pulse }: { pulse: ThemePulse }): JSX.Element {
   const { theme } = pulse;
   const measured = pulse.changeRateMedian !== undefined;
   const unquoted = theme.instrumentCount - pulse.quotedCount;
+  /** 거래대금 **값을 받은** 종목 수. 0원짜리도 합에는 들어간다 — 0원은 잰 사실이다. */
+  const turnoverKnownCount = pulse.turnoverCount + pulse.turnoverZeroSymbols.length;
 
   return (
     <article className="theme-pulse" data-tone={measured ? feeImpactTone(pulse.changeRateMedian as number) : 'flat'}>
@@ -962,7 +981,8 @@ function ThemePulseCard({ pulse }: { pulse: ThemePulse }): JSX.Element {
             계산에서 뺀 종목이 있어서, `시세 98`이라고 적으면 못 받은 것으로 읽힌다.
           */}
           <span>
-            명단 {theme.symbolCount}종목 · 지금 찾은 종목 {theme.instrumentCount} · 등락률 {pulse.quotedCount}
+            명단 {theme.symbolCount}종목 · 지금 찾은 종목 {theme.instrumentCount} · 등락률 {pulse.quotedCount} ·
+            거래대금 {turnoverKnownCount}
           </span>
         </div>
         <em data-tone={measured ? feeImpactTone(pulse.changeRateMedian as number) : undefined}>
@@ -983,7 +1003,8 @@ function ThemePulseCard({ pulse }: { pulse: ThemePulse }): JSX.Element {
           <div>
             <dt><Term>거래대금 가중</Term></dt>
             <dd>
-              {pulse.changeRateWeighted === undefined ? '값 없음' : formatRate(pulse.changeRateWeighted)}
+              {weightedRateLabel(pulse)}
+              {/* 합과 다른 수다. 0원짜리는 곱하면 사라지므로 가중평균에는 못 들어간다. */}
               <small>{pulse.turnoverCount}종목</small>
             </dd>
           </div>
@@ -998,7 +1019,7 @@ function ThemePulseCard({ pulse }: { pulse: ThemePulse }): JSX.Element {
             <dt><Term>거래대금</Term> 합</dt>
             <dd>
               {pulse.turnover === undefined ? '값 없음' : formatOkeanAmount(pulse.turnover)}
-              <small>{pulse.turnoverCount}종목</small>
+              <small>{turnoverKnownCount}종목</small>
             </dd>
           </div>
         </dl>
@@ -1038,6 +1059,27 @@ function ThemePulseCard({ pulse }: { pulse: ThemePulse }): JSX.Element {
       {pulse.failedSymbols.length > 0 && (
         <p className="theme-pulse__note theme-pulse__note--error">
           {pulse.failedSymbols.length}종목은 조회가 깨져 못 받았습니다 — {pulse.failureMessages.join(' / ')}
+        </p>
+      )}
+      {/*
+        거래대금 칸이 등락률 칸보다 작으면 왜 작은지 적는다. 사유가 둘이고 서로
+        다른 사실이라 한 줄로 합치지 않는다 — 앞은 우리가 못 받은 것이고 뒤는
+        그 종목에 대해 잰 것이다.
+      */}
+      {pulse.turnoverMissingSymbols.length > 0 && (
+        <p className="theme-pulse__note">
+          거래대금이 오지 않은 {pulse.turnoverMissingSymbols.length}종목은 거래대금 합과 가중평균에서
+          빠졌습니다 ({pulse.turnoverMissingSymbols.slice(0, 6).join(', ')}
+          {pulse.turnoverMissingSymbols.length > 6 ? ' …' : ''}) — 0원이라는 뜻이 아니라 값을 못 받은
+          것입니다. 등락률에는 들어 있습니다.
+        </p>
+      )}
+      {pulse.turnoverZeroSymbols.length > 0 && (
+        <p className="theme-pulse__note">
+          오늘 거래대금이 0원인 {pulse.turnoverZeroSymbols.length}종목은 가중평균에서만 빠졌습니다 (
+          {pulse.turnoverZeroSymbols.slice(0, 6).join(', ')}
+          {pulse.turnoverZeroSymbols.length > 6 ? ' …' : ''}) — 호가는 살아 있고 아직 오늘 체결이 없는
+          것입니다. 거래대금 합과 등락률에는 들어 있습니다.
         </p>
       )}
       {/* 줄어든 자리를 전부 더해도 안 맞으면 설명되지 않은 나머지가 있다는 뜻이다. */}
@@ -1085,6 +1127,12 @@ function ThemePulseCard({ pulse }: { pulse: ThemePulse }): JSX.Element {
  * 정수로 반올림하면 걸린 종목과 통과한 종목이 둘 다 `0억`으로 보인다.
  */
 function formatOkeanAmount(won: number): string {
+  /*
+   * 정확히 0원은 억으로 접지 않는다. `0.0억`은 4백만원도 그렇게 보이므로
+   * "반올림해서 0"인지 "진짜 0"인지 구별되지 않는다 — 거래대금 0원은
+   * "오늘 한 주도 안 거래됐다"는 셀 수 있는 사실이라 그대로 적는다.
+   */
+  if (won === 0) return '0원';
   const eok = won / 100_000_000;
   if (eok >= 100) return `${Math.round(eok).toLocaleString('ko-KR')}억`;
   return `${eok.toFixed(1)}억`;

@@ -151,10 +151,33 @@ export function aggregateThemePulse(
   rows.sort((a, b) => b.changeRate - a.changeRate);
 
   const rates = rows.map((row) => row.changeRate);
-  const withTurnover = rows.filter(
-    (row): row is ThemePulseMember & { turnover: number } => row.turnover !== undefined && row.turnover > 0,
-  );
+  /*
+   * 가중평균에서 빠지는 이유가 둘인데 예전에는 `turnoverCount` 한 칸으로만 나가
+   * 구별이 없었다. 둘은 다른 사실이다.
+   *
+   *   - **값이 안 왔다** — 해외·선물·야간 환산가처럼 KIS가 거래대금을 주지 않는
+   *     경로다. 우리가 모르는 것이라 **거래대금 합에도 못 넣는다.** 0원으로 세면
+   *     합이 실제보다 작아진다.
+   *   - **0원이다** — 호가는 살아 있는데 오늘 아직 체결이 없다. 이건 잰 사실이라
+   *     합에는 0원으로 들어가고, 가중평균에서만 빠진다(0을 곱하면 없는 것과 같다).
+   *
+   * 2026-07-31 14:02·14:16 실전 서버 실측(테마 302개 합집합 2,113종목, 두 번 같은 값):
+   * 둘 다 0종목이라 지금 화면에 보이는 값은 달라지지 않는다. 거래대금 0원인 92종목은
+   * 전부 호가까지 비어 `noOrderBookSymbols`에서 이미 빠졌기 때문이다. 갈라 두는 것은
+   * 이 둘이 나타나는 시간대(장전·개장 직후)를 재지 않았기 때문이고, 그때 한 칸으로
+   * 합쳐 있으면 "필드가 안 왔다"와 "오늘 안 거래됐다"를 구별할 수 없다.
+   */
+  const turnoverMissingSymbols: string[] = [];
+  const turnoverZeroSymbols: string[] = [];
+  const withTurnover: Array<{ changeRate: number; turnover: number }> = [];
+  for (const row of rows) {
+    if (row.turnover === undefined) turnoverMissingSymbols.push(row.symbol);
+    else if (row.turnover === 0) turnoverZeroSymbols.push(row.symbol);
+    else withTurnover.push({ changeRate: row.changeRate, turnover: row.turnover });
+  }
   const turnoverSum = withTurnover.reduce((sum, row) => sum + row.turnover, 0);
+  // 합계를 낼 수 있는 종목이 하나라도 있는가. 0원짜리도 여기 든다 — 0원은 잰 사실이다.
+  const hasTurnoverSum = withTurnover.length + turnoverZeroSymbols.length > 0;
   const middle = median(rates);
   const average = mean(rates);
 
@@ -170,14 +193,22 @@ export function aggregateThemePulse(
     // 시세가 하나도 없으면 값 자체를 담지 않는다. 0%는 "안 움직였다"는 다른 사실이다.
     ...(middle !== undefined ? { changeRateMedian: middle } : {}),
     ...(average !== undefined ? { changeRateMean: average } : {}),
+    // 0으로 나눌 수 없다. 거래대금이 전부 0원이면 "돈이 어디로 도는지"를 낼 수 없다.
     ...(turnoverSum > 0
       ? {
           changeRateWeighted:
             withTurnover.reduce((sum, row) => sum + row.changeRate * row.turnover, 0) / turnoverSum,
-          turnover: turnoverSum,
         }
       : {}),
+    /*
+     * 합계는 가중평균과 조건이 다르다. **합 0원과 값 없음을 겸하지 않는다** —
+     * 아무도 안 거래한 테마의 0원은 잰 사실이고, 화면이 `값 없음`이라 적으면
+     * 못 받은 것으로 읽힌다.
+     */
+    ...(hasTurnoverSum ? { turnover: turnoverSum } : {}),
     turnoverCount: withTurnover.length,
+    turnoverMissingSymbols,
+    turnoverZeroSymbols,
     advancing: rows.filter((row) => row.changeRate > 0).length,
     declining: rows.filter((row) => row.changeRate < 0).length,
     unchanged: rows.filter((row) => row.changeRate === 0).length,
