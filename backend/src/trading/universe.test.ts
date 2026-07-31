@@ -13,7 +13,7 @@ import { describe, it } from 'node:test';
 
 import type { Quote } from '@invest/shared';
 
-import { MIN_DAILY_TURNOVER, screenQuote, sessionElapsedRatio } from './universe.js';
+import { knownRangeRate, MIN_DAILY_TURNOVER, screenQuote, sessionElapsedRatio } from './universe.js';
 
 /** 넉넉히 통과하는 기본값. 시험마다 필요한 값만 덮어쓴다. */
 function quote(overrides: Partial<Quote> = {}): Quote {
@@ -108,6 +108,39 @@ describe('후보 거르기 — 왕복 비용', () => {
      * 0으로 읽고 거르면, 모르는 것을 나쁜 것으로 단정하는 셈이다.
      */
     assert.equal(screenQuote(quote({ high: 0, low: 0 }), 1), null);
+    assert.equal(knownRangeRate(quote({ high: 0, low: 0 })), undefined);
+    // KIS가 빈 문자열을 준 자리는 NaN으로 온다. 그것도 모르는 것이다.
+    assert.equal(knownRangeRate(quote({ high: NaN, low: NaN })), undefined);
+  });
+
+  it('고가 = 저가는 아는 값이다 — 폭 0이라 걸린다', () => {
+    /*
+     * 예전에는 `range > 0` 가드가 이 종목의 비용 검사를 통째로 건너뛰어,
+     * **1원 움직인 종목은 버리면서 한 푼도 안 움직인 종목은 통과**시켰다.
+     * 폭이 넓을수록 나쁠 수는 없다.
+     *
+     * 2026-07-31 장중 실측: `000227 유유제약2우B`가 09:35·10:00 두 회차 모두
+     * `pass`였다. 거래대금이 8,684,600원으로 1원도 안 바뀐 채였다 — 25분간
+     * 체결이 없는데 유동성은 누적값이라 통과하고 비용은 고가=저가라 면제됐다.
+     */
+    const flat = quote({ price: 10_000, high: 10_000, low: 10_000 });
+    assert.equal(knownRangeRate(flat), 0);
+    assert.equal(screenQuote(flat, 1), 'costHeavy');
+  });
+
+  it('폭이 넓어질수록 판정이 나빠지지 않는다', () => {
+    /*
+     * 폭 0 → 2원 → 80원 → 86원(문턱 0.860%) → 400원. 문턱을 한 번 넘은 뒤
+     * 다시 탈락으로 돌아가면 안 된다. 예전 코드는 폭 0에서만 통과였다.
+     */
+    const verdicts = [0, 1, 40, 43, 200].map((half) =>
+      screenQuote(quote({ price: 10_000, high: 10_000 + half, low: 10_000 - half }), 1),
+    );
+    assert.deepEqual(verdicts, ['costHeavy', 'costHeavy', 'costHeavy', null, null]);
+  });
+
+  it('고가가 저가보다 낮으면 모르는 것으로 둔다 — 음수 폭을 만들지 않는다', () => {
+    assert.equal(knownRangeRate(quote({ high: 9_900, low: 10_100 })), undefined);
   });
 
   it('유동성이 먼저 걸리면 그 사유로 돌려준다', () => {

@@ -16,6 +16,7 @@
 import { getCategoryInstruments } from '../db/instruments.js';
 import { getInstrumentQuotes, MULTI_QUOTE_MAX_CODES } from '../kis/rest.js';
 import {
+  knownRangeRate,
   MAX_COST_SHARE_OF_RANGE,
   MIN_DAILY_TURNOVER,
   ROUND_TRIP_COST_RATE,
@@ -97,7 +98,12 @@ export async function runScreening(cash: number, lookups: number): Promise<Scree
       unresolved += 1;
       continue;
     }
-    const range = quote.high - quote.low;
+    /*
+     * 판정과 **같은 함수**로 잰다. 예전에는 여기서 `range > 0 ? … : undefined`를
+     * 따로 계산해서, 한 값에만 체결된 종목이 화면에는 `없음`으로 뜨는데 판정은
+     * `pass`였다 — 두 자리가 서로 다른 규칙을 들고 있었다.
+     */
+    const rangeRate = knownRangeRate(quote);
     rows.push({
       instrumentId: instrument.id,
       symbol: instrument.symbol,
@@ -106,7 +112,8 @@ export async function runScreening(cash: number, lookups: number): Promise<Scree
       changeRate: quote.changeRate,
       // KIS가 준 실제 누적 거래대금. 값이 없는 경로만 현재가 × 거래량으로 어림한다.
       turnover: quote.turnover ?? quote.price * quote.accVolume,
-      rangeRate: range > 0 ? (range / quote.price) * 100 : undefined,
+      // 모르면 `undefined`, 한 값에만 체결됐으면 `0`이다. 둘은 다른 사실이다.
+      rangeRate: rangeRate === undefined ? undefined : rangeRate * 100,
       // 값비싸서 못 사는 것이 먼저다. 살 수도 없는 종목을 유동성으로 거르면
       // 사유가 뒤바뀐다 — 자동매매도 이 순서로 본다.
       verdict: quote.price > cash ? 'tooExpensive' : (screenQuote(quote, elapsed) ?? 'pass'),

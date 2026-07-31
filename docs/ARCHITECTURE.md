@@ -164,9 +164,30 @@ frontend/src/
 backend/src/trading/
 ├── strategy.ts    # Strategy 인터페이스 + 이동평균 교차 / 변동성 돌파 / 평균 회귀
 ├── universe.ts    # 후보 고르기 (국내 주문 가능 + 살 수 있는 가격 + 리스크 룰)
+├── screening.ts   # 같은 판정을 화면에 보이게 (거른 것도 사유와 함께 돌려준다)
 ├── autoTrader.ts  # 러너 (주기 실행, 목표·중단선·연속 실패 시 자동 정지)
-└── backtest.ts    # 성과 측정 (다음 봉 시가 체결, 비용 차감, in/out-of-sample)
+├── backtest.ts    # 성과 측정 (다음 봉 시가 체결, 비용 차감, in/out-of-sample)
+└── rangeExpansion.ts  # 문턱을 정하려고 재는 계산 (순수 함수, 아래 참고)
 ```
+
+후보 거르기의 문턱(`MIN_DAILY_TURNOVER`·`MAX_COST_SHARE_OF_RANGE`)은 **재서**
+정한다. `rangeExpansion.ts`는 그 측정의 계산부고, 실제로 재는 것은
+`scripts/measureRangeExpansion.ts`(KIS로 과거 분봉을 받아 재구성) →
+`scripts/analyzeRangeExpansion.ts`(받아 둔 표본만 읽어 해석) 두 단계다.
+받는 것과 해석하는 것을 갈라 둔 이유는, 종목·하루당 KIS 5회가 나가므로 보는
+각도를 바꿀 때마다 다시 받을 수 없기 때문이다. 잰 결과는 `docs/USER_FINDINGS.md`.
+
+### `backend/src/scripts/` — 조사용 스크립트의 KIS 경계
+
+**일회성 조사 스크립트는 KIS를 직접 부른다.** `captureAuction.ts`·`dumpQuoteRaw.ts`·
+`probeIntradayHistory.ts`·`measureRangeExpansion.ts`가 `config.restBase`와
+`getAccessToken(primaryCredentials)`로 직접 URL을 짜고 원본 필드명을 읽는다.
+"무엇이 오는지"를 확인하려고 만든 것이라 정규화하면 그 목적이 사라진다.
+
+**이 예외는 `scripts/`까지다.** 원본 필드가 `server.ts`나 프론트로 흘러가면 안
+된다는 규칙은 그대로다. 어떤 조사 경로가 화면 기능이 되면 그때 `kis/`로 옮긴다 —
+`measureRangeExpansion.ts`의 날짜 지정 분봉 조회가 그 후보다(지금
+`getInstrumentIntradayCandles`는 오늘 날짜가 박혀 있고 120봉만 준다).
 
 안전 순서는 **전략 → 러너 → 리스크 룰 → 게이트**다. 전략은 "무엇을 살지"만
 정하고 "내도 되는지"는 뒤쪽이 본다. 전략이 안전장치를 알면 두 곳에서 같은

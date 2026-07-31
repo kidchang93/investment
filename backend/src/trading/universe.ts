@@ -145,6 +145,32 @@ export interface UniverseRejections {
 }
 
 /**
+ * 오늘 고가−저가를 지금 값으로 나눈 비율. **모르는 것과 0인 것을 가른다.**
+ *
+ * 고가·저가를 아직 못 받았으면 `undefined`, 받았는데 한 값이면 `0`이다.
+ * 둘은 다른 사실이다 — 앞은 "아직 모른다", 뒤는 "오늘 한 값에만 체결됐다"다.
+ *
+ * ── 왜 갈라야 하나 (2026-07-31 장중 실측) ────────────────────────────────
+ *
+ * 예전에는 `if (range > 0)` 하나로 둘을 함께 건너뛰었다. 그래서 **1원 움직인
+ * 종목은 `costHeavy`로 버리면서 한 푼도 안 움직인 종목은 통과**시켰다. 문턱을
+ * 어느 쪽으로 정하든 이 순서는 성립하지 않는다 — 폭이 넓을수록 나쁠 수는 없다.
+ *
+ * 실제로 `000227 유유제약2우B`가 09:35과 10:00 두 회차 모두 `pass`였다.
+ * 거래대금이 8,684,600원으로 **1원도 안 바뀐** 채였다 — 25분 동안 체결이 한
+ * 건도 없었는데 유동성은 누적값이라 통과하고 비용은 고가=저가라 면제됐다.
+ *
+ * `high`·`low`가 NaN이거나 0이면 비교가 전부 거짓이라 `undefined`로 떨어진다.
+ * KIS는 값이 없는 자리에 빈 문자열을 주고 거래정지 종목은 고가·저가가 0이다.
+ */
+export function knownRangeRate(quote: Quote): number | undefined {
+  if (!(quote.price > 0) || !(quote.high > 0) || !(quote.low > 0)) return undefined;
+  // 고가 < 저가는 성립하지 않는 값이다. 억지로 음수 폭을 만들지 않는다.
+  if (quote.high < quote.low) return undefined;
+  return (quote.high - quote.low) / quote.price;
+}
+
+/**
  * 유동성·비용으로 거른다. 통과하면 null, 걸리면 사유.
  *
  * 두 조건 모두 "백테스트에서는 되는데 실제로는 안 되는" 것을 잡는다.
@@ -171,11 +197,36 @@ export function screenQuote(quote: Quote, elapsed: number): keyof UniverseReject
   const turnover = quote.turnover ?? quote.price * quote.accVolume;
   if (turnover < MIN_DAILY_TURNOVER * elapsed) return 'illiquid';
 
-  const range = quote.high - quote.low;
-  // 고가·저가가 아직 안 잡힌 종목(장 초반·거래 없음)은 이 잣대로 거르지 않는다.
-  if (range > 0 && quote.price > 0) {
-    const rangeRate = range / quote.price;
-    if (ROUND_TRIP_COST_RATE > rangeRate * MAX_COST_SHARE_OF_RANGE) return 'costHeavy';
+  /*
+   * 고가·저가를 아직 못 받은 종목은 이 잣대로 거르지 않는다 — 모르는 것을
+   * 나쁜 것으로 단정하는 셈이다. 다만 **받았는데 한 값인 것은 아는 값이다.**
+   * 폭이 0이면 왕복 비용을 이길 길이 없으므로 그대로 걸린다.
+   *
+   * ── 이 문턱은 시간비례가 아니다. 그건 잰 결과다 ─────────────────────────
+   *
+   * 위 유동성 문턱만 `elapsed`를 곱한다. 거래대금은 시간에 쌓이지만 고가−저가는
+   * **누적이 아니라 범위**라 같은 방식으로 나눌 수 없다. 그러면 어떻게 나눠야
+   * 하는지를 2026-07-31에 과거 3개월을 재구성해 쟀다
+   * (`scripts/measureRangeExpansion.ts` → `docs/USER_FINDINGS.md`).
+   *
+   * 후보 둘이 실측으로 **기각**됐다(50종목 × 15거래일, 2026-04-28~07-30).
+   * 폭이 벌어지는 속도가 둘 다보다 훨씬 느리다.
+   *
+   *   09:01 → 09:05  elapsed 5.00배 · √elapsed 2.24배 · **실제 폭 1.68배**
+   *   09:05 → 09:15  elapsed 3.00배 · √elapsed 1.73배 · **실제 폭 1.27배**
+   *
+   * 09:01에 이미 하루치 폭의 25.2%(중앙값)가 벌어져 있다. `elapsed`(0.26%)를
+   * 곱하면 문턱이 사실상 사라진다. 그래서 하루치 잣대를 그대로 둔다.
+   *
+   * **그렇다고 지금 값이 맞다는 뜻은 아니다.** 같은 측정에서 이 문턱은 장 초반에
+   * 너무 빡빡하고(09:01 헛탈락 34.7%p) 장 후반에 너무 헐겁다(15:00에 앞으로 남은
+   * 폭이 0.860%에 못 미치는데 통과시킨 것이 50.2%). 고치려면 "지나간 폭" 대신
+   * "앞으로 남을 폭"을 재야 하는데, 그건 상수 조정이 아니라 문턱이 무엇을 묻는지를
+   * 바꾸는 일이다. 무엇을 더 재야 정할 수 있는지는 `docs/USER_FINDINGS.md`에 적었다.
+   */
+  const rangeRate = knownRangeRate(quote);
+  if (rangeRate !== undefined && ROUND_TRIP_COST_RATE > rangeRate * MAX_COST_SHARE_OF_RANGE) {
+    return 'costHeavy';
   }
   return null;
 }
