@@ -372,7 +372,7 @@ function isFutureAssetType(assetType: Instrument['assetType']): boolean {
   return assetType === 'future' || assetType === 'future_spread';
 }
 
-interface TradingViewQuote {
+interface TradingViewFields {
   close: number;
   change?: number;
   change_abs?: number;
@@ -381,6 +381,16 @@ interface TradingViewQuote {
   low?: number;
   volume?: number;
   currency?: string;
+}
+
+/**
+ * TradingView 응답 + **받은 시각**.
+ *
+ * 야간 환산가는 이 값 둘(원주·환율)과 국내 현재가 하나를 합쳐 만든다. 합친 값의
+ * 나이는 셋 중 가장 묵은 것이라, 부분마다 시각을 들고 있어야 그걸 낼 수 있다.
+ */
+interface TradingViewQuote extends TradingViewFields {
+  fetchedAt: number;
 }
 
 const NIGHT_PROXY_SPECS: Record<
@@ -414,11 +424,12 @@ async function fetchTradingViewQuote(symbol: string): Promise<TradingViewQuote> 
     if (!res.ok) {
       throw new Error(`TradingView 조회 실패 (${res.status})`);
     }
-    const json = (await res.json()) as Partial<TradingViewQuote> & { code?: string; errmsg?: string };
+    const json = (await res.json()) as Partial<TradingViewFields> & { code?: string; errmsg?: string };
+    const fetchedAt = Date.now();
     if (json.code || !Number.isFinite(json.close)) {
       throw new Error(`TradingView 응답이 올바르지 않습니다: ${symbol}`);
     }
-    return json as TradingViewQuote;
+    return { ...(json as TradingViewFields), fetchedAt };
   } finally {
     clearTimeout(timeout);
   }
@@ -436,7 +447,8 @@ export async function getUsdKrwExchangeRate(): Promise<ExchangeRate> {
     rate,
     change,
     changeRate,
-    fetchedAt: Date.now(),
+    // 응답을 받은 시각. `Date.now()`를 여기서 다시 부르면 계산 시간만큼 새 값처럼 보인다.
+    fetchedAt: quote.fetchedAt,
   };
 }
 
@@ -535,6 +547,12 @@ export async function getQuote(code: string): Promise<Quote> {
     'FHKST01010100',
     { FID_COND_MRKT_DIV_CODE: 'J', FID_INPUT_ISCD: code },
   );
+  /*
+   * 응답을 받은 순간을 찍는다. KIS는 시세에 시각을 주지 않는다 — 이 응답의
+   * output 80필드에 "이 값의 시각"이 없다(2026-07-31 실측). 정규화가 끝난 뒤에
+   * 찍어도 실질 차이는 없지만, 뒤에 무거운 계산이 붙으면 그만큼 새 값처럼 보인다.
+   */
+  const fetchedAt = Date.now();
   const o = (json.output ?? {}) as Record<string, string>;
   /*
    * 누적 거래대금은 단건·멀티시세가 같은 필드명(acml_tr_pbmn)으로 준다. 값을
@@ -544,6 +562,7 @@ export async function getQuote(code: string): Promise<Quote> {
   const turnover = toNumberOrNaN(o.acml_tr_pbmn);
   return {
     code,
+    fetchedAt,
     price: requireNumber(o.stck_prpr, 'stck_prpr'),
     change: requireNumber(o.prdy_vrss, 'prdy_vrss'),
     changeRate: requireNumber(o.prdy_ctrt, 'prdy_ctrt'),
@@ -601,6 +620,8 @@ export async function getDomesticQuotes(codes: string[]): Promise<QuoteBatchResu
     result.calls += 1;
     try {
       const json = await kisGet(MULTI_QUOTE_PATH, MULTI_QUOTE_TR_ID, multiQuoteParams(chunk));
+      // 이 묶음 30종목이 같이 받은 시각. 묶음마다 따로 찍는다 — 앞 묶음과 뒤 묶음은 나이가 다르다.
+      const fetchedAt = Date.now();
       /*
        * rt_cd를 먼저 본다. 실패 응답에는 output이 아예 없어 "전부 빈 행"으로 보이는데,
        * 그러면 종목이 없어진 것과 조회가 깨진 것이 같은 모양이 된다.
@@ -609,7 +630,7 @@ export async function getDomesticQuotes(codes: string[]): Promise<QuoteBatchResu
         throw new Error(`KIS 멀티시세 실패 (${json.msg_cd ?? ''}): ${json.msg1 ?? ''}`);
       }
       const rows = (json.output ?? []) as Array<Record<string, string>>;
-      const parsed = parseMultiQuoteChunk(chunk, Array.isArray(rows) ? rows : []);
+      const parsed = parseMultiQuoteChunk(chunk, Array.isArray(rows) ? rows : [], fetchedAt);
       for (const quote of parsed.quotes) result.quotes.set(quote.code, quote);
       result.blank.push(...parsed.blank);
     } catch (err) {
@@ -1020,6 +1041,7 @@ async function getTradingViewInstrumentQuote(instrument: Instrument): Promise<Qu
   const changeRate = Number((quote.change ?? (quote.open ? change / quote.open * 100 : 0)).toFixed(2));
   return {
     code: instrument.id,
+    fetchedAt: quote.fetchedAt,
     price,
     change,
     changeRate,
@@ -1056,6 +1078,11 @@ async function getNightProxyQuote(instrument: Instrument): Promise<Quote> {
 
   return {
     code: instrument.id,
+    /*
+     * 셋을 합쳐 만든 값이라 **가장 묵은 부분만큼 묵었다.** 셋을 나란히 부르므로
+     * 실제 차이는 작지만, 한쪽이 늦거나 느려지면 그 사실이 여기로 드러나야 한다.
+     */
+    fetchedAt: Math.min(source.fetchedAt, fx.fetchedAt, regularQuote.fetchedAt),
     price: price as number,
     change,
     changeRate,
@@ -1077,9 +1104,11 @@ async function getDomesticFutureQuote(instrument: Instrument): Promise<Quote> {
       FID_INPUT_ISCD: instrument.providerSymbol,
     },
   );
+  const fetchedAt = Date.now();
   const o = (json.output1 ?? {}) as Record<string, string>;
   return {
     code: instrument.id,
+    fetchedAt,
     price: requireNumber(o.futs_prpr, 'futs_prpr'),
     change: requireNumber(o.futs_prdy_vrss, 'futs_prdy_vrss'),
     changeRate: requireNumber(o.futs_prdy_ctrt, 'futs_prdy_ctrt'),
@@ -1098,10 +1127,12 @@ async function getOverseasFutureQuote(instrument: Instrument): Promise<Quote> {
     'HHDFC55010000',
     { SRS_CD: instrument.providerSymbol },
   );
+  const fetchedAt = Date.now();
   const rows = json.output1;
   const o = (Array.isArray(rows) ? rows[0] : rows ?? {}) as Record<string, string>;
   return {
     code: instrument.id,
+    fetchedAt,
     price: requireNumber(o.last_price, 'last_price'),
     change: requireNumber(o.prev_diff_price, 'prev_diff_price'),
     changeRate: requireNumber(o.prev_diff_rate, 'prev_diff_rate'),
@@ -2171,11 +2202,14 @@ async function getOverseasQuote(instrument: Instrument): Promise<Quote> {
       SYMB: instrument.providerSymbol,
     }),
   ]);
+  // 둘을 나란히 부르므로 늦게 온 쪽이 이 시각이다. 값의 나이는 이보다 크다.
+  const fetchedAt = Date.now();
   const priceOutput = (priceJson.output ?? {}) as Record<string, string>;
   const detailOutput = (detailJson.output ?? {}) as Record<string, string>;
   const price = requireNumber(priceOutput.last, 'last');
   return {
     code: instrument.id,
+    fetchedAt,
     price,
     change: requireNumber(priceOutput.diff, 'diff'),
     changeRate: requireNumber(priceOutput.rate, 'rate'),

@@ -39,6 +39,8 @@ function instrument(symbol: string, name: string, overrides: Partial<Instrument>
 function quote(id: string, changeRate: number, turnover?: number): Quote {
   return {
     code: id,
+    // 이 시험이 나이를 보지는 않지만, 시각 없는 시세는 만들 수 없다.
+    fetchedAt: Date.parse('2026-07-31T00:54:11.441Z'),
     price: 10_000,
     change: 100,
     changeRate,

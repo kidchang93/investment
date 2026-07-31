@@ -111,10 +111,14 @@ export function multiQuoteParams(codes: string[]): Record<string, string> {
  * **자리를 코드로 검산한다.** 없는 코드가 빈 행으로 자리를 지킨다는 것은 실측으로
  * 확인했지만, 언젠가 KIS가 그 행을 빼면 뒤가 통째로 한 칸씩 밀린다. 그때 나오는
  * 값은 **다른 종목의 그럴듯한 가격**이라 형식 검사로는 절대 안 걸린다. 어긋나면 던진다.
+ *
+ * `fetchedAt`은 인자로 받는다. 여기서 `Date.now()`를 부르면 파싱 시각이 찍히고,
+ * 시험이 시계를 갈아 끼워야 돌아간다. 응답을 받은 쪽(`rest.ts`)이 그 시각을 안다.
  */
 export function parseMultiQuoteChunk(
   requestedCodes: string[],
   rows: Array<Record<string, string>>,
+  fetchedAt: number,
 ): MultiQuoteChunkResult {
   if (rows.length !== requestedCodes.length) {
     throw new Error(
@@ -138,7 +142,7 @@ export function parseMultiQuoteChunk(
         `멀티시세 응답 순서가 요청과 어긋났습니다: ${index + 1}번째에 ${requested}를 물었는데 ${code}가 왔습니다`,
       );
     }
-    const quote = toQuote(code, row);
+    const quote = toQuote(code, row, fetchedAt);
     if (!quote) {
       // 코드는 왔는데 숫자가 안 온 행. 0으로 채우면 "거래대금 0"으로 읽혀
       // 유동성 문턱에 걸린 것처럼 보인다. 값이 없는 것은 값이 아니다.
@@ -160,7 +164,7 @@ export function parseMultiQuoteChunk(
  * 빈 문자열을 `Number()`에 넣으면 **0**이 나오므로 `toNumberOrNaN`으로 읽는다.
  * 그냥 읽으면 값이 안 온 종목이 "거래대금 0원"이 되어 사실이 하나 지어진다.
  */
-function toQuote(code: string, row: Record<string, string>): Quote | null {
+function toQuote(code: string, row: Record<string, string>, fetchedAt: number): Quote | null {
   const price = toNumberOrNaN(row.inter2_prpr);
   const change = toNumberOrNaN(row.inter2_prdy_vrss);
   const changeRate = toNumberOrNaN(row.prdy_ctrt);
@@ -182,6 +186,8 @@ function toQuote(code: string, row: Record<string, string>): Quote | null {
 
   return {
     code,
+    // 응답 하나에서 나온 30종목은 전부 같은 시각이다. 행마다 다시 재면 파싱 순서가 나이가 된다.
+    fetchedAt,
     price,
     change,
     changeRate,

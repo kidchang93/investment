@@ -319,6 +319,27 @@ export interface Trade {
 /** 단순 현재가 스냅샷 */
 export interface Quote {
   code: string;
+  /**
+   * 이 값을 **받은 시각** (ms).
+   *
+   * **KIS는 시세에 시각을 주지 않는다.** 현재가(`inquire-price`) 응답 80필드,
+   * 멀티시세 29필드 어디에도 "이 값이 언제 것인지"가 없다 (2026-07-31 실전
+   * 실측 — 날짜가 들어간 필드는 `w52_hgpr_date` 같은 52주 최고가 날짜뿐이다).
+   * 그래서 이건 거래소가 값을 만든 시각이 아니라 우리가 응답을 받은 시각이고,
+   * 값의 실제 나이는 `now - fetchedAt` **이상**이다. 하한이지 정확한 나이가 아니다.
+   *
+   * **다시 쓸 때 새로 찍지 않는다.** 서버가 같은 값을 캐시에서 꺼내 줄 때
+   * 지금 시각을 넣으면 묵은 값이 방금 것으로 보인다 — 2026-07-31 장중 실측에서
+   * `/api/instruments/quotes`가 45초까지 같은 값을 돌려줬고, 그 45초 동안
+   * 000660이 1,601,000 → 1,588,000원(−0.81%) 움직였다. 그때 화면은
+   * `갱신 3초 전`이라고 적고 있었다.
+   *
+   * 이름은 `OrderBook.fetchedAt`·`MarketMoversSnapshot.fetchedAt`과 맞췄다.
+   * `ScreeningResult.scannedAt`·`ThemePulseBatch.measuredAt`이 다른 말인 것은
+   * 갈라진 게 아니라 대상이 달라서다 — 그쪽은 **한 회차**의 시각이고 이건
+   * **값 하나**의 시각이다.
+   */
+  fetchedAt: number;
   price: number;
   change: number;
   changeRate: number;
@@ -337,6 +358,38 @@ export interface Quote {
    * 어림한 값을 쓸 자리라면 어림한 쪽에서 그렇게 밝힌다.
    */
   turnover?: number;
+}
+
+/**
+ * 받은 시세를 화면 저장소에 반영할지.
+ *
+ * 한 종목의 시세가 두 길로 온다 — 선택 종목은 단건(`/api/instruments/:id/quote`,
+ * 캐시 없음)으로, 목록은 묶음(`/api/instruments/quotes`, 45초 캐시)으로. 늦게
+ * 도착한 쪽이 무조건 이기면 **방금 받은 값이 캐시에서 나온 묵은 값에 덮인다.**
+ * 시각이 없던 때는 그 일이 나도 알 방법이 없었다.
+ *
+ * 같은 시각이면 덮는다 — 같은 나이의 값이라 어느 쪽을 써도 같고, 안 덮으면
+ * 첫 값이 영영 남는다.
+ */
+export function shouldReplaceQuote(current: Quote | undefined, incoming: Quote): boolean {
+  if (!current) return true;
+  return incoming.fetchedAt >= current.fetchedAt;
+}
+
+/**
+ * 여러 시세 중 **가장 묵은** 시각. 화면이 "적어도 이때 것"이라고 말할 수 있게 한다.
+ *
+ * 가장 새 값을 쓰면 한 종목만 방금 왔어도 목록 전체가 새것처럼 보인다. 빈
+ * 목록은 `undefined`다 — `Math.min()`은 인자가 없으면 `Infinity`라 그대로 쓰면
+ * 나이가 음수가 된다.
+ */
+export function oldestFetchedAt(quotes: Quote[]): number | undefined {
+  let oldest: number | undefined;
+  for (const quote of quotes) {
+    if (!Number.isFinite(quote.fetchedAt)) continue;
+    if (oldest === undefined || quote.fetchedAt < oldest) oldest = quote.fetchedAt;
+  }
+  return oldest;
 }
 
 /** 호가 한 단계. 같은 층의 팔자(ask)와 사자(bid)를 마주 놓는다. */

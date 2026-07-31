@@ -29,6 +29,15 @@ import {
 /** 실측(2026-07-31): 31종목을 넣으면 rt_cd=0으로 응답하면서 30행만 온다. */
 const MEASURED_MAX_CODES = 30;
 
+/**
+ * 응답을 받은 시각. 파서는 이 값을 **그대로 옮겨 담아야** 한다.
+ *
+ * KIS는 시세에 시각을 주지 않으므로(응답 29필드에 없다) 나이는 우리가 찍는
+ * 수밖에 없다. 파서가 제 시계(`Date.now()`)를 보면 파싱 시각이 찍히고, 그러면
+ * 캐시에서 다시 꺼낼 때 나이가 지워진다. 픽스처 녹화 시각을 그대로 쓴다.
+ */
+const FETCHED_AT = Date.parse('2026-07-31T00:54:11.441Z');
+
 interface Fixture {
   recordedAt: string;
   requestedSymbols: string[];
@@ -105,19 +114,20 @@ describe('parseMultiQuoteChunk — 실제 응답 30종목', () => {
   });
 
   it('30종목 전부를 시세로 바꾼다 — 빈 자리 없음', () => {
-    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output);
+    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output, FETCHED_AT);
     assert.equal(parsed.quotes.length, 30);
     assert.deepEqual(parsed.blank, []);
     assert.deepEqual(parsed.quotes.map((q) => q.code), f.requestedSymbols);
   });
 
   it('값이 단건 조회(FHKST01010100)와 같다 — 같은 시각 실측치를 못 박는다', () => {
-    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output);
+    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output, FETCHED_AT);
     const byCode = new Map(parsed.quotes.map((q) => [q.code, q]));
 
     // 2026-07-30 종가. 단건 조회로 같은 값을 확인했다(probeMultiQuote compare).
     assert.deepEqual(byCode.get('000660'), {
       code: '000660',
+      fetchedAt: FETCHED_AT,
       price: 1_322_000,
       change: -79_000,
       changeRate: -5.64,
@@ -130,6 +140,7 @@ describe('parseMultiQuoteChunk — 실제 응답 30종목', () => {
     });
     assert.deepEqual(byCode.get('005930'), {
       code: '005930',
+      fetchedAt: FETCHED_AT,
       price: 207_000,
       change: -1_500,
       changeRate: -0.72,
@@ -148,7 +159,7 @@ describe('parseMultiQuoteChunk — 실제 응답 30종목', () => {
    * +2.59%인 것을 "실측 2.5%"로 문서 세 곳에 적었다가 검증에서 걸렸다.
    */
   it('거래대금은 어림이 아니라 실제 값이다 — 005930은 어림이 2.59% 작다', () => {
-    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output);
+    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output, FETCHED_AT);
     const samsung = parsed.quotes.find((q) => q.code === '005930');
     assert.ok(samsung);
     const estimate = samsung.price * samsung.accVolume;
@@ -158,8 +169,25 @@ describe('parseMultiQuoteChunk — 실제 응답 30종목', () => {
     assert.ok(Math.abs(estimate - (samsung.turnover ?? 0)) > 249_000_000_000);
   });
 
+  /*
+   * 시각을 인자로 받는 이유. 파서가 `Date.now()`를 부르면 이 시험이 죽는다 —
+   * 픽스처는 2026-07-31 00:54 녹화분이고, 지금 시각과 같을 수 없다.
+   */
+  it('받은 시각을 그대로 옮겨 담는다 — 파서가 제 시계를 보지 않는다', () => {
+    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output, FETCHED_AT);
+    assert.equal(parsed.quotes.length, 30);
+    for (const quote of parsed.quotes) {
+      assert.equal(quote.fetchedAt, FETCHED_AT, `${quote.code}의 시각이 인자와 다르다`);
+    }
+  });
+
+  it('한 응답에서 나온 30종목은 시각이 하나다 — 파싱 순서가 나이가 되면 안 된다', () => {
+    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output, FETCHED_AT);
+    assert.deepEqual([...new Set(parsed.quotes.map((q) => q.fetchedAt))], [FETCHED_AT]);
+  });
+
   it('거래정지 종목의 0을 버리지 않는다 — 값이 0인 것과 값이 없는 것은 다르다', () => {
-    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output);
+    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output, FETCHED_AT);
     const halted = parsed.quotes.find((q) => q.code === '009310');
     assert.ok(halted, '009310은 시고저·거래량이 전부 0이지만 현재가는 5,330원이다');
     assert.equal(halted.price, 5_330);
@@ -186,7 +214,7 @@ describe('parseMultiQuoteChunk — 없는 종목코드가 섞인 실제 응답',
   });
 
   it('빈 자리는 blank로 빼고 나머지는 제자리 값을 그대로 준다', () => {
-    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output);
+    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output, FETCHED_AT);
     assert.deepEqual(parsed.blank, ['999999']);
     assert.deepEqual(parsed.quotes.map((q) => q.code), ['005930', '000660', '042700', '069500']);
 
@@ -202,7 +230,7 @@ describe('parseMultiQuoteChunk — 없는 종목코드가 섞인 실제 응답',
   });
 
   it('빈 자리를 0원짜리 시세로 만들지 않는다', () => {
-    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output);
+    const parsed = parseMultiQuoteChunk(f.requestedSymbols, f.response.output, FETCHED_AT);
     assert.equal(parsed.quotes.some((q) => q.price === 0), false);
     assert.equal(parsed.quotes.some((q) => q.code === '999999'), false);
   });
@@ -214,14 +242,14 @@ describe('parseMultiQuoteChunk — 없는 종목코드가 섞인 실제 응답',
     shifted.push(shifted[shifted.length - 1]);
     assert.equal(shifted.length, f.requestedSymbols.length);
     assert.throws(
-      () => parseMultiQuoteChunk(f.requestedSymbols, shifted),
+      () => parseMultiQuoteChunk(f.requestedSymbols, shifted, FETCHED_AT),
       /응답 순서가 요청과 어긋났습니다: 3번째에 999999를 물었는데 042700가 왔습니다/,
     );
   });
 
   it('행 수가 다르면 던진다 — 31종목을 물었을 때 30행이 오는 그 상황이다', () => {
     assert.throws(
-      () => parseMultiQuoteChunk([...f.requestedSymbols, '005490'], f.response.output),
+      () => parseMultiQuoteChunk([...f.requestedSymbols, '005490'], f.response.output, FETCHED_AT),
       /응답 행 수가 요청과 다릅니다: 요청 6종목, 응답 5행/,
     );
   });
@@ -233,14 +261,14 @@ describe('parseMultiQuoteChunk — 숫자가 아닌 값', () => {
 
   it('코드는 왔는데 현재가가 비면 blank다 — NaN을 흘리면 유동성 검사를 그냥 통과한다', () => {
     const broken = { ...good, inter2_prpr: '' };
-    const parsed = parseMultiQuoteChunk(['005930'], [broken]);
+    const parsed = parseMultiQuoteChunk(['005930'], [broken], FETCHED_AT);
     assert.deepEqual(parsed.quotes, []);
     assert.deepEqual(parsed.blank, ['005930']);
   });
 
   it('거래량이 숫자가 아니면 blank다', () => {
     const broken = { ...good, acml_vol: '-' };
-    const parsed = parseMultiQuoteChunk(['005930'], [broken]);
+    const parsed = parseMultiQuoteChunk(['005930'], [broken], FETCHED_AT);
     assert.deepEqual(parsed.blank, ['005930']);
   });
 
@@ -250,20 +278,20 @@ describe('parseMultiQuoteChunk — 숫자가 아닌 값', () => {
     assert.equal(Number(''), 0, '이 함정 때문에 toNumberOrNaN이 있다');
 
     const withoutTurnover = { ...good, acml_tr_pbmn: '' };
-    const parsed = parseMultiQuoteChunk(['005930'], [withoutTurnover]);
+    const parsed = parseMultiQuoteChunk(['005930'], [withoutTurnover], FETCHED_AT);
     assert.equal(parsed.quotes.length, 1);
     assert.equal('turnover' in parsed.quotes[0], false, '0으로 채우면 거래가 없었던 것으로 읽힌다');
     assert.equal(parsed.quotes[0].price, 207_000);
   });
 
   it('빈 문자열을 0으로 읽지 않는다 — 거래량이 비면 blank지 0이 아니다', () => {
-    const parsed = parseMultiQuoteChunk(['005930'], [{ ...good, acml_vol: '' }]);
+    const parsed = parseMultiQuoteChunk(['005930'], [{ ...good, acml_vol: '' }], FETCHED_AT);
     assert.deepEqual(parsed.quotes, []);
     assert.deepEqual(parsed.blank, ['005930']);
   });
 
   it('부호를 모르면 보합(3)으로 둔다 — 상승·하락 어느 쪽으로도 넘겨짚지 않는다', () => {
-    const parsed = parseMultiQuoteChunk(['005930'], [{ ...good, prdy_vrss_sign: '' }]);
+    const parsed = parseMultiQuoteChunk(['005930'], [{ ...good, prdy_vrss_sign: '' }], FETCHED_AT);
     assert.equal(parsed.quotes[0].sign, '3');
   });
 
@@ -279,7 +307,7 @@ describe('parseMultiQuoteChunk — 숫자가 아닌 값', () => {
    */
   it('현재가가 "0"이면 blank다 — 0원짜리 시세는 없는 사실이다', () => {
     const zeroPrice = { ...good, inter2_prpr: '0' };
-    const parsed = parseMultiQuoteChunk(['005930'], [zeroPrice]);
+    const parsed = parseMultiQuoteChunk(['005930'], [zeroPrice], FETCHED_AT);
     assert.deepEqual(parsed.quotes, [], '0원을 시세로 만들면 안 된다');
     assert.deepEqual(parsed.blank, ['005930']);
   });
@@ -288,7 +316,7 @@ describe('parseMultiQuoteChunk — 숫자가 아닌 값', () => {
     // 거래정지: 현재가는 있고 시고저·거래량만 0. 이건 살린다.
     // (009310 참엔지니어링 실측: 현재가 5,330 · 시고저 0 · 거래량 0)
     const halted = { ...good, inter2_oprc: '0', inter2_hgpr: '0', inter2_lwpr: '0', acml_vol: '0' };
-    const parsedHalted = parseMultiQuoteChunk(['005930'], [halted]);
+    const parsedHalted = parseMultiQuoteChunk(['005930'], [halted], FETCHED_AT);
     assert.equal(parsedHalted.quotes.length, 1, '거래정지 종목을 잃으면 안 된다');
     assert.equal(parsedHalted.quotes[0].accVolume, 0);
   });

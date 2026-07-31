@@ -22,6 +22,7 @@ import {
   seedDefaultWatchlist,
 } from './db/instruments.js';
 import { ensureThemeSchema, getThemeList, getThemeMembers } from './db/themes.js';
+import { QuoteCache } from './quoteCache.js';
 import { getThemePulses, THEME_PULSE_MAX_THEMES } from './themes/pulse.js';
 import { createOrderIntent, ensureTradingSchema, getFillByOrderId, getTradingOverview } from './db/trading.js';
 import { ensureAutoTraderSchema, getAutoTraderRuns } from './db/autoTrader.js';
@@ -107,7 +108,6 @@ import type {
  * 프런트가 쓰는 값은 `INSTRUMENT_QUOTE_BATCH`(shared)에 함께 두어 갈라지지 않게 한다.
  */
 const BATCH_QUOTE_LIMIT = INSTRUMENT_QUOTE_BATCH.limit;
-const QUOTE_CACHE_TTL_MS = 45_000;
 const STREAM_SUBSCRIBE_LIMIT = 80;
 /** 매수가능 조회가 성립하는 국내 자산 유형. 지수·선물·야간 프록시는 주문 대상이 아니다. */
 const ORDERABLE_DOMESTIC_ASSET_TYPES = new Set<InstrumentAssetType>(['stock', 'etf', 'etn']);
@@ -175,7 +175,11 @@ function resolveAccount(accountId?: string): KisAccountConfig | null | 'unknown'
   return account;
 }
 
-const quoteCache = new Map<string, { quote: Quote; fetchedAt: number }>();
+/*
+ * 캐시가 시각을 다시 찍지 않는다. 나이는 `Quote.fetchedAt` 하나로만 다닌다 —
+ * 그래야 캐시에서 나온 값이 45초 묵었다는 사실이 응답에 남는다 (`quoteCache.ts`).
+ */
+const quoteCache = new QuoteCache();
 
 function normalizeSubscribeInstruments(msg: ClientMessage): ClientSubscribeInstrument[] {
   const legacy = (msg.codes ?? []).map((code) => ({ code, market: 'KOSPI', assetType: 'stock' as const }));
@@ -1010,22 +1014,17 @@ async function main(): Promise<void> {
      * 사이에 120ms를 쉬었다 — 관심목록 40종목이면 40회에 5초였다.
      * 멀티시세는 국내 종목 30개가 1회다.
      */
-    const byId = new Map<string, Quote>();
-    const stale: string[] = [];
-    for (const id of ids) {
-      const cached = quoteCache.get(id);
-      if (cached && Date.now() - cached.fetchedAt < QUOTE_CACHE_TTL_MS) byId.set(id, cached.quote);
-      else stale.push(id);
-    }
+    const { hits, misses } = quoteCache.lookup(ids);
+    const byId = new Map<string, Quote>(hits);
 
-    if (stale.length > 0) {
-      const found = (await Promise.all(stale.map((id) => getInstrument(id)))).filter(
+    if (misses.length > 0) {
+      const found = (await Promise.all(misses.map((id) => getInstrument(id)))).filter(
         (instrument): instrument is Instrument => instrument !== null,
       );
       const batch = await getInstrumentQuotes(found);
-      const now = Date.now();
       for (const [id, quote] of batch.quotes) {
-        quoteCache.set(id, { quote, fetchedAt: now });
+        // 시각은 quote가 들고 온 것을 그대로 둔다. 여기서 다시 찍으면 나이가 지워진다.
+        quoteCache.store(id, quote);
         byId.set(id, quote);
       }
       // 못 받은 것을 조용히 넘기지 않는다. 화면에는 값이 없는 자리로 남는다.

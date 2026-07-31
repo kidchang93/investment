@@ -19,6 +19,8 @@ import { MIN_DAILY_TURNOVER, screenQuote, sessionElapsedRatio } from './universe
 function quote(overrides: Partial<Quote> = {}): Quote {
   return {
     code: 'KR:KOSPI:000000',
+    // 후보 거르기는 나이를 보지 않지만, 시각 없는 시세는 만들 수 없다.
+    fetchedAt: Date.parse('2026-07-31T00:54:11.441Z'),
     price: 10_000,
     change: 0,
     changeRate: 0,

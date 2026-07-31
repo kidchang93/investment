@@ -99,9 +99,11 @@ import {
   INSTRUMENT_QUOTE_BATCH,
   KRX_SESSION_MINUTES,
   krxSessionKind,
+  oldestFetchedAt,
   riskRuleBlockers,
   settledProfitRate,
   settledRealized,
+  shouldReplaceQuote,
 } from '@invest/shared';
 
 type RangeKey = '1M' | '3M' | '6M' | '1Y' | 'ALL';
@@ -768,6 +770,12 @@ const FEE_BROKERS: FeeBroker[] = [
 const OVERSEAS_REFRESH_MS = 5_000;
 const LIST_QUOTE_REFRESH_MS = 60_000;
 const FX_REFRESH_MS = 60_000;
+/*
+ * 이 문턱을 넘으면 `갱신 N초 전`이 낡은 색으로 바뀐다.
+ *
+ * 나이는 서버가 준 `Quote.fetchedAt`으로 재므로 **서버 캐시(45초)까지 포함한다** —
+ * 60초 주기 끝에서 최대 105초다. 주기나 서버 캐시를 늘리면 여기도 같이 봐야 한다.
+ */
 const QUOTE_STALE_MS = LIST_QUOTE_REFRESH_MS * 2;
 const TRADE_STALE_MS = 10_000;
 /*
@@ -2118,6 +2126,27 @@ function pendingQuoteLabel(instrument: Instrument): string {
   return closedSessionLabel(instrument) ?? '시세 대기';
 }
 
+/**
+ * 받은 시세를 저장소에 반영한다.
+ *
+ * 한 종목의 시세가 두 길로 온다 — 선택 종목은 단건(`/api/instruments/:id/quote`,
+ * 서버 캐시 없음)으로, 목록은 묶음(`/api/instruments/quotes`, 45초 캐시)으로.
+ * 도착 순서대로 덮으면 **방금 받은 값이 캐시에서 나온 묵은 값에 지워진다.**
+ * `Quote.fetchedAt`이 없던 때는 그 일이 나도 알 방법이 없었다.
+ *
+ * 바뀐 것이 없으면 원래 객체를 그대로 돌려준다 — 새 객체를 만들면 값이 같아도
+ * 리렌더가 돈다.
+ */
+function mergeQuotes(current: Record<string, Quote>, incoming: Quote[]): Record<string, Quote> {
+  let next: Record<string, Quote> | null = null;
+  for (const quote of incoming) {
+    if (!shouldReplaceQuote(current[quote.code], quote)) continue;
+    next ??= { ...current };
+    next[quote.code] = quote;
+  }
+  return next ?? current;
+}
+
 function toSnapshot(trade: Trade | undefined, quote: Quote | undefined): PriceSnapshot | undefined {
   if (trade) return trade;
   if (quote) return quote;
@@ -2674,7 +2703,18 @@ export function App(): JSX.Element {
     const timer = window.setTimeout(() => setError(null), 8000);
     return () => window.clearTimeout(timer);
   }, [error]);
-  const [quoteRefreshAt, setQuoteRefreshAt] = useState<number | null>(null);
+  /*
+   * 화면에 있는 시세 중 **가장 묵은 것의 시각.**
+   *
+   * 예전에는 여기에 `Date.now()`를 찍었다 — 뜻은 "응답을 받은 시각"이었지 값의
+   * 나이가 아니었다. 서버가 같은 값을 최대 45초까지 다시 주므로, 2026-07-31
+   * 장중 실측에서 45초 묵은 값에 `갱신 3초 전`이 붙어 있었다. 그 45초 동안
+   * 000660이 1,601,000 → 1,588,000원(−0.81%) 움직였다.
+   *
+   * 이제 서버가 `Quote.fetchedAt`을 준다. 가장 새 값이 아니라 **가장 묵은**
+   * 값으로 말한다 — 한 종목만 방금 와도 목록 전체가 새것처럼 보이면 안 된다.
+   */
+  const [oldestQuoteFetchedAt, setOldestQuoteFetchedAt] = useState<number | null>(null);
   const [isQuoteRefreshing, setIsQuoteRefreshing] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [intradayCandlesByCode, setIntradayCandlesByCode] = useState<Record<string, Candle[]>>({});
@@ -3358,7 +3398,7 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!selectedInstrument) return;
     fetchInstrumentQuote(selectedInstrument.id)
-      .then((res) => setQuotesByCode((m) => ({ ...m, [selectedInstrument.id]: res })))
+      .then((res) => setQuotesByCode((m) => mergeQuotes(m, [res])))
       .catch((e) => setError(toErrorMessage(e)));
   }, [selectedInstrument]);
 
@@ -3367,7 +3407,7 @@ export function App(): JSX.Element {
     if (!selectedInstrument || selectedInstrument.country === 'KR') return;
     const refresh = (): void => {
       void fetchInstrumentQuote(selectedInstrument.id)
-        .then((res) => setQuotesByCode((m) => ({ ...m, [selectedInstrument.id]: res })))
+        .then((res) => setQuotesByCode((m) => mergeQuotes(m, [res])))
         .catch((e) => setError(toErrorMessage(e)));
       void fetchInstrumentCandles(selectedInstrument.id)
         .then((res) => setCandlesByCode((m) => ({ ...m, [selectedInstrument.id]: res })))
@@ -3520,18 +3560,28 @@ export function App(): JSX.Element {
       if (quoteTargetIds.length === 0 || (respectVisibility && document.hidden)) return;
       setIsQuoteRefreshing(true);
       void (async () => {
+        /*
+         * 이번 회차에서 받은 것 중 가장 묵은 시각. 묶음마다 나이가 다르므로 계속 낮춰 간다.
+         * 더 묵어서 반영하지 않은 값도 세므로 실제 화면보다 조금 더 묵게 나올 수 있다 —
+         * 나이를 실제보다 크게 말하는 쪽이라 안전한 방향이다.
+         */
+        let cycleOldest: number | null = null;
         try {
           for (let index = 0; index < quoteTargetIds.length; index += LIST_QUOTE_REQUEST_CHUNK_SIZE) {
             if (!shouldApply()) return;
             const chunk = quoteTargetIds.slice(index, index + LIST_QUOTE_REQUEST_CHUNK_SIZE);
             const quotes = await fetchInstrumentQuotes(chunk);
             if (!shouldApply()) return;
-            setQuotesByCode((items) => {
-              const next = { ...items };
-              for (const quote of quotes) next[quote.code] = quote;
-              return next;
-            });
-            setQuoteRefreshAt(Date.now());
+            setQuotesByCode((items) => mergeQuotes(items, quotes));
+            /*
+             * 아무것도 못 받았으면 시각을 건드리지 않는다. 지금 시각을 찍으면
+             * 받은 게 없는데 방금 갱신한 것처럼 보인다.
+             */
+            const received = oldestFetchedAt(quotes);
+            if (received !== undefined) {
+              cycleOldest = cycleOldest === null ? received : Math.min(cycleOldest, received);
+              setOldestQuoteFetchedAt(cycleOldest);
+            }
           }
         } catch (e) {
           if (shouldApply()) setError(toErrorMessage(e));
@@ -3625,7 +3675,11 @@ export function App(): JSX.Element {
   const selectedKrwConversion = formatConvertedKrw(snapshot?.price, selectedInstrument?.currency, usdKrwRate);
   const realtimeChartLabel = realtimeChartStatusLabel(selectedInstrument, selectedTrade);
   const activeToolOption = TOOL_OPTIONS.find((tool) => tool.key === activeTool) ?? TOOL_OPTIONS[1];
-  const quoteLagMs = quoteRefreshAt ? Math.max(0, nowMs - quoteRefreshAt) : null;
+  /*
+   * 서버가 준 시각으로 잰다. 값이 서버 캐시에서 나왔으면 그 나이가 여기 그대로
+   * 드러난다 — 예전에는 응답을 받은 시각을 찍어서 최대 45초를 감췄다.
+   */
+  const quoteLagMs = oldestQuoteFetchedAt ? Math.max(0, nowMs - oldestQuoteFetchedAt) : null;
   const quoteFreshnessTone = quoteLagMs === null ? 'waiting' : quoteLagMs > QUOTE_STALE_MS ? 'stale' : 'fresh';
   const quoteFreshnessLabel = quoteLagMs === null ? '갱신 대기' : `갱신 ${formatElapsed(quoteLagMs)}`;
   const latestTradeMs = tradeTimestampMs(stream.recentTrades[0]);
@@ -3648,9 +3702,13 @@ export function App(): JSX.Element {
         ? `장이 닫혀 있어 체결이 들어오지 않습니다 (${getMarketSession(selectedInstrument).hours})`
         : '아직 체결이 들어오지 않았습니다'
       : `마지막 체결 ${formatClock(latestTradeMs as number)}`;
-  const quoteFreshnessTitle = quoteRefreshAt
-    ? `마지막 갱신 ${formatClock(quoteRefreshAt)}`
-    : '아직 시세를 조회하지 않았습니다';
+  /*
+   * 무엇의 시각인지 적는다. `마지막 갱신`이라고만 하면 방금 부른 시각으로 읽히는데,
+   * 서버가 캐시에서 준 값이면 그보다 앞선다.
+   */
+  const quoteFreshnessTitle = oldestQuoteFetchedAt
+    ? `화면에 있는 시세 중 가장 묵은 것 — 갱신 ${formatClock(oldestQuoteFetchedAt)}`
+    : '아직 시세를 받지 않았습니다';
 
   /*
    * 이전에는 `조회 전용`이 하드코딩이라 게이트가 열려도 그대로였다. 매매 앱에서
@@ -3784,7 +3842,11 @@ export function App(): JSX.Element {
 
     selectedPriceRef.current = { id: selectedInstrument.id, price: snapshot.price };
   }, [selectedInstrument?.id, snapshot?.price]);
-  const marketSession = useMemo(() => getMarketSession(selectedInstrument), [quoteRefreshAt, selectedInstrument]);
+  const marketSession = useMemo(
+    // 시세를 받을 때마다 다시 계산한다. 현지시각을 흐르게 하려는 것이라 값 자체는 안 본다.
+    () => getMarketSession(selectedInstrument),
+    [oldestQuoteFetchedAt, selectedInstrument],
+  );
   const previousClose = snapshot ? snapshot.price - snapshot.change : undefined;
   const dayRangePosition = snapshot ? getRangePosition(snapshot.price, snapshot.low, snapshot.high) : null;
   const openChange = snapshot ? snapshot.price - snapshot.open : undefined;
@@ -6665,7 +6727,7 @@ export function App(): JSX.Element {
             <div className="market-strip__item">
               <span>현지시간</span>
               <strong>{marketSession.localTime}</strong>
-              <small>{quoteRefreshAt ? `갱신 ${formatClock(quoteRefreshAt)}` : '갱신 대기'}</small>
+              <small>{oldestQuoteFetchedAt ? `갱신 ${formatClock(oldestQuoteFetchedAt)}` : '갱신 대기'}</small>
             </div>
           </section>}
 
@@ -6993,8 +7055,8 @@ export function App(): JSX.Element {
             */}
             <span className="bottom-dock__status">
               {sessionModeLabel} ·{' '}
-              {quoteRefreshAt
-                ? `시세 갱신 ${formatClock(quoteRefreshAt)} · ${quoteFreshnessLabel}`
+              {oldestQuoteFetchedAt
+                ? `시세 갱신 ${formatClock(oldestQuoteFetchedAt)} · ${quoteFreshnessLabel}`
                 : '시세 조회 전'}
             </span>
           </div>}

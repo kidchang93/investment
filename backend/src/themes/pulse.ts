@@ -28,6 +28,7 @@
 
 import { getThemeMembers } from '../db/themes.js';
 import { canBatchQuote, getInstrumentQuotes, MULTI_QUOTE_MAX_CODES } from '../kis/rest.js';
+import { oldestFetchedAt } from '@invest/shared';
 import type {
   Instrument,
   Quote,
@@ -239,7 +240,14 @@ export async function getThemePulses(codes: string[]): Promise<ThemePulseBatch> 
   const blank = new Set(batch.blank);
 
   return {
-    measuredAt: Date.now(),
+    /*
+     * 이 회차는 **가장 묵은 시세만큼 묵었다.** 마지막 호출이 끝난 시각(`Date.now()`)을
+     * 적으면 8묶음을 도는 동안 앞 묶음이 얼마나 묵었는지가 지워진다. 화면은 이 시각을
+     * `HH:MM:SS에 잰 값`으로 그대로 적는다.
+     *
+     * 시세가 하나도 없으면 잴 대상이 없으니 회차 시각을 쓴다.
+     */
+    measuredAt: oldestFetchedAt([...batch.quotes.values()]) ?? Date.now(),
     quoteCalls: batch.calls,
     maxQuoteCalls: THEME_PULSE_MAX_CALLS,
     pulses: plan.measured.map((members) => aggregateThemePulse(members, batch.quotes, blank, failures)),
