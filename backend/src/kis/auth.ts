@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { resolve } from 'node:path';
 import { config, restBaseFor, type KisServer } from '../config.js';
@@ -48,6 +49,20 @@ export const primaryCredentials: KisCredentials = {
 interface TokenCache {
   accessToken: string;
   expiresAt: number; // epoch ms
+  /**
+   * 이 토큰을 받은 **앱키의 지문**. 앱키가 바뀌면 캐시를 버린다.
+   *
+   * 캐시 이름은 `token-{서버}-{자격증명 id}.json`이라 **id가 같고 앱키만 바뀌면
+   * 같은 파일**이다. 그러면 옛 앱키로 받은 토큰을 새 앱키로 쓰게 되고 KIS가
+   * `EGW00123 기간이 만료된 token 입니다`로 거부한다 — 실제로 겪었다(2026-08-01,
+   * 모의 앱키를 계좌별로 나눠 넣었을 때). 만료가 아니라 **다른 앱키의 토큰**인데
+   * 오류 문구가 만료라고 말해서 원인을 찾기 어렵다.
+   *
+   * **앱키 자체를 저장하지 않는다.** 자격증명이 파일에 남을 이유가 없다.
+   * 지문이 없는 옛 캐시는 그대로 쓴다 — 버리면 멀쩡한 토큰을 재발급하게 되는데
+   * 발급에는 횟수 제한이 있다(1일 1회 원칙).
+   */
+  appKeyFingerprint?: string;
 }
 
 const approvalKeys = new Map<string, string>();
@@ -79,6 +94,7 @@ async function readTokenCache(credentials: KisCredentials): Promise<TokenCache |
   try {
     const parsed = JSON.parse(await fs.readFile(cacheFile(credentials), 'utf8')) as unknown;
     if (!isTokenCache(parsed)) return null;
+    if (!isSameAppKey(parsed, credentials.appKey)) return null;
     return parsed;
   } catch {
     return null;
@@ -107,6 +123,7 @@ async function issueAccessToken(credentials: KisCredentials): Promise<string> {
   const cache: TokenCache = {
     accessToken: json.access_token,
     expiresAt: Date.now() + (json.expires_in ?? 86_400) * 1000,
+    appKeyFingerprint: appKeyFingerprint(credentials.appKey),
   };
   await writeTokenCache(credentials, cache);
   return cache.accessToken;
@@ -148,6 +165,27 @@ export async function getApprovalKey(credentials: KisCredentials = primaryCreden
   const json = (await res.json()) as { approval_key: string };
   approvalKeys.set(key, json.approval_key);
   return json.approval_key;
+}
+
+/**
+ * 앱키의 지문. **앱키 자체는 어디에도 남기지 않는다.**
+ *
+ * 12자면 이 용도(같은 파일에 다른 앱키가 왔는지)에 충분하다 — 앱키를 되찾는 데
+ * 쓰이는 값이 아니라 "바뀌었는가"만 가르는 값이다.
+ */
+export function appKeyFingerprint(appKey: string): string {
+  return createHash('sha256').update(appKey).digest('hex').slice(0, 12);
+}
+
+/**
+ * 캐시가 지금 앱키의 것인가.
+ *
+ * 지문이 없는 옛 캐시는 **통과시킨다.** 앱키가 그대로인 경우가 대부분이고,
+ * 버리면 멀쩡한 토큰을 재발급하게 되는데 발급에는 횟수 제한이 있다.
+ */
+export function isSameAppKey(cache: { appKeyFingerprint?: string }, appKey: string): boolean {
+  if (cache.appKeyFingerprint === undefined) return true;
+  return cache.appKeyFingerprint === appKeyFingerprint(appKey);
 }
 
 function isTokenCache(value: unknown): value is TokenCache {

@@ -149,6 +149,38 @@ const ACCOUNT_KIND_LABELS: Record<string, string> = {
   EXTRAORDINARY: '선물옵션',
 };
 
+/**
+ * 앱키·시크릿을 찾을 env 이름 후보를 **찾을 순서대로** 만든다.
+ *
+ * **계좌마다 앱키가 다를 수 있다.** KIS 모의투자를 종류별로 따로 신청하면 앱키도
+ * 계좌도 각각 나온다 — 그러면 공용 앱키(`KIS_APP_KEY_VTS`)가 **아예 없다.**
+ * 반대로 한 신청에 계좌가 둘 딸려 오면 앱키는 하나다. 둘 다 되게 한다.
+ *
+ *   KIS_VTS_ACCOUNT_ORDINARY_NO 의 앱키를 찾는 순서
+ *     1. KIS_APP_KEY_ORDINARY_VTS   ← 계좌별 앱키 (종류가 앞)
+ *     2. KIS_APP_KEY_VTS_ORDINARY   ← 계좌별 앱키 (계좌 키와 같은 순서)
+ *     3. KIS_APP_KEY_VTS            ← 공용 앱키
+ *
+ * 두 순서를 다 보는 이유는 계좌 키가 `<id>_ACCOUNT_<종류>_NO`라서 어느 쪽이
+ * 자연스러운지 사람마다 다르게 읽기 때문이다. 실제로 갈렸다 — 계좌는
+ * `VTS_ACCOUNT_ORDINARY_NO`인데 앱키는 `APP_KEY_ORDINARY_VTS`로 들어왔다.
+ *
+ * **계좌별 앱키가 먼저다.** 공용이 함께 있으면 더 구체적인 쪽이 이긴다.
+ */
+export function credentialEnvNames(prefix: string, credentialId: string, kind?: string): string[] {
+  if (!kind) return [`${prefix}_${credentialId}`];
+  return [`${prefix}_${kind}_${credentialId}`, `${prefix}_${credentialId}_${kind}`, `${prefix}_${credentialId}`];
+}
+
+/** 후보 이름을 순서대로 보고 **값이 있는 첫 번째**를 쓴다. 없으면 빈 문자열. */
+function readCredentialEnv(prefix: string, credentialId: string, kind?: string): string {
+  for (const name of credentialEnvNames(prefix, credentialId, kind)) {
+    const value = process.env[name];
+    if (value) return value;
+  }
+  return '';
+}
+
 /** 계좌번호 + 앱키 + 시크릿 3종이 모두 있어야 한 계좌로 인정한다. */
 function parseKisAccounts(): KisAccountConfig[] {
   const accounts: KisAccountConfig[] = [];
@@ -163,8 +195,8 @@ function parseKisAccounts(): KisAccountConfig[] {
       process.env[key],
       process.env[`KIS_${accountId}_ACCOUNT_PRODUCT_CODE`] ?? process.env[`KIS_${credentialId}_ACCOUNT_PRODUCT_CODE`],
     );
-    const appKey = process.env[`KIS_APP_KEY_${credentialId}`] ?? '';
-    const appSecret = process.env[`KIS_APP_SECRET_${credentialId}`] ?? '';
+    const appKey = readCredentialEnv('KIS_APP_KEY', credentialId, kind);
+    const appSecret = readCredentialEnv('KIS_APP_SECRET', credentialId, kind);
 
     if (!parsed) {
       /*
@@ -181,13 +213,18 @@ function parseKisAccounts(): KisAccountConfig[] {
       continue;
     }
     if (!appKey || !appSecret) {
+      /*
+       * **찾아본 이름을 전부 적는다.** 하나만 적으면 "그 이름으로 넣었는데 왜
+       * 안 되지"가 남는다 — 실제로 앱키를 `KIS_APP_KEY_ORDINARY_VTS`로 넣었는데
+       * 사유가 `KIS_APP_KEY_VTS가 없습니다`라고만 말한 적이 있다.
+       */
       const missing = [
-        !appKey && `KIS_APP_KEY_${credentialId}`,
-        !appSecret && `KIS_APP_SECRET_${credentialId}`,
+        !appKey && `KIS_APP_KEY (${credentialEnvNames('KIS_APP_KEY', credentialId, kind).join(' 또는 ')})`,
+        !appSecret && `KIS_APP_SECRET (${credentialEnvNames('KIS_APP_SECRET', credentialId, kind).join(' 또는 ')})`,
       ]
         .filter(Boolean)
         .join(' · ');
-      skippedKisAccounts.push({ id, reason: `${missing}가 없습니다.` });
+      skippedKisAccounts.push({ id, reason: `${missing} 중 하나가 있어야 합니다.` });
       continue;
     }
 

@@ -17,7 +17,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { tokenCacheFileName, tokenCacheKey } from './auth.js';
+import { appKeyFingerprint, isSameAppKey, tokenCacheFileName, tokenCacheKey } from './auth.js';
 
 describe('토큰 캐시 파일 이름', () => {
   it('같은 자격증명이라도 서버가 다르면 다른 파일이다', () => {
@@ -47,5 +47,48 @@ describe('메모리 캐시 키', () => {
     assert.equal(tokenCacheKey('21', 'prod'), 'prod:21');
     assert.notEqual(tokenCacheKey('21', 'prod'), tokenCacheKey('21', 'vts'));
     assert.notEqual(tokenCacheKey('21', 'vts'), tokenCacheKey('23', 'vts'));
+  });
+});
+
+/*
+ * 캐시 이름은 `token-{서버}-{자격증명 id}.json`이라 **id가 같고 앱키만 바뀌면 같은
+ * 파일**이다. 그러면 옛 앱키로 받은 토큰을 새 앱키로 쓰게 되고 KIS가
+ * `EGW00123 기간이 만료된 token 입니다`로 거부한다 — 2026-08-01에 실제로 겪었다.
+ * 모의 앱키를 계좌별로 나눠 넣었는데, **만료가 아니라 다른 앱키의 토큰**인데도
+ * 오류 문구가 만료라고 말해서 원인을 찾기 어려웠다.
+ */
+describe('앱키가 바뀌면 토큰 캐시를 버린다', () => {
+  it('같은 앱키면 지문이 같다', () => {
+    assert.equal(appKeyFingerprint('key-a'), appKeyFingerprint('key-a'));
+  });
+
+  it('다른 앱키면 지문이 다르다', () => {
+    assert.notEqual(appKeyFingerprint('key-a'), appKeyFingerprint('key-b'));
+  });
+
+  it('지문에 앱키가 그대로 남지 않는다', () => {
+    // 자격증명이 파일에 남을 이유가 없다. "바뀌었는가"만 가르면 된다.
+    const key = 'PSxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+    const fingerprint = appKeyFingerprint(key);
+    assert.ok(!fingerprint.includes(key));
+    assert.ok(fingerprint.length < key.length);
+    assert.match(fingerprint, /^[0-9a-f]+$/);
+  });
+
+  it('같은 앱키의 캐시는 쓴다', () => {
+    assert.equal(isSameAppKey({ appKeyFingerprint: appKeyFingerprint('key-a') }, 'key-a'), true);
+  });
+
+  it('다른 앱키의 캐시는 버린다', () => {
+    assert.equal(isSameAppKey({ appKeyFingerprint: appKeyFingerprint('key-a') }, 'key-b'), false);
+  });
+
+  /*
+   * 지문이 없는 옛 캐시는 통과시킨다. 앱키가 그대로인 경우가 대부분이고, 버리면
+   * 멀쩡한 토큰을 재발급하게 되는데 발급에는 횟수 제한이 있다(1일 1회 원칙).
+   */
+  it('지문이 없는 옛 캐시는 그대로 쓴다', () => {
+    assert.equal(isSameAppKey({}, 'key-a'), true);
+    assert.equal(isSameAppKey({ appKeyFingerprint: undefined }, 'key-a'), true);
   });
 });

@@ -1,4 +1,4 @@
-import { config, orderServerMismatch, restBaseFor, type KisAccountConfig } from '../config.js';
+import { config, orderServerMismatch, restBaseFor, type KisAccountConfig, type KisServer } from '../config.js';
 import { getDomesticInstrumentsBySymbols } from '../db/instruments.js';
 import { credentialServer, getAccessToken, primaryCredentials, type KisCredentials } from './auth.js';
 import {
@@ -92,9 +92,41 @@ async function kisPost(
   });
 }
 
-/** KIS 초당 호출 한도 초과 코드. 잔고·체결·손익을 한 화면에서 동시에 부르면 쉽게 걸린다. */
-const KIS_RATE_LIMIT_CODE = 'EGW00201';
-const KIS_MIN_CALL_GAP_MS = 70;
+/**
+ * 초당 한도를 넘겼을 때 오는 코드. **두 가지다.**
+ *
+ * | 코드 | 무엇의 한도 | 어디서 |
+ * |------|------|------|
+ * | `EGW00201` | **개인(앱키) 유량** — 실전 18건/초 · 모의 1건/초 | 모든 TR |
+ * | `EGW00215` | **원장 유량 120 TPS** — 개인 유량과 무관하게 걸린다 | 잔고조회·ETF호가 |
+ *
+ * 예전에는 앞엣것만 봐서, `EGW00215`가 오면 한도로 인식되지 않아 **백오프·재시도를
+ * 타지 못하고** 오류가 그대로 위로 흘렀다. 잔고조회는 러너가 매 회차 부르는 경로다.
+ * 출처는 KIS 주식잔고조회 API 문서 원문 — *"원장 유량정책에 의거, 개인 고객 유량
+ * 무관하게 초당 120 TPS로 제한 … 재시도 처리 부탁드리겠습니다"*.
+ */
+const KIS_RATE_LIMIT_CODES = new Set(['EGW00201', 'EGW00215']);
+
+/**
+ * 호출 사이 최소 간격. **서버마다 다르다.**
+ *
+ * KIS 공식 유량 안내(2026-04-20 기준)가 명시한다 — REST 실전 **18건/초**, 모의
+ * **1건/초**. 18배 차이다. 예전에는 70ms 하나였는데, 그건 실전 기준으로는 맞지만
+ * (≒14.3건/초) **모의에서는 14배 초과**라 매 회차 후보의 12.5~37.5%를 조용히
+ * 잃고 있었다(2026-08-01 실측: 멀티시세 8묶음 중 1~3묶음이 `EGW00201`).
+ *
+ * 실전 값은 KIS 권장(*"동시 호출의 경우 100~150ms 텀"*)보다 짧지만 하드 한도
+ * 안이고, 기존 실측(10묶음 300종목 1.08초에 `EGW00201` 0건)이 이 값으로 낸 것이라
+ * 바꾸지 않는다. 모의는 1건/초라 여유를 두고 **1,100ms**로 잡는다.
+ *
+ * ⚠ **신규 앱키는 3일간 초당 3건**이다(KIS 공지 2026-03-20, 모의계좌는 해당 없음).
+ * 그 기간에는 실전 값도 부족하다 — 걸리면 `EGW00201`이 잦아지는 것으로 드러난다.
+ */
+const KIS_MIN_CALL_GAP_BY_SERVER: Record<KisServer, number> = {
+  prod: 70,
+  vts: 1_100,
+};
+
 const KIS_RATE_LIMIT_BACKOFF_MS = 400;
 
 let kisCallChain: Promise<unknown> = Promise.resolve();
@@ -111,16 +143,21 @@ function delay(ms: number): Promise<void> {
  * 일부 카드만 502로 비는 일이 생긴다. 순서를 지키는 대신 조금 느리게 간다.
  */
 function scheduleKisCall<T>(run: () => Promise<T>): Promise<T> {
+  /*
+   * 간격은 **그 실행의 기본 서버**로 정한다. 개장일 조회 하나가 다른 서버로 나가지만
+   * 줄은 하나라, 느린 쪽(모의)에 맞춰 두는 것이 안전하다.
+   */
+  const gap = KIS_MIN_CALL_GAP_BY_SERVER[config.env];
   const result = kisCallChain.then(run, run);
   kisCallChain = result.then(
-    () => delay(KIS_MIN_CALL_GAP_MS),
-    () => delay(KIS_MIN_CALL_GAP_MS),
+    () => delay(gap),
+    () => delay(gap),
   );
   return result;
 }
 
-function isRateLimited(body: Record<string, unknown>): boolean {
-  return String(body.msg_cd ?? '') === KIS_RATE_LIMIT_CODE;
+export function isRateLimited(body: Record<string, unknown>): boolean {
+  return KIS_RATE_LIMIT_CODES.has(String(body.msg_cd ?? ''));
 }
 
 /** KIS REST GET 공통 헬퍼. tr_id별로 헤더/인증을 채워 호출한다. */
@@ -193,7 +230,7 @@ async function kisGetWithHeaders(
    * 모양이다. 실패는 실패로 알린다.
    */
   if (isRateLimited(second.body)) {
-    throw new Error(`KIS GET ${path} 실패: 초당 호출 한도를 넘었습니다 (${KIS_RATE_LIMIT_CODE})`);
+    throw new Error(`KIS GET ${path} 실패: 초당 호출 한도를 넘었습니다 (${String(second.body.msg_cd ?? '')})`);
   }
   return second;
 }

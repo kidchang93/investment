@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  credentialEnvNames,
   marketOpenDayHint,
   orderServerMismatch,
   parseAccountKey,
@@ -213,5 +214,41 @@ describe('주문 경로에 다른 서버 자격증명이 새지 않는다', () =
 
   it('반대 방향도 막는다', () => {
     assert.match(orderServerMismatch('vts', 'prod') ?? '', /실전 서버로만 보냅니다/);
+  });
+});
+
+/*
+ * **계좌마다 앱키가 다를 수 있다.** KIS 모의투자를 종류별로 따로 신청하면 앱키도
+ * 계좌도 각각 나온다 — 그러면 공용 앱키(`KIS_APP_KEY_VTS`)가 아예 없다.
+ *
+ * 2026-08-01에 이것 때문에 두 계좌가 통째로 빠졌다. 계좌는
+ * `KIS_VTS_ACCOUNT_ORDINARY_NO`인데 앱키는 `KIS_APP_KEY_ORDINARY_VTS`로 들어와서,
+ * 코드가 찾던 `KIS_APP_KEY_VTS`가 없었다. 계좌 키가 `<id>_ACCOUNT_<종류>_NO`라
+ * 앱키를 어느 순서로 적을지 사람마다 다르게 읽는다 — 그래서 둘 다 본다.
+ */
+describe('앱키 env 이름 후보', () => {
+  it('종류가 없으면 한 가지뿐이다', () => {
+    assert.deepEqual(credentialEnvNames('KIS_APP_KEY', '21'), ['KIS_APP_KEY_21']);
+  });
+
+  it('종류가 있으면 계좌별 앱키를 먼저 보고 공용을 마지막에 본다', () => {
+    assert.deepEqual(credentialEnvNames('KIS_APP_KEY', 'VTS', 'ORDINARY'), [
+      'KIS_APP_KEY_ORDINARY_VTS',
+      'KIS_APP_KEY_VTS_ORDINARY',
+      'KIS_APP_KEY_VTS',
+    ]);
+  });
+
+  it('시크릿도 같은 규칙이다', () => {
+    assert.deepEqual(credentialEnvNames('KIS_APP_SECRET', 'VTS', 'EXTRAORDINARY'), [
+      'KIS_APP_SECRET_EXTRAORDINARY_VTS',
+      'KIS_APP_SECRET_VTS_EXTRAORDINARY',
+      'KIS_APP_SECRET_VTS',
+    ]);
+  });
+
+  it('공용 앱키가 맨 마지막이다 — 계좌별이 있으면 그쪽이 이긴다', () => {
+    const names = credentialEnvNames('KIS_APP_KEY', 'VTS', 'ORDINARY');
+    assert.equal(names[names.length - 1], 'KIS_APP_KEY_VTS');
   });
 });
