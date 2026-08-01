@@ -13,7 +13,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { parseAccountKey, parseAccountNumber } from './config.js';
+import {
+  marketOpenDayHint,
+  orderServerMismatch,
+  parseAccountKey,
+  parseAccountNumber,
+  resolveMarketOpenDayLookup,
+  restBaseFor,
+} from './config.js';
 
 describe('계좌 env 키 읽기', () => {
   it('접미사 없는 키는 자격증명과 계좌 id가 같다', () => {
@@ -84,5 +91,127 @@ describe('계좌번호 자릿수', () => {
 
   it('숫자가 아닌 문자는 걷어낸 뒤 센다', () => {
     assert.deepEqual(parseAccountNumber(' 1234-5678 ', undefined), { cano: '12345678', productCode: '01' });
+  });
+});
+
+/*
+ * 개장일 조회(`chk-holiday` / `CTCA0903R`)는 **모의 서버에 없다** — HTTP 500 +
+ * `EGW02006 모의투자 TR 이 아닙니다`(2026-08-01 실측). 조회 실패는 리스크 룰에서
+ * "보류"가 되므로, 그대로 두면 모의 환경에서는 **통과하는 주문이 존재할 수 없다.**
+ * 개장일은 계좌와 무관한 시장 사실이라 실전 서버에 물어도 답이 같아서 우회를 뒀다.
+ *
+ * 여기서 못 박는 것: 설정이 없으면 지금 그대로 실패할 자리로 가고, 설정이 있으면
+ * **그 자격증명·그 서버**로 가고, 실전 환경에서는 이 우회가 아예 없다.
+ */
+describe('개장일 조회를 어디에 물어보는가', () => {
+  const prodAccount = { id: '21', appKey: 'prod-key', appSecret: 'prod-secret' };
+  const vtsOrdinary = { id: 'VTS-ORDINARY', appKey: 'vts-key', appSecret: 'vts-secret' };
+  const accounts = [prodAccount, vtsOrdinary];
+  const primary = { id: 'VTS-ORDINARY', appKey: 'vts-key', appSecret: 'vts-secret' };
+
+  it('설정이 없으면 모의 서버에 물어본다 — 지금 동작 그대로(= 실패해서 보류)', () => {
+    const lookup = resolveMarketOpenDayLookup({ env: 'vts', credentialId: undefined, accounts, primary });
+    assert.equal(lookup.server, 'vts');
+    assert.equal(lookup.viaProdServer, false);
+    assert.equal(lookup.credentials.appKey, 'vts-key');
+    assert.equal(lookup.problem, null);
+    // 무엇을 하면 되는지는 말해 준다. 보류만 적으면 설정 문제인지 장애인지 알 수 없다.
+    assert.match(marketOpenDayHint(lookup) ?? '', /KIS_OPEN_DAY_CREDENTIAL_ID/);
+  });
+
+  it('빈 문자열·공백만 있는 설정은 없는 것으로 본다', () => {
+    for (const credentialId of ['', '   ']) {
+      const lookup = resolveMarketOpenDayLookup({ env: 'vts', credentialId, accounts, primary });
+      assert.equal(lookup.server, 'vts');
+      assert.equal(lookup.viaProdServer, false);
+    }
+  });
+
+  it('설정이 있으면 그 자격증명으로 실전 서버에 물어본다', () => {
+    const lookup = resolveMarketOpenDayLookup({ env: 'vts', credentialId: '21', accounts, primary });
+    assert.equal(lookup.server, 'prod');
+    assert.equal(lookup.viaProdServer, true);
+    assert.deepEqual(lookup.credentials, prodAccount);
+    assert.equal(lookup.problem, null);
+    assert.equal(marketOpenDayHint(lookup), null);
+    // 도메인은 config.ts의 표 하나에서만 나온다.
+    assert.equal(restBaseFor(lookup.server), 'https://openapi.koreainvestment.com:9443');
+    assert.notEqual(restBaseFor('prod'), restBaseFor('vts'));
+  });
+
+  // 계좌에 종류가 붙으면 id가 `VTS-ORDINARY`가 된다. 고르는 것은 앱키다.
+  it('자격증명 id로도 찾는다 — 종류가 붙은 계좌 id에 걸린다', () => {
+    const lookup = resolveMarketOpenDayLookup({
+      env: 'vts',
+      credentialId: 'VTS',
+      accounts,
+      primary,
+    });
+    assert.equal(lookup.viaProdServer, true);
+    assert.equal(lookup.credentials.id, 'VTS-ORDINARY');
+  });
+
+  /*
+   * 없는 설정을 추측해서 아무 앱키나 쓰지 않는다. 대신 **왜 못 썼는지** 남긴다 —
+   * 계좌가 조용히 사라진 전례가 두 번 있었다.
+   */
+  it('설정한 id를 못 찾으면 아무 앱키나 쓰지 않고 사유를 남긴다', () => {
+    const lookup = resolveMarketOpenDayLookup({ env: 'vts', credentialId: '99', accounts, primary });
+    assert.equal(lookup.server, 'vts');
+    assert.equal(lookup.viaProdServer, false);
+    assert.deepEqual(lookup.credentials, primary);
+    assert.match(lookup.problem ?? '', /99/);
+    assert.equal(marketOpenDayHint(lookup), lookup.problem);
+  });
+
+  it('실전 환경에서는 이 우회가 아예 동작하지 않는다', () => {
+    const prodPrimary = { id: '21', appKey: 'prod-key', appSecret: 'prod-secret' };
+    const plain = resolveMarketOpenDayLookup({
+      env: 'prod',
+      credentialId: undefined,
+      accounts,
+      primary: prodPrimary,
+    });
+    assert.deepEqual(plain, { credentials: prodPrimary, server: 'prod', viaProdServer: false, problem: null });
+
+    // 설정이 있어도 실전에서는 쓰지 않는다. 대신 무시한다고 말한다.
+    const configured = resolveMarketOpenDayLookup({
+      env: 'prod',
+      credentialId: 'VTS',
+      accounts,
+      primary: prodPrimary,
+    });
+    assert.equal(configured.server, 'prod');
+    assert.equal(configured.viaProdServer, false);
+    assert.deepEqual(configured.credentials, prodPrimary);
+    assert.match(configured.problem ?? '', /무시/);
+    /*
+     * 실전 서버 조회는 이 설정과 무관하게 동작한다. 그런데도 실패했다면 원인이 다른
+     * 데 있으므로 사유에 설정 이야기를 붙이지 않는다 — 엉뚱한 곳을 보게 만든다.
+     */
+    assert.equal(marketOpenDayHint(configured), null);
+    assert.equal(marketOpenDayHint(plain), null);
+  });
+});
+
+/*
+ * 실전 자격증명이 주문 경로로 새면 **모의 환경인 줄 알고 실계좌에 주문이 나간다.**
+ * 개장일 우회는 조회 전용이라, 주문 POST는 도메인을 `config.restBase`로 고정하고
+ * 서버가 다른 자격증명이 들어오면 보내기 전에 던진다.
+ */
+describe('주문 경로에 다른 서버 자격증명이 새지 않는다', () => {
+  it('서버가 같으면 통과한다', () => {
+    assert.equal(orderServerMismatch('vts', 'vts'), null);
+    assert.equal(orderServerMismatch('prod', 'prod'), null);
+  });
+
+  it('모의 환경에 실전 자격증명이 들어오면 사유를 돌려준다', () => {
+    const reason = orderServerMismatch('prod', 'vts') ?? '';
+    assert.match(reason, /모의 서버로만 보냅니다/);
+    assert.match(reason, /실전 서버 자격증명/);
+  });
+
+  it('반대 방향도 막는다', () => {
+    assert.match(orderServerMismatch('vts', 'prod') ?? '', /실전 서버로만 보냅니다/);
   });
 });

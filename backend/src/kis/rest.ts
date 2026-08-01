@@ -1,6 +1,6 @@
-import { config, type KisAccountConfig } from '../config.js';
+import { config, orderServerMismatch, restBaseFor, type KisAccountConfig } from '../config.js';
 import { getDomesticInstrumentsBySymbols } from '../db/instruments.js';
-import { getAccessToken, primaryCredentials, type KisCredentials } from './auth.js';
+import { credentialServer, getAccessToken, primaryCredentials, type KisCredentials } from './auth.js';
 import {
   chunkQuoteCodes,
   MULTI_QUOTE_PATH,
@@ -54,6 +54,12 @@ export { MULTI_QUOTE_MAX_CODES } from './multiQuote.js';
 /**
  * KIS REST POST 공통 헬퍼. 주문 계열은 전부 POST이고 파라미터를 body로 보낸다.
  * GET과 달리 `hashkey` 헤더는 필수가 아니며, 생략해도 정상 접수된다.
+ *
+ * ⚠ **주문은 이 실행의 기본 서버(`config.env`)로만 나간다.** 개장일 조회는 모의
+ * 환경에서도 실전 서버에 붙는데(`KIS_OPEN_DAY_CREDENTIAL_ID`), 그 자격증명은
+ * **조회 전용**이다. 여기로 새면 모의 환경인 줄 알고 실계좌에 주문이 나간다 —
+ * 이 레포에서 가장 위험한 실수라 도메인은 `config.restBase`로 고정하고, 서버가
+ * 다른 자격증명이 들어오면 **보내기 전에** 던진다.
  */
 async function kisPost(
   path: string,
@@ -61,6 +67,9 @@ async function kisPost(
   body: Record<string, string>,
   credentials: KisCredentials,
 ): Promise<Record<string, unknown>> {
+  const mismatch = orderServerMismatch(credentialServer(credentials), config.env);
+  if (mismatch) throw new Error(mismatch);
+
   const token = await getAccessToken(credentials);
   // 주문은 재시도하지 않는다. 중복 접수 위험이 조회 실패보다 훨씬 크다.
   return scheduleKisCall(async () => {
@@ -123,6 +132,13 @@ async function kisGet(
   return (await kisGetWithHeaders(path, trId, params)).body;
 }
 
+/**
+ * 조회(GET) 공통 헬퍼.
+ *
+ * **도메인은 자격증명이 정한다.** 토큰은 발급받은 서버에서만 통하므로 둘이 함께
+ * 다녀야 어긋나지 않는다. 지금 기본 서버가 아닌 곳으로 가는 조회는 개장일
+ * (`chk-holiday`) 하나뿐이다 — 모의 서버에 그 TR이 없어서다.
+ */
 async function kisGetWithHeaders(
   path: string,
   trId: string,
@@ -131,7 +147,7 @@ async function kisGetWithHeaders(
   credentials: KisCredentials = primaryCredentials,
 ): Promise<{ body: Record<string, unknown>; headers: Headers }> {
   const token = await getAccessToken(credentials);
-  const url = new URL(config.restBase + path);
+  const url = new URL(restBaseFor(credentialServer(credentials)) + path);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 
   const headers: Record<string, string> = {
@@ -1819,7 +1835,12 @@ export async function cancelKisDomesticReservedOrder(
   };
 }
 
-/** 개장일 판정 캐시. 같은 날짜를 주문마다 다시 묻지 않는다. */
+/**
+ * 개장일 판정 캐시. 같은 날짜를 주문마다 다시 묻지 않는다.
+ *
+ * 답이 계좌·서버와 무관한 시장 사실이라 날짜만으로 가른다. **성공만 담는다** —
+ * 실패를 담으면 한 번의 일시적 오류가 그 프로세스가 사는 동안 계속 보류로 막는다.
+ */
 const marketOpenCache = new Map<string, boolean>();
 
 /**
@@ -1828,15 +1849,26 @@ const marketOpenCache = new Map<string, boolean>();
  * 시각만 보는 검증으로는 주말·공휴일 주문을 막지 못한다. KIS가
  * "장운영일자가 주문일과 상이합니다"로 거부하기 전에 우리가 먼저 걸러야 한다.
  * `opnd_yn`이 개장일 여부다(영업일 `bzdy_yn`과 다르다 — 영업일이어도 휴장일 수 있다).
+ *
+ * **이 TR은 모의 서버에 없다**(HTTP 500 + `EGW02006`). 그래서 모의 환경에서는
+ * `KIS_OPEN_DAY_CREDENTIAL_ID`로 지정한 실전 자격증명·실전 도메인에 물어본다.
+ * 개장일은 계좌와 무관한 시장 사실이라 답이 같다. 설정이 없으면 지금처럼 모의
+ * 서버에 물어 실패하고, 리스크 룰이 보류로 막는다.
+ *
+ * ⚠ **이 우회는 조회 전용이다.** 여기서 쓰는 자격증명을 주문에 넘기면 안 된다
+ * (`kisPost`가 한 겹 더 막는다).
  */
 export async function isDomesticMarketOpenDay(date = kstToday()): Promise<boolean> {
   const cached = marketOpenCache.get(date);
   if (cached !== undefined) return cached;
 
+  const lookup = config.marketOpenDay;
   const { body } = await kisGetWithHeaders(
     '/uapi/domestic-stock/v1/quotations/chk-holiday',
     'CTCA0903R',
     { BASS_DT: date, CTX_AREA_FK: '', CTX_AREA_NK: '' },
+    '',
+    { ...lookup.credentials, server: lookup.server },
   );
 
   if (body.rt_cd && body.rt_cd !== '0') {

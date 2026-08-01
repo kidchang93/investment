@@ -24,7 +24,7 @@ function rules(overrides: Partial<RiskRuleSet> = {}): RiskRuleSet {
     maxOrderNotional: 1_000_000,
     dailyOrderCountLimit: 20,
     dailyNotionalLimit: 5_000_000,
-    allowMarketOrder: false,
+    allowMarketOrder: true,
     sessionStart: '09:00',
     sessionEnd: '15:30',
     symbolAllowlist: [],
@@ -118,11 +118,23 @@ describe('riskRuleBlockers — 종목·유형', () => {
     assert.deepEqual(riskRuleBlockers(order({ symbol: undefined, rules: rules({ symbolAllowlist: ['005930'] }) })), []);
   });
 
+  /*
+   * **시나리오를 이 시험이 직접 만든다.** 예전에는 `rules()` 기본값이 마침
+   * `allowMarketOrder: false`인 것에 기대고 있었는데, 기본값이 바뀌자 시험 이름과
+   * 실제로 재는 것이 어긋났다 — "막혀 있으면"을 검사한다면서 안 막힌 룰을 태웠다.
+   * 기본값이 무엇이든 이 시험은 같은 것을 재야 한다.
+   */
   it('시장가가 막혀 있으면 시장가만 막고 지정가는 통과시킨다', () => {
-    assert.deepEqual(riskRuleBlockers(order({ orderType: 'limit' })), []);
-    const market = riskRuleBlockers(order({ orderType: 'market' }));
+    const blocked = rules({ allowMarketOrder: false });
+    assert.deepEqual(riskRuleBlockers(order({ rules: blocked, orderType: 'limit' })), []);
+    const market = riskRuleBlockers(order({ rules: blocked, orderType: 'market' }));
     assert.equal(market.length, 1);
     assert.match(market[0], /시장가 주문이 막혀/);
+  });
+
+  it('시장가가 허용돼 있으면 시장가도 통과시킨다', () => {
+    const allowed = rules({ allowMarketOrder: true });
+    assert.deepEqual(riskRuleBlockers(order({ rules: allowed, orderType: 'market' })), []);
   });
 
   it('실주문이 꺼져 있으면 막는다', () => {
@@ -132,12 +144,13 @@ describe('riskRuleBlockers — 종목·유형', () => {
 
   it('걸리는 것이 여럿이면 전부 모아 준다', () => {
     // 화면은 사유를 한 번에 보여준다 — 하나 고치고 눌러 봐야 다음을 아는 건 아니다.
+    // 넷을 세려면 시장가 차단도 걸려야 하므로 그 조건을 여기서 명시한다.
     const blockers = riskRuleBlockers(
       order({
         orderType: 'market',
         quantity: 2_000,
         price: 1_000,
-        rules: rules({ symbolBlocklist: ['005930'] }),
+        rules: rules({ symbolBlocklist: ['005930'], allowMarketOrder: false }),
       }),
     );
     assert.equal(blockers.length, 4, blockers.join(' / '));

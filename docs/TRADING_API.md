@@ -26,7 +26,7 @@ KIS 오픈API 매매 기능의 구현 현황과, 막혀 있는 항목의 이유�
 | 정정취소가능주문 | `trading/inquire-psbl-rvsecncl` | `TTTC0084R` / **모의 없음** | `GET /api/broker/kis/open-orders` | ✅ |
 | 예약주문 조회 | `trading/order-resv-ccnl` | `CTSC0004R` / **모의 없음** | `GET /api/broker/kis/reserved-orders` | ✅ |
 | 기간별 매매손익 | `trading/inquire-period-trade-profit` | `TTTC8715R` / **모의 없음** | `GET /api/broker/kis/trade-profit` | ✅ |
-| 국내 개장일 | `quotations/chk-holiday` | `CTCA0903R` | (리스크 룰 내부) | ✅ |
+| 국내 개장일 | `quotations/chk-holiday` | `CTCA0903R` / **모의 없음** | (리스크 룰 내부) | ✅ |
 | 호가·예상체결 | `quotations/inquire-asking-price-exp-ccn` | `FHKST01010200` | `GET /api/instruments/:id/order-book` | ✅ |
 | 멀티시세 (최대 30종목) | `quotations/intstock-multprice` | `FHKST11300006` | `POST /api/instruments/quotes` (내부) | ✅ |
 
@@ -446,6 +446,50 @@ curl -X POST http://localhost:4000/api/broker/kis/reserved-orders/cancel \
 - 매도가능수량 → 잔고조회(`VTTC8434R`)의 `hldg_qty`로 근사. 미결제·대주 상황은 반영되지 않는다.
 - 정정취소가능주문 → 체결내역(`VTTC0081R`)에서 `CCLD_DVSN='02'`(미체결)로 필터.
 
+#### 2-1. 개장일 조회(`CTCA0903R`)도 모의 서버에 없다 — 그런데 이건 **막는 쪽**이었다
+
+2026-08-01 실측:
+
+```
+APP_ENV=vts → HTTP 500
+{"rt_cd":"1","msg_cd":"EGW02006","msg1":"모의투자 TR 이 아닙니다."}
+```
+
+앞의 셋은 실패해도 화면 한 칸이 비는 정도인데, 이건 다르다. 리스크 룰이 개장일을
+확인하지 못하면 **보류로 막으므로**(아래 7번), 모의 환경에서는 `개장일을 확인할 수 없어
+주문을 보류합니다`가 늘 붙어 **통과하는 주문이 존재할 수 없었다.** 월요일 장중에도
+똑같았다. 조회 실패를 막힌 쪽에 두는 설계는 옳지만, 여기서는 영구 차단이 된다.
+
+**해결 방법.** 개장일은 계좌와 무관한 **시장 사실**이라 실전 서버에 물어도 답이 같다
+(2026-08-01 실측: 20260731 `Y` · 20260801 `N` · 20260803 `Y`). `KIS_OPEN_DAY_CREDENTIAL_ID`에
+실전 자격증명 id를 주면 **이 조회 하나만** 그 앱키로 실전 도메인에 보낸다.
+
+```
+KIS_OPEN_DAY_CREDENTIAL_ID=21   # KIS_APP_KEY_21 / KIS_APP_SECRET_21의 <id>
+```
+
+> ⚠ **조회 전용이다. 주문에 절대 쓰지 않는다.** 실전 자격증명이 주문 경로로 새면
+> 모의 환경인 줄 알고 **실계좌에 주문이 나간다** — 이 레포에서 가장 위험한 실수다.
+> 그래서 주문(POST)은 도메인을 `config.restBase`에 고정하고, 서버가 다른 자격증명이
+> 들어오면 `orderServerMismatch()`가 **보내기 전에** 던진다.
+
+- **설정이 없으면 지금 동작 그대로다** — 모의에서는 여전히 보류로 막힌다. 없는 설정을
+  추측해 아무 앱키나 쓰지 않는다. 대신 판정 사유와 시작 로그가 **무엇을 넣으면 되는지**
+  말한다: `개장일을 확인할 수 없어 주문을 보류합니다. 모의 서버에는 개장일 조회가 …`
+- **`APP_ENV=prod`에서는 이 우회가 아예 동작하지 않는다.** 값을 적어 두면 무시한다고 알린다.
+- **실전 서버에 붙는다는 사실을 시작 로그에 찍는다.** 조용히 다른 서버에 붙는 것은 안 된다.
+  휴장일 사유에도 `(실전 서버에서 확인)`을 붙인다.
+- 토큰 캐시가 서버별로 갈린다(`token-prod-21.json` ≠ `token-vts-21.json`). 토큰은 발급받은
+  서버에서만 통하므로 한 파일을 공유하면 **모의 서버에 실전 토큰**을 보내게 된다.
+
+시험은 `config.test.ts`(어느 서버로 가는가 · 주문 경로 가드)와 `kis/auth.test.ts`
+(캐시 키)에 있다. 둘 다 네트워크 없이 돈다.
+
+> **부수 효과 하나는 남겨 뒀다.** `marketOpenCache`는 **성공만 담는다.** 그래서 설정이
+> 없는 모의 환경에서는 리스크 판정 1건마다 KIS 호출이 계속 나간다. 실패까지 담으면
+> 일시적 오류 한 번이 그 프로세스가 사는 동안 계속 보류로 막으므로 그대로 뒀다.
+> 설정을 넣으면 첫 판정 1회로 끝난다.
+
 ### 3. 실시간 주문·체결 통보(H0STCNI0) — 구현됨, HTS ID 필요
 
 구현은 끝났고 **`.env`에 HTS ID만 넣으면 켜진다.**
@@ -757,7 +801,7 @@ EXCG_ID_DVSN_CD = "KRX"     // 또는 NXT. SOR은 22를 받지 않는다
 | `maxOrderNotional` | 1,000,000원 | 1회 주문 금액 |
 | `dailyOrderCountLimit` | 20건 | 오늘(KST) 접수 건수 |
 | `dailyNotionalLimit` | 5,000,000원 | 오늘(KST) 접수 금액 합 |
-| `allowMarketOrder` | `false` | 시장가 주문 |
+| `allowMarketOrder` | **`true`** | 시장가 주문 (아래 주의) |
 | `sessionStart`~`sessionEnd` | 09:00~15:30 | 허용 시간대 (KST) |
 | 개장일 | — | 주말·공휴일 (`chk-holiday`) |
 | `symbolAllowlist` | `[]` | 비어 있지 않으면 목록 밖 종목 |
@@ -770,6 +814,20 @@ EXCG_ID_DVSN_CD = "KRX"     // 또는 NXT. SOR은 22를 받지 않는다
 
 위반 사유는 **전부 모아서** 돌려준다. 하나씩 알려주면 고칠 때마다 새 사유를 만난다.
 일일 사용량은 `trading_broker_orders`에서 오늘(KST) `submitted`된 `place` 건만 센다.
+
+> ⚠ **`allowMarketOrder` 기본값이 `true`다 (2026-08-01 결정).** 자동매매 러너는
+> **항상 시장가**라(`autoTrader.ts`) 이게 `false`면 게이트가 열려도 주문을 한 건도
+> 못 낸다. **실계좌와 모의를 가르는 것은 이 값이 아니라 `APP_ENV`다** — 모의(`vts`)면
+> 도메인이 모의 서버라 실계좌 앱키가 `EGW02007`로 거부된다.
+>
+> **그래서 `APP_ENV=prod`로 돌릴 때는 계좌별 룰을 반드시 다시 본다.** 룰 행이 없는
+> 계좌는 이 기본값을 받아 **실계좌에 시장가가 열린 채**가 된다. 막고 싶은 계좌에는
+> `allowMarketOrder: false`를 **명시적으로 저장**한다 — 기본값에 기대지 않는다.
+> (`GET .../risk-rules?accountId=`로 계좌마다 실제 값을 확인할 수 있다.)
+
+**한도 숫자는 KIS가 정한 것이 아니다.** 20건·5,000,000원·1,000,000원·1,000주는 이
+레포가 "처음부터 크게 열어두지 않는다"는 뜻으로 건 값이고 **근거가 되는 실측이 없다**
+(2026-08-01 확인, 도입 커밋 `4abee43`). KIS 쪽 제한과는 별개다.
 
 ### 시장가 주문의 금액을 어디에 남기는가 (2026-08-01 고침)
 

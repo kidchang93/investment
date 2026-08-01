@@ -5,6 +5,7 @@ import {
   summarizeDailyOrderUsage,
   type DailyOrderUsage,
 } from './orderUsage.js';
+import { config, marketOpenDayHint } from '../config.js';
 import { isDomesticMarketOpenDay } from '../kis/rest.js';
 import type { OrderSide, OrderType, RiskRuleSet, RiskVerdict } from '@invest/shared';
 
@@ -31,14 +32,30 @@ interface RiskRuleRow {
   symbol_blocklist: string[] | null;
 }
 
-/** 계좌 설정이 없을 때 쓰는 보수적인 기본값. 처음부터 크게 열어두지 않는다. */
+/**
+ * 계좌 설정이 없을 때 쓰는 기본값. **판단의 주인은 여기다** — 아래 `CREATE TABLE`의
+ * `DEFAULT`는 `upsert`가 늘 값을 명시하므로 실제로 쓰이지 않는다. 둘이 어긋나면
+ * 읽는 사람만 헷갈리므로 같이 둔다.
+ *
+ * 금액·수량·건수 한도는 여전히 보수적으로 잡는다 — 다만 **이 값들은 KIS가 정한
+ * 것이 아니라 이 레포가 건 것이고 근거가 되는 실측이 없다**(2026-08-01 확인).
+ *
+ * ★ `allowMarketOrder`만 `true`다. 자동매매 러너는 **항상 시장가**라
+ * (`autoTrader.ts`) 이게 `false`면 게이트가 열려도 주문을 한 건도 못 낸다.
+ * **실계좌와 모의를 가르는 것은 이 값이 아니라 `APP_ENV`다** — 모의(`vts`)면
+ * 도메인이 모의 서버라 실계좌 앱키가 `EGW02007`로 거부된다.
+ *
+ * **그래서 `APP_ENV=prod`로 돌릴 때는 계좌별 룰을 다시 봐야 한다.** 룰 행이 없는
+ * 계좌는 이 값을 받아 실계좌에 시장가가 열린 채가 된다. 막고 싶은 계좌에는
+ * `allowMarketOrder: false`를 **명시적으로 저장**한다 — 기본값에 기대지 않는다.
+ */
 const DEFAULT_RULES: Omit<RiskRuleSet, 'accountId'> = {
   enabled: true,
   maxOrderNotional: 1_000_000,
   maxOrderQuantity: 1_000,
   dailyNotionalLimit: 5_000_000,
   dailyOrderCountLimit: 20,
-  allowMarketOrder: false,
+  allowMarketOrder: true,
   sessionStart: '09:00',
   sessionEnd: '15:30',
   symbolAllowlist: [],
@@ -54,7 +71,8 @@ export async function ensureRiskRuleSchema(): Promise<void> {
       max_order_quantity numeric(24, 8) NOT NULL DEFAULT 1000,
       daily_notional_limit numeric(20, 4) NOT NULL DEFAULT 5000000,
       daily_order_count_limit integer NOT NULL DEFAULT 20,
-      allow_market_order boolean NOT NULL DEFAULT false,
+      -- 실제 기본값은 DEFAULT_RULES가 정한다. upsert가 늘 값을 명시하므로 이 DEFAULT는 쓰이지 않는다.
+      allow_market_order boolean NOT NULL DEFAULT true,
       session_start text NOT NULL DEFAULT '09:00',
       session_end text NOT NULL DEFAULT '15:30',
       symbol_allowlist jsonb NOT NULL DEFAULT '[]'::jsonb,
@@ -261,13 +279,25 @@ export async function checkRiskRules(input: RiskCheckInput): Promise<RiskVerdict
      * 시각만 보면 주말·공휴일 주문이 그대로 나간다. 실제로 토요일 13시 주문이 룰을 통과해
      * KIS까지 갔다가 "장운영일자가 주문일과 상이합니다"로 거부된 적이 있다.
      * 개장일 판정은 KIS에 묻되, 조회가 실패하면 보내지 않는 쪽으로 막는다.
+     *
+     * **모의 서버에는 이 조회가 없다.** 그대로 두면 catch가 늘 걸려 모의 환경에서는
+     * 통과하는 주문이 존재할 수 없다. 어디에 물어보고 있는지·무엇을 설정하면 되는지를
+     * 사유에 함께 적는다 — 보류만 적으면 설정 문제인지 KIS 장애인지 알 수 없다.
      */
+    const openDay = config.marketOpenDay;
     try {
       if (!(await isDomesticMarketOpenDay())) {
-        violations.push('오늘은 국내 증시 휴장일입니다.');
+        violations.push(
+          openDay.viaProdServer
+            ? '오늘은 국내 증시 휴장일입니다 (실전 서버에서 확인).'
+            : '오늘은 국내 증시 휴장일입니다.',
+        );
       }
     } catch {
-      violations.push('개장일을 확인할 수 없어 주문을 보류합니다.');
+      const hint = marketOpenDayHint(openDay);
+      violations.push(
+        hint ? `개장일을 확인할 수 없어 주문을 보류합니다. ${hint}` : '개장일을 확인할 수 없어 주문을 보류합니다.',
+      );
     }
   }
 

@@ -7,6 +7,33 @@ loadEnv({ path: resolve(process.cwd(), '.env') });
 
 const isProd = process.env.APP_ENV === 'prod';
 
+/** KIS 서버. 도메인도 계좌 TR_ID 접두어도 여기서 갈린다. */
+export type KisServer = 'prod' | 'vts';
+
+const env: KisServer = isProd ? 'prod' : 'vts';
+
+/**
+ * REST 도메인 표. **도메인을 다른 곳에서 짜지 않는다** — 분기는 이 표 하나뿐이다.
+ */
+const REST_BASES: Record<KisServer, string> = {
+  prod: 'https://openapi.koreainvestment.com:9443',
+  vts: 'https://openapivts.koreainvestment.com:29443',
+};
+
+export function restBaseFor(server: KisServer): string {
+  return REST_BASES[server];
+}
+
+/** 로그·오류 문구에 쓰는 이름. 화면 용어를 따른다(`docs/CODE_STYLE.md`). */
+const SERVER_LABELS: Record<KisServer, string> = {
+  prod: '실전 서버',
+  vts: '모의 서버',
+};
+
+export function kisServerLabel(server: KisServer): string {
+  return SERVER_LABELS[server];
+}
+
 /** 상품코드가 따로 없을 때의 기본값. 개인 종합위탁계좌가 01이다. */
 const DEFAULT_PRODUCT_CODE = '01';
 
@@ -206,30 +233,44 @@ function parseKisAccounts(): KisAccountConfig[] {
 }
 
 /**
- * 시세·종목마스터·실시간 WS처럼 계좌와 무관한 호출에 쓸 기본 자격증명.
- * 호출 한도를 한 앱키에 모으려고 계좌를 바꿔도 이 값은 고정한다.
+ * 자격증명 id로 계좌를 찾는다.
+ *
+ * **정확히 일치하는 계좌를 먼저 보고, 없으면 그 자격증명을 쓰는 첫 계좌를 쓴다.**
+ * 계좌에 종류가 붙으면 id가 `VTS-ORDINARY`가 되는데 사람은 `VTS`라고 적는 것이
+ * 자연스럽다 — 고르는 것은 계좌가 아니라 **앱키**이고, 종류가 달라도 앱키는 같다.
+ *
+ * `KIS_PRIMARY_ACCOUNT_ID`와 `KIS_OPEN_DAY_CREDENTIAL_ID`가 같은 규칙을 쓴다.
+ * 두 곳이 각자 들고 있으면 한쪽만 고쳐진다.
  */
-function resolvePrimaryCredentials(accounts: KisAccountConfig[]): {
+export function findKisCredentialById<T extends { id: string }>(
+  accounts: readonly T[],
+  credentialId: string,
+): T | undefined {
+  return (
+    accounts.find((account) => account.id === credentialId)
+    ?? accounts.find((account) => account.id.startsWith(`${credentialId}-`))
+  );
+}
+
+/** 계좌와 함께 다니지 않는, 앱키만 뽑은 묶음. */
+export interface KisCredentialPair {
   id: string;
   appKey: string;
   appSecret: string;
-} {
+}
+
+/**
+ * 시세·종목마스터·실시간 WS처럼 계좌와 무관한 호출에 쓸 기본 자격증명.
+ * 호출 한도를 한 앱키에 모으려고 계좌를 바꿔도 이 값은 고정한다.
+ */
+function resolvePrimaryCredentials(accounts: KisAccountConfig[]): KisCredentialPair {
   const explicitId = process.env.KIS_PRIMARY_ACCOUNT_ID?.trim();
   /*
-   * **자격증명 id로도 찾는다.** 계좌에 종류가 붙으면 id가 `VTS-ORDINARY`가 되는데,
-   * `KIS_PRIMARY_ACCOUNT_ID=VTS`라고 적는 것이 자연스럽다 — 고르는 것은 계좌가
-   * 아니라 **앱키**이고, 종류가 달라도 앱키는 같기 때문이다. 정확히 일치하는
-   * 계좌를 먼저 보고, 없으면 그 앱키를 쓰는 첫 계좌를 쓴다.
-   *
-   * 이게 없으면 `KIS_PRIMARY_ACCOUNT_ID`가 조용히 무시되고 id 오름차순 첫 계좌가
+   * 이 값이 없으면 `KIS_PRIMARY_ACCOUNT_ID`가 조용히 무시되고 id 오름차순 첫 계좌가
    * 기본이 된다 — 실계좌 id가 숫자면 모의 환경인데 실계좌 앱키가 기본이 되어
    * 시세가 통째로 죽는다.
    */
-  const chosen =
-    (explicitId
-      ? accounts.find((account) => account.id === explicitId)
-        ?? accounts.find((account) => account.id.startsWith(`${explicitId}-`))
-      : undefined) ?? accounts[0];
+  const chosen = (explicitId ? findKisCredentialById(accounts, explicitId) : undefined) ?? accounts[0];
   if (chosen) return { id: chosen.id, appKey: chosen.appKey, appSecret: chosen.appSecret };
 
   return {
@@ -239,20 +280,130 @@ function resolvePrimaryCredentials(accounts: KisAccountConfig[]): {
   };
 }
 
+/**
+ * 개장일 조회(`chk-holiday` / `CTCA0903R`)를 **어느 자격증명으로 어느 서버에** 물을지.
+ *
+ * **모의 서버에는 이 TR이 없다.** `APP_ENV=vts`로 물으면 HTTP 500 +
+ * `EGW02006 모의투자 TR 이 아닙니다`가 온다(2026-08-01 실측). 조회가 실패하면
+ * 리스크 룰이 "보류"로 막으므로 그대로 두면 **모의 환경에서는 리스크 룰을 통과하는
+ * 주문이 존재할 수 없다** — 월요일 장중에도 똑같이 막힌다.
+ *
+ * 개장일은 계좌와 무관한 **시장 사실**이라 실전 서버에 물어도 답이 같다(2026-08-01
+ * 실측: 20260731 `Y` · 20260801 `N` · 20260803 `Y`). 그래서
+ * `KIS_OPEN_DAY_CREDENTIAL_ID`에 실전 자격증명 id를 주면 **이 조회 하나만** 그
+ * 앱키로 실전 도메인에 보낸다.
+ *
+ * ⚠ **조회 전용이다. 주문에 절대 쓰지 않는다.** 이 자격증명이 주문 경로로 새면
+ * 모의 환경인 줄 알고 실계좌에 주문이 나간다 — 이 레포에서 가장 위험한 실수라
+ * `orderServerMismatch()`가 한 겹 더 막는다.
+ *
+ * 값이 없으면 **지금 동작 그대로**다(모의에서는 보류). 없는 설정을 추측해서 아무
+ * 앱키나 쓰지 않는다. 실전 환경에서는 이 우회가 아예 동작하지 않는다 — 이미 실전
+ * 서버에 붙어 있고 같은 TR이 그대로 동작한다.
+ */
+export interface MarketOpenDayLookup {
+  credentials: KisCredentialPair;
+  /** 이 조회를 보낼 서버 */
+  server: KisServer;
+  /** 모의 환경인데 실전 서버로 물어보는 중인가. 서버 시작 로그와 판정 사유가 이걸 적는다 */
+  viaProdServer: boolean;
+  /** 설정이 있는데 못 썼거나 쓸 자리가 아닌 이유. 조용히 무시하지 않는다 */
+  problem: string | null;
+}
+
+export function resolveMarketOpenDayLookup(input: {
+  env: KisServer;
+  credentialId: string | undefined;
+  accounts: readonly KisCredentialPair[];
+  primary: KisCredentialPair;
+}): MarketOpenDayLookup {
+  const credentialId = input.credentialId?.trim() ?? '';
+  const asIs: MarketOpenDayLookup = {
+    credentials: input.primary,
+    server: input.env,
+    viaProdServer: false,
+    problem: null,
+  };
+
+  // 실전 환경에서는 우회가 없다. 지금 경로 그대로 간다.
+  if (input.env === 'prod') {
+    if (!credentialId) return asIs;
+    return {
+      ...asIs,
+      problem:
+        'KIS_OPEN_DAY_CREDENTIAL_ID는 모의(APP_ENV=vts)에서만 씁니다.'
+        + ' 실전에서는 이미 실전 서버에 붙어 있어 무시합니다.',
+    };
+  }
+
+  if (!credentialId) return asIs;
+
+  const found = findKisCredentialById(input.accounts, credentialId);
+  if (!found) {
+    return {
+      ...asIs,
+      problem:
+        `KIS_OPEN_DAY_CREDENTIAL_ID에 적힌 자격증명을 찾지 못했습니다 (${credentialId}).`
+        + ' 그 id로 KIS_APP_KEY_<id> · KIS_APP_SECRET_<id> · KIS_<id>_ACCOUNT_NO가 함께 있어야 합니다.',
+    };
+  }
+
+  return {
+    credentials: { id: found.id, appKey: found.appKey, appSecret: found.appSecret },
+    server: 'prod',
+    viaProdServer: true,
+    problem: null,
+  };
+}
+
+/**
+ * 개장일을 확인하지 못했을 때 **무엇을 해야 하는지** 한 줄로 알려 준다. 할 말이 없으면 null.
+ *
+ * 이 말이 없으면 모의 환경에서는 `개장일을 확인할 수 없어 주문을 보류합니다`만 보이고,
+ * 그게 설정 문제인지 KIS 장애인지 구별할 방법이 없다. 환경변수 이름은 운영자가 그대로
+ * 입력해야 하는 값이라 화면에 영어로 나가도 된다(`docs/CODE_STYLE.md`).
+ */
+export function marketOpenDayHint(lookup: MarketOpenDayLookup): string | null {
+  /*
+   * 실전 서버로 나가는 조회는 이 설정과 무관하게 동작한다. 그런데도 실패했다면
+   * 원인이 다른 데 있으므로, 여기서 설정 이야기를 꺼내면 엉뚱한 곳을 보게 만든다.
+   */
+  if (lookup.server !== 'vts') return null;
+  if (lookup.problem) return lookup.problem;
+  return (
+    '모의 서버에는 개장일 조회가 없습니다.'
+    + ' KIS_OPEN_DAY_CREDENTIAL_ID에 실전 자격증명 id를 넣으면 개장일만 실전 서버로 확인합니다.'
+  );
+}
+
+/**
+ * 주문 경로에 다른 서버의 자격증명이 섞였는지 본다. 어긋나면 사유, 맞으면 null.
+ *
+ * 개장일 조회용 실전 자격증명은 **조회 전용**이다. 이게 주문 POST로 새면 모의
+ * 환경인 줄 알고 실계좌에 주문이 나간다. 코드 경로상 섞일 일이 없더라도 한 겹
+ * 더 막아 둔다 — 되돌릴 수 없는 실수라서다.
+ */
+export function orderServerMismatch(credentialServer: KisServer, env: KisServer): string | null {
+  if (credentialServer === env) return null;
+  // 두 라벨이 모두 `서버`로 끝나 뒤에 붙는 조사가 갈리지 않는다. 라벨을 늘리면 다시 본다.
+  return (
+    `주문은 ${SERVER_LABELS[env]}로만 보냅니다.`
+    + ` ${SERVER_LABELS[credentialServer]} 자격증명이 주문 경로에 들어왔습니다 — 조회 전용 자격증명은 주문에 쓸 수 없습니다.`
+  );
+}
+
 const kisAccounts = parseKisAccounts();
 const primary = resolvePrimaryCredentials(kisAccounts);
 
 export const config = {
   /** 'vts'(모의) | 'prod'(실전) */
-  env: (isProd ? 'prod' : 'vts') as 'prod' | 'vts',
+  env,
   /** 계좌 무관 호출용 기본 자격증명 */
   appKey: primary.appKey,
   appSecret: primary.appSecret,
   primaryCredentialId: primary.id,
   /** REST 도메인 */
-  restBase: isProd
-    ? 'https://openapi.koreainvestment.com:9443'
-    : 'https://openapivts.koreainvestment.com:29443',
+  restBase: restBaseFor(env),
   /** 실시간 WebSocket 도메인 */
   wsBase: isProd
     ? 'ws://ops.koreainvestment.com:21000'
@@ -262,6 +413,16 @@ export const config = {
   kisAccounts,
   /** 설정하려 했는데 못 쓴 계좌와 그 사유. 서버가 뜰 때 로그로 알린다 */
   skippedKisAccounts,
+  /**
+   * 개장일 조회를 어느 자격증명·어느 서버로 보낼지. **조회 전용이다** —
+   * 주문에는 절대 쓰지 않는다(`resolveMarketOpenDayLookup` 주석 참고).
+   */
+  marketOpenDay: resolveMarketOpenDayLookup({
+    env,
+    credentialId: process.env.KIS_OPEN_DAY_CREDENTIAL_ID,
+    accounts: kisAccounts,
+    primary,
+  }),
   /**
    * 실주문 전송 허용 여부. **기본값은 항상 false**다.
    * 명시적으로 `KIS_LIVE_ORDER_ENABLED=true`를 넣어야 열린다.

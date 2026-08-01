@@ -31,7 +31,7 @@ frontend ──▶ @invest/shared ◀── backend
 ```
 backend/src/
 ├── server.ts          # 진입점. Fastify REST + WS 서버 조립, KisRealtime 기동
-├── config.ts          # .env 로드, vts/prod 도메인·자격증명 분기
+├── config.ts          # .env 로드, vts/prod 도메인·자격증명 분기 (★개장일 조회는 서버가 갈릴 수 있다)
 ├── watchlist.ts       # 감시 종목 (env 오버라이드 → 없으면 기본값)
 ├── quoteCache.ts      # 현재가 캐시(45초). ★시각을 다시 찍지 않는다 — 나이는 Quote.fetchedAt 하나뿐
 ├── themes/
@@ -313,8 +313,39 @@ KisRealtime open/close → 'status' 이벤트 → broadcast({type:'status'})
 > KIS가 주문/계좌 TR_ID를 개편했다. 구 ID(`TTTC8001R`, `TTTC0802U` 등)도 아직 응답하지만
 > 현행 ID만 쓴다. 전체 대응표와 막힌 항목은 `docs/TRADING_API.md` 참고.
 
-도메인은 `config.ts`에서 `vts`(모의) / `prod`(실전)로 분기한다.
+도메인은 `config.ts`의 `restBaseFor()` 표에서 `vts`(모의) / `prod`(실전)로 분기한다.
 **계좌 관련 TR_ID는 실전/모의 접두어(`TTTC`/`VTTC`)가 다르므로 `config.env` 분기로만 고른다.**
+
+### 개장일 조회만 다른 서버로 나간다
+
+**모의 서버에는 `chk-holiday`(`CTCA0903R`)가 없다** — HTTP 500 + `EGW02006 모의투자 TR 이
+아닙니다`(2026-08-01 실측). 조회 실패는 리스크 룰에서 "보류"가 되므로 그대로 두면
+**모의 환경에서는 리스크 룰을 통과하는 주문이 존재할 수 없다.** 월요일 장중에도 막힌다.
+
+개장일은 계좌와 무관한 **시장 사실**이라 실전 서버에 물어도 답이 같다. 그래서
+`KIS_OPEN_DAY_CREDENTIAL_ID`에 실전 자격증명 id를 주면 **이 조회 하나만** 실전 도메인으로
+보낸다. **KRX 달력을 코드가 자체 판단하는 길은 버렸다** — "휴장일을 아는 것은 서버지 이
+계산이 아니다"(`trading/runCandles.ts`)라는 결정과 부딪히고, 시계로 주말만 거르면
+공휴일에 같은 결함이 그대로 돌아온다.
+
+```
+config.marketOpenDay = { credentials, server, viaProdServer, problem }
+        │
+        └─ isDomesticMarketOpenDay() → kisGetWithHeaders(..., {…credentials, server})
+```
+
+이 때문에 세 가지가 따라온다.
+
+| | 규칙 | 왜 |
+|------|------|------|
+| 조회(GET) 도메인 | **자격증명이 정한다** (`KisCredentials.server`, 없으면 `config.env`) | 토큰은 발급받은 서버에서만 통한다. 둘이 따로 다니면 어긋난다 |
+| 토큰 캐시 키 | `token-{서버}-{자격증명id}.json` | `config.env`를 박아 두면 실전 토큰이 `token-vts-21.json`에 저장돼 **이름이 거짓말을 하고**, 모의 호출이 그 캐시를 재사용하면 모의 서버에 실전 토큰을 보낸다 |
+| 주문(POST) 도메인 | **`config.restBase` 고정** + `orderServerMismatch()` 가드 | 이 자격증명은 **조회 전용**이다. 주문 경로로 새면 모의 환경인 줄 알고 실계좌에 주문이 나간다 |
+
+**설정이 없으면 지금 동작 그대로**(모의에서는 보류)이고 `APP_ENV=prod`에서는 이 우회가
+아예 없다. 없는 설정을 추측해 아무 앱키나 쓰지 않는다 — 못 찾으면 사유(`problem`)를
+남겨 서버 시작 로그와 판정 사유가 함께 말한다. 실전 서버에 붙는다는 사실도 시작 로그에
+찍는다. **조용히 다른 서버에 붙는 것은 안 된다.**
 
 ## 다계좌 자격증명 모델
 

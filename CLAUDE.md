@@ -76,6 +76,7 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 | `KIS_<id>_ACCOUNT_<종류>_NO` | | 한 앱키에 계좌가 여럿일 때(모의투자의 `ORDINARY` 주식 / `EXTRAORDINARY` 선물옵션). 계좌 id는 `<id>-<종류>`가 되고 앱키는 `KIS_APP_KEY_<id>`를 함께 쓴다 |
 | `KIS_<id>_ACCOUNT_PRODUCT_CODE` | | 상품코드 2자리. 생략하면 `01`(종합위탁) |
 | `KIS_PRIMARY_ACCOUNT_ID` | | 시세·실시간 WS에 쓸 기본 계좌 id. 생략하면 id 오름차순 첫 계좌 |
+| `KIS_OPEN_DAY_CREDENTIAL_ID` | | 개장일 조회(`chk-holiday`)를 물어볼 자격증명 id. **모의 서버에 이 TR이 없어** `APP_ENV=vts`면 리스크 룰이 늘 보류로 막힌다. 이 값을 주면 **개장일 조회 하나만** 그 앱키로 실전 서버에 보낸다. **조회 전용이고 주문에는 절대 쓰지 않는다.** 없으면 지금 동작 그대로(보류), `APP_ENV=prod`면 무시 |
 | `KIS_LIVE_ORDER_ENABLED` | | `true`면 실주문 전송 허용. **기본값은 항상 차단**이다 |
 | `KIS_<id>_HTS_ID` / `KIS_HTS_ID` | | HTS/MTS 로그인 ID. 실시간 주문·체결 통보(`H0STCNI0`) 구독의 `tr_key`. 종목코드가 아니다. 없으면 통보만 비활성화된다 |
 | `KIS_ACCOUNT_NO` | | 구버전 단일 계좌 방식. `KIS_APP_KEY`/`KIS_APP_SECRET`와 함께 쓴다 |
@@ -105,7 +106,7 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 ## 절대 하지 말아야 할 것
 
 1. **KIS 원본 필드명(약어)을 프론트로 노출하지 말 것.** `stck_prpr`, `prdy_ctrt` 같은 약어는 반드시 `backend/src/kis/`에서 `@invest/shared` 타입으로 정규화한 뒤 넘긴다. 프론트는 KIS 스펙을 몰라야 한다.
-2. **인증 토큰 발급을 남발하지 말 것.** `access_token`은 발급 횟수 제한이 있어 `.cache/token-{env}-{계좌id}.json`으로 **앱키별로** 캐시한다 (구버전 단일 계좌는 `token-{env}.json`). 인증 로직을 바꿀 때 캐시 재사용을 깨지 않는다. 캐시는 백엔드 실행 디렉터리 기준이라 실제 경로는 `backend/.cache/`다.
+2. **인증 토큰 발급을 남발하지 말 것.** `access_token`은 발급 횟수 제한이 있어 `.cache/token-{서버}-{계좌id}.json`으로 **앱키별·서버별로** 캐시한다 (구버전 단일 계좌는 `token-{서버}.json`). 토큰은 **발급받은 서버에서만** 통하므로 파일 이름의 `{서버}`는 그 실행의 `APP_ENV`가 아니라 **그 토큰을 받은 서버**다 — 개장일 조회는 모의 환경에서도 실전 서버에 붙는다(`KIS_OPEN_DAY_CREDENTIAL_ID`). 인증 로직을 바꿀 때 캐시 재사용을 깨지 않는다. 캐시는 백엔드 실행 디렉터리 기준이라 실제 경로는 `backend/.cache/`다.
 
 2-1. **계좌 조회에 다른 계좌의 앱키를 쓰지 말 것.** KIS는 앱키에 등록된 계좌만 허용하고, 아니면 `INVALID_CHECK_ACNO`로 거부한다. 앱키/시크릿은 전역 값이 아니라 `KisAccountConfig`로 계좌와 함께 다닌다. 계좌 API를 추가할 때 `toCredentials(account)`를 `kisGetWithHeaders`에 넘겨야 한다.
 3. **두 인증 엔드포인트의 시크릿 필드명 혼동 금지.** `/oauth2/tokenP` → `appsecret`, `/oauth2/Approval` → `secretkey`. 서로 다르다.
@@ -114,4 +115,4 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 4-1. **멀티시세(`FHKST11300006`)의 30종목 상한을 넘기지 말 것.** 31개를 보내면 **오류가 나지 않는다** — `rt_cd=0`으로 정상 응답하면서 31번째가 조용히 사라진다(2026-07-31 실측). 그대로 두면 "이 테마는 이게 전부"라고 적게 된다. `multiQuoteParams`가 던지게 해 뒀으니 그 가드를 걷어내지 않는다.
 5. **`.env`와 `.cache/`를 커밋하지 말 것.** (자격증명·토큰 포함)
 6. **`shared`를 빌드 산출물로 참조하지 말 것.** `main`/`types`가 `src/index.ts`를 직접 가리킨다. 컴파일 단계 없이 소스로 소비된다.
-7. **모의(`vts`)/실전(`prod`) 도메인을 하드코딩하지 말 것.** 반드시 `config.ts`의 분기를 통한다.
+7. **모의(`vts`)/실전(`prod`) 도메인을 하드코딩하지 말 것.** 반드시 `config.ts`의 `restBaseFor()` 표를 통한다. 조회(GET)의 도메인은 **자격증명이 정한다**(`KisCredentials.server`) — 토큰이 발급받은 서버에서만 통하므로 둘이 함께 다녀야 한다. **주문(POST)은 예외로 `config.restBase`에 고정**하고, 서버가 다른 자격증명이 들어오면 `orderServerMismatch()`가 보내기 전에 던진다. 실전 자격증명이 주문 경로로 새면 모의 환경인 줄 알고 실계좌에 주문이 나간다.

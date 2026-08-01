@@ -1,7 +1,14 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { WebSocketServer, WebSocket } from 'ws';
-import { config, assertCredentials, getKisAccount, type KisAccountConfig } from './config.js';
+import {
+  config,
+  assertCredentials,
+  getKisAccount,
+  kisServerLabel,
+  marketOpenDayHint,
+  type KisAccountConfig,
+} from './config.js';
 import {
   addDefaultWatchlistItem,
   addWatchlistItem,
@@ -1323,6 +1330,24 @@ async function main(): Promise<void> {
    */
   for (const skipped of config.skippedKisAccounts) {
     app.log.warn(`KIS 계좌 ${skipped.id}을(를) 쓰지 못했습니다 — ${skipped.reason}`);
+  }
+  /*
+   * 개장일 조회가 어느 서버로 나가는지 반드시 알린다. 조용히 다른 서버에 붙는 것은
+   * 안 된다. 모의 서버에는 이 TR이 없어(EGW02006) 설정이 없으면 리스크 룰이 늘
+   * 보류로 막히므로, 그 사실도 여기서 말한다.
+   */
+  const openDay = config.marketOpenDay;
+  if (openDay.viaProdServer) {
+    app.log.warn(
+      `개장일 조회만 ${kisServerLabel(openDay.server)}에 물어본다`
+      + ` — 자격증명 ${openDay.credentials.id} (KIS_OPEN_DAY_CREDENTIAL_ID).`
+      + ' 조회 전용이며 주문은 이 서버로 나가지 않는다.',
+    );
+  } else {
+    const hint = marketOpenDayHint(openDay);
+    if (hint) app.log.warn(`개장일을 확인하지 못하면 실주문이 보류된다 — ${hint}`);
+    // 실전에서는 개장일 조회가 그대로 동작한다. 설정을 적어 둔 것만 무시한다고 알린다.
+    else if (openDay.problem) app.log.warn(openDay.problem);
   }
   app.log.info(
     kis.isOrderNoticeEnabled
