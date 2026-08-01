@@ -462,24 +462,40 @@ function todayUtcSeconds(): number {
   return Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) / 1000);
 }
 
-/** 국내주식 1분봉 시세 (주식일별분봉조회, tr_id: FHKST03010230). */
-async function getDomesticIntradayCandles(instrument: Instrument): Promise<CandlesResponse> {
+/**
+ * 국내주식 1분봉 한 창 (주식일별분봉조회, tr_id: FHKST03010230).
+ *
+ * `endHour`(`HHMMSS`)에서 **뒤로 최대 120봉**을 준다. 하루 정규장은 391분이라
+ * 한 창으로는 하루가 안 덮인다 — `getDomesticDayMinuteCandles`가 창을 이어 붙인다.
+ *
+ * **`onlyDate`를 넘기면 그 날짜 봉만 남긴다.** 그 날짜에 봉이 하나도 없으면
+ * KIS는 오류도 빈 응답도 아닌 **이전 거래일 120봉**을 `MCA00000 정상처리`로
+ * 돌려준다(2026-07-31 실측: 일요일 `20260726`을 물었더니 `20260724` 120봉).
+ * 과거를 재구성할 때 이걸 안 거르면 없는 날의 값을 지어내게 된다.
+ */
+async function fetchDomesticMinuteWindow(
+  instrument: Instrument,
+  endHour: string,
+  date: string,
+  onlyDate?: string,
+): Promise<Candle[]> {
   const json = await kisGet(
     '/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice',
     'FHKST03010230',
     {
       FID_COND_MRKT_DIV_CODE: 'J',
       FID_INPUT_ISCD: instrument.providerSymbol,
-      FID_INPUT_HOUR_1: '235959',
-      FID_INPUT_DATE_1: kstToday(),
+      FID_INPUT_HOUR_1: endHour,
+      FID_INPUT_DATE_1: date,
       FID_PW_DATA_INCU_YN: 'N',
       FID_FAKE_TICK_INCU_YN: '',
     },
   );
 
   const output2 = (json.output2 ?? []) as Array<Record<string, string>>;
-  const candles: Candle[] = output2
+  return output2
     .filter((r) => /^\d{8}$/.test(r.stck_bsop_date ?? '') && /^\d{6}$/.test(r.stck_cntg_hour ?? ''))
+    .filter((r) => onlyDate === undefined || r.stck_bsop_date === onlyDate)
     .map((r) => ({
       time: kstDateTimeToTimestamp(r.stck_bsop_date, r.stck_cntg_hour),
       open: toNumber(r.stck_oprc),
@@ -498,7 +514,62 @@ async function getDomesticIntradayCandles(instrument: Instrument): Promise<Candl
         isNonNegativeFinite(c.volume ?? 0),
     )
     .sort((a, b) => a.time - b.time);
+}
 
+/**
+ * 정규장 391분을 덮는 창 다섯 개. 한 번에 120봉이라 겹쳐 가며 이어 붙인다.
+ *
+ *   093000 → 0900~0930 · 110000 → 0901~1100 · 130000 → 1101~1300
+ *   150000 → 1301~1500 · 235959 → 1321~1530
+ *
+ * 09:00 봉을 위해 `093000`이 따로 있다 — 개장 동시호가가 거기 들어간다.
+ * 이 값은 2026-07-31에 실제로 받아 보고 정했다(`docs/USER_FINDINGS.md`).
+ */
+const MINUTE_WINDOW_HOURS = ['093000', '110000', '130000', '150000', '235959'];
+
+/** 한 종목·하루를 덮는 데 드는 KIS 호출 수. 부르는 쪽이 예산을 세울 수 있어야 한다. */
+export const MINUTE_CALLS_PER_DAY = MINUTE_WINDOW_HOURS.length;
+
+/**
+ * 국내주식 하루치 1분봉. **과거 날짜를 받는다.**
+ *
+ * 창 다섯 개를 이어 붙이고 겹친 봉은 시각으로 합친다. 받아진 가장 오래된 날짜는
+ * 2025-10-31이었다(`scripts/probeIntradayHistory.ts`).
+ *
+ * **이어 붙인 것이 맞는지는 부르는 쪽이 일봉 고가·저가와 대조한다.** 한 창이라도
+ * 빠지면 하루 고저가 달라지므로 봉 수를 세는 것보다 엄한 검사다. 여기서 하지 않는
+ * 이유는 일봉을 또 받아야 해서다 — 여러 날을 재는 쪽은 일봉을 한 번만 받아 두고
+ * 쓴다.
+ *
+ * `gapMs`는 창 사이 간격이다. KIS 초당 한도(EGW00201)를 태우지 않게 둔다 —
+ * 백엔드도 같은 앱키를 쓰고 있다.
+ */
+export async function getDomesticDayMinuteCandles(
+  instrument: Instrument,
+  date: string,
+  gapMs = 220,
+): Promise<Candle[]> {
+  const byTime = new Map<number, Candle>();
+  for (const [index, hour] of MINUTE_WINDOW_HOURS.entries()) {
+    for (const candle of await fetchDomesticMinuteWindow(instrument, hour, date, date)) {
+      byTime.set(candle.time, candle);
+    }
+    if (index < MINUTE_WINDOW_HOURS.length - 1 && gapMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, gapMs));
+    }
+  }
+  return [...byTime.values()].sort((a, b) => a.time - b.time);
+}
+
+/**
+ * 국내주식 1분봉 시세 — **오늘 것 한 창(최대 120봉)**. 러너와 화면이 쓴다.
+ *
+ * 날짜를 안 거른다. 그 날짜에 봉이 없으면 전날 것이 오는데, 그 판정은
+ * `trading/runCandles.ts`가 마지막 봉의 KST 날짜로 한다 — 거기 계약이 시험으로
+ * 못 박혀 있어 여기서 또 거르지 않는다.
+ */
+async function getDomesticIntradayCandles(instrument: Instrument): Promise<CandlesResponse> {
+  const candles = await fetchDomesticMinuteWindow(instrument, '235959', kstToday());
   return { code: instrument.id, name: instrument.name, candles };
 }
 

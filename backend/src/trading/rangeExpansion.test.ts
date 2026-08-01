@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  candleToMinuteBar,
   fullDayRangeRate,
   normalizeMinuteBars,
   quantile,
@@ -18,6 +19,12 @@ import {
   spreadEvenly,
   type MinuteBar,
 } from './rangeExpansion.js';
+
+/** `Candle.time`은 UTC epoch 초다. KST 시각을 그 값으로 바꾼다. */
+function kstEpoch(date: string, hour: number, minute: number): number {
+  const [y, m, d] = [date.slice(0, 4), date.slice(4, 6), date.slice(6, 8)].map(Number);
+  return Math.floor(Date.UTC(y, m - 1, d, hour - 9, minute, 0) / 1000);
+}
 
 /** 09:00부터 1분 간격. 값은 시험마다 직접 적는다. */
 function bars(rows: Array<[high: number, low: number, close: number]>, startMinute = 540): MinuteBar[] {
@@ -231,5 +238,58 @@ describe('분위수', () => {
   it('빈 표본은 NaN이다 — 0으로 채우면 없는 값이 최솟값이 된다', () => {
     assert.ok(Number.isNaN(quantile([], 0.5)));
     assert.ok(Number.isNaN(quantile([NaN], 0.5)));
+  });
+});
+
+/*
+ * KIS에서 오는 것은 `Candle`(UTC epoch 초)이고 이 모듈이 재는 것은 KST 분이다.
+ * 9시간을 잘못 다루면 09:00 봉이 00:00으로 읽혀 **전 구간이 장 밖**이 되고,
+ * `snapshotAt`은 잴 것이 없어 조용히 null을 준다 — 오류가 아니라 표본 0이라
+ * 눈치채기 어렵다. 그래서 경계를 직접 못 박는다.
+ */
+describe('Candle → MinuteBar (KST 축 변환)', () => {
+  it('09:00 KST는 540분이다', () => {
+    const bar = candleToMinuteBar({ time: kstEpoch('20260731', 9, 0), high: 3, low: 1, close: 2 });
+    assert.equal(bar.minute, 540);
+  });
+
+  it('15:30 KST는 930분이다 — 마감 경계', () => {
+    const bar = candleToMinuteBar({ time: kstEpoch('20260731', 15, 30), high: 3, low: 1, close: 2 });
+    assert.equal(bar.minute, 930);
+  });
+
+  /*
+   * 09:00 KST는 UTC로 **전날 00:00**이다. UTC 날짜가 하루 뒤로 넘어가는 이
+   * 구간에서 음수 나머지가 나오면 minute이 1440 근처로 튄다.
+   */
+  it('UTC로 전날이 되는 시각도 KST 분으로 읽는다', () => {
+    const bar = candleToMinuteBar({ time: kstEpoch('20260731', 0, 30), high: 3, low: 1, close: 2 });
+    assert.equal(bar.minute, 30);
+  });
+
+  it('고저종과 체결량은 그대로 옮긴다', () => {
+    const bar = candleToMinuteBar({
+      time: kstEpoch('20260731', 10, 15),
+      high: 1200,
+      low: 1180,
+      close: 1195,
+      volume: 4200,
+    });
+    assert.deepEqual(bar, { minute: 615, high: 1200, low: 1180, close: 1195, volume: 4200 });
+  });
+
+  it('체결량이 없으면 없는 채로 둔다 — 0으로 채우면 「거래 없음」이 지어진다', () => {
+    const bar = candleToMinuteBar({ time: kstEpoch('20260731', 10, 15), high: 3, low: 1, close: 2 });
+    assert.equal(bar.volume, undefined);
+  });
+
+  it('하루치를 통째로 옮겨도 정규장 안에 들어온다', () => {
+    const day = [
+      candleToMinuteBar({ time: kstEpoch('20260731', 9, 0), high: 3, low: 1, close: 2 }),
+      candleToMinuteBar({ time: kstEpoch('20260731', 12, 0), high: 5, low: 2, close: 4 }),
+      candleToMinuteBar({ time: kstEpoch('20260731', 15, 30), high: 4, low: 3, close: 3 }),
+    ];
+    assert.deepEqual(day.map((bar) => bar.minute), [540, 720, 930]);
+    assert.ok(day.every((bar) => bar.minute >= 540 && bar.minute <= 930));
   });
 });

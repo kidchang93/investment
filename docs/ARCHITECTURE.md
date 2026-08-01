@@ -201,17 +201,49 @@ backend/src/trading/
 받는 것과 해석하는 것을 갈라 둔 이유는, 종목·하루당 KIS 5회가 나가므로 보는
 각도를 바꿀 때마다 다시 받을 수 없기 때문이다. 잰 결과는 `docs/USER_FINDINGS.md`.
 
+**전략 성과도 같은 두 단계다. 다만 축이 둘이라 경로도 둘이다.**
+
+| 축 | 재는 것 | 받는 것 |
+|------|------|------|
+| 일봉 | `scripts/measureStrategies.ts` | 같은 스크립트 (종목당 1회라 싸다) |
+| **1분봉 — 러너가 도는 축** | `scripts/measureStrategiesIntraday.ts` | `scripts/collectMinuteCandles.ts` |
+
+분봉 쪽이 갈라져 있는 것은 종목·하루당 5회이기 때문이다. 20종목 × 15거래일이면
+1,500회다. 두 수집기 모두 **일봉 고가·저가와 대조해** 창을 놓친 날을 버리고, 버린
+건수를 결과에 남긴다 — 몇 건을 왜 버렸는지 모르면 남은 표본이 무엇을 대표하는지
+알 수 없다.
+
+두 측정 모두 **판정(`verdict`)을 자동으로 고치지 않는다.** 어긋난 것만 알리고
+사람이 정한다. 특히 분봉 쪽은 `verdict`가 일봉 축에서 정해진 값이라, 축을 하나로
+맞추기 전에는 그 결과로 뒤집지 않는다.
+
 ### `backend/src/scripts/` — 조사용 스크립트의 KIS 경계
 
 **일회성 조사 스크립트는 KIS를 직접 부른다.** `captureAuction.ts`·`dumpQuoteRaw.ts`·
-`probeIntradayHistory.ts`·`measureRangeExpansion.ts`가 `config.restBase`와
-`getAccessToken(primaryCredentials)`로 직접 URL을 짜고 원본 필드명을 읽는다.
-"무엇이 오는지"를 확인하려고 만든 것이라 정규화하면 그 목적이 사라진다.
+`probeIntradayHistory.ts`가 `config.restBase`와 `getAccessToken(primaryCredentials)`로
+직접 URL을 짜고 원본 필드명을 읽는다. "무엇이 오는지"를 확인하려고 만든 것이라
+정규화하면 그 목적이 사라진다.
 
 **이 예외는 `scripts/`까지다.** 원본 필드가 `server.ts`나 프론트로 흘러가면 안
-된다는 규칙은 그대로다. 어떤 조사 경로가 화면 기능이 되면 그때 `kis/`로 옮긴다 —
-`measureRangeExpansion.ts`의 날짜 지정 분봉 조회가 그 후보다(지금
-`getInstrumentIntradayCandles`는 오늘 날짜가 박혀 있고 120봉만 준다).
+된다는 규칙은 그대로다.
+
+**소비자가 둘이 되면 옮긴다.** 날짜 지정 분봉 조회가 그랬다 — `measureRangeExpansion.ts`가
+직접 파싱하던 것을 분봉 축 전략 측정(`measureStrategiesIntraday.ts`)이 같이 쓰게 되면서
+`kis/rest.ts`의 `getDomesticDayMinuteCandles`로 옮겼다. 같은 TR을 두 곳이 각자 파싱하면
+한쪽만 고쳐진다. 옮기면서 딸려 온 것:
+
+- KIS 한도(EGW00201) 백오프를 `kisGetWithHeaders`가 맡는다. **500으로 오는 같은 오류**까지
+  잡는데 스크립트가 들고 있던 재시도는 200만 봤다.
+- 창 다섯 개를 이어 붙이는 자리와 그 호출 수(`MINUTE_CALLS_PER_DAY`)가 한 곳에 있다.
+- **그 날짜 봉만 남기는 필터**도 한 곳이다. 그 날짜에 봉이 없으면 KIS가 이전 거래일 것을
+  `MCA00000 정상처리`로 조용히 준다.
+
+`Candle`(UTC epoch 초) ↔ `MinuteBar`(KST 분) 변환은 `trading/rangeExpansion.ts`의
+`candleToMinuteBar`다. 9시간을 잘못 다루면 09:00 봉이 00:00으로 읽혀 **전 구간이 장
+밖**이 되고, 오류 없이 표본만 0건이 된다 — 시험 6건이 이 경계를 못 박는다.
+
+`getInstrumentIntradayCandles`(오늘 한 창·120봉)는 그대로 남는다. 날짜를 안 거르고,
+그 판정은 `trading/runCandles.ts`가 마지막 봉의 KST 날짜로 한다.
 
 후보에서 빠진 사유(`ScreeningVerdict`)는 **자동매매와 화면이 같은 함수**로 낸다 —
 `verdictFor(quote, elapsed, cash)`. 예전에는 `loadAutoTraderCandidates`와

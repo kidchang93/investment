@@ -64,6 +64,28 @@ export interface RangeSnapshot {
   turnoverSoFar: number | undefined;
 }
 
+/**
+ * `Candle`(UTC epoch **초**)을 `MinuteBar`(자정부터의 KST 분)로.
+ *
+ * KIS에서 오는 것은 이제 `Candle`이라(`getDomesticDayMinuteCandles`) 여기서 축을
+ * 바꾼다. 예전에는 `scripts/measureRangeExpansion.ts`가 KIS 원본 필드를 직접
+ * 읽어 `MinuteBar`를 만들었는데, 같은 TR을 두 곳이 각자 파싱하면 한쪽만 고쳐진다.
+ *
+ * **KST 분으로 바꾸는 것이라 9시간을 더한다.** `Candle.time`은 UTC 기준이다 —
+ * 그냥 `%86400`으로 나누면 09:00 봉이 00:00으로 읽혀 전 구간이 장 밖이 된다.
+ */
+export function candleToMinuteBar(candle: { time: number; high: number; low: number; close: number; volume?: number }): MinuteBar {
+  const kstSeconds = candle.time + 9 * 3600;
+  const secondsOfDay = ((kstSeconds % 86400) + 86400) % 86400;
+  return {
+    minute: Math.floor(secondsOfDay / 60),
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+    volume: candle.volume,
+  };
+}
+
 /** 오름차순 정렬 + 같은 분 중복 제거. 창을 여러 번 받아 이어 붙이면 겹친다. */
 export function normalizeMinuteBars(bars: MinuteBar[]): MinuteBar[] {
   const byMinute = new Map<number, MinuteBar>();

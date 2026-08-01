@@ -48,11 +48,10 @@ import { appendFileSync } from 'node:fs';
 
 import { KRX_SESSION_MINUTES } from '@invest/shared';
 
-import { config } from '../config.js';
 import { getCategoryInstruments } from '../db/instruments.js';
-import { getAccessToken, primaryCredentials } from '../kis/auth.js';
-import { getDailyCandles } from '../kis/rest.js';
+import { MINUTE_CALLS_PER_DAY, getDailyCandles, getDomesticDayMinuteCandles } from '../kis/rest.js';
 import {
+  candleToMinuteBar,
   fullDayRangeRate,
   normalizeMinuteBars,
   snapshotAt,
@@ -63,17 +62,14 @@ import { MAX_COST_SHARE_OF_RANGE, MIN_DAILY_TURNOVER, ROUND_TRIP_COST_RATE } fro
 import type { Instrument } from '@invest/shared';
 
 const OUT = process.env.RANGE_OUT ?? '/tmp/range-expansion.jsonl';
-/** KIS 초당 한도(EGW00201)를 태우지 않게 둔다. 백엔드도 같은 앱키를 쓰고 있다. */
-const CALL_GAP_MS = 220;
-const RATE_LIMIT_BACKOFF_MS = 1200;
-
-/*
- * 정규장 391분을 덮는 창 다섯 개. 한 번에 120봉이라 겹쳐 가며 이어 붙인다.
- *   093000 → 0900~0930 · 110000 → 0901~1100 · 130000 → 1101~1300
- *   150000 → 1301~1500 · 235959 → 1321~1530
- * 09:00 봉을 위해 093000이 따로 있다 — 개장 동시호가가 거기 들어간다.
+/**
+ * KIS 초당 한도(EGW00201)를 태우지 않게 둔다. 백엔드도 같은 앱키를 쓰고 있다.
+ *
+ * 한도에 걸렸을 때의 백오프는 `kisGetWithHeaders`가 한다 — 200 + `EGW00201`뿐
+ * 아니라 **500으로 오는 같은 오류**까지 잡는다. 예전에 이 파일이 들고 있던
+ * 재시도는 앞쪽만 봤다.
  */
-const WINDOW_HOURS = ['093000', '110000', '130000', '150000', '235959'];
+const CALL_GAP_MS = 220;
 
 const SESSION_OPEN = KRX_SESSION_MINUTES.open;
 const SESSION_CLOSE = KRX_SESSION_MINUTES.close;
@@ -127,56 +123,18 @@ async function buildPool(size: number): Promise<Instrument[]> {
   return pool;
 }
 
-const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function fetchWindow(code: string, date: string, hour: string, token: string): Promise<MinuteBar[]> {
-  const url = new URL('/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice', config.restBase);
-  url.searchParams.set('FID_COND_MRKT_DIV_CODE', 'J');
-  url.searchParams.set('FID_INPUT_ISCD', code);
-  url.searchParams.set('FID_INPUT_HOUR_1', hour);
-  url.searchParams.set('FID_INPUT_DATE_1', date);
-  url.searchParams.set('FID_PW_DATA_INCU_YN', 'N');
-  url.searchParams.set('FID_FAKE_TICK_INCU_YN', '');
-
-  async function once(): Promise<{ bars: MinuteBar[]; rateLimited: boolean }> {
-    const res = await fetch(url, {
-      headers: {
-        authorization: `Bearer ${token}`,
-        appkey: primaryCredentials.appKey,
-        appsecret: primaryCredentials.appSecret,
-        tr_id: 'FHKST03010230',
-        custtype: config.custType,
-      },
-    });
-    const json = (await res.json()) as { msg_cd?: string; output2?: Array<Record<string, string>> };
-    if (json.msg_cd === 'EGW00201') return { bars: [], rateLimited: true };
-    const bars = (json.output2 ?? [])
-      .filter((row) => /^\d{6}$/.test(row.stck_cntg_hour ?? '') && row.stck_bsop_date === date)
-      .map((row) => ({
-        minute: Number(row.stck_cntg_hour.slice(0, 2)) * 60 + Number(row.stck_cntg_hour.slice(2, 4)),
-        high: Number(row.stck_hgpr),
-        low: Number(row.stck_lwpr),
-        close: Number(row.stck_prpr),
-        // 빈 문자열은 `Number('') === 0`이라 "거래 없음"이 지어진다. 없으면 없다고 둔다.
-        volume: row.cntg_vol === undefined || row.cntg_vol === '' ? undefined : Number(row.cntg_vol),
-      }));
-    return { bars, rateLimited: false };
-  }
-
-  const first = await once();
-  if (!first.rateLimited) return first.bars;
-  await delay(RATE_LIMIT_BACKOFF_MS);
-  return (await once()).bars;
-}
-
-/** 하루치 분봉. 창 다섯 개를 이어 붙인다. */
-async function fetchDay(code: string, date: string, token: string): Promise<MinuteBar[]> {
-  const all: MinuteBar[] = [];
-  for (const hour of WINDOW_HOURS) {
-    all.push(...(await fetchWindow(code, date, hour, token)));
-    await delay(CALL_GAP_MS);
-  }
-  return normalizeMinuteBars(all).filter((bar) => bar.minute >= SESSION_OPEN && bar.minute <= SESSION_CLOSE);
+/**
+ * 하루치 분봉. 창 이어 붙이기·날짜 필터·정규화는 `kis/rest.ts`가 한다.
+ *
+ * 예전에는 이 파일이 같은 TR을 직접 파싱했다. 분봉 축 전략 측정
+ * (`measureStrategiesIntraday.ts`)이 같은 경로를 쓰게 되면서 파서가 둘이 됐고,
+ * 한쪽만 고쳐지는 자리라 `kis/`로 옮겼다 — `docs/ARCHITECTURE.md`가 이 경로를
+ * 옮길 후보로 적어 두고 있었다.
+ */
+async function fetchDay(instrument: Instrument, date: string): Promise<MinuteBar[]> {
+  const candles = await getDomesticDayMinuteCandles(instrument, date, CALL_GAP_MS);
+  return normalizeMinuteBars(candles.map(candleToMinuteBar))
+    .filter((bar) => bar.minute >= SESSION_OPEN && bar.minute <= SESSION_CLOSE);
 }
 
 interface Sample {
@@ -200,7 +158,6 @@ function pct(value: number): string {
 async function main(): Promise<void> {
   const stockCount = Number(process.argv[2] ?? 60);
   const dayCount = Number(process.argv[3] ?? 10);
-  const token = await getAccessToken(primaryCredentials);
 
   /*
    * 거래일은 지어내지 않는다. 삼성전자 일봉의 날짜가 곧 개장일이고, 오늘은
@@ -221,7 +178,7 @@ async function main(): Promise<void> {
   const pool = await buildPool(stockCount);
   console.log(
     `종목 ${pool.length} × 거래일 ${dates.length} (${dates[0]}~${dates[dates.length - 1]})`
-    + ` · 종목·하루당 KIS ${WINDOW_HOURS.length}회 = 총 ${pool.length * dates.length * WINDOW_HOURS.length}회`,
+    + ` · 종목·하루당 KIS ${MINUTE_CALLS_PER_DAY}회 = 총 ${pool.length * dates.length * MINUTE_CALLS_PER_DAY}회`,
   );
   console.log(`필요한 하루 변동폭 ${pct(REQUIRED_RANGE_RATE)} (왕복 비용 ${pct(ROUND_TRIP_COST_RATE)} ÷ ${MAX_COST_SHARE_OF_RANGE})`);
   console.log(`원자료 ${OUT}\n`);
@@ -243,7 +200,7 @@ async function main(): Promise<void> {
     );
 
     for (const date of dates) {
-      const bars = await fetchDay(instrument.symbol, date, token);
+      const bars = await fetchDay(instrument, date);
       if (bars.length === 0) {
         noBarDays += 1;
         continue;
