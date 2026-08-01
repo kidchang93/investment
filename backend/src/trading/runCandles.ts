@@ -41,7 +41,17 @@
  * 시험에 못 박아 둔다. 섞여 오기 시작해도 판정이 흔들리지 않게.
  */
 
-import type { Candle, Instrument } from '@invest/shared';
+import type { Candle, CandleAxis, Instrument } from '@invest/shared';
+
+/**
+ * 러너가 전략에 넣는 봉. **여기가 축의 주인이다** — 실제로 분봉을 받아 오는 곳이라
+ * 이 값이 바뀌면 받아 오는 코드도 같이 바뀐다.
+ *
+ * 전략 판정문이 다른 축에서 잰 것이면 화면이 그 사실을 말해야 한다. 예전에는 축이
+ * 어디에도 값으로 없어서, 일봉으로 잰 판정문이 자동매매 시작 버튼 옆에 아무 표시
+ * 없이 떠 있었다.
+ */
+export const RUNNER_CANDLE_AXIS: CandleAxis = 'minute';
 
 /** 마지막 봉이 어느 거래일 것인가. */
 export interface CandleDayCheck {

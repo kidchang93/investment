@@ -10,10 +10,12 @@ import { describe, it } from 'node:test';
 
 import type { Candle, Instrument } from '@invest/shared';
 
+import { RUNNER_CANDLE_AXIS } from './runCandles.js';
 import {
   MeanReversionStrategy,
   MovingAverageCrossStrategy,
   VolatilityBreakoutStrategy,
+  listStrategies,
   movingAverage,
 } from './strategy.js';
 
@@ -146,6 +148,80 @@ describe('minBars', () => {
   it('minBars는 양수다', () => {
     for (const item of all) {
       assert.ok(item.minBars > 0, `${item.label}: ${item.minBars}`);
+    }
+  });
+});
+
+/*
+ * 화면이 자동매매 시작 버튼 옆에 이 값을 그대로 적는다. 예전에는 판정문이 전부
+ * 일봉으로 잰 값이었는데 러너는 1분봉으로 돌았고, 축이 값으로 없어서 화면도
+ * 사람도 그 차이를 볼 수 없었다. 평균 회귀의 "승률 70.8%"가 러너 축에서는
+ * 19.6%다.
+ *
+ * 다시 그 상태가 되는 길은 둘이다 — 새 전략을 러너 축 측정 없이 등록하거나,
+ * 러너가 축을 바꿨는데 판정문을 그대로 두거나. 둘 다 여기서 걸린다.
+ */
+describe('전략 판정문의 축', () => {
+  const all = [
+    new MovingAverageCrossStrategy(),
+    new VolatilityBreakoutStrategy(),
+    new MeanReversionStrategy(),
+  ];
+
+  it('모든 전략이 러너가 도는 축에서 잰 측정을 갖는다', () => {
+    for (const item of all) {
+      const axes = item.measurements.map((m) => m.axis);
+      assert.ok(
+        axes.includes(RUNNER_CANDLE_AXIS),
+        `${item.label}: 러너는 ${RUNNER_CANDLE_AXIS} 축으로 도는데 그 축의 측정이 없다`
+          + ` (있는 축: ${axes.join(', ') || '없음'})`,
+      );
+    }
+  });
+
+  it('러너 축 측정이 맨 앞에 온다 — 화면이 그 순서대로 읽는다', () => {
+    for (const item of all) {
+      assert.equal(
+        item.measurements[0]?.axis,
+        RUNNER_CANDLE_AXIS,
+        `${item.label}: 맨 앞이 ${item.measurements[0]?.axis}다`,
+      );
+    }
+  });
+
+  it('한 축을 두 번 적지 않는다', () => {
+    for (const item of all) {
+      const axes = item.measurements.map((m) => m.axis);
+      assert.equal(new Set(axes).size, axes.length, `${item.label}: ${axes.join(', ')}`);
+    }
+  });
+
+  /*
+   * 시점과 조건이 빠지면 시간이 지나 조용히 틀린 값이 된다(`docs/CODE_STYLE.md`).
+   * 날짜 형식까지 보는 이유는 화면이 그대로 찍기 때문이다.
+   */
+  it('측정마다 잰 날과 조건이 있다', () => {
+    for (const item of all) {
+      for (const measurement of item.measurements) {
+        assert.match(
+          measurement.measuredOn,
+          /^\d{4}-\d{2}-\d{2}$/,
+          `${item.label}/${measurement.axis}: 잰 날이 YYYY-MM-DD가 아니다`,
+        );
+        assert.ok(
+          measurement.sample.length > 0 && measurement.result.length > 0,
+          `${item.label}/${measurement.axis}: 조건이나 결과가 비어 있다`,
+        );
+      }
+    }
+  });
+
+  it('목록 응답이 러너 축을 함께 준다 — 프론트가 축을 박아 두지 않게', () => {
+    const listed = listStrategies();
+    assert.equal(listed.runnerAxis, RUNNER_CANDLE_AXIS);
+    assert.equal(listed.strategies.length, all.length);
+    for (const strategy of listed.strategies) {
+      assert.equal(strategy.measurements[0]?.axis, RUNNER_CANDLE_AXIS, strategy.key);
     }
   });
 });

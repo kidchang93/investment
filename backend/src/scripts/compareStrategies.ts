@@ -170,7 +170,7 @@ async function main(): Promise<void> {
     const windows = { 앞: cut, 뒤: candles.length - cut };
     console.log(`  구간 나눔 ${SPLIT_RATIO * 100}% — 앞 ${windows.앞}봉 / 뒤 ${windows.뒤}봉`);
 
-    for (const { key, label } of listStrategies()) {
+    for (const { key, label } of listStrategies().strategies) {
       const walkResults = backtestWindows(key, instrument, candles, startCash, DEFAULT_COSTS, WALK_WINDOWS);
       const slot = walk.get(key) ?? Array.from({ length: WALK_WINDOWS }, () => ({ returns: [], trades: 0 }));
       walk.set(key, slot);
@@ -264,7 +264,7 @@ async function main(): Promise<void> {
   console.log(`\n═══ 구간을 옮겨 가며 (${WALK_WINDOWS}구간) ═══`);
   console.log('전체 기간을 셋으로 잘라 각각 따로 쟀다. 한 시점의 장세에 맞은 결과인지 본다.');
   for (const [key, slots] of walk) {
-    const label = listStrategies().find((item) => item.key === key)?.label ?? key;
+    const label = listStrategies().strategies.find((item) => item.key === key)?.label ?? key;
     const parts = slots.map((slot, index) => {
       if (slot.returns.length === 0) return `${index + 1}구간 —`;
       const mid = median(slot.returns);

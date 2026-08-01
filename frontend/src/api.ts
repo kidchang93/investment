@@ -32,6 +32,7 @@ import type {
   SignalScoreSummary,
   Quote,
   ScreeningResult,
+  StrategyListResponse,
   ThemeList,
   ThemePulseBatch,
   TradingOverview,
@@ -520,7 +521,7 @@ export async function removeWatchlistItem(watchlistId: string, instrumentId: str
 
 /* ── 자동매매 ─────────────────────────────────────────────────────────── */
 
-export async function fetchAutoTraderStrategies(): Promise<Array<{ key: string; label: string }>> {
+export async function fetchAutoTraderStrategies(): Promise<StrategyListResponse> {
   const res = await fetch(`${API_BASE}/api/broker/kis/auto-trader/strategies`);
   if (!res.ok) throw new Error(`전략 목록 조회 실패: ${res.status}`);
   return res.json();

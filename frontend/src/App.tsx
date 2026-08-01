@@ -49,6 +49,7 @@ import {
 import { useStream } from './useStream';
 import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } from './Chart';
 import {
+  CANDLE_AXIS_LABELS,
   KR_KONEX_SELL_TAX_RATE,
   KR_SELL_TAX_RATE,
 } from '@invest/shared';
@@ -84,6 +85,7 @@ import type {
   ScreeningRow,
   ScreeningVerdict,
   SignalScoreSummary,
+  StrategyListResponse,
   PriceSign,
   Quote,
   Theme,
@@ -2751,9 +2753,15 @@ export function App(): JSX.Element {
    */
   const [signalScores, setSignalScores] = useState<SignalScoreSummary[] | null>(null);
   const [signalScoresError, setSignalScoresError] = useState<string | null>(null);
-  const [autoStrategies, setAutoStrategies] = useState<
-    Array<{ key: string; label: string; backtestNote?: string; verdict?: 'no_edge' | 'unproven' }>
-  >([]);
+  /*
+   * 전략 목록과 **자동매매가 실제로 도는 축**. 축을 여기 박아 두지 않는다 —
+   * 러너가 축을 바꾸면 화면만 조용히 틀린 말을 하게 된다. 서버가 준 것만 쓴다.
+   *
+   * 조회 실패를 빈 배열로 바꾸지 않는다. 판정문이 사라진 채로 시작 버튼이 살아
+   * 있으면 무엇이 확인된 전략인지 모르는 채 켜게 된다.
+   */
+  const [autoStrategies, setAutoStrategies] = useState<StrategyListResponse | null>(null);
+  const [autoStrategiesError, setAutoStrategiesError] = useState<string | null>(null);
   const [autoStrategy, setAutoStrategy] = useState('ma_cross');
   const [autoMode, setAutoMode] = useState<AutoTraderMode>('dry_run');
   const [autoTarget, setAutoTarget] = useState('100000');
@@ -2841,8 +2849,11 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     fetchAutoTraderStrategies()
-      .then(setAutoStrategies)
-      .catch(() => setAutoStrategies([]));
+      .then((list) => {
+        setAutoStrategies(list);
+        setAutoStrategiesError(null);
+      })
+      .catch((e) => setAutoStrategiesError(toErrorMessage(e)));
   }, []);
 
   /*
@@ -4852,7 +4863,7 @@ export function App(): JSX.Element {
     field.focus({ preventScroll: true });
   }, []);
 
-  const selectedAutoStrategy = autoStrategies.find((item) => item.key === autoStrategy);
+  const selectedAutoStrategy = autoStrategies?.strategies.find((item) => item.key === autoStrategy);
 
   const autoTraderBlockers = useMemo(() => {
     /*
@@ -7546,7 +7557,7 @@ export function App(): JSX.Element {
                       onChange={(event) => setAutoStrategy(event.target.value)}
                       value={autoStrategy}
                     >
-                      {autoStrategies.map((item) => (
+                      {(autoStrategies?.strategies ?? []).map((item) => (
                         <option key={item.key} value={item.key}>
                           {item.label}
                           {/*
@@ -7560,13 +7571,50 @@ export function App(): JSX.Element {
                     </select>
                   </label>
 
-                  {/* 고른 전략에 대해 무엇이 확인됐는지. 숫자만 적으면 시점이 없어 오해된다. */}
-                  {selectedAutoStrategy?.backtestNote && (
-                    <p
-                      className="auto-trader__verdict"
-                      data-verdict={selectedAutoStrategy.verdict}
-                    >
-                      {selectedAutoStrategy.backtestNote}
+                  {/*
+                    고른 전략에 대해 무엇이 확인됐는지. 숫자만 적으면 시점이 없어
+                    오해되고, **어느 봉으로 쟀는지가 빠지면 아예 다른 것을 말하게 된다.**
+                    예전에는 이 자리가 문장 하나였고 전부 일봉으로 잰 값이었는데
+                    자동매매는 1분봉으로 돈다 — 평균 회귀의 `승률 70.8%`(일봉)가
+                    실제 도는 축에서는 19.6%다. 축마다 갈라 적고, 실제로 쓰는 봉을
+                    맨 위에 둔다(순서는 서버가 정한다).
+                  */}
+                  {selectedAutoStrategy && autoStrategies && (
+                    <div className="auto-trader__verdicts">
+                      {selectedAutoStrategy.measurements.map((measurement) => {
+                        const isRunnerAxis = measurement.axis === autoStrategies.runnerAxis;
+                        return (
+                          <p
+                            className="auto-trader__verdict"
+                            data-axis={isRunnerAxis ? 'runner' : 'other'}
+                            data-verdict={selectedAutoStrategy.verdict}
+                            key={measurement.axis}
+                          >
+                            <strong className="auto-trader__verdict-axis">
+                              {CANDLE_AXIS_LABELS[measurement.axis]}
+                              {isRunnerAxis
+                                ? ' · 자동매매가 실제로 보는 봉입니다'
+                                : ' · 자동매매는 이 봉으로 돌지 않습니다'}
+                            </strong>
+                            <span className="auto-trader__verdict-sample">
+                              {measurement.measuredOn} 측정 · {measurement.sample}
+                            </span>
+                            <span>{measurement.result}</span>
+                          </p>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/*
+                    받아 오지 못한 것과 확인된 게 없는 것은 다르다. 빈 배열로
+                    바꾸면 판정문이 사라진 자리가 `아는 것이 없다`로 읽힌다.
+                  */}
+                  {!autoStrategies && (
+                    <p className="auto-trader__verdict" data-axis="missing">
+                      {autoStrategiesError
+                        ? `전략 목록을 불러오지 못해 무엇이 확인된 전략인지 표시할 수 없습니다 — ${autoStrategiesError}`
+                        : '전략 목록을 불러오는 중입니다'}
                     </p>
                   )}
 
@@ -7624,8 +7672,14 @@ export function App(): JSX.Element {
                           지금 돌고 있는지 모를 때는 시작을 막는다. 조회가
                           실패한 것을 `멈춤`으로 읽고 또 시작하면 같은 계좌에
                           두 번 걸린다. 모르면 막힌 쪽에 둔다.
+
+                          고른 전략을 모를 때도 막는다. 목록 조회가 실패하면
+                          드롭다운이 비고 판정문도 사라지는데, `autoStrategy`는
+                          초기값(`ma_cross`)이라 그대로 눌리고 있었다 — 무엇이
+                          걸리는지도, 그 전략에 대해 무엇이 확인됐는지도 모르는
+                          채로 실계좌 매매가 시작된다.
                         */
-                        disabled={isAutoSubmitting || !isAutoTraderKnown}
+                        disabled={isAutoSubmitting || !isAutoTraderKnown || !selectedAutoStrategy}
                         onClick={() => void submitAutoTraderStart()}
                         type="button"
                       >
@@ -7637,6 +7691,14 @@ export function App(): JSX.Element {
                         {autoTraderError
                           ? `지금 돌고 있는지 확인하지 못해 시작을 막았습니다 — ${autoTraderError}`
                           : (accountsBlockedLabel ?? '지금 돌고 있는지 확인하는 중입니다')}
+                      </em>
+                    )}
+                    {/* 위 사유가 이미 떠 있으면 겹쳐 적지 않는다. 막은 이유는 하나씩 말한다. */}
+                    {isAutoTraderKnown && !selectedAutoStrategy && (
+                      <em className="auto-trader__unknown">
+                        {autoStrategiesError
+                          ? `어느 전략으로 도는지 확인하지 못해 시작을 막았습니다 — ${autoStrategiesError}`
+                          : '전략 목록을 불러오는 중입니다'}
                       </em>
                     )}
                   </div>

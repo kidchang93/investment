@@ -22,6 +22,23 @@ export interface Candle {
   volume?: number;
 }
 
+/**
+ * 봉의 시간 축. **잰 값에는 이것이 반드시 함께 다닌다.**
+ *
+ * 같은 전략·같은 종목이라도 축이 다르면 판정이 뒤집힌다 — 2026-07-31 측정에서
+ * 평균 회귀 승률이 일봉 68.5%, 1분봉 19.6%였다. 왕복 비용(0.43%)은 축과 무관하게
+ * 똑같이 나가는데 분봉의 값 변화 폭이 훨씬 작아서다(1봉 |Δ| 중앙값 일봉 1.005%,
+ * 분봉 0.105%). 축이 글 속에만 있으면 화면은 "이 판정이 러너를 설명하는가"를
+ * 말할 수 없다.
+ */
+export type CandleAxis = 'daily' | 'minute';
+
+/** 화면에 적는 축 이름. 내부 식별자를 그대로 찍지 않는다. */
+export const CANDLE_AXIS_LABELS: Record<CandleAxis, string> = {
+  daily: '일봉',
+  minute: '1분봉',
+};
+
 /** 일봉 조회 응답 */
 export interface CandlesResponse {
   code: string;
@@ -1598,6 +1615,40 @@ export type AutoTraderStatus =
   | 'target_reached'
   | 'stopped_out'
   | 'error';
+
+/**
+ * 전략을 한 번 재고 남긴 것.
+ *
+ * 축·시점·조건을 **필드로** 가른다. 예전에는 이 전부가 문장 하나(`backtestNote`)
+ * 였고, 그 문장이 일봉으로 잰 값인데 러너는 1분봉으로 돌았다. 화면은 축이 다르다는
+ * 사실을 말할 수 없었고 *"승률 70.8%로 셋 중 압도적 1위"*가 자동매매 시작 버튼 옆에
+ * 그대로 떠 있었다 — 러너 축에서는 19.6%다.
+ *
+ * 여러 건을 들고 다니는 것은 축을 골라 보여주기 위해서가 아니라, **어느 축을 아직
+ * 재지 않았는지가 드러나게** 하기 위해서다.
+ */
+export interface StrategyMeasurement {
+  axis: CandleAxis;
+  /** 잰 날. `2026-07-31` */
+  measuredOn: string;
+  /** 무엇으로 쟀나 — 종목 수·기간·비용 가정 */
+  sample: string;
+  /** 무엇이 나왔나. 숫자만이 아니라 그 숫자를 어떻게 읽어야 하는지까지 */
+  result: string;
+}
+
+/** 자동매매 전략 목록 응답. 러너가 도는 축을 함께 준다 — 판정의 주인은 서버다. */
+export interface StrategyListResponse {
+  /** 러너가 실제로 전략에 넣는 봉. 이 축의 측정이 없는 전략은 화면이 그렇게 말한다 */
+  runnerAxis: CandleAxis;
+  strategies: Array<{
+    key: string;
+    label: string;
+    /** 러너 축 측정이 먼저 온다 */
+    measurements: StrategyMeasurement[];
+    verdict: 'no_edge' | 'unproven';
+  }>;
+}
 
 /** 전략이 내는 신호. 종목까지 전략이 고른다. */
 export interface StrategySignal {

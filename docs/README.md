@@ -45,6 +45,8 @@
   안전 장치·주문 흐름 설명은 `TRADING_API.md`·`TRADING_ROADMAP.md`의 최신 상태를
   따르므로, 두 문서가 바뀌면 `MANUAL.md`도 함께 봐야 한다.
 - `TRADING_ROADMAP.md`의 백테스트 판정(`no_edge`/`unproven`)은 코드
-  (`backend/src/trading/strategy.ts`의 `backtestNote`/`verdict`)가 최신 값의 출처다.
+  (`backend/src/trading/strategy.ts`의 `measurements`/`verdict`)가 최신 값의 출처다.
   로드맵 문서에는 판정이 바뀌어 온 과정이 남아 있고, 화면에 뜨는 문장은 항상
-  코드 쪽 값이다.
+  코드 쪽 값이다. **측정에는 축(`CandleAxis`)이 함께 다니고, 러너가 도는 축의
+  측정이 맨 앞에 온다** — 축이 없던 시절 일봉 판정문이 1분봉 러너를 설명하는 글로
+  읽혔다.

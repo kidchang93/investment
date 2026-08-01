@@ -102,7 +102,7 @@ async function main(): Promise<void> {
    * 쓰면 "승률 65%"와 "플러스 7/20"이 같은 말인 줄 알게 된다.
    */
   const winCounts = new Map<string, number>();
-  const strategies = listStrategies();
+  const { strategies } = listStrategies();
   for (const strategy of strategies) {
     byStrategy.set(strategy.key, Array.from({ length: WINDOW_COUNT }, () => []));
     tradeCounts.set(strategy.key, 0);
