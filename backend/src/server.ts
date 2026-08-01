@@ -1294,8 +1294,17 @@ async function main(): Promise<void> {
   await kis.start(WATCHLIST.map((w) => w.code));
 
   app.log.info(
-    `KIS env=${config.env} · 구독 ${WATCHLIST.length}종목: ${WATCHLIST.map((w) => `${w.name}(${w.code})`).join(', ')}`,
+    `KIS env=${config.env} · 계좌 ${config.kisAccounts.map((a) => a.id).join(', ') || '없음'}`
+    + ` · 시세·실시간은 계좌 ${config.primaryCredentialId}의 앱키를 쓴다`
+    + ` · 구독 ${WATCHLIST.length}종목: ${WATCHLIST.map((w) => `${w.name}(${w.code})`).join(', ')}`,
   );
+  /*
+   * 설정하려 했는데 못 쓴 계좌를 알린다. 예전에는 조용히 빠져서, 넣은 사람이
+   * 오타를 낸 줄 모르고 "왜 이 계좌가 화면에 없지"만 남았다.
+   */
+  for (const skipped of config.skippedKisAccounts) {
+    app.log.warn(`KIS 계좌 ${skipped.id}을(를) 쓰지 못했습니다 — ${skipped.reason}`);
+  }
   app.log.info(
     kis.isOrderNoticeEnabled
       ? '실시간 주문·체결 통보 구독함'

@@ -63,6 +63,22 @@ function parseAccountNumber(
   return null;
 }
 
+/**
+ * 설정하려 했는데 못 쓴 계좌. **왜 빠졌는지**를 들고 있다.
+ *
+ * 예전에는 그냥 `continue`였다. 그래서 `KIS_VTS_ACCOUNT_NO`의 숫자가 7자리
+ * (8도 10도 아님)였을 때 그 계좌가 **아무 말 없이 사라졌고**, 화면에는 나머지
+ * 계좌만 떴다. 넣은 사람은 오타를 낸 줄 모르고 "왜 안 보이지"만 남는다.
+ *
+ * 자격증명이 아니라 **무엇이 모자란지**만 담는다 — 로그로 나가는 값이다.
+ */
+export interface SkippedKisAccount {
+  id: string;
+  reason: string;
+}
+
+const skippedKisAccounts: SkippedKisAccount[] = [];
+
 /** `KIS_<id>_ACCOUNT_NO` + `KIS_APP_KEY_<id>` + `KIS_APP_SECRET_<id>` 3종이 모두 있어야 한 계좌로 인정한다. */
 function parseKisAccounts(): KisAccountConfig[] {
   const accounts: KisAccountConfig[] = [];
@@ -75,7 +91,28 @@ function parseKisAccounts(): KisAccountConfig[] {
     const parsed = parseAccountNumber(process.env[key], process.env[`KIS_${id}_ACCOUNT_PRODUCT_CODE`]);
     const appKey = process.env[`KIS_APP_KEY_${id}`] ?? '';
     const appSecret = process.env[`KIS_APP_SECRET_${id}`] ?? '';
-    if (!parsed || !appKey || !appSecret) continue;
+
+    if (!parsed) {
+      /*
+       * 자릿수를 적는다. 계좌번호 자체는 자격증명에 준하므로 값은 남기지 않는다 —
+       * 몇 자리인지만 알면 무엇을 고쳐야 하는지 알 수 있다.
+       */
+      const digits = normalizeAccountValue(process.env[key]).length;
+      skippedKisAccounts.push({
+        id,
+        reason:
+          `KIS_${id}_ACCOUNT_NO의 숫자가 ${digits}자리입니다.`
+          + ' 8자리(종합계좌번호)이거나 10자리 이상(종합계좌번호 8 + 상품코드 2)이어야 합니다.',
+      });
+      continue;
+    }
+    if (!appKey || !appSecret) {
+      const missing = [!appKey && `KIS_APP_KEY_${id}`, !appSecret && `KIS_APP_SECRET_${id}`]
+        .filter(Boolean)
+        .join(' · ');
+      skippedKisAccounts.push({ id, reason: `${missing}가 없습니다.` });
+      continue;
+    }
 
     // HTS ID는 계좌별로 두되, 사람이 하나만 쓰는 경우가 흔해 전역값도 허용한다.
     const htsId = (process.env[`KIS_${id}_HTS_ID`] ?? process.env.KIS_HTS_ID ?? '').trim();
@@ -142,6 +179,8 @@ export const config = {
   port: parsePort(process.env.PORT),
   databaseUrl: process.env.DATABASE_URL ?? 'postgresql://kis:kis_local@localhost:55432/kis',
   kisAccounts,
+  /** 설정하려 했는데 못 쓴 계좌와 그 사유. 서버가 뜰 때 로그로 알린다 */
+  skippedKisAccounts,
   /**
    * 실주문 전송 허용 여부. **기본값은 항상 false**다.
    * 명시적으로 `KIS_LIVE_ORDER_ENABLED=true`를 넣어야 열린다.
