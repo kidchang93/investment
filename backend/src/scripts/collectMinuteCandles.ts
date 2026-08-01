@@ -27,7 +27,7 @@
  *
  * **주문은 내지 않는다.** 조회만 한다.
  *
- *   npx tsx src/scripts/collectMinuteCandles.ts [종목수] [거래일수]
+ *   npx tsx src/scripts/collectMinuteCandles.ts [종목수] [거래일수] [spread|contiguous]
  *   MINUTE_OUT=/tmp/minute-candles.jsonl npx tsx src/scripts/collectMinuteCandles.ts 20 15
  */
 
@@ -69,6 +69,11 @@ export interface MinuteDayRecord {
 export interface CollectSummary {
   kind: 'summary';
   collectedAt: string;
+  /**
+   * 날을 어떻게 골랐나. **이 파일을 이어 붙여 백테스트해도 되는지**가 여기 달렸다.
+   * `spread`는 날 사이가 며칠씩 벌어져 있어 이어 붙이면 갭이 인공물이 된다.
+   */
+  dateMode: 'spread' | 'contiguous';
   stockCount: number;
   dates: string[];
   usedDays: number;
@@ -119,24 +124,45 @@ function kstDateOf(time: number): string {
 async function main(): Promise<void> {
   const stockCount = Number(process.argv[2] ?? 20);
   const dayCount = Number(process.argv[3] ?? 15);
+  /*
+   * 날을 어떻게 고를까. **쓰임이 다르면 표본도 달라야 한다.**
+   *
+   *   spread(기본)  받아 온 구간 전체에 고르게 흩뿌린다. 여러 장세를 보려는 것이라
+   *                 **분포를 재는 데** 맞다.
+   *   contiguous    최근 N거래일을 연달아. **이어 붙여 백테스트하는 데** 맞다.
+   *
+   * ★ 이 둘을 섞어 쓰다가 틀렸다(2026-08-01). 흩뿌린 표본을 이어 붙여 백테스트했더니
+   * 날 사이 간격이 **중앙값 7일**(최대 53일)이었고, 그 자리의 갭이 |Δ| 중앙 3.30%로
+   * **왕복 비용 0.43%의 7.7배**였다. 백테스트는 그걸 "한 봉"으로 먹는다. 건수로는
+   * 밤 넘김이 4~7%뿐이라 무시해도 되는 줄 알았는데, 손익으로는 전체 손실의 56~162%를
+   * 만들고 있었다 — **그 손실이 시장이 아니라 표본 설계에서 나온 인공물이다.**
+   */
+  const dateMode = (process.argv[4] ?? 'spread') as 'spread' | 'contiguous';
+  if (dateMode !== 'spread' && dateMode !== 'contiguous') {
+    console.error(`날짜 고르는 방식은 spread 또는 contiguous입니다: ${dateMode}`);
+    process.exit(1);
+  }
 
   /*
    * 거래일은 지어내지 않는다. 삼성전자 일봉의 날짜가 곧 개장일이고, 오늘은 뺀다 —
    * 장중이면 하루가 아직 안 끝났다.
-   *
-   * **연달아 붙은 날로만 재지 않는다.** 이어진 열흘은 같은 장세라 표본이 늘어도
-   * 새로 아는 것이 적다. 받아 온 구간 전체에 고르게 흩뿌린다.
    */
   const calendar = await getDailyCandles('005930', DAILY_HISTORY_DAYS);
   const today = kstDateOf(Math.floor(Date.now() / 1000));
   const available = calendar.candles.map((candle) => kstDateOf(candle.time)).filter((date) => date < today);
-  const dates = spreadEvenly(available, dayCount);
+  const dates = dateMode === 'contiguous' ? available.slice(-dayCount) : spreadEvenly(available, dayCount);
 
   const pool = await buildPool(stockCount);
   const planned = pool.length * dates.length * MINUTE_CALLS_PER_DAY;
   console.log(
     `종목 ${pool.length} × 거래일 ${dates.length} (${dates[0]}~${dates[dates.length - 1]})`
     + ` · 종목·하루당 KIS ${MINUTE_CALLS_PER_DAY}회 = 분봉 ${planned}회 + 일봉 ${pool.length}회`,
+  );
+  console.log(
+    dateMode === 'contiguous'
+      ? '날짜: 최근 연속 거래일 — 이어 붙여 백테스트하는 데 쓴다'
+      : '날짜: 구간 전체에 고르게 흩뿌림 — 분포를 재는 데 쓴다.'
+        + ' ★ 이어 붙여 백테스트하지 마라 (날 사이 갭이 왕복 비용의 몇 배다)',
   );
   console.log(`원자료 ${OUT}\n`);
 
@@ -201,6 +227,7 @@ async function main(): Promise<void> {
   const summary: CollectSummary = {
     kind: 'summary',
     collectedAt: new Date().toISOString(),
+    dateMode,
     stockCount: pool.length,
     dates,
     usedDays,

@@ -172,6 +172,10 @@ async function main(): Promise<void> {
     let overnightTrades = 0;
     let belowCostTrades = 0;
     let skipped = 0;
+    /** 구간 내내 1주 값이 현금보다 비싸 한 번도 살 수 없었던 종목 */
+    let unaffordable = 0;
+    /** 살 수는 있었는데 신호가 한 번도 안 난 종목 */
+    let noTradeInstruments = 0;
 
     /*
      * 신호를 낼 수 없는 표본은 성적이 아니라 **잴 수 없는 조건**이다. 섞으면
@@ -188,7 +192,33 @@ async function main(): Promise<void> {
         skipped += 1;
         continue;
       }
+
+      /*
+       * **한 번도 살 수 없었던 종목은 성적이 아니다.**
+       *
+       * 구간 내내 1주 값이 현금보다 비싸면 `backtest()`가 `size <= 0`으로 매수를
+       * 건너뛰어 **매매 0건 · 수익률 정확히 0.00%**가 된다. 전부 마이너스인 분포에서
+       * 0은 맨 위라 중앙값을 끌어올린다. 게다가 러너 자신의 후보 필터(`verdictFor`의
+       * `tooExpensive`)가 거르는 종목이라, **러너가 만질 수 없는 종목으로 러너의
+       * 전략을 재는 셈**이다.
+       *
+       * 2026-08-01에 이걸로 판정문이 실제보다 1.4~1.9배 좋게 적혀 있었다 —
+       * 20종목 중 5종목이 그랬고, 중앙값이 -20.43%인데 -10.95%로 적혀 있었다.
+       */
+      const cheapest = Math.min(...item.candles.map((candle) => candle.low));
+      if (cheapest > START_CASH) {
+        unaffordable += 1;
+        continue;
+      }
+
       const result = backtest(strategy.key, item.instrument, item.candles, START_CASH, DEFAULT_COSTS);
+
+      /*
+       * 살 수는 있었는데 신호가 한 번도 안 난 종목도 따로 센다. 이것도 0.00%로
+       * 남으면 같은 문제를 만든다 — 다만 **성적에서 뺄지는 판단이 갈리므로**
+       * 빼지 않고 세기만 해서 결과에 남긴다. 몇 건인지 안 보이는 것이 제일 나쁘다.
+       */
+      if (result.tradeCount === 0) noTradeInstruments += 1;
 
       returnRates.push(result.returnRate * 100);
       trades += result.tradeCount;
@@ -231,6 +261,16 @@ async function main(): Promise<void> {
       + (trades > 0 ? ` (${pct((overnightTrades / trades) * 100)})` : '')
       + (skipped > 0 ? ` · 봉이 모자라 뺀 종목 ${skipped}개` : ''),
     );
+    /*
+     * 표본에서 뺀 것과 0%로 남은 것을 **반드시 적는다.** 안 보이면 중앙값이 무엇의
+     * 중앙값인지 알 수 없다 — 실제로 이것 때문에 판정문이 1.4~1.9배 좋게 적혔다.
+     */
+    if (unaffordable > 0 || noTradeInstruments > 0) {
+      console.log(
+        `  표본에서 뺌: 현금으로 한 번도 못 사는 종목 ${unaffordable}개`
+        + ` · (뺀 건 아님) 살 수는 있는데 신호가 없던 종목 ${noTradeInstruments}개`,
+      );
+    }
     if (coded) {
       console.log(`  코드(${coded.measuredOn} 측정): ${coded.result}`);
     } else {
@@ -269,6 +309,8 @@ async function main(): Promise<void> {
       overnightTrades,
       belowCostTrades,
       skippedInstruments: skipped,
+      unaffordableInstruments: unaffordable,
+      noTradeInstruments,
     });
   }
 
