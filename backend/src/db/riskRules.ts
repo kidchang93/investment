@@ -1,4 +1,10 @@
 import { pool } from './client.js';
+import {
+  dailyLimitViolations,
+  orderNotional,
+  summarizeDailyOrderUsage,
+  type DailyOrderUsage,
+} from './orderUsage.js';
 import { isDomesticMarketOpenDay } from '../kis/rest.js';
 import type { OrderSide, OrderType, RiskRuleSet, RiskVerdict } from '@invest/shared';
 
@@ -120,13 +126,26 @@ export async function upsertRiskRules(rules: RiskRuleSet): Promise<RiskRuleSet> 
   return getRiskRules(rules.accountId);
 }
 
-/** 오늘(KST) 접수된 실주문의 건수와 금액 합. 일일 한도 판정에 쓴다. */
-async function getTodayUsage(accountId: string): Promise<{ count: number; notional: number }> {
-  const { rows } = await pool.query<{ order_count: string; notional_sum: string | null }>(
+/**
+ * 오늘(KST) 접수된 실주문의 건수와 금액 합. 일일 한도 판정에 쓴다.
+ *
+ * **합계를 SQL에서 내지 않는다.** 예전에는 `SUM(quantity * COALESCE(limit_price, 0))`
+ * 이었고, 시장가 주문은 `limit_price`가 NULL이라 **한 건도 금액에 쌓이지 않았다** —
+ * 러너는 늘 시장가라 일일 금액 한도가 잣대로 작동하지 않았다. 고른 행을 그대로 받아
+ * 순수 함수(`summarizeDailyOrderUsage`)로 세면 그 계산을 DB 없이 시험할 수 있다 —
+ * 2026-08-01 기준 이 표에 `submitted` 행이 0건이라 조회로는 확인할 방법이 없었다.
+ *
+ * 건수는 행 수 그대로다 — 금액을 몰라도 접수는 접수다(`COUNT(*)`와 같다).
+ */
+async function getTodayUsage(accountId: string): Promise<DailyOrderUsage> {
+  const { rows } = await pool.query<{
+    order_type: OrderType | null;
+    quantity: string | null;
+    limit_price: string | null;
+    estimated_price: string | null;
+  }>(
     `
-      SELECT
-        COUNT(*)::text AS order_count,
-        COALESCE(SUM(COALESCE(quantity, 0) * COALESCE(limit_price, 0)), 0)::text AS notional_sum
+      SELECT order_type, quantity, limit_price, estimated_price
       FROM trading_broker_orders
       WHERE account_id = $1
         AND action = 'place'
@@ -135,8 +154,14 @@ async function getTodayUsage(accountId: string): Promise<{ count: number; notion
     `,
     [accountId],
   );
-  const row = rows[0];
-  return { count: Number(row?.order_count ?? 0), notional: Number(row?.notional_sum ?? 0) };
+  return summarizeDailyOrderUsage(
+    rows.map((row) => ({
+      orderType: row.order_type,
+      quantity: row.quantity,
+      limitPrice: row.limit_price,
+      estimatedPrice: row.estimated_price,
+    })),
+  );
 }
 
 /** 'HH:MM' 문자열을 분 단위로. 형식이 깨지면 null. */
@@ -167,8 +192,14 @@ export interface RiskCheckInput {
   side: OrderSide;
   orderType: OrderType;
   quantity: number;
-  /** 지정가면 단가, 시장가면 현재가 추정치 */
-  price: number;
+  /**
+   * 지정가면 단가, 시장가면 현재가 추정치.
+   *
+   * **모르면 `undefined`를 넘긴다. 0으로 채우지 마라.** 0을 넘기면 금액 잣대를
+   * 전부 통과하지만, 모르는 것은 통과가 아니라 보류다. 시장가는 이 값이 기록에도
+   * 남아(`estimatedPrice`) 일일 금액 한도에 쌓인다.
+   */
+  price: number | undefined;
   /**
    * 거래 시간대·개장일 검사를 건너뛴다.
    * 예약주문은 장 마감 후(15:40~다음 영업일 07:30)에 넣는 게 정상이라
@@ -189,12 +220,19 @@ export async function checkRiskRules(input: RiskCheckInput): Promise<RiskVerdict
     return { allowed: false, violations: ['이 계좌는 리스크 룰에서 실주문이 꺼져 있습니다.'], rules };
   }
 
-  const notional = input.quantity * input.price;
+  /*
+   * 주문 금액. **모르면 `undefined`다.** 예전에는 시장가 현재가 조회가 실패하면
+   * 호출부가 0을 넘겼고, 그러면 `0 > 한도`가 거짓이라 금액 잣대를 전부 그냥 지나갔다.
+   * 모르는 것은 통과가 아니라 보류다 — 개장일 조회 실패를 다루는 방식과 같다.
+   */
+  const notional = orderNotional(input.quantity, input.price);
 
   if (input.quantity > rules.maxOrderQuantity) {
     violations.push(`1회 주문 수량 한도 ${rules.maxOrderQuantity.toLocaleString('ko-KR')}주를 초과합니다.`);
   }
-  if (notional > rules.maxOrderNotional) {
+  if (notional === undefined) {
+    violations.push('주문 금액을 계산할 단가를 알 수 없어 주문을 보류합니다.');
+  } else if (notional > rules.maxOrderNotional) {
     violations.push(`1회 주문 금액 한도 ${rules.maxOrderNotional.toLocaleString('ko-KR')}원을 초과합니다.`);
   }
   if (input.orderType === 'market' && !rules.allowMarketOrder) {
@@ -234,15 +272,14 @@ export async function checkRiskRules(input: RiskCheckInput): Promise<RiskVerdict
   }
 
   const usage = await getTodayUsage(input.accountId);
-  if (usage.count + 1 > rules.dailyOrderCountLimit) {
-    violations.push(`일일 주문 건수 한도 ${rules.dailyOrderCountLimit}건을 초과합니다 (오늘 ${usage.count}건).`);
-  }
-  if (usage.notional + notional > rules.dailyNotionalLimit) {
-    violations.push(
-      `일일 주문 금액 한도 ${rules.dailyNotionalLimit.toLocaleString('ko-KR')}원을 초과합니다 ` +
-        `(오늘 ${usage.notional.toLocaleString('ko-KR')}원).`,
-    );
-  }
+  violations.push(...dailyLimitViolations({ rules, usage, notional }));
 
-  return { allowed: violations.length === 0, violations, rules, todayOrderCount: usage.count, todayNotional: usage.notional };
+  return {
+    allowed: violations.length === 0,
+    violations,
+    rules,
+    todayOrderCount: usage.count,
+    todayNotional: usage.notional,
+    todayUnpricedCount: usage.unpricedCount,
+  };
 }

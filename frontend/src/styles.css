@@ -3996,6 +3996,15 @@ span.sample-badge {
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * 시장가 주문의 추정 단가. 지정가 단가와 같은 칸에 서므로 어림값인 것이 보여야 한다 —
+ * 점선과 죽인 글씨로 확정된 값처럼 읽히지 않게 한다.
+ */
+.portfolio-table__row span.portfolio-table__estimate {
+  border-bottom: 1px dotted var(--faint);
+  color: var(--muted);
+}
+
 .portfolio-table__row em {
   justify-self: start;
   padding: 1px 6px;

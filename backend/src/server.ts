@@ -695,21 +695,40 @@ async function main(): Promise<void> {
       return reply.code(400).send({ message });
     }
 
+    /*
+     * 시장가는 단가가 없으므로 현재가로 금액을 추정해 한도를 본다.
+     *
+     * **그 추정가를 기록에도 남긴다**(`estimatedPrice`). 남기지 않으면 이 주문이
+     * 일일 금액 한도에 0원으로 쌓여, 시장가만 내는 동안에는 한도가 영원히 차지 않는다.
+     * `limitPrice` 자리에 넣지 않는 이유는 그 컬럼이 "지정가 단가"라는 뜻이라서다.
+     */
+    let estimatedPrice: number | undefined;
+    if (orderType === 'market') {
+      try {
+        const { price } = await getInstrumentQuote(instrument);
+        if (Number.isFinite(price) && price > 0) estimatedPrice = price;
+      } catch (err) {
+        req.log.warn({ err, instrumentId }, '리스크 판정용 현재가 조회 실패');
+      }
+    }
+
     const placeAudit = {
       ...auditBase,
       accountId: account.id,
       instrumentId: instrument.id,
       symbol: instrument.providerSymbol,
+      estimatedPrice,
     };
 
-    // 시장가는 단가가 없으므로 현재가로 금액을 추정해 한도를 본다.
-    let riskPrice = limitPrice ?? 0;
-    if (orderType === 'market') {
-      try {
-        riskPrice = (await getInstrumentQuote(instrument)).price;
-      } catch (err) {
-        req.log.warn({ err, instrumentId }, '리스크 판정용 현재가 조회 실패');
-      }
+    /*
+     * 추정가를 못 받았으면 보류한다. 예전에는 경고만 남기고 0으로 계속 갔는데,
+     * 0이면 1회 금액 한도도 일일 금액 한도도 그냥 지나간다 — 모르는 것을 0으로
+     * 치면 안전장치가 통째로 열린다.
+     */
+    if (orderType === 'market' && estimatedPrice === undefined) {
+      const message = '현재가를 확인할 수 없어 시장가 주문을 보류합니다.';
+      await audit({ ...placeAudit, status: 'blocked', message, blockers: ['현재가 확인 실패'] });
+      return reply.code(503).send({ message });
     }
 
     const verdict = await checkRiskRules({
@@ -718,7 +737,7 @@ async function main(): Promise<void> {
       side,
       orderType,
       quantity,
-      price: riskPrice,
+      price: orderType === 'market' ? estimatedPrice : limitPrice,
     });
     if (!verdict.allowed) {
       await audit({

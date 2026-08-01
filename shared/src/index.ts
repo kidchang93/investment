@@ -1527,8 +1527,13 @@ export interface RiskVerdict {
   rules: RiskRuleSet;
   /** 오늘(KST) 접수된 주문 건수 */
   todayOrderCount?: number;
-  /** 오늘(KST) 접수된 주문 금액 합 */
+  /** 오늘(KST) 접수된 주문 중 **금액을 아는 것**의 합. 아래 건수만큼은 빠져 있다 */
   todayNotional?: number;
+  /**
+   * 금액을 알 수 없어 위 합에서 빠진 건수.
+   * 0으로 치면 "오늘 그만큼 안 썼다"가 되어 일일 금액 한도가 헐거워진다.
+   */
+  todayUnpricedCount?: number;
 }
 
 export type BrokerOrderAction = 'place' | 'amend' | 'cancel';
@@ -1552,6 +1557,14 @@ export interface BrokerOrderRecord {
   orderType?: OrderType;
   quantity?: number;
   limitPrice?: number;
+  /**
+   * 시장가 주문의 **판정 시점 추정 단가**. 지정가 주문에는 없다.
+   *
+   * `limitPrice`와 갈라 둔다 — 시장가에는 단가가 없고, 추정치를 단가 자리에 넣으면
+   * 기록을 읽는 사람이 지정가로 낸 주문이라고 오해한다. 리스크 룰의 금액 한도는
+   * 이 값으로 재므로 어림값이라는 사실과 함께 남긴다.
+   */
+  estimatedPrice?: number;
   orderNo?: string;
   orderBranchNo?: string;
   /** 정정·취소 대상 원주문번호 */

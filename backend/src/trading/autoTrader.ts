@@ -370,6 +370,10 @@ async function executeSignal(
   /*
    * 시장가로 낸다. 신호가 난 순간의 가격에 붙어야 해서 지정가로는 체결을 놓친다.
    * 다만 리스크 룰에서 시장가를 막아뒀다면 그 판정이 이긴다.
+   *
+   * 여기 넘기는 `candidate.price`가 곧 금액 한도를 재는 잣대이므로 **주문 기록에도
+   * 같은 값을 남긴다**(`estimatedPrice`). 남기지 않으면 이 주문이 일일 금액 한도에
+   * 0원으로 쌓이는데, 러너는 늘 시장가라 한도가 영영 차지 않는다.
    */
   const verdict = await checkRiskRules({
     accountId: config.accountId,
@@ -449,6 +453,7 @@ async function executeSignal(
       symbol: candidate.instrument.symbol,
       orderType: 'market',
       quantity,
+      estimatedPrice: candidate.price,
     });
     throw e;
   }
@@ -459,6 +464,7 @@ async function executeSignal(
     symbol: candidate.instrument.symbol,
     orderType: 'market',
     quantity,
+    estimatedPrice: candidate.price,
     orderNo: result.orderNo,
     orderBranchNo: result.orderBranchNo,
   });

@@ -8008,6 +8008,21 @@ export function App(): JSX.Element {
                         <span>
                           {record.quantity !== undefined ? `${formatNumber(record.quantity)}주` : '-'}
                           {record.limitPrice !== undefined ? ` · ${formatMoney(record.limitPrice)}` : ''}
+                          {/*
+                            시장가에는 단가가 없다. 대신 한도 판정에 쓴 추정 단가를 적되
+                            어림값이라고 밝힌다 — 그냥 적으면 지정가로 낸 주문으로 읽힌다.
+                          */}
+                          {record.limitPrice === undefined && record.estimatedPrice !== undefined && (
+                            <>
+                              {' · '}
+                              <span
+                                className="portfolio-table__estimate"
+                                title="시장가라 단가가 없습니다. 일일 금액 한도를 잰 추정 단가입니다."
+                              >
+                                추정 {formatMoney(record.estimatedPrice)}
+                              </span>
+                            </>
+                          )}
                         </span>
                         <span>{record.orderNo ?? record.originalOrderNo ?? '-'}</span>
                         <span title={record.blockers.join(', ') || record.message}>
