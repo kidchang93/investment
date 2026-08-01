@@ -15,6 +15,7 @@ import {
   DEFAULT_COSTS,
   backtest,
   backtestSplit,
+  backtestWindowSlices,
   backtestWindows,
   type BacktestCosts,
 } from './backtest.js';
@@ -140,6 +141,22 @@ describe('백테스트', () => {
     }
   });
 
+  it('구간 끝에 들고 있으면 승률에 안 들어간다 — winRate는 판 것들만의 값이다', () => {
+    /*
+     * `trades[]`에는 청산된 매매만 들어간다. 이 성질이 조용히 바뀌면 "회복하면
+     * 판다"는 전략의 승률이 실제보다 높게 나온다 — 회복 못 한 매매가 통째로
+     * 빠지기 때문이다. 비용을 **켜고** 잰다: 켜야 드러나는 것을 끄고 재면 안 된다.
+     */
+    const openEnd = [...new Array(20).fill(10), 12, 14, 16, 18, 20, 22, 24, 26, 28, 30];
+    const result = backtest('ma_cross', instrument, flatCandles(openEnd), 50_000, DEFAULT_COSTS);
+
+    assert.ok(result.openQuantity > 0, '들고 끝나야 이 시험이 성립한다');
+    assert.equal(result.tradeCount, 0, '판 것이 없으므로 매매도 0건이다');
+    assert.deepEqual(result.trades, []);
+    assert.equal(result.winRate, 0, '분모가 0이면 0 — 「다 졌다」가 아니라 「판 게 없다」다');
+    assert.ok(result.returnRate > 0, '수익률에는 미청산 평가액이 들어간다. 승률과 다른 것을 센다');
+  });
+
   it('최대 낙폭은 0 이상 1 이하', () => {
     const result = backtest('ma_cross', instrument, flatCandles(ROUND_TRIP), 50_000, DEFAULT_COSTS);
     assert.ok(result.maxDrawdown >= 0 && result.maxDrawdown <= 1, String(result.maxDrawdown));
@@ -167,20 +184,28 @@ describe('walk-forward 구간 나누기', () => {
   });
 
   it('나눈 구간이 원본을 빠짐없이 덮고 겹치지 않는다', () => {
-    // 구간 경계를 직접 계산해 비교한다 — 함수가 쓰는 것과 같은 규칙이어야 한다.
-    const total = 100;
+    /*
+     * 예전에는 이 시험이 경계를 **직접 다시 계산해** 비교했다. 같은 식을 두 번
+     * 쓴 것이라 함수가 바뀌어도 안 걸린다. 이제 함수가 자른 것을 그대로 본다.
+     */
+    const candles = flatCandles(Array.from({ length: 100 }, (_, index) => index + 1));
     for (const count of [1, 2, 3, 4, 7]) {
-      const size = Math.floor(total / count);
-      const bounds: Array<[number, number]> = [];
-      for (let i = 0; i < count; i += 1) {
-        bounds.push([i * size, i === count - 1 ? total : (i + 1) * size]);
-      }
-      assert.equal(bounds[0][0], 0, `${count}구간: 처음이 0이어야 한다`);
-      assert.equal(bounds[count - 1][1], total, `${count}구간: 끝이 ${total}이어야 한다`);
-      for (let i = 1; i < count; i += 1) {
-        assert.equal(bounds[i][0], bounds[i - 1][1], `${count}구간: ${i}번째가 앞 구간 끝에서 시작해야 한다`);
-      }
+      const slices = backtestWindowSlices(candles, count);
+      assert.equal(slices.length, count, `${count}구간: 구간 수`);
+      assert.deepEqual(slices.flat(), candles, `${count}구간: 이어 붙이면 원본`);
     }
+  });
+
+  it('자른 구간과 잰 구간이 같다 — 재는 쪽이 구간마다 표본을 판정할 수 있어야 한다', () => {
+    const candles = flatCandles(ROUND_TRIP);
+    const slices = backtestWindowSlices(candles, 3);
+    const windows = backtestWindows('ma_cross', instrument, candles, 50_000, NO_COSTS, 3);
+    assert.equal(slices.length, windows.length);
+    slices.forEach((slice, index) => {
+      const alone = backtest('ma_cross', instrument, slice, 50_000, NO_COSTS);
+      assert.equal(alone.endEquity, windows[index].endEquity, `${index + 1}구간 자산`);
+      assert.equal(alone.tradeCount, windows[index].tradeCount, `${index + 1}구간 매매 수`);
+    });
   });
 
   it('구간 수가 1이면 전체를 한 번 잰 것과 같다', () => {

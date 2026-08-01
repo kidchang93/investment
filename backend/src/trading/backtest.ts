@@ -61,9 +61,32 @@ export interface BacktestResult {
   startCash: number;
   endEquity: number;
   returnRate: number;
+  /**
+   * **청산된 매매만 들어간다.** 구간이 끝날 때 아직 들고 있던 포지션은 여기
+   * 없고 `openQuantity`/`openValue`로만 나온다. 강제 청산을 하지 않는 이유는
+   * `returnRate`가 이미 마지막 종가로 평가하고 있어서다 — 두 번 세면 안 된다.
+   */
   trades: BacktestTrade[];
   tradeCount: number;
   winCount: number;
+  /**
+   * `winCount / tradeCount`. **판 것들만의 승률이다.**
+   *
+   * ── 읽는 사람이 반드시 알아야 하는 편향 ──────────────────────────────
+   *
+   * 미청산 포지션은 분모에도 분자에도 없다. 그래서 **"회복하면 판다"는 전략
+   * (평균 회귀)에서는 회복 못 한 매매가 통째로 빠진다** — 지는 쪽만 골라
+   * 안 세는 셈이라 승률이 실제보다 높게 나온다.
+   *
+   * 크기를 쟀다(2026-08-01, 일봉 축). 구간 끝에서 강제 청산해 미청산까지
+   * 매매로 세면 평균 회귀의 매매 1건당 수익률이
+   * `+1.858%(t=2.69) → +0.192%(t=0.21)`로 **우위가 사라진다.**
+   *
+   * 판정문에 승률을 적을 때는 `openQuantity > 0`으로 끝난 표본이 몇 개인지
+   * 함께 적는다(`trading/measurementSample.ts`의 `openEnded`).
+   *
+   * **동작은 그대로 둔다.** 강제 청산을 넣을지는 별건이라 여기서 정하지 않는다.
+   */
   winRate: number;
   /** 최대 낙폭. 고점 대비 얼마나 내려갔는지 */
   maxDrawdown: number;
@@ -218,17 +241,30 @@ export function backtestWindows(
   costs: BacktestCosts = DEFAULT_COSTS,
   windowCount = 3,
 ): BacktestResult[] {
+  return backtestWindowSlices(candles, windowCount).map((slice) =>
+    backtest(strategyKey, instrument, slice, startCash, costs),
+  );
+}
+
+/**
+ * `backtestWindows`가 재는 구간을 그대로 돌려준다.
+ *
+ * 재는 쪽이 **구간마다** "이 현금으로 1주라도 살 수 있었나"를 물어야 해서
+ * 내보낸다. 자르는 규칙을 스크립트가 다시 쓰면 두 곳이 조용히 갈라진다 —
+ * 마지막 구간이 나머지를 다 가져간다는 규칙이 특히 그렇다.
+ */
+export function backtestWindowSlices(candles: Candle[], windowCount = 3): Candle[][] {
   if (windowCount < 1) return [];
   const size = Math.floor(candles.length / windowCount);
   if (size === 0) return [];
 
-  const results: BacktestResult[] = [];
+  const slices: Candle[][] = [];
   for (let i = 0; i < windowCount; i += 1) {
     // 마지막 구간은 나머지를 모두 가져간다. 버리면 최근 데이터가 사라진다.
     const end = i === windowCount - 1 ? candles.length : (i + 1) * size;
-    results.push(backtest(strategyKey, instrument, candles.slice(i * size, end), startCash, costs));
+    slices.push(candles.slice(i * size, end));
   }
-  return results;
+  return slices;
 }
 
 /**
