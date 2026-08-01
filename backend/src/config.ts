@@ -46,9 +46,21 @@ function normalizeAccountValue(raw: string | undefined): string {
   return (raw ?? '').replace(/[^0-9]/g, '');
 }
 
+/** KIS 종합계좌번호(`CANO`)의 자릿수. 이보다 짧으면 무엇을 채울지 알 수 없다. */
+const CANO_LENGTH = 8;
+
 /**
  * 계좌번호 문자열에서 종합계좌번호와 상품코드를 뽑는다.
  * `12345678-01`처럼 통합 표기하거나, 8자리만 넣고 상품코드를 따로 줄 수 있다.
+ *
+ * **짧은 계좌번호를 채워 주지 않는다.** 7자리 계좌번호를 받았을 때 (그대로 ·
+ * 왼쪽 0 채움 · 오른쪽 0 채움) × 상품코드 7가지 = **21개 조합을 KIS에 실제로
+ * 물어봤고 전부 `INVALID_CHECK_ACNO`였다**(2026-08-01,
+ * `probeAccountNumberForm.ts`). 무엇을 채워야 하는지 알 수 없다는 뜻이라,
+ * 짐작해서 채우면 **틀린 계좌번호로 조회를 계속 시도하게 된다.**
+ *
+ * 대신 **왜 못 쓰는지 말한다**(`skippedKisAccounts`). 예전에는 이 자리에서 그냥
+ * `null`을 돌려줘 계좌가 아무 말 없이 사라졌다.
  */
 function parseAccountNumber(
   rawAccount: string | undefined,
@@ -57,7 +69,7 @@ function parseAccountNumber(
   const account = normalizeAccountValue(rawAccount);
   const productCode = normalizeAccountValue(rawProductCode);
   if (account.length >= 10) return { cano: account.slice(0, 8), productCode: account.slice(8, 10) };
-  if (account.length === 8) {
+  if (account.length === CANO_LENGTH) {
     return { cano: account, productCode: productCode.length === 2 ? productCode : DEFAULT_PRODUCT_CODE };
   }
   return null;
