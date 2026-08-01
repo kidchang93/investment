@@ -323,7 +323,20 @@ config.kisAccounts: KisAccountConfig[]   # {id, label, appKey, appSecret, cano, 
 ```
 
 - env 규칙: `KIS_<id>_ACCOUNT_NO` + `KIS_APP_KEY_<id>` + `KIS_APP_SECRET_<id>` **3종이 모두 있어야** 한 계좌로 인정한다.
+- **한 앱키에 계좌가 여럿이면 종류를 붙인다** — `KIS_VTS_ACCOUNT_ORDINARY_NO`(주식) ·
+  `KIS_VTS_ACCOUNT_EXTRAORDINARY_NO`(선물옵션). 계좌 id는 `VTS-ORDINARY`가 되고 앱키는
+  종류를 뗀 `KIS_APP_KEY_VTS`를 함께 쓴다. KIS 모의투자가 이 모양이다.
+- **못 쓴 계좌는 사유를 남긴다**(`config.skippedKisAccounts`, 서버 시작 로그). 예전에는
+  자릿수가 안 맞거나 키 이름이 정규식에 안 걸리면 **아무 말 없이 사라졌다** — 오류가 아니라
+  없는 것처럼 동작해서, 넣은 사람은 오타를 낸 줄 모른 채 "왜 이 계좌가 화면에 없지"만 남았다.
+  두 번 그랬다. `config.test.ts`가 두 계약을 못 박는다.
+- **짧은 계좌번호를 채워 주지 않는다.** 7자리를 받았을 때 (그대로 · 왼쪽 0 채움 ·
+  오른쪽 0 채움) × 상품코드 7가지 = 21개 조합을 KIS에 물어봤고 전부 `INVALID_CHECK_ACNO`였다
+  (`scripts/probeAccountNumberForm.ts`). 무엇을 채워야 하는지 알 수 없다는 뜻이라
+  짐작해서 채우면 틀린 번호로 조회를 계속 시도하게 된다.
 - 기본 계좌는 `KIS_PRIMARY_ACCOUNT_ID`, 없으면 id 오름차순 첫 계좌. 실행마다 바뀌지 않도록 정렬한다.
+  이 값은 **자격증명 id로도 찾는다** — `VTS`라고 적으면 `VTS-ORDINARY`가 잡힌다. 고르는 것은
+  계좌가 아니라 앱키이고 종류가 달라도 앱키는 같기 때문이다.
 - 시세·실시간은 계좌와 무관하므로 기본 계좌의 앱키로 고정해 호출 한도를 한곳에 모은다.
 - `access_token`·`approval_key`는 **앱키별로** 캐시한다 (`auth.ts`). 한 캐시를 공유하면 다른 앱키의 토큰으로 호출해 계좌 조회가 조용히 실패한다.
 - 계좌번호(`CANO`)·상품코드(`ACNT_PRDT_CD`)는 서버 환경 변수에서만 읽고, 프론트로는 `maskKisAccount()`로 마스킹한 표시용 문자열과 `accountId`/`label`만 나간다.

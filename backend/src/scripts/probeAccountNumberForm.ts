@@ -57,16 +57,25 @@ async function main(): Promise<void> {
   const targetId = process.argv[2] ?? 'VTS';
 
   /*
-   * **`config.kisAccounts`에서 찾지 않는다.** 이 스크립트가 시험하려는 계좌는
-   * 형태를 정할 수 없어 거기서 이미 빠진 계좌다. `.env`를 직접 읽는다.
+   * 설정에 잡힌 계좌면 그것을 쓰고, 아니면 `.env`를 직접 읽는다.
+   *
+   * 후자가 필요한 이유는 이 스크립트가 시험하려는 대상이 바로 **형태를 정할 수
+   * 없어 설정에서 빠진 계좌**이기 때문이다. 빠진 계좌는 `config.kisAccounts`에
+   * 없다.
    */
-  const rawAccount = (process.env[`KIS_${targetId}_ACCOUNT_NO`] ?? '').replace(/[^0-9]/g, '');
-  const appKey = process.env[`KIS_APP_KEY_${targetId}`] ?? '';
-  const appSecret = process.env[`KIS_APP_SECRET_${targetId}`] ?? '';
+  const known = config.kisAccounts.find((item) => item.id === targetId);
+  const rawAccount = known
+    ? known.cano
+    : (process.env[`KIS_${targetId}_ACCOUNT_NO`] ?? '').replace(/[^0-9]/g, '');
+  const credentialId = targetId.split('-')[0];
+  const appKey = known?.appKey ?? process.env[`KIS_APP_KEY_${credentialId}`] ?? '';
+  const appSecret = known?.appSecret ?? process.env[`KIS_APP_SECRET_${credentialId}`] ?? '';
   if (!rawAccount || !appKey || !appSecret) {
-    console.log(
-      `KIS_${targetId}_ACCOUNT_NO · KIS_APP_KEY_${targetId} · KIS_APP_SECRET_${targetId} 중 빠진 것이 있습니다.`,
-    );
+    console.log(`계좌 ${targetId}의 계좌번호나 앱키를 찾지 못했습니다.`);
+    console.log(`설정된 계좌: ${config.kisAccounts.map((a) => a.id).join(', ') || '없음'}`);
+    for (const skipped of config.skippedKisAccounts) {
+      console.log(`  빠진 계좌 ${skipped.id} — ${skipped.reason}`);
+    }
     return;
   }
 
@@ -76,7 +85,7 @@ async function main(): Promise<void> {
     appKey,
     appSecret,
     cano: rawAccount,
-    productCode: '01',
+    productCode: known?.productCode ?? '01',
   };
 
   const envLabel = config.env === 'prod' ? '실전 서버' : '모의 서버';

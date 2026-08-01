@@ -72,7 +72,8 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 | `KIS_APP_SECRET` | ✅ | KIS Developers 발급 appsecret |
 | `KIS_APP_KEY_<id>` | | 계좌 `<id>`용 appkey (다계좌 방식) |
 | `KIS_APP_SECRET_<id>` | | 계좌 `<id>`용 appsecret (다계좌 방식) |
-| `KIS_<id>_ACCOUNT_NO` | | 계좌 `<id>`의 계좌번호. `12345678-01` 통합 표기 또는 앞 8자리 |
+| `KIS_<id>_ACCOUNT_NO` | | 계좌 `<id>`의 계좌번호. `12345678-01` 통합 표기 또는 앞 8자리. **8자리보다 짧으면 안 쓴다** — 짐작해서 채우지 않는다 |
+| `KIS_<id>_ACCOUNT_<종류>_NO` | | 한 앱키에 계좌가 여럿일 때(모의투자의 `ORDINARY` 주식 / `EXTRAORDINARY` 선물옵션). 계좌 id는 `<id>-<종류>`가 되고 앱키는 `KIS_APP_KEY_<id>`를 함께 쓴다 |
 | `KIS_<id>_ACCOUNT_PRODUCT_CODE` | | 상품코드 2자리. 생략하면 `01`(종합위탁) |
 | `KIS_PRIMARY_ACCOUNT_ID` | | 시세·실시간 WS에 쓸 기본 계좌 id. 생략하면 id 오름차순 첫 계좌 |
 | `KIS_LIVE_ORDER_ENABLED` | | `true`면 실주문 전송 허용. **기본값은 항상 차단**이다 |

@@ -62,7 +62,7 @@ const CANO_LENGTH = 8;
  * 대신 **왜 못 쓰는지 말한다**(`skippedKisAccounts`). 예전에는 이 자리에서 그냥
  * `null`을 돌려줘 계좌가 아무 말 없이 사라졌다.
  */
-function parseAccountNumber(
+export function parseAccountNumber(
   rawAccount: string | undefined,
   rawProductCode: string | undefined,
 ): { cano: string; productCode: string } | null {
@@ -91,18 +91,53 @@ export interface SkippedKisAccount {
 
 const skippedKisAccounts: SkippedKisAccount[] = [];
 
-/** `KIS_<id>_ACCOUNT_NO` + `KIS_APP_KEY_<id>` + `KIS_APP_SECRET_<id>` 3종이 모두 있어야 한 계좌로 인정한다. */
+/**
+ * 계좌 하나를 가리키는 env 키를 뜯는다.
+ *
+ *   KIS_21_ACCOUNT_NO                  → 자격증명 21 · 계좌 id `21`
+ *   KIS_VTS_ACCOUNT_ORDINARY_NO        → 자격증명 VTS · 계좌 id `VTS-ORDINARY`
+ *   KIS_VTS_ACCOUNT_EXTRAORDINARY_NO   → 자격증명 VTS · 계좌 id `VTS-EXTRAORDINARY`
+ *
+ * **한 앱키에 계좌가 여럿일 수 있다.** KIS 모의투자가 그렇다 — 주식 계좌와
+ * 선물옵션 계좌가 같은 앱키에 함께 등록된다. 예전에는 `KIS_<id>_ACCOUNT_NO`
+ * 하나만 읽어서, 종류를 붙여 적은 계좌가 **정규식에 안 걸려 통째로 무시됐다.**
+ * 그것도 아무 말 없이 — `skippedKisAccounts`에도 안 남았다.
+ *
+ * 앱키는 **종류를 뗀 쪽**(`credentialId`)에서 찾는다. 계좌마다 앱키를 따로 적게
+ * 하면 같은 값을 두 번 쓰게 된다.
+ */
+export function parseAccountKey(key: string): { credentialId: string; accountId: string; kind?: string } | null {
+  const plain = /^KIS_(.+)_ACCOUNT_NO$/.exec(key);
+  if (plain) return { credentialId: plain[1], accountId: plain[1] };
+  const kinded = /^KIS_(.+)_ACCOUNT_([A-Z]+)_NO$/.exec(key);
+  if (kinded) {
+    return { credentialId: kinded[1], accountId: `${kinded[1]}-${kinded[2]}`, kind: kinded[2] };
+  }
+  return null;
+}
+
+/** 계좌 종류의 화면 이름. 모르는 종류는 코드를 그대로 쓴다 — 지어내지 않는다. */
+const ACCOUNT_KIND_LABELS: Record<string, string> = {
+  ORDINARY: '주식',
+  EXTRAORDINARY: '선물옵션',
+};
+
+/** 계좌번호 + 앱키 + 시크릿 3종이 모두 있어야 한 계좌로 인정한다. */
 function parseKisAccounts(): KisAccountConfig[] {
   const accounts: KisAccountConfig[] = [];
 
   for (const key of Object.keys(process.env)) {
-    const match = /^KIS_(.+)_ACCOUNT_NO$/.exec(key);
-    if (!match) continue;
+    const parsedKey = parseAccountKey(key);
+    if (!parsedKey) continue;
 
-    const id = match[1];
-    const parsed = parseAccountNumber(process.env[key], process.env[`KIS_${id}_ACCOUNT_PRODUCT_CODE`]);
-    const appKey = process.env[`KIS_APP_KEY_${id}`] ?? '';
-    const appSecret = process.env[`KIS_APP_SECRET_${id}`] ?? '';
+    const { credentialId, accountId, kind } = parsedKey;
+    const id = accountId;
+    const parsed = parseAccountNumber(
+      process.env[key],
+      process.env[`KIS_${accountId}_ACCOUNT_PRODUCT_CODE`] ?? process.env[`KIS_${credentialId}_ACCOUNT_PRODUCT_CODE`],
+    );
+    const appKey = process.env[`KIS_APP_KEY_${credentialId}`] ?? '';
+    const appSecret = process.env[`KIS_APP_SECRET_${credentialId}`] ?? '';
 
     if (!parsed) {
       /*
@@ -113,13 +148,16 @@ function parseKisAccounts(): KisAccountConfig[] {
       skippedKisAccounts.push({
         id,
         reason:
-          `KIS_${id}_ACCOUNT_NO의 숫자가 ${digits}자리입니다.`
+          `${key}의 숫자가 ${digits}자리입니다.`
           + ' 8자리(종합계좌번호)이거나 10자리 이상(종합계좌번호 8 + 상품코드 2)이어야 합니다.',
       });
       continue;
     }
     if (!appKey || !appSecret) {
-      const missing = [!appKey && `KIS_APP_KEY_${id}`, !appSecret && `KIS_APP_SECRET_${id}`]
+      const missing = [
+        !appKey && `KIS_APP_KEY_${credentialId}`,
+        !appSecret && `KIS_APP_SECRET_${credentialId}`,
+      ]
         .filter(Boolean)
         .join(' · ');
       skippedKisAccounts.push({ id, reason: `${missing}가 없습니다.` });
@@ -127,8 +165,25 @@ function parseKisAccounts(): KisAccountConfig[] {
     }
 
     // HTS ID는 계좌별로 두되, 사람이 하나만 쓰는 경우가 흔해 전역값도 허용한다.
-    const htsId = (process.env[`KIS_${id}_HTS_ID`] ?? process.env.KIS_HTS_ID ?? '').trim();
-    accounts.push({ id, label: `KIS ${id}`, appKey, appSecret, htsId: htsId || undefined, ...parsed });
+    const htsId = (
+      process.env[`KIS_${accountId}_HTS_ID`]
+      ?? process.env[`KIS_${credentialId}_HTS_ID`]
+      ?? process.env.KIS_HTS_ID
+      ?? ''
+    ).trim();
+    /*
+     * 화면 이름에 종류를 한국어로 붙인다. `KIS VTS-ORDINARY`는 내부 식별자라
+     * 읽는 사람이 무슨 계좌인지 알 수 없다(`docs/CODE_STYLE.md`).
+     */
+    const kindLabel = kind ? ` ${ACCOUNT_KIND_LABELS[kind] ?? kind}` : '';
+    accounts.push({
+      id,
+      label: `KIS ${credentialId}${kindLabel}`,
+      appKey,
+      appSecret,
+      htsId: htsId || undefined,
+      ...parsed,
+    });
   }
 
   // env 순회 순서에 의존하지 않도록 정렬한다. 기본 계좌가 실행마다 바뀌면 안 된다.
@@ -160,7 +215,21 @@ function resolvePrimaryCredentials(accounts: KisAccountConfig[]): {
   appSecret: string;
 } {
   const explicitId = process.env.KIS_PRIMARY_ACCOUNT_ID?.trim();
-  const chosen = (explicitId ? accounts.find((account) => account.id === explicitId) : undefined) ?? accounts[0];
+  /*
+   * **자격증명 id로도 찾는다.** 계좌에 종류가 붙으면 id가 `VTS-ORDINARY`가 되는데,
+   * `KIS_PRIMARY_ACCOUNT_ID=VTS`라고 적는 것이 자연스럽다 — 고르는 것은 계좌가
+   * 아니라 **앱키**이고, 종류가 달라도 앱키는 같기 때문이다. 정확히 일치하는
+   * 계좌를 먼저 보고, 없으면 그 앱키를 쓰는 첫 계좌를 쓴다.
+   *
+   * 이게 없으면 `KIS_PRIMARY_ACCOUNT_ID`가 조용히 무시되고 id 오름차순 첫 계좌가
+   * 기본이 된다 — 실계좌 id가 숫자면 모의 환경인데 실계좌 앱키가 기본이 되어
+   * 시세가 통째로 죽는다.
+   */
+  const chosen =
+    (explicitId
+      ? accounts.find((account) => account.id === explicitId)
+        ?? accounts.find((account) => account.id.startsWith(`${explicitId}-`))
+      : undefined) ?? accounts[0];
   if (chosen) return { id: chosen.id, appKey: chosen.appKey, appSecret: chosen.appSecret };
 
   return {
