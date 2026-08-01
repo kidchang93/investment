@@ -1,6 +1,14 @@
-import { config, orderServerMismatch, restBaseFor, type KisAccountConfig, type KisServer } from '../config.js';
+import {
+  config,
+  orderServerMismatch,
+  readServerMismatch,
+  restBaseFor,
+  type KisAccountConfig,
+  type KisServer,
+} from '../config.js';
 import { getDomesticInstrumentsBySymbols } from '../db/instruments.js';
 import { credentialServer, getAccessToken, primaryCredentials, type KisCredentials } from './auth.js';
+import { kisErrorSuffix } from './errorCodes.js';
 import {
   chunkQuoteCodes,
   MULTI_QUOTE_PATH,
@@ -86,7 +94,8 @@ async function kisPost(
       body: JSON.stringify(body),
     });
     if (!res.ok) {
-      throw new Error(`KIS POST ${path} 실패 (${res.status}): ${await res.text()}`);
+      const text = await res.text();
+      throw new Error(`KIS POST ${path} 실패 (${res.status}): ${text}${kisErrorSuffix(text)}`);
     }
     return (await res.json()) as Record<string, unknown>;
   });
@@ -175,6 +184,12 @@ async function kisGet(
  * **도메인은 자격증명이 정한다.** 토큰은 발급받은 서버에서만 통하므로 둘이 함께
  * 다녀야 어긋나지 않는다. 지금 기본 서버가 아닌 곳으로 가는 조회는 개장일
  * (`chk-holiday`) 하나뿐이다 — 모의 서버에 그 TR이 없어서다.
+ *
+ * ⚠ **짝이 어긋난 자격증명은 조회도 보내지 않는다.** 계좌 TR은 이름이 `config.env`로
+ * 갈려(`TTTC8434R`/`VTTC8434R`) 어느 도메인으로 보내도 맞지 않고, 보내는 순간 그
+ * 서버의 토큰이 발급돼 캐시된다(2026-08-01 실측: `token-prod-VTS-EXTRAORDINARY.json`이
+ * 실제로 생겼다). 사유는 `readServerMismatch`에 적어 뒀다. 예외는 개장일 하나이며
+ * 호출부가 `crossServerRead`로 밝힌다.
  */
 async function kisGetWithHeaders(
   path: string,
@@ -183,6 +198,15 @@ async function kisGetWithHeaders(
   trCont = '',
   credentials: KisCredentials = primaryCredentials,
 ): Promise<{ body: Record<string, unknown>; headers: Headers }> {
+  if (!credentials.crossServerRead) {
+    const mismatch = readServerMismatch(credentialServer(credentials), config.env);
+    /*
+     * 토큰을 받기 **전에** 세운다. 발급 자체가 다른 서버에 값을 남기는 일이라서다.
+     * 보간한 값 뒤에 조사를 붙이지 않는다 — 경로도 id도 끝 글자가 매번 다르다.
+     */
+    if (mismatch) throw new Error(`KIS 조회를 보내지 않았습니다 (${path}, 자격증명 ${credentials.id}). ${mismatch}`);
+  }
+
   const token = await getAccessToken(credentials);
   const url = new URL(restBaseFor(credentialServer(credentials)) + path);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
@@ -214,7 +238,8 @@ async function kisGetWithHeaders(
       body = {};
     }
     if (!res.ok && !isRateLimited(body)) {
-      throw new Error(`KIS GET ${path} 실패 (${res.status}): ${text}`);
+      // 짝이 어긋났다는 뜻의 코드면 그렇게 말해 준다. 아니면 덧말이 빈 문자열이다.
+      throw new Error(`KIS GET ${path} 실패 (${res.status}): ${text}${kisErrorSuffix(body)}`);
     }
     return { body, headers: res.headers };
   }
@@ -268,9 +293,18 @@ function maskKisAccount(cano: string, productCode: string): string {
 const MISSING_ACCOUNT_MESSAGE =
   'KIS 계좌 설정이 없습니다. KIS_<id>_ACCOUNT_NO / KIS_APP_KEY_<id> / KIS_APP_SECRET_<id>를 함께 채워주세요.';
 
-/** 계좌 조회는 그 계좌가 등록된 앱키로만 가능하다. 계좌 설정에서 자격증명만 뽑아 쓴다. */
-function toCredentials(account: KisAccountConfig): KisCredentials {
-  return { id: account.id, appKey: account.appKey, appSecret: account.appSecret };
+/**
+ * 계좌 조회는 그 계좌가 등록된 앱키로만 가능하다. 계좌 설정에서 자격증명만 뽑아 쓴다.
+ *
+ * **서버 표기(`server`)를 반드시 함께 싣는다.** 예전에는 `{id, appKey, appSecret}`만
+ * 넘겨서 `credentialServer()`가 늘 `config.env`를 돌려줬고, 그 결과
+ * `orderServerMismatch(config.env, config.env)`가 **언제나 null**이라 주문 가드가
+ * 정상 경로에서 한 번도 걸리지 않았다. 도달 불가능한 방어선이었다.
+ *
+ * 시험에서 부르므로 내보낸다 — 짝을 싣는지가 이 함수의 계약이다.
+ */
+export function toCredentials(account: KisAccountConfig): KisCredentials {
+  return { id: account.id, appKey: account.appKey, appSecret: account.appSecret, server: account.server };
 }
 
 /**
@@ -1905,7 +1939,12 @@ export async function isDomesticMarketOpenDay(date = kstToday()): Promise<boolea
     'CTCA0903R',
     { BASS_DT: date, CTX_AREA_FK: '', CTX_AREA_NK: '' },
     '',
-    { ...lookup.credentials, server: lookup.server },
+    /*
+     * **짝 검사를 건너뛰는 유일한 조회다.** `CTCA0903R`은 서버로 이름이 갈리지 않고
+     * 답도 계좌와 무관한 시장 사실이라, 이 실행이 모의여도 실전 서버에 물어 된다.
+     * 다른 TR에 이 표시를 옮겨 붙이지 않는다 — 계좌 TR은 이름부터 갈린다.
+     */
+    { ...lookup.credentials, server: lookup.server, crossServerRead: true },
   );
 
   if (body.rt_cd && body.rt_cd !== '0') {

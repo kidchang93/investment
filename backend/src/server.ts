@@ -4,6 +4,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import {
   config,
   assertCredentials,
+  describeCredentialPairings,
   getKisAccount,
   kisServerLabel,
   marketOpenDayHint,
@@ -1330,6 +1331,28 @@ async function main(): Promise<void> {
    */
   for (const skipped of config.skippedKisAccounts) {
     app.log.warn(`KIS 계좌 ${skipped.id}을(를) 쓰지 못했습니다 — ${skipped.reason}`);
+  }
+  /*
+   * **어느 앱키가 어느 서버에 붙는지 계좌마다 적는다.** 조용히 다른 서버에 붙는 일이
+   * 없어야 한다 — 2026-08-01에 `APP_ENV=prod` + 모의 앱키로 돌렸더니 멀티시세·일봉이
+   * 정상 응답하고 분봉만 `EGW02004`로 막혔다. 반쯤 되니 아무도 눈치채지 못했고
+   * `backend/.cache/token-prod-VTS-EXTRAORDINARY.json`까지 생겼다.
+   *
+   * **명시한 것과 추정한 것을 갈라 적는다.** 코드는 앱키가 어느 서버용인지 알 수 없어서
+   * `KIS_<id>_SERVER`가 없으면 `APP_ENV`로 짐작할 뿐이다. 짐작을 사실처럼 적지 않는다.
+   */
+  if (config.primaryCredentialProblem) app.log.warn(config.primaryCredentialProblem);
+  for (const pairing of describeCredentialPairings(config.kisAccounts, config.env)) {
+    const source = pairing.declared ? 'KIS_<id>_SERVER에 명시' : 'APP_ENV로 추정';
+    const primaryMark = pairing.id === config.primaryCredentialId ? ' · 시세·실시간 기본' : '';
+    const line = `자격증명 ${pairing.id} → ${kisServerLabel(pairing.server)} (${source})${primaryMark}`;
+    if (pairing.matchesEnv) app.log.info(line);
+    else {
+      app.log.warn(
+        `${line} — 이 실행은 ${kisServerLabel(config.env)}라 짝이 어긋난다.`
+        + ' 이 자격증명으로는 조회도 주문도 보내지 않는다.',
+      );
+    }
   }
   /*
    * 개장일 조회가 어느 서버로 나가는지 반드시 알린다. 조용히 다른 서버에 붙는 것은

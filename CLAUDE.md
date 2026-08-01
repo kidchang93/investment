@@ -75,6 +75,8 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 | `KIS_<id>_ACCOUNT_NO` | | 계좌 `<id>`의 계좌번호. `12345678-01` 통합 표기 또는 앞 8자리. **8자리보다 짧으면 안 쓴다** — 짐작해서 채우지 않는다 |
 | `KIS_<id>_ACCOUNT_<종류>_NO` | | 한 앱키에 계좌가 여럿일 때(모의투자의 `ORDINARY` 주식 / `EXTRAORDINARY` 선물옵션). 계좌 id는 `<id>-<종류>`가 되고 앱키는 `KIS_APP_KEY_<id>`를 함께 쓴다 |
 | `KIS_<id>_ACCOUNT_PRODUCT_CODE` | | 상품코드 2자리. 생략하면 `01`(종합위탁) |
+| `KIS_<id>_SERVER` | | 그 앱키가 붙는 서버 (`prod` \| `vts`). **생략하면 `APP_ENV`로 추정한다.** 적었는데 `APP_ENV`와 어긋나면 그 자격증명으로는 주문도 조회도 안 나가고, 기본 계좌가 어긋나면 서버가 뜨지 않는다 |
+| `KIS_ACCOUNT_SERVER` | | 구버전 단일 계좌(`KIS_ACCOUNT_NO`)용 서버 표기 |
 | `KIS_PRIMARY_ACCOUNT_ID` | | 시세·실시간 WS에 쓸 기본 계좌 id. 생략하면 id 오름차순 첫 계좌 |
 | `KIS_OPEN_DAY_CREDENTIAL_ID` | | 개장일 조회(`chk-holiday`)를 물어볼 자격증명 id. **모의 서버에 이 TR이 없어** `APP_ENV=vts`면 리스크 룰이 늘 보류로 막힌다. 이 값을 주면 **개장일 조회 하나만** 그 앱키로 실전 서버에 보낸다. **조회 전용이고 주문에는 절대 쓰지 않는다.** 없으면 지금 동작 그대로(보류), `APP_ENV=prod`면 무시 |
 | `KIS_LIVE_ORDER_ENABLED` | | `true`면 실주문 전송 허용. **기본값은 항상 차단**이다 |
@@ -116,3 +118,7 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 5. **`.env`와 `.cache/`를 커밋하지 말 것.** (자격증명·토큰 포함)
 6. **`shared`를 빌드 산출물로 참조하지 말 것.** `main`/`types`가 `src/index.ts`를 직접 가리킨다. 컴파일 단계 없이 소스로 소비된다.
 7. **모의(`vts`)/실전(`prod`) 도메인을 하드코딩하지 말 것.** 반드시 `config.ts`의 `restBaseFor()` 표를 통한다. 조회(GET)의 도메인은 **자격증명이 정한다**(`KisCredentials.server`) — 토큰이 발급받은 서버에서만 통하므로 둘이 함께 다녀야 한다. **주문(POST)은 예외로 `config.restBase`에 고정**하고, 서버가 다른 자격증명이 들어오면 `orderServerMismatch()`가 보내기 전에 던진다. 실전 자격증명이 주문 경로로 새면 모의 환경인 줄 알고 실계좌에 주문이 나간다.
+
+7-1. **앱키가 어느 서버용인지 짐작하지 말 것.** KIS는 알려주지 않고 앱키 문자열에도 표시가 없다. 사람이 `KIS_<id>_SERVER`(`prod`|`vts`)에 적으면 그것을 지키고, 안 적었으면 `APP_ENV`로 추정하되 **추정이라고 시작 로그에 적는다.** 적어 둔 값과 `APP_ENV`가 어긋나면 그 자격증명으로는 **주문도 조회도 보내지 않는다**(`readServerMismatch`) — 계좌 TR 이름이 `APP_ENV`로 갈려(`TTTC`/`VTTC`) 어차피 맞지 않고, 보내는 순간 그 서버의 토큰이 발급돼 캐시된다. 기본 자격증명이 어긋나면 `assertCredentials()`가 **서버를 못 뜨게 한다.** 예외는 개장일(`chk-holiday`) 하나뿐이고 `KisCredentials.crossServerRead`로 호출부가 밝힌다 — **다른 TR에 그 표시를 옮겨 붙이지 않는다.**
+
+7-2. **서버 불일치 오류와 "그 기능이 없는 것"을 섞지 말 것.** `EGW02007`(실전 앱키를 모의 서버에)·`EGW02004`(모의 앱키를 실전 서버에)는 **짝 문제**지만 `EGW02006`(모의투자 TR이 아닙니다)은 앱키가 아니라 **모의 서버에 그 기능이 없는 것**이다. 가르는 표는 `kis/errorCodes.ts` 한 곳에 있다.

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { resolve } from 'node:path';
 import { config, restBaseFor, type KisServer } from '../config.js';
+import { kisErrorSuffix } from './errorCodes.js';
 
 /**
  * KIS 인증 토큰 관리.
@@ -29,9 +30,21 @@ export interface KisCredentials {
   appSecret: string;
   /**
    * 이 자격증명이 붙는 서버. 생략하면 `config.env`(= 그 실행의 기본 서버)다.
-   * 지금 이 값을 명시하는 곳은 개장일 조회 하나뿐이고 **조회 전용**이다.
+   *
+   * 값은 두 곳에서 온다 — 사람이 적은 `KIS_<id>_SERVER`(계좌 자격증명)와, 개장일
+   * 조회가 스스로 정하는 `'prod'`다. **코드는 앱키가 어느 서버용인지 알 수 없으므로**
+   * 적히지 않은 것을 짐작하지 않는다.
    */
   server?: KisServer;
+  /**
+   * **이 실행의 기본 서버가 아닌 곳으로 일부러 보내는 조회인가.**
+   *
+   * 짝이 어긋난 자격증명은 조회도 막지만(`readServerMismatch`), 개장일
+   * (`chk-holiday` / `CTCA0903R`)만은 예외다 — TR 이름이 서버로 갈리지 않고 답도
+   * 계좌와 무관한 시장 사실이라 실전 서버에 물어도 같다. 그 하나를 위해 호출부가
+   * 명시한다. **주문에는 쓰지 않는다** — 주문은 `orderServerMismatch`가 따로 막는다.
+   */
+  crossServerRead?: boolean;
 }
 
 /** 이 자격증명이 붙는 서버. 안 적혀 있으면 그 실행의 기본 서버다. */
@@ -39,11 +52,17 @@ export function credentialServer(credentials: KisCredentials): KisServer {
   return credentials.server ?? config.env;
 }
 
-/** 계좌 무관 호출(시세·실시간)에 쓰는 기본 자격증명 */
+/**
+ * 계좌 무관 호출(시세·실시간)에 쓰는 기본 자격증명.
+ *
+ * 서버 표기(`KIS_<id>_SERVER`)를 그대로 들고 다닌다. 짝이 어긋나면 `assertCredentials`가
+ * 서버를 못 뜨게 하므로, 여기 값이 `config.env`와 다른 채로 도는 일은 없다.
+ */
 export const primaryCredentials: KisCredentials = {
   id: config.primaryCredentialId,
   appKey: config.appKey,
   appSecret: config.appSecret,
+  server: config.primaryCredentialServer,
 };
 
 interface TokenCache {
@@ -117,7 +136,13 @@ async function issueAccessToken(credentials: KisCredentials): Promise<string> {
     }),
   });
   if (!res.ok) {
-    throw new Error(`토큰 발급 실패 (${res.status}): ${await res.text()}`);
+    /*
+     * 짝이 어긋나면 여기서 먼저 드러난다 — 실전 앱키를 모의 서버에 보내면
+     * `EGW02007`이 토큰 발급 단계에서 온다. 코드만 적으면 무슨 뜻인지 알 수 없으므로
+     * 어느 쪽 앱키가 어느 서버에 갔는지까지 덧붙인다.
+     */
+    const text = await res.text();
+    throw new Error(`토큰 발급 실패 (${res.status}): ${text}${kisErrorSuffix(text)}`);
   }
   const json = (await res.json()) as { access_token: string; expires_in?: number };
   const cache: TokenCache = {
@@ -160,7 +185,8 @@ export async function getApprovalKey(credentials: KisCredentials = primaryCreden
     }),
   });
   if (!res.ok) {
-    throw new Error(`approval_key 발급 실패 (${res.status}): ${await res.text()}`);
+    const text = await res.text();
+    throw new Error(`approval_key 발급 실패 (${res.status}): ${text}${kisErrorSuffix(text)}`);
   }
   const json = (await res.json()) as { approval_key: string };
   approvalKeys.set(key, json.approval_key);

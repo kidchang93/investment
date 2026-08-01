@@ -34,6 +34,34 @@ export function kisServerLabel(server: KisServer): string {
   return SERVER_LABELS[server];
 }
 
+/**
+ * `KIS_<id>_SERVER`에 적힌 값. **코드는 앱키가 어느 서버용인지 알 수 없다** —
+ * KIS가 알려주지 않고 앱키 문자열에도 표시가 없다. 그래서 사람이 적을 수 있게 하고,
+ * 적었으면 그것을 지킨다. 안 적었으면 지금처럼 `APP_ENV`로 추정한다(하위 호환).
+ *
+ * 적었는데 못 읽은 것을 **조용히 없는 것으로 보지 않는다.** 그러면 안전장치를 켰다고
+ * 믿는 사람이 켜지지 않은 채로 돌게 된다 — 계좌가 아무 말 없이 사라졌던 전례와 같다.
+ */
+export interface DeclaredKisServer {
+  /** 읽어낸 서버. 안 적었거나 못 읽으면 null */
+  server: KisServer | null;
+  /** 적었는데 못 읽은 이유. 환경변수 이름은 부르는 쪽이 앞에 붙인다 */
+  problem: string | null;
+}
+
+export function parseDeclaredServer(raw: string | undefined): DeclaredKisServer {
+  const value = (raw ?? '').trim().toLowerCase();
+  if (!value) return { server: null, problem: null };
+  if (value === 'prod' || value === 'vts') return { server: value, problem: null };
+  /*
+   * 보간한 값 뒤에 조사를 붙이지 않는다(`docs/CODE_STYLE.md`). 적힌 값은 괄호로 뺀다.
+   */
+  return {
+    server: null,
+    problem: `값을 알아볼 수 없습니다 (${raw?.trim() ?? ''}). prod(실전 서버) 또는 vts(모의 서버)만 씁니다.`,
+  };
+}
+
 /** 상품코드가 따로 없을 때의 기본값. 개인 종합위탁계좌가 01이다. */
 const DEFAULT_PRODUCT_CODE = '01';
 
@@ -59,6 +87,12 @@ export interface KisAccountConfig {
    * 종목코드가 아니라 사람의 로그인 ID다. 없으면 통보를 구독하지 않는다.
    */
   htsId?: string;
+  /**
+   * 이 자격증명이 붙는 서버(`KIS_<id>_SERVER`). **사람이 적었을 때만 값이 있다** —
+   * 없으면 `config.env`로 추정한다. 명시와 추정을 갈라 두는 이유는 시작 로그가
+   * "적힌 것"과 "짐작한 것"을 구별해 말해야 하기 때문이다.
+   */
+  server?: KisServer;
 }
 
 function parsePort(raw: string | undefined): number {
@@ -228,6 +262,24 @@ function parseKisAccounts(): KisAccountConfig[] {
       continue;
     }
 
+    /*
+     * 이 자격증명이 붙는 서버. 계좌별(`KIS_VTS-ORDINARY_SERVER`)을 먼저 보고
+     * 자격증명별(`KIS_VTS_SERVER`)로 떨어진다 — 앱키가 자격증명 단위라 보통 뒤엣것을 쓴다.
+     *
+     * **적었는데 못 읽으면 그 계좌를 쓰지 않는다.** 이 값의 목적이 "짝이 어긋난 채로
+     * 조용히 붙는 것"을 막는 것인데, 오타를 무시하고 추정으로 되돌아가면 켰다고 믿는
+     * 안전장치가 꺼진 채로 돈다.
+     */
+    const serverEnvName =
+      process.env[`KIS_${accountId}_SERVER`] !== undefined
+        ? `KIS_${accountId}_SERVER`
+        : `KIS_${credentialId}_SERVER`;
+    const declaredServer = parseDeclaredServer(process.env[serverEnvName]);
+    if (declaredServer.problem) {
+      skippedKisAccounts.push({ id, reason: `${serverEnvName} ${declaredServer.problem}` });
+      continue;
+    }
+
     // HTS ID는 계좌별로 두되, 사람이 하나만 쓰는 경우가 흔해 전역값도 허용한다.
     const htsId = (
       process.env[`KIS_${accountId}_HTS_ID`]
@@ -246,6 +298,7 @@ function parseKisAccounts(): KisAccountConfig[] {
       appKey,
       appSecret,
       htsId: htsId || undefined,
+      server: declaredServer.server ?? undefined,
       ...parsed,
     });
   }
@@ -253,17 +306,23 @@ function parseKisAccounts(): KisAccountConfig[] {
   // env 순회 순서에 의존하지 않도록 정렬한다. 기본 계좌가 실행마다 바뀌면 안 된다.
   accounts.sort((a, b) => a.id.localeCompare(b.id));
 
-  // 접미사 없는 단일 계좌 설정(구버전)도 계속 지원한다.
+  // 접미사 없는 단일 계좌 설정(구버전)도 계속 지원한다. 서버 표기는 `KIS_ACCOUNT_SERVER`다.
   const legacy = parseAccountNumber(process.env.KIS_ACCOUNT_NO, process.env.KIS_ACCOUNT_PRODUCT_CODE);
+  const legacyServer = parseDeclaredServer(process.env.KIS_ACCOUNT_SERVER);
   if (legacy && process.env.KIS_APP_KEY && process.env.KIS_APP_SECRET) {
-    accounts.unshift({
-      id: 'default',
-      label: 'KIS 계좌',
-      appKey: process.env.KIS_APP_KEY,
-      appSecret: process.env.KIS_APP_SECRET,
-      htsId: process.env.KIS_HTS_ID?.trim() || undefined,
-      ...legacy,
-    });
+    if (legacyServer.problem) {
+      skippedKisAccounts.push({ id: 'default', reason: `KIS_ACCOUNT_SERVER ${legacyServer.problem}` });
+    } else {
+      accounts.unshift({
+        id: 'default',
+        label: 'KIS 계좌',
+        appKey: process.env.KIS_APP_KEY,
+        appSecret: process.env.KIS_APP_SECRET,
+        htsId: process.env.KIS_HTS_ID?.trim() || undefined,
+        server: legacyServer.server ?? undefined,
+        ...legacy,
+      });
+    }
   }
 
   return accounts;
@@ -294,27 +353,68 @@ export interface KisCredentialPair {
   id: string;
   appKey: string;
   appSecret: string;
+  /** 이 앱키가 붙는 서버(`KIS_<id>_SERVER`). 사람이 적었을 때만 값이 있다 */
+  server?: KisServer;
+}
+
+/**
+ * 자격증명 하나가 **어느 서버에 붙는지**와, 그것이 적힌 값인지 짐작한 값인지.
+ * 서버 시작 로그가 이걸 그대로 적는다 — **조용히 다른 서버에 붙는 일이 없어야 한다.**
+ */
+export interface CredentialPairing {
+  id: string;
+  /** 이 자격증명이 붙는 서버 */
+  server: KisServer;
+  /** 사람이 `KIS_<id>_SERVER`에 적었나. false면 `APP_ENV`로 추정한 것이다 */
+  declared: boolean;
+  /** 이 실행의 서버와 짝이 맞나 */
+  matchesEnv: boolean;
+}
+
+export function describeCredentialPairings(
+  credentials: readonly { id: string; server?: KisServer }[],
+  env: KisServer,
+): CredentialPairing[] {
+  return credentials.map((credential) => {
+    const server = credential.server ?? env;
+    return { id: credential.id, server, declared: credential.server !== undefined, matchesEnv: server === env };
+  });
 }
 
 /**
  * 시세·종목마스터·실시간 WS처럼 계좌와 무관한 호출에 쓸 기본 자격증명.
  * 호출 한도를 한 앱키에 모으려고 계좌를 바꿔도 이 값은 고정한다.
+ *
+ * **적어 둔 id를 못 찾으면 조용히 다른 앱키로 넘어가지 않는다.** 예전에는
+ * `KIS_PRIMARY_ACCOUNT_ID`가 안 걸리면 아무 말 없이 id 오름차순 첫 계좌가 기본이 됐다 —
+ * 모의로 돌리는데 실계좌 앱키가 시세를 맡게 되고, 그게 바로 **다른 서버에 조용히
+ * 붙는** 모양이다. 이제는 넘어가되 **사유를 남긴다**(`problem`, 서버 시작 로그).
+ *
+ * 새로 열린 길이 하나 더 있다. `KIS_<id>_SERVER`에 알아볼 수 없는 값을 적으면 그 계좌가
+ * 통째로 빠지므로, 그 계좌를 가리키던 `KIS_PRIMARY_ACCOUNT_ID`가 갑자기 못 찾는 id가 된다.
  */
-function resolvePrimaryCredentials(accounts: KisAccountConfig[]): KisCredentialPair {
-  const explicitId = process.env.KIS_PRIMARY_ACCOUNT_ID?.trim();
-  /*
-   * 이 값이 없으면 `KIS_PRIMARY_ACCOUNT_ID`가 조용히 무시되고 id 오름차순 첫 계좌가
-   * 기본이 된다 — 실계좌 id가 숫자면 모의 환경인데 실계좌 앱키가 기본이 되어
-   * 시세가 통째로 죽는다.
-   */
-  const chosen = (explicitId ? findKisCredentialById(accounts, explicitId) : undefined) ?? accounts[0];
-  if (chosen) return { id: chosen.id, appKey: chosen.appKey, appSecret: chosen.appSecret };
+export function resolvePrimaryCredentials(
+  accounts: readonly KisCredentialPair[],
+  explicitId: string | undefined,
+  fallback: KisCredentialPair,
+): { credentials: KisCredentialPair; problem: string | null } {
+  const wanted = explicitId?.trim() ?? '';
+  const found = wanted ? findKisCredentialById(accounts, wanted) : undefined;
+  const chosen = found ?? accounts[0];
+  const problem =
+    wanted && !found
+      ? // 보간한 값 뒤에 조사를 붙이지 않는다 — id가 무엇이냐에 따라 `을/를`이 갈린다.
+        `KIS_PRIMARY_ACCOUNT_ID에 적힌 자격증명을 찾지 못했습니다 (${wanted}).`
+        + ` 대신 시세·실시간을 ${chosen ? `자격증명 ${chosen.id}` : '구버전 단일 계좌 설정'}의 앱키로 돌립니다.`
+      : null;
 
-  return {
-    id: 'default',
-    appKey: process.env.KIS_APP_KEY ?? '',
-    appSecret: process.env.KIS_APP_SECRET ?? '',
-  };
+  if (chosen) {
+    return {
+      credentials: { id: chosen.id, appKey: chosen.appKey, appSecret: chosen.appSecret, server: chosen.server },
+      problem,
+    };
+  }
+  return { credentials: fallback, problem };
 }
 
 /**
@@ -385,8 +485,22 @@ export function resolveMarketOpenDayLookup(input: {
     };
   }
 
+  /*
+   * 적어 둔 자격증명이 **모의 서버용이라고 적혀 있으면** 개장일을 물을 수 없다.
+   * 이 우회의 전제가 "실전 서버에 물으면 답이 같다"인데, 모의 앱키를 실전 도메인에
+   * 보내면 `EGW02004`로 거부될 뿐이다(2026-08-01 실측). 짐작해서 보내지 않는다.
+   */
+  if (found.server === 'vts') {
+    return {
+      ...asIs,
+      problem:
+        `KIS_OPEN_DAY_CREDENTIAL_ID에 적힌 자격증명은 모의 서버용이라고 적혀 있습니다 (${credentialId}).`
+        + ' 개장일은 실전 서버에 물어야 하므로 KIS_<id>_SERVER=prod인 자격증명 id를 넣으세요.',
+    };
+  }
+
   return {
-    credentials: { id: found.id, appKey: found.appKey, appSecret: found.appSecret },
+    credentials: { id: found.id, appKey: found.appKey, appSecret: found.appSecret, server: 'prod' },
     server: 'prod',
     viaProdServer: true,
     problem: null,
@@ -429,8 +543,46 @@ export function orderServerMismatch(credentialServer: KisServer, env: KisServer)
   );
 }
 
+/**
+ * **조회도 막는다.** 짝이 어긋난 자격증명으로 나가는 조회는 사유, 맞으면 null.
+ *
+ * 조회는 되돌릴 수 없는 동작이 아니라 그냥 둘까 했지만 세 가지 때문에 막는 쪽으로 정했다.
+ *
+ * 1. **성공할 수 없다.** 계좌 TR은 이름이 `config.env`로 갈린다(`TTTC8434R`/`VTTC8434R`).
+ *    도메인만 자격증명 쪽으로 돌리면 이름과 도메인이 어긋나 어느 쪽으로 보내도 맞지 않는다.
+ *    실시간 통보(`H0STCNI0`/`H0STCNI9`)도 같다.
+ * 2. **보내면 토큰이 발급되고 캐시된다.** 2026-08-01 실측에서 모의 앱키를 실전 도메인에
+ *    붙였더니 `backend/.cache/token-prod-VTS-EXTRAORDINARY.json`이 실제로 생겼다.
+ *    발급에는 횟수 제한이 있어 이건 값이 나가는 일이다.
+ * 3. **반쯤 통과하는 것이 가장 나쁘다.** 같은 실측에서 멀티시세·일봉은 정상 응답했고
+ *    분봉만 `EGW02004`로 막혔다. 그 상태로는 다른 서버에 붙은 줄 모른 채 값을 믿게 된다.
+ *
+ * 막는 값은 **사람이 `KIS_<id>_SERVER`에 적었을 때만** 생긴다. 안 적었으면 `config.env`로
+ * 추정하므로 늘 짝이 맞고 지금 동작 그대로다.
+ *
+ * 예외는 하나 — 개장일(`chk-holiday`)처럼 **서버로 이름이 갈리지 않는 TR을 일부러 다른
+ * 서버에 묻는** 조회다. 그건 `KisCredentials.crossServerRead`로 호출부가 밝힌다.
+ */
+export function readServerMismatch(credentialServer: KisServer, env: KisServer): string | null {
+  if (credentialServer === env) return null;
+  return (
+    `이 실행은 ${SERVER_LABELS[env]}인데 자격증명은 ${SERVER_LABELS[credentialServer]}용이라고 적혀 있습니다`
+    + ' (KIS_<id>_SERVER). 짝이 어긋나면 조회도 보내지 않습니다 —'
+    + ' 계좌 TR 이름이 APP_ENV로 갈려 어차피 맞지 않고, 보내면 그 서버의 토큰이 발급돼 캐시됩니다.'
+  );
+}
+
 const kisAccounts = parseKisAccounts();
-const primary = resolvePrimaryCredentials(kisAccounts);
+const { credentials: primary, problem: primaryProblem } = resolvePrimaryCredentials(
+  kisAccounts,
+  process.env.KIS_PRIMARY_ACCOUNT_ID,
+  {
+    id: 'default',
+    appKey: process.env.KIS_APP_KEY ?? '',
+    appSecret: process.env.KIS_APP_SECRET ?? '',
+    server: parseDeclaredServer(process.env.KIS_ACCOUNT_SERVER).server ?? undefined,
+  },
+);
 
 export const config = {
   /** 'vts'(모의) | 'prod'(실전) */
@@ -439,6 +591,17 @@ export const config = {
   appKey: primary.appKey,
   appSecret: primary.appSecret,
   primaryCredentialId: primary.id,
+  /**
+   * 기본 자격증명이 붙는 서버. **사람이 적었을 때만 값이 있다** — 없으면 `env`로 추정한다.
+   * 시세·종목마스터·실시간 WS가 전부 이 앱키를 쓰므로 짝이 어긋나면 서버를 띄우지 않는다
+   * (`assertCredentials`).
+   */
+  primaryCredentialServer: primary.server,
+  /**
+   * `KIS_PRIMARY_ACCOUNT_ID`를 적었는데 못 찾아 다른 앱키로 넘어간 사유. 없으면 null.
+   * **조용히 넘어가지 않는다** — 그게 다른 서버에 붙는 길 중 하나다.
+   */
+  primaryCredentialProblem: primaryProblem,
   /** REST 도메인 */
   restBase: restBaseFor(env),
   /** 실시간 WebSocket 도메인 */
@@ -482,6 +645,22 @@ export function assertCredentials(): void {
     throw new Error(
       'KIS 자격증명이 설정되지 않았습니다. KIS_APP_KEY/KIS_APP_SECRET 또는 ' +
         '계좌별 KIS_APP_KEY_<id>/KIS_APP_SECRET_<id>/KIS_<id>_ACCOUNT_NO를 .env에 채워주세요.',
+    );
+  }
+  /*
+   * **기본 자격증명의 짝이 어긋나면 서버를 띄우지 않는다.** 시세·종목마스터·실시간 WS가
+   * 전부 이 앱키 하나를 쓰므로 어긋난 채로 뜨면 전 화면이 깨진다. 그런데 2026-08-01
+   * 실측에서는 깨지지도 않았다 — 멀티시세·일봉은 통과하고 분봉만 `EGW02004`로 막혀서,
+   * 모의 앱키가 실전 도메인에 붙은 줄 모른 채 값을 믿게 됐다. 반쯤 되는 것이 가장 나쁘다.
+   *
+   * 여기 걸리려면 사람이 `KIS_<id>_SERVER`에 적어야 한다. 안 적었으면 추정이라 늘 통과다.
+   */
+  const mismatch = readServerMismatch(config.primaryCredentialServer ?? config.env, config.env);
+  if (mismatch) {
+    throw new Error(
+      `시세·실시간에 쓸 기본 자격증명의 짝이 어긋나 서버를 시작하지 않습니다 (${config.primaryCredentialId}). ${mismatch}`
+      + ` APP_ENV를 자격증명 쪽에 맞추거나 (${config.primaryCredentialServer ?? config.env}),`
+      + ` KIS_PRIMARY_ACCOUNT_ID에 ${kisServerLabel(config.env)}용 자격증명 id를 지정하세요.`,
     );
   }
 }

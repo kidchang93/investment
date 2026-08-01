@@ -44,6 +44,9 @@ npm run build                  # frontend vite build — 통과 필수
 - [ ] 상한을 넘긴 요청을 **잘라서 200으로** 답하지 않는가 — 잘린 줄 모르면 "이게 전부"로 읽힌다
 - [ ] 여럿을 집계할 때 **표본이 몇 개인지**가 응답에 남는가 (명단 N → 찾은 M → 시세 온 K)
 
+- [ ] 자격증명을 새 경로로 넘길 때 **서버 표기(`KisCredentials.server`)를 함께 실었는가.** 안 실으면 `credentialServer()`가 늘 `config.env`가 되어 짝 가드가 **언제나 통과**한다 (`toCredentials`가 그랬다)
+- [ ] 다른 서버로 나가는 조회에 `crossServerRead`를 붙였다면, 그 TR이 **정말로 서버로 이름이 갈리지 않는가** (계좌 TR은 `TTTC`/`VTTC`로 갈린다)
+
 ### 보안
 - [ ] `.env` / `.cache/` 가 커밋에 포함되지 않았는가 (`.gitignore` 확인)
 - [ ] 자격증명·토큰이 로그/응답 body에 노출되지 않는가

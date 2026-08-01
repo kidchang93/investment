@@ -38,6 +38,7 @@ backend/src/
 │   └── pulse.ts       # 테마 등락률: DB 명단 + 멀티시세 → 집계 (순수 함수 + 호출 예산)
 └── kis/               # KIS 연동 레이어 (원본 스펙을 여기서만 다룬다)
     ├── auth.ts        # access_token(REST, 파일캐시) / approval_key(WS, 메모리)
+    ├── errorCodes.ts  # KIS 오류 코드에 이름 붙이기 (★짝 문제 vs 기능 없음을 가른다)
     ├── rest.ts        # 일봉(getDailyCandles)·현재가(getQuote/getDomesticQuotes) 조회 + 정규화
     ├── normalize.ts   # KIS 원본 문자열 → 숫자·부호 (rest/multiQuote가 같은 규칙을 쓴다)
     ├── multiQuote.ts  # 멀티시세(FHKST11300006) 요청 조립 + 응답 자리 검산
@@ -344,8 +345,65 @@ config.marketOpenDay = { credentials, server, viaProdServer, problem }
 
 **설정이 없으면 지금 동작 그대로**(모의에서는 보류)이고 `APP_ENV=prod`에서는 이 우회가
 아예 없다. 없는 설정을 추측해 아무 앱키나 쓰지 않는다 — 못 찾으면 사유(`problem`)를
-남겨 서버 시작 로그와 판정 사유가 함께 말한다. 실전 서버에 붙는다는 사실도 시작 로그에
-찍는다. **조용히 다른 서버에 붙는 것은 안 된다.**
+남겨 서버 시작 로그와 판정 사유가 함께 말한다. `KIS_<id>_SERVER=vts`라고 적어 둔
+자격증명을 여기 지정해도 쓰지 않는다(모의 앱키를 실전 도메인에 보내면 `EGW02004`다).
+실전 서버에 붙는다는 사실도 시작 로그에 찍는다. **조용히 다른 서버에 붙는 것은 안 된다.**
+
+### 앱키가 어느 서버용인지는 사람이 적는다
+
+**코드는 앱키가 실전용인지 모의용인지 알 수 없다.** KIS가 알려주지 않고 앱키 문자열에도
+표시가 없다. 그래서 2026-08-01에 이런 일이 실제로 일어났다 — `.env`가
+`KIS_PRIMARY_ACCOUNT_ID=VTS`인 채로 `APP_ENV=prod`로 돌리자 **모의 앱키가 실전 도메인에
+붙었고, 조회가 조용히 통과했다.**
+
+```
+멀티시세·일봉  정상 응답      ← 반쯤 된다
+분봉          EGW02004      ← 여기만 막혔다
+backend/.cache/token-prod-VTS-EXTRAORDINARY.json  ← 실전 토큰이 실제로 발급돼 캐시됐다
+```
+
+그래서 **`KIS_<id>_SERVER`(`prod`|`vts`)에 사람이 적을 수 있게 하고, 적었으면 그것을
+지킨다.** 안 적었으면 지금처럼 `APP_ENV`로 추정한다(하위 호환). 적었는데 알아볼 수 없는
+값이면 그 계좌를 쓰지 않고 사유를 남긴다 — 추정으로 되돌아가면 켰다고 믿는 안전장치가
+꺼진 채로 돈다.
+
+| | 규칙 | 왜 |
+|------|------|------|
+| 값이 없을 때 | `config.env`로 **추정**하고 로그에 `추정`이라 적는다 | 대부분의 설정은 짝이 맞다. 짐작을 사실처럼 적지 않는다 |
+| 주문(POST) | `orderServerMismatch()`가 **던진다** | 되돌릴 수 없다. `toCredentials`가 `server`를 채우면서 이 가드가 **처음으로 실제 발동**한다 |
+| 조회(GET) | `readServerMismatch()`가 **던진다** | ① 계좌 TR 이름이 `config.env`로 갈려 어느 도메인으로 보내도 안 맞고 ② 보내면 그 서버의 토큰이 발급돼 캐시되며 ③ 시세는 반쯤 통과해 붙은 줄 모른다 |
+| 기본 자격증명 | `assertCredentials()`가 **서버를 못 뜨게 한다** | 시세·마스터·실시간 WS가 전부 이 앱키다. 어긋난 채로 뜨면 전 화면이 반쯤 거짓말을 한다 |
+| 개장일만 예외 | `KisCredentials.crossServerRead` | `CTCA0903R`은 서버로 이름이 갈리지 않고 답이 시장 사실이라 실전에 물어도 같다. **다른 TR에 옮겨 붙이지 않는다** |
+
+> **조회를 막기로 한 이유를 적어 둔다.** 조회는 되돌릴 수 없는 동작이 아니라 그냥 둘까
+> 했지만, 어긋난 짝으로 나가는 조회는 **성공할 수가 없는데 값은 나간다**(토큰 발급 횟수).
+> 그리고 실측처럼 반쯤 통과하면 그게 가장 나쁘다. 막는 비용은 **사람이 적었을 때만** 든다.
+>
+> **계좌 TR을 자격증명의 서버로 고르게 하는 길은 안 갔다.** 그러면 한 프로세스가 모의·실전
+> 계좌를 함께 다룰 수 있게 되는데, **주문까지 서버를 넘나들 수 있게 된다.** 지금 막으려는
+> 것이 정확히 그것이다. 계좌 TR_ID는 `config.env` 분기 그대로 둔다.
+
+시작 로그는 계좌마다 **어느 앱키가 어느 서버에 붙는지**와 **명시인지 추정인지**를 적는다
+(`describeCredentialPairings`).
+
+```
+자격증명 21 → 실전 서버 (KIS_<id>_SERVER에 명시)
+자격증명 VTS-ORDINARY → 모의 서버 (APP_ENV로 추정) · 시세·실시간 기본
+```
+
+### KIS 오류 코드에 이름을 붙인다 (`kis/errorCodes.ts`)
+
+셋이 비슷하게 생겼는데 고치는 방법이 다르다. 섞으면 엉뚱한 곳을 보게 된다.
+
+| 코드 | 뜻 | 성질 |
+|------|------|------|
+| `EGW02007` | 실전 앱키를 모의 서버에 (*"해당 앱키는 모의투자용 앱키가 아닙니다"*) | `serverMismatch` |
+| `EGW02004` | 모의 앱키를 실전 서버에 (분봉 조회에서 관측) | `serverMismatch` |
+| `EGW02006` | 그 TR이 모의 서버에 없다 (`chk-holiday` 등) | `trNotOnVts` — **짝 문제가 아니다** |
+
+`EGW02006`을 짝 문제로 읽으면 개장일 우회를 안 켠 사람에게 "앱키가 틀렸다"고 말하게
+된다 — 앱키는 멀쩡하다. 한도 코드(`EGW00201`·`EGW00215`)는 재시도로 풀리는 것이라
+판정이 따로 있다(`rest.ts`의 `isRateLimited`).
 
 ## 다계좌 자격증명 모델
 
@@ -360,6 +418,8 @@ config.kisAccounts: KisAccountConfig[]   # {id, label, appKey, appSecret, cano, 
 ```
 
 - env 규칙: `KIS_<id>_ACCOUNT_NO` + `KIS_APP_KEY_<id>` + `KIS_APP_SECRET_<id>` **3종이 모두 있어야** 한 계좌로 인정한다.
+- `KIS_<id>_SERVER`(선택)로 그 앱키가 붙는 서버를 적는다. 계좌별(`KIS_VTS-ORDINARY_SERVER`)이
+  먼저고 자격증명별(`KIS_VTS_SERVER`)로 떨어진다. 구버전 단일 계좌는 `KIS_ACCOUNT_SERVER`.
 - **한 앱키에 계좌가 여럿이면 종류를 붙인다** — `KIS_VTS_ACCOUNT_ORDINARY_NO`(주식) ·
   `KIS_VTS_ACCOUNT_EXTRAORDINARY_NO`(선물옵션). 계좌 id는 `VTS-ORDINARY`가 되고 앱키는
   종류를 뗀 `KIS_APP_KEY_VTS`를 함께 쓴다. KIS 모의투자가 이 모양이다.

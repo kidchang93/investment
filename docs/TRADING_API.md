@@ -485,6 +485,29 @@ KIS_OPEN_DAY_CREDENTIAL_ID=21   # KIS_APP_KEY_21 / KIS_APP_SECRET_21의 <id>
 시험은 `config.test.ts`(어느 서버로 가는가 · 주문 경로 가드)와 `kis/auth.test.ts`
 (캐시 키)에 있다. 둘 다 네트워크 없이 돈다.
 
+#### 2-2. 그 가드는 **한 번도 걸리지 않고 있었다** (2026-08-01 고침)
+
+`kisPost`가 `orderServerMismatch(credentialServer(credentials), config.env)`로 막는데,
+자격증명에 서버가 실리지 않아 그 값이 **언제나 `config.env`**였다.
+
+```
+rest.ts  toCredentials(account) → { id, appKey, appSecret }   ← server를 안 채웠다
+auth.ts  credentialServer(c)    → c.server ?? config.env      ← 그래서 config.env
+→ orderServerMismatch(config.env, config.env) 는 언제나 null
+```
+
+도달 불가능한 방어선이었다. 같은 날 **짝이 실제로 어긋나는 상황**이 확인되면서
+(`KIS_PRIMARY_ACCOUNT_ID=VTS` + `APP_ENV=prod` → 모의 앱키가 실전 도메인에 붙고
+조회가 조용히 통과, `token-prod-VTS-EXTRAORDINARY.json`까지 생성) 살렸다.
+
+- `KIS_<id>_SERVER`(`prod`|`vts`)에 사람이 적으면 `toCredentials`가 자격증명에 싣는다.
+  **안 적으면 지금 그대로** — `config.env`로 추정한다.
+- 주문은 `orderServerMismatch()`가, **조회는 `readServerMismatch()`가** 던진다.
+  조회까지 막은 이유와 개장일 예외(`crossServerRead`)는 `docs/ARCHITECTURE.md`의
+  「앱키가 어느 서버용인지는 사람이 적는다」 절에 적었다.
+- 회귀 시험은 `kis/credentialPairing.test.ts`다. `fetch`를 가로채 **한 번도 나가지
+  않는 것**까지 확인한다 — 고치기 전 코드에서는 이 시험 6건이 전부 실패했다.
+
 > **부수 효과 하나는 남겨 뒀다.** `marketOpenCache`는 **성공만 담는다.** 그래서 설정이
 > 없는 모의 환경에서는 리스크 판정 1건마다 KIS 호출이 계속 나간다. 실패까지 담으면
 > 일시적 오류 한 번이 그 프로세스가 사는 동안 계속 보류로 막으므로 그대로 뒀다.

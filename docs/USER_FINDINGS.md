@@ -1115,6 +1115,34 @@ KIS는 시세·분봉 조회만 했다.
 그리고 **vts 멀티시세는 8묶음 중 1~3묶음이 `EGW00201`로 조용히 실패한다**(실전은
 10묶음 300종목에 0건이었다) — 매 회차 후보의 12.5~37.5%를 잃는다.
 
+### ★ 모의 앱키가 실전 서버에 조용히 붙었다 (2026-08-01 실측)
+
+`.env`가 `KIS_PRIMARY_ACCOUNT_ID=VTS`인 채로 `APP_ENV=prod`로 돌린 것뿐인데 짝이
+어긋났고, **아무도 그 사실을 말해 주지 않았다.**
+
+```
+APP_ENV=prod · restBase=https://openapi.koreainvestment.com:9443
+primary 자격증명 = VTS-EXTRAORDINARY   ← 모의용 앱키인데 서버는 실전이다
+```
+
+| 무엇 | 결과 |
+|------|------|
+| 멀티시세·일봉 | **정상 응답했다** |
+| 분봉 | `EGW02004`로 막힘 |
+| 토큰 | `backend/.cache/token-prod-VTS-EXTRAORDINARY.json`이 **실제로 생겼다** |
+
+**반쯤 통과한 것이 핵심이다.** 통째로 깨졌다면 바로 알았을 텐데, 값이 오니까
+모의로 돌고 있다고 믿게 된다. 발급 횟수 제한이 있는 토큰까지 다른 서버에서 하나 썼다.
+
+그리고 **주문 가드가 이 상황에서 발동하지 않았다.** `kisPost`가
+`orderServerMismatch(credentialServer(credentials), config.env)`로 막는데,
+`toCredentials`가 `server`를 안 채워서 그 값이 언제나 `config.env`였다 — 도달할 수 없는
+방어선이었다.
+
+고친 방식은 `docs/ARCHITECTURE.md`의 「앱키가 어느 서버용인지는 사람이 적는다」 절에 있다.
+**코드는 앱키가 어느 서버용인지 알 수 없다**(KIS가 알려주지 않는다). 그래서 사람이
+`KIS_<id>_SERVER`에 적게 하고, 적었으면 지킨다. 안 적으면 지금 그대로다.
+
 ### 고친 것
 
 - `5467a97` 시장가 주문의 일일 금액 한도. 러너 주문이 **영원히 0원**으로 쌓이고 있었고,
