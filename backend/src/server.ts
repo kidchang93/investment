@@ -541,12 +541,26 @@ async function main(): Promise<void> {
     if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
     if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
 
-    const { mode, strategy, targetEquity, stopEquity, intervalSeconds, maxPositions } = req.body;
+    const { mode, strategy, targetEquity, stopEquity, intervalSeconds, maxPositions, minHoldMinutes } =
+      req.body;
     if (mode !== 'dry_run' && mode !== 'live') {
       return reply.code(400).send({ message: "mode는 'dry_run' 또는 'live'여야 합니다." });
     }
     if (!Number.isFinite(targetEquity) || !Number.isFinite(stopEquity)) {
       return reply.code(400).send({ message: '목표 금액과 중단 금액이 필요합니다.' });
+    }
+    /*
+     * 최소 보유 시간. 생략하면 0(끔)이라 지금 동작 그대로다.
+     *
+     * 값을 조용히 잘라 맞추지 않는다 — 매도를 미루는 설정이라 480을 보냈는데 390으로
+     * 깎이면 사용자가 건 것과 러너가 도는 것이 갈린다. 상한은 정규장 하루 길이
+     * (09:00~15:30, 390분)로 잡는다. 그보다 길면 그날 안에는 어차피 못 판다.
+     */
+    const minHold = minHoldMinutes === undefined ? 0 : Number(minHoldMinutes);
+    if (!Number.isFinite(minHold) || minHold < 0 || minHold > 390) {
+      return reply
+        .code(400)
+        .send({ message: '최소 보유 시간은 0분부터 390분(정규장 하루 길이) 사이여야 합니다.' });
     }
     /*
      * 실주문 모드는 서버 게이트가 열려 있을 때만 시작할 수 있다. 게이트가 닫힌 채로
@@ -569,6 +583,7 @@ async function main(): Promise<void> {
           stopEquity: Number(stopEquity),
           intervalSeconds: Number(intervalSeconds) || 60,
           maxPositions: Number(maxPositions) || 1,
+          minHoldMinutes: Math.floor(minHold),
         },
         {
           loadCandidates: loadAutoTraderCandidates,

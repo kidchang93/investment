@@ -288,6 +288,53 @@ export async function completeClaimedOrder(
   }
 }
 
+/**
+ * 그 계좌·그 종목의 **마지막 매수 접수 시각**(epoch ms). 자동매매의 최소 보유
+ * 시간이 이 값으로 잰다.
+ *
+ * **KIS 잔고(`positions`)에는 매수 시각이 없다.** 그래서 우리가 남긴 감사 기록에서
+ * 읽는다 — 러너가 재시작해도 남고, 화면에서 수동으로 산 것도 같은 표에 들어온다.
+ *
+ * `status='submitted'`인 `place` 매수만 센다. `blocked`·`rejected`는 접수되지
+ * 않았으므로 포지션이 된 적이 없고, 그걸 세면 사지도 않은 종목이 못 팔게 된다.
+ * 일일 사용량 집계(`db/riskRules.ts`의 `getTodayUsage`)와 같은 잣대다.
+ *
+ * **여기 없는 매수는 알 수 없다** — 러너를 켜기 전부터 들고 있던 것, 다른 앱으로
+ * 산 것. 그 종목은 `undefined`로 나가고 러너는 **막지 않고 판다**(`minHold.ts`의
+ * ★ 절). 못 파는 쪽이 훨씬 위험하다.
+ *
+ * **잰 것은 접수 시각이지 체결 시각이 아니다.** 이 표에 체결 시각이 없다. 러너는
+ * 늘 시장가라 둘이 거의 같지만, 사람이 낸 지정가가 한참 뒤에 체결되면 어긋난다 —
+ * 그때는 실제보다 이르게 잰 것이라 **더 오래 못 파는 쪽**으로 틀린다.
+ */
+export async function getLastBuySubmittedAt(
+  accountId: string,
+  symbols: string[],
+): Promise<Map<string, number>> {
+  const wanted = [...new Set(symbols.filter((symbol) => symbol.trim() !== ''))];
+  if (wanted.length === 0) return new Map();
+  const { rows } = await pool.query<{ symbol: string; bought_at_ms: string }>(
+    `
+      SELECT symbol, (EXTRACT(EPOCH FROM MAX(created_at)) * 1000)::bigint::text AS bought_at_ms
+      FROM trading_broker_orders
+      WHERE account_id = $1
+        AND action = 'place'
+        AND status = 'submitted'
+        AND side = 'buy'
+        AND symbol = ANY($2::text[])
+      GROUP BY symbol
+    `,
+    [accountId, wanted],
+  );
+  const found = new Map<string, number>();
+  for (const row of rows) {
+    const at = Number(row.bought_at_ms);
+    // 읽을 수 없는 시각은 넣지 않는다. 넣으면 NaN 비교가 조용히 "안 지났다"가 된다.
+    if (Number.isFinite(at)) found.set(row.symbol, at);
+  }
+  return found;
+}
+
 /** 이미 처리된 키의 결과. 재시도에 그대로 돌려준다. */
 export async function getOrderByClientOrderId(
   clientOrderId: string,

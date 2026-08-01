@@ -6659,6 +6659,48 @@ span.sample-badge {
   color: var(--faint);
 }
 
+/*
+ * 최소 보유 시간 설명.
+ *
+ * 부모가 `repeat(auto-fit, minmax(190px, 1fr))` 그리드라 그냥 두면 한 칸에 끼어
+ * 필드처럼 보인다. 문단이므로 한 줄을 다 쓴다 — 판정문(`__verdict`)과 같은 이유다.
+ *
+ * 켜면 테두리만 또렷해진다. 상태색(초록/빨강)을 쓰지 않는 것은 이게 좋다/나쁘다가
+ * 아니라 **지금 켜져 있다**는 사실이기 때문이다. 판정색이 바로 위에 있어 색을 더
+ * 쓰면 어느 색이 무슨 뜻인지 알 수 없게 된다.
+ */
+.auto-trader__min-hold {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: rgba(148, 163, 184, 0.06);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.auto-trader__min-hold[data-on='true'] {
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
+.auto-trader__min-hold > strong {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.auto-trader__min-hold p {
+  margin: 0;
+}
+
+/* 매도를 미루는 기능이라 위험은 눌러 적지 않는다. 손절이 없다는 사실과 같이 읽힌다. */
+.auto-trader__min-hold-risk {
+  color: #f0a8aa;
+}
+
 .auto-trader__field > span {
   color: var(--faint);
   font-size: 11px;

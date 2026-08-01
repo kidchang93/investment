@@ -1239,6 +1239,12 @@ primary 자격증명 = VTS-EXTRAORDINARY   ← 모의용 앱키인데 서버는 
 주장이 아니라 배관 주장이라 표본 흔들림에 안 무너진다. 한도가 차면 **매도가
 잠긴다**는 것도 이미 관측됐다.
 
+> **구현했다** — `AutoTraderConfig.minHoldMinutes`(리스크 룰이 아니다) · 판정은
+> `backend/src/trading/minHold.ts`의 순수 함수 · 매수 시각은 `trading_broker_orders`의
+> 마지막 매수 접수 시각 · **기본값 0(끔)**이고 화면에서 고른다. 매수 기록이 없으면
+> 미루지 않고 판다. 설계와 위험은 `docs/TRADING_API.md`의 「자동매매 최소 보유 시간」
+> 절과 `docs/ARCHITECTURE.md`에 있다. **이 표는 여전히 손익 주장이 아니다.**
+
 ### 권하지 않는 것
 
 **손절·익절·트레일링·최대 보유를 넣지 않는다.** 이 축에서 발동하지 않고, 발동하면

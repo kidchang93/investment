@@ -467,6 +467,28 @@ const AUTO_TRADER_STATUS_LABEL: Record<string, string> = {
   error: '오류로 정지',
 };
 
+/*
+ * 자동매매 최소 보유 시간 선택지.
+ *
+ * 선택지를 동등하게 늘어놓지 않는다(`docs/CODE_STYLE.md`) — `<option>`에는 툴팁이
+ * 붙지 않으므로 아는 것을 라벨 글 자체에 넣는다. 60·120분을 권하는 근거는 손익이
+ * 아니라 일일 주문 한도이고, 그 실측은 select 아래 설명에 적는다.
+ *
+ * 재지 않은 값(30분·240분 등)은 넣지 않는다. 넣으면 잰 값과 나란히 놓여 같은
+ * 근거가 있는 것처럼 읽힌다.
+ */
+const MIN_HOLD_OPTIONS: Array<{ minutes: number; label: string }> = [
+  { minutes: 0, label: '끄기 — 신호가 나면 바로 팝니다' },
+  { minutes: 60, label: '60분 — 하루 주문 수가 한도 안으로 들어옵니다' },
+  { minutes: 120, label: '120분 — 주문 수를 더 줄입니다' },
+];
+
+/** 최소 보유 설정값을 화면 말로. 끈 것과 켠 것을 다르게 적는다. */
+function formatMinHold(minutes: number | undefined): string {
+  if (minutes === undefined) return '조회 대기';
+  return minutes > 0 ? `${minutes}분` : '끔';
+}
+
 const SIDE_PANEL_TITLE: Record<SidePanelTab, string> = {
   order: '주문',
   watch: '관심종목',
@@ -2766,6 +2788,11 @@ export function App(): JSX.Element {
   const [autoMode, setAutoMode] = useState<AutoTraderMode>('dry_run');
   const [autoTarget, setAutoTarget] = useState('100000');
   const [autoStop, setAutoStop] = useState('40000');
+  /*
+   * 최소 보유 시간(분). 기본은 `0`(끔)이라 지금 동작을 바꾸지 않는다 — 매도를
+   * 미루는 설정이라 기본으로 켜면 위험하다.
+   */
+  const [autoMinHold, setAutoMinHold] = useState('0');
   const [autoMessage, setAutoMessage] = useState<string | null>(null);
   const [isAutoSubmitting, setIsAutoSubmitting] = useState(false);
   const [isLiveOrderSubmitting, setIsLiveOrderSubmitting] = useState(false);
@@ -4916,6 +4943,7 @@ export function App(): JSX.Element {
         stopEquity: Number(autoStop),
         intervalSeconds: 60,
         maxPositions: 1,
+        minHoldMinutes: Number(autoMinHold),
       });
       setAutoTrader(state);
     } catch (e) {
@@ -7650,6 +7678,57 @@ export function App(): JSX.Element {
                     />
                   </label>
 
+                  <label className="auto-trader__field">
+                    <span>최소 보유 시간 (매도만)</span>
+                    <select
+                      disabled={autoTrader?.status === 'running'}
+                      onChange={(event) => setAutoMinHold(event.target.value)}
+                      value={autoMinHold}
+                    >
+                      {MIN_HOLD_OPTIONS.map((option) => (
+                        <option key={option.minutes} value={String(option.minutes)}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {/*
+                    왜 이 설정이 있는지를 고르기 전에 적는다. 근거가 손익이 아니라
+                    일일 주문 한도라서, 수익 기능처럼 읽히면 안 된다. 측정값에는
+                    시점과 조건을 함께 적는다(`docs/CODE_STYLE.md`).
+
+                    위험도 같은 자리에 적는다 — 매도를 미루는 기능이고 지금 손절이
+                    없다는 사실과 함께 읽혀야 한다.
+                  */}
+                  <div className="auto-trader__min-hold" data-on={Number(autoMinHold) > 0}>
+                    <strong>산 지 정한 시간이 안 지났으면 매도 신호가 나도 그 회차에는 팔지 않습니다</strong>
+                    <p>
+                      자동매매가 자기 신호를 미루는 것입니다. 매수는 미루지 않고, 수동 주문과 예약주문도
+                      막지 않습니다.
+                    </p>
+                    <p>
+                      왜 거는가 — 손익이 아니라 일일 주문 한도 때문입니다. 2026-08-01 측정(1분봉 ·
+                      15종목 · 연속 15거래일 · 왕복 비용 0.43%)에서 종목 하나가 하루에 내는 주문 수는
+                      최소 보유가 없을 때 이동평균 교차 12.4건 · 변동성 돌파 49.7건 · 평균 회귀 11.0건,
+                      60분이면 5.0 · 7.6 · 5.3건, 120분이면 3.6 · 4.3 · 3.7건이었습니다. 일일 건수
+                      한도는 매수·매도를 가리지 않고 계좌 전체를 합쳐 셉니다
+                      {riskRules
+                        ? ` (지금 이 계좌 ${riskRules.dailyOrderCountLimit.toLocaleString('ko-KR')}건).`
+                        : ' (아래 리스크 룰의 일일 건수 한도).'}{' '}
+                      매수가 한도를 먼저 쓰면 그날은 팔 수 없습니다.
+                    </p>
+                    <p>
+                      덜 잃는 법이지 이기는 법이 아닙니다. 같은 측정에서 비용을 0으로 놓으면 개선이
+                      사라지고 이익 종목 수가 오히려 줄었습니다 (전략별로 7→3 · 6→3 · 10→5종목).
+                    </p>
+                    <p className="auto-trader__min-hold-risk">
+                      위험 — 값이 급락해도 정한 시간 동안은 자동매매가 팔지 않습니다. 지금 손절은
+                      없습니다. 반대로 러너를 켜기 전부터 들고 있던 종목처럼 매수 기록이 없으면 미루지
+                      않고 그대로 팝니다.
+                    </p>
+                  </div>
+
                   <div className="auto-trader__actions">
                     {autoTrader?.status === 'running' ? (
                       <button
@@ -7721,6 +7800,15 @@ export function App(): JSX.Element {
                           Math.max(0, autoTrader.config.targetEquity - (autoTrader.currentEquity ?? 0)),
                         )}
                       </strong>
+                    </div>
+                    {/*
+                      위 select는 돌고 있는 동안 잠기고 값은 이 화면의 초안이다.
+                      서버를 다시 열거나 다른 화면에서 시작했으면 둘이 다를 수 있으니,
+                      실제로 도는 설정은 서버가 준 값으로 적는다.
+                    */}
+                    <div>
+                      <span>최소 보유</span>
+                      <strong>{formatMinHold(autoTrader.config.minHoldMinutes)}</strong>
                     </div>
                   </div>
                 )}

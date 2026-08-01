@@ -28,7 +28,11 @@ import { randomUUID } from 'node:crypto';
 
 import { getKisAccount, type KisAccountConfig } from '../config.js';
 import { recordAutoTraderRun } from '../db/autoTrader.js';
-import { claimClientOrderId, completeClaimedOrder } from '../db/brokerOrders.js';
+import {
+  claimClientOrderId,
+  completeClaimedOrder,
+  getLastBuySubmittedAt,
+} from '../db/brokerOrders.js';
 import { checkRiskRules } from '../db/riskRules.js';
 import {
   getKisDomesticAccountSnapshot,
@@ -36,6 +40,7 @@ import {
   placeKisDomesticOrder,
 } from '../kis/rest.js';
 import { checkBuyFundamentals } from './fundamentals.js';
+import { checkMinHold, describeMinHoldDefer, describeMinHoldSetting } from './minHold.js';
 import {
   candleTargets,
   classifyCandles,
@@ -152,7 +157,9 @@ export async function startAutoTrader(
     status: 'running',
     message:
       `시작 · ${strategy.label} · ${config.mode === 'dry_run' ? '모의 실행(주문 전송 안 함)' : '실주문'}` +
-      ` · 목표 ${config.targetEquity.toLocaleString()}원 · 중단 ${config.stopEquity.toLocaleString()}원`,
+      ` · 목표 ${config.targetEquity.toLocaleString()}원 · 중단 ${config.stopEquity.toLocaleString()}원` +
+      // 매도를 미루는 설정이라 어떤 값으로 돌았는지가 기록에 남아야 한다.
+      ` · ${describeMinHoldSetting(config.minHoldMinutes)}`,
     equity: startEquity,
   });
 
@@ -234,7 +241,9 @@ async function runOnce(handle: RunnerHandle, deps: AutoTraderDeps): Promise<void
   const heldInstruments = await deps.loadHeldInstruments(heldSymbols);
   const heldIds = new Set(heldInstruments.map((instrument) => instrument.id));
   const targets = candleTargets(heldInstruments, picked.instruments, MAX_CANDIDATES_PER_RUN);
-  const loaded = await loadCandles(targets, heldIds, new Date());
+  // 이 회차의 시각. 분봉 날짜 검사와 최소 보유 판정이 같은 시각을 본다.
+  const runAt = new Date();
+  const loaded = await loadCandles(targets, heldIds, runAt);
   const candidates = loaded.candidates;
 
   /*
@@ -301,9 +310,43 @@ async function runOnce(handle: RunnerHandle, deps: AutoTraderDeps): Promise<void
     });
   }
 
-  for (const signal of signals) {
-    await executeSignal(handle, signal, candidates, positions, cash, equity, account);
+  /*
+   * 최소 보유 시간에 쓸 매수 시각. **매도 신호가 있을 때만 조회한다** — 끈 상태
+   * (0분)이거나 매수만 난 회차에 DB를 한 번 더 칠 이유가 없다.
+   *
+   * 조회가 실패하면 **막지 않고 판다.** 모를 때 막힌 쪽에 두는 이 레포의 다른
+   * 안전장치들과 반대 방향인데, 이유는 `minHold.ts`의 ★ 절에 있다 — 못 파는 쪽이
+   * 훨씬 위험하다. 대신 이번 회차에 최소 보유가 적용되지 않았다는 사실을 남긴다.
+   */
+  let boughtAtBySymbol = new Map<string, number>();
+  if (config.minHoldMinutes > 0 && signals.some((signal) => signal.side === 'sell')) {
+    try {
+      boughtAtBySymbol = await getLastBuySubmittedAt(config.accountId, heldSymbols);
+    } catch (e) {
+      await recordAutoTraderRun({
+        accountId: config.accountId,
+        status: 'running',
+        message:
+          '매수 시각을 조회하지 못해 이번 회차에는 최소 보유 시간을 적용하지 않았습니다'
+          + ` · ${e instanceof Error ? e.message : String(e)}`,
+        equity,
+      });
+    }
   }
+
+  for (const signal of signals) {
+    await executeSignal(handle, signal, candidates, positions, cash, equity, account, {
+      boughtAtBySymbol,
+      nowMs: runAt.getTime(),
+    });
+  }
+}
+
+/** 최소 보유 판정에 필요한 재료. 회차마다 한 번 모아 신호들이 나눠 쓴다. */
+interface MinHoldContext {
+  /** 종목코드 → 마지막 매수 접수 시각(epoch ms). 없는 종목은 잴 수 없는 것이다 */
+  boughtAtBySymbol: Map<string, number>;
+  nowMs: number;
 }
 
 async function executeSignal(
@@ -314,6 +357,7 @@ async function executeSignal(
   cash: number,
   equity: number,
   account: KisAccountConfig,
+  minHold: MinHoldContext,
 ): Promise<void> {
   const { config } = handle.state;
   const candidate = candidates.find((item) => item.instrument.id === signal.instrumentId);
@@ -334,6 +378,36 @@ async function executeSignal(
           : `${candidate.instrument.name} 매도 보류 · 보유 수량 없음`,
       instrumentId: signal.instrumentId,
       side: signal.side,
+      equity,
+    });
+    return;
+  }
+
+  /*
+   * 최소 보유 시간. **매도에만 걸고, 산 지 얼마나 됐는지 모르면 막지 않는다.**
+   * 판정은 `minHold.ts`의 순수 함수가 하고 여기서는 기록만 남긴다.
+   *
+   * `신호 없음`이 아니라 **보류**로 남는다 — "볼 것을 다 보고 낼 신호가 없었다"와
+   * "냈는데 미뤘다"는 다른 사실이다. 수량 확인 뒤에 두는 것은, 팔 것 자체가 없으면
+   * 그 사실이 더 구체적이기 때문이다.
+   */
+  const holdDecision = checkMinHold({
+    side: signal.side,
+    minHoldMinutes: config.minHoldMinutes,
+    boughtAtMs: minHold.boughtAtBySymbol.get(candidate.instrument.symbol),
+    nowMs: minHold.nowMs,
+  });
+  if (holdDecision.defer) {
+    await recordAutoTraderRun({
+      accountId: config.accountId,
+      status: 'running',
+      message:
+        `${candidate.instrument.name} 매도 보류 · ${describeMinHoldDefer(holdDecision, config.minHoldMinutes)}`
+        + ` · ${signal.reason}`,
+      instrumentId: signal.instrumentId,
+      side: signal.side,
+      quantity,
+      price: candidate.price,
       equity,
     });
     return;
