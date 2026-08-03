@@ -51,7 +51,49 @@ export async function ensureAutoTraderSchema(): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS trading_auto_runs_account_created_idx
       ON trading_auto_runs (account_id, created_at DESC);
+
+    /*
+     * **돌아야 할 상태**를 적어 둔다. 지금 도는 러너는 메모리에만 있어서
+     * 프로세스가 죽으면 함께 사라진다 — 2026-08-03 장중에 개발 서버가 내려갔고
+     * 보유 8종목이 아무도 안 보는 채로 남았다. 사람이 알아채기 전까지는
+     * 매도 신호가 나도 나갈 수 없다.
+     *
+     * 한 달을 무인으로 돌리려면 프로세스가 다시 떴을 때 스스로 돌아와야 한다.
+     */
+    CREATE TABLE IF NOT EXISTS trading_auto_desired (
+      account_id TEXT PRIMARY KEY,
+      config JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
+}
+
+/**
+ * "이 계좌는 돌아야 한다"를 적는다. 시작할 때 부르고, 멈출 때 지운다.
+ *
+ * **스스로 멈춘 것(목표 도달·중단선·연속 실패)도 지운다.** 그건 판단이 내려진
+ * 것이라 다시 살리면 그 판단을 무시하는 셈이다. 지워지지 않고 남는 경우는
+ * 하나뿐이다 — 프로세스가 그 일을 할 새도 없이 죽은 것.
+ */
+export async function setDesiredAutoTrader(accountId: string, config: unknown): Promise<void> {
+  await pool.query(
+    `INSERT INTO trading_auto_desired (account_id, config, updated_at)
+     VALUES ($1, $2::jsonb, now())
+     ON CONFLICT (account_id) DO UPDATE SET config = EXCLUDED.config, updated_at = now()`,
+    [accountId, JSON.stringify(config)],
+  );
+}
+
+export async function clearDesiredAutoTrader(accountId: string): Promise<void> {
+  await pool.query(`DELETE FROM trading_auto_desired WHERE account_id = $1`, [accountId]);
+}
+
+/** 프로세스가 죽을 때 돌고 있던 계좌들. 부팅 때 이것으로 되살린다. */
+export async function listDesiredAutoTraders(): Promise<Array<{ accountId: string; config: unknown }>> {
+  const { rows } = await pool.query<{ account_id: string; config: unknown }>(
+    `SELECT account_id, config FROM trading_auto_desired`,
+  );
+  return rows.map((row) => ({ accountId: row.account_id, config: row.config }));
 }
 
 /**

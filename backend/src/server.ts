@@ -44,8 +44,10 @@ import {
 import { ensureBrokerOrderSchema, getBrokerOrderRecords, recordBrokerOrderAttempt } from './db/brokerOrders.js';
 import {
   getAutoTraderState,
+  resumeAutoTraders,
   startAutoTrader,
   stopAutoTrader,
+  type AutoTraderDeps,
 } from './trading/autoTrader.js';
 import { listStrategies } from './trading/strategy.js';
 import { isTrUnavailableOnServer } from './kis/errorCodes.js';
@@ -55,6 +57,27 @@ import { pendingBuySymbols } from './trading/pendingBuys.js';
  * 모의 서버에 없는 기능을 화면에 어떻게 말할지. 두 라우트가 같은 말을 쓴다.
  * **오류가 아니다** — 설정으로 못 고치고 `APP_ENV=prod`에서만 쓸 수 있다.
  */
+/**
+ * 러너가 회차마다 쓰는 바깥 세계. **한 벌만 둔다** — 시작 라우트와 부팅 복구가
+ * 서로 다른 것을 넘기면 되살아난 러너가 다르게 동작한다.
+ */
+const AUTO_TRADER_DEPS: AutoTraderDeps = {
+  loadCandidates: loadAutoTraderCandidates,
+  // 보유 종목은 후보 필터와 무관하게 분봉을 받아야 팔 수 있다.
+  loadHeldInstruments: async (symbols) => [
+    ...(await getDomesticInstrumentsBySymbols(symbols)).values(),
+  ],
+  /*
+   * 접수했지만 아직 안 채워진 매수. **잔량으로 판단한다** — 시간 창으로
+   * 잡으면 그날 체결이 늦을 때 그대로 뚫린다(`pendingBuys.ts`).
+   * 조회 구간을 1일로 두는 것은 오늘 낸 주문만 자리를 먹으면 되기 때문이다.
+   */
+  loadPendingBuySymbols: async (accountId) => {
+    const snapshot = await getKisDomesticExecutions(getKisAccount(accountId) ?? null, 1);
+    return [...pendingBuySymbols(snapshot.executions)];
+  },
+};
+
 const TR_UNAVAILABLE_NOTE = '모의투자 서버에는 이 조회 기능이 없습니다 · 실전 계좌에서만 볼 수 있습니다';
 import { loadAutoTraderCandidates } from './trading/universe.js';
 import {
@@ -227,6 +250,19 @@ async function main(): Promise<void> {
   await ensureBrokerOrderSchema();
   await ensureRiskRuleSchema();
   await ensureAutoTraderSchema();
+  /*
+   * 프로세스가 죽을 때 돌고 있던 러너를 되살린다. 2026-08-03 장중에 개발 서버가
+   * 내려갔고 보유 8종목이 아무도 안 보는 채로 남았다 — 사람이 알아채기 전까지는
+   * 매도 신호가 나도 나갈 수 없다.
+   *
+   * 서버가 뜨는 것을 막지 않는다. 되살리기가 실패해도 앱 자체는 떠야 사람이
+   * 들어와서 손을 쓸 수 있다.
+   */
+  void resumeAutoTraders(AUTO_TRADER_DEPS)
+    .then((count) => {
+      if (count > 0) app.log.info({ count }, '자동매매 러너를 재시작했습니다');
+    })
+    .catch((err) => app.log.error({ err }, '자동매매 러너 재시작 실패'));
   await ensureSignalScoreSchema();
   await seedDefaultWatchlist(WATCHLIST);
 
@@ -605,22 +641,7 @@ async function main(): Promise<void> {
           maxPositions: Number(maxPositions) || 1,
           minHoldMinutes: Math.floor(minHold),
         },
-        {
-          loadCandidates: loadAutoTraderCandidates,
-          // 보유 종목은 후보 필터와 무관하게 분봉을 받아야 팔 수 있다.
-          loadHeldInstruments: async (symbols) => [
-            ...(await getDomesticInstrumentsBySymbols(symbols)).values(),
-          ],
-          /*
-           * 접수했지만 아직 안 채워진 매수. **잔량으로 판단한다** — 시간 창으로
-           * 잡으면 그날 체결이 늦을 때 그대로 뚫린다(`pendingBuys.ts`).
-           * 조회 구간을 1일로 두는 것은 오늘 낸 주문만 자리를 먹으면 되기 때문이다.
-           */
-          loadPendingBuySymbols: async (accountId) => {
-            const snapshot = await getKisDomesticExecutions(getKisAccount(accountId) ?? null, 1);
-            return [...pendingBuySymbols(snapshot.executions)];
-          },
-        },
+        AUTO_TRADER_DEPS,
       );
       return state;
     } catch (e) {

@@ -1,0 +1,76 @@
+/**
+ * 러너 가동 시간대 판정 검증.
+ *
+ * 틀리면 두 방향 다 아프다 — 좁으면 장중에 러너가 쉬고, 넓으면 밤새 KIS를
+ * 때린다(2026-08-03에 뒤엣것이 났다). 그리고 **리스크 룰과 경계가 같아야 한다.**
+ * 어긋나면 러너는 쉬는데 룰은 통과시키는 구간이 생긴다.
+ */
+
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+
+import { kstMinutesOfDay, sessionMinutes, withinSession } from './session.js';
+
+/** KST 기준 그날 `HH:MM`. 서버 타임존과 무관하게 같은 값이어야 한다. */
+function kst(clock: string): Date {
+  return new Date(`2026-08-03T${clock}:00+09:00`);
+}
+
+describe('시각 문자열 읽기', () => {
+  it('HH:MM을 분으로 바꾼다', () => {
+    assert.equal(sessionMinutes('09:00'), 540);
+    assert.equal(sessionMinutes('15:30'), 930);
+    assert.equal(sessionMinutes('00:00'), 0);
+    assert.equal(sessionMinutes('9:05'), 545, '한 자리 시도 읽는다');
+  });
+
+  it('형식이 깨졌으면 null이다', () => {
+    for (const bad of ['', '9', '25:00', '09:60', 'abc', '09-00']) {
+      assert.equal(sessionMinutes(bad), null, bad);
+    }
+  });
+});
+
+describe('KST 분 계산', () => {
+  it('서버 타임존과 무관하게 KST로 읽는다', () => {
+    assert.equal(kstMinutesOfDay(kst('09:00')), 540);
+    assert.equal(kstMinutesOfDay(kst('15:30')), 930);
+  });
+});
+
+describe('가동 시간대 판정', () => {
+  /* 리스크 룰이 `now < start || now > end`로 막으므로 양 끝을 포함한다. */
+  it('양 끝을 포함한다 — 리스크 룰과 같은 경계', () => {
+    assert.equal(withinSession('09:00', '15:30', kst('09:00')), true);
+    assert.equal(withinSession('09:00', '15:30', kst('15:30')), true);
+  });
+
+  it('바깥은 거짓이다', () => {
+    assert.equal(withinSession('09:00', '15:30', kst('08:59')), false);
+    assert.equal(withinSession('09:00', '15:30', kst('15:31')), false);
+    // 2026-08-03에 이 시각 회차가 KIS를 20여 회 때렸다.
+    assert.equal(withinSession('09:00', '15:30', kst('15:31')), false);
+    assert.equal(withinSession('09:00', '15:30', kst('03:00')), false);
+  });
+
+  /* 시간외까지 늘리면 러너도 함께 늘어나야 한다 — 사용자가 값을 바꾸면 그만이다. */
+  it('시간대를 늘리면 그만큼 돈다', () => {
+    assert.equal(withinSession('09:00', '18:00', kst('16:30')), true);
+    assert.equal(withinSession('08:30', '15:30', kst('08:40')), true);
+  });
+
+  /*
+   * 오타 하나로 러너가 조용히 아무것도 안 하면 한 달을 켜 두고 빈손이 된다.
+   * 잘못된 설정을 막는 것은 리스크 룰이고 그건 사유를 남긴다.
+   */
+  it('형식이 깨졌으면 막지 않는다 — 조용히 멎는 것이 더 나쁘다', () => {
+    assert.equal(withinSession('', '15:30', kst('12:00')), true);
+    assert.equal(withinSession('09:00', '25:00', kst('12:00')), true);
+  });
+
+  it('자정을 넘기는 구간도 다룬다 — 조용히 영영 안 도는 일이 없게', () => {
+    assert.equal(withinSession('22:00', '02:00', kst('23:00')), true);
+    assert.equal(withinSession('22:00', '02:00', kst('01:00')), true);
+    assert.equal(withinSession('22:00', '02:00', kst('12:00')), false);
+  });
+});

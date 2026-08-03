@@ -27,7 +27,12 @@ import type {
 import { randomUUID } from 'node:crypto';
 
 import { getKisAccount, type KisAccountConfig } from '../config.js';
-import { recordAutoTraderRun } from '../db/autoTrader.js';
+import {
+  clearDesiredAutoTrader,
+  listDesiredAutoTraders,
+  recordAutoTraderRun,
+  setDesiredAutoTrader,
+} from '../db/autoTrader.js';
 import {
   claimClientOrderId,
   completeClaimedOrder,
@@ -54,6 +59,7 @@ import {
   type CandleCandidate,
   type CandleSkip,
 } from './runCandles.js';
+import { withinSession } from './session.js';
 import { getStrategy, type StrategyContext } from './strategy.js';
 
 /**
@@ -125,6 +131,13 @@ interface RunnerHandle {
   state: AutoTraderState;
   consecutiveErrors: number;
   busy: boolean;
+  /**
+   * 직전 회차가 거래 시간대 안이었나. **아직 모르면 `undefined`다.**
+   *
+   * 시간대에 들고 나는 순간에만 기록을 남기려고 둔다. `false`로 시작하면 처음
+   * 켤 때 "다시 돕니다"가 먼저 찍혀 사람을 헷갈리게 한다.
+   */
+  wasInSession?: boolean;
 }
 
 const runners = new Map<string, RunnerHandle>();
@@ -150,6 +163,12 @@ export async function stopAutoTrader(
   handle.state.status = status;
   handle.state.stopReason = reason;
   handle.state.stoppedAt = Date.now();
+  /*
+   * **스스로 멈춘 것도 지운다.** 목표 도달·중단선·연속 실패는 내려진 판단이라
+   * 부팅 때 되살리면 그 판단을 무시하는 셈이다. 남는 경우는 하나뿐이다 —
+   * 프로세스가 이 줄을 실행할 새도 없이 죽은 것.
+   */
+  await clearDesiredAutoTrader(accountId);
   await recordAutoTraderRun({
     accountId,
     status,
@@ -189,6 +208,12 @@ export async function startAutoTrader(
   };
   const handle: RunnerHandle = { timer: null, state, consecutiveErrors: 0, busy: false };
   runners.set(config.accountId, handle);
+  /*
+   * **프로세스가 죽어도 돌아올 수 있게** 설정을 남긴다. 러너는 메모리에만 있어서
+   * 서버가 내려가면 함께 사라지는데, 2026-08-03에 실제로 그랬고 보유 8종목이
+   * 아무도 안 보는 채로 남았다 — 매도 신호가 나도 나갈 수 없다.
+   */
+  await setDesiredAutoTrader(config.accountId, config);
 
   await recordAutoTraderRun({
     accountId: config.accountId,
@@ -244,6 +269,49 @@ async function runOnce(handle: RunnerHandle, deps: AutoTraderDeps): Promise<void
   const { config } = handle.state;
   const strategy = getStrategy(config.strategy);
   if (!strategy) throw new Error(`알 수 없는 전략입니다: ${config.strategy}`);
+
+  /*
+   * ── 장 밖에서는 아무것도 묻지 않는다 ────────────────────────────────────
+   *
+   * 리스크 룰의 거래 시간대 밖이면 어차피 주문이 한 건도 못 나간다. 그런데
+   * 예전에는 회차를 그대로 다 돌았다 — 잔고·시세·분봉으로 **KIS를 20여 회**
+   * 때리고 나서 마지막 문에서 막혔다.
+   *
+   * 2026-08-03 15:31(마감 뒤) 실측에서 회차가 `후보 12종목`으로 멀쩡히 돌았다.
+   * KIS는 마감 뒤에도 그날 분봉을 계속 주기 때문이다. 하루를 넘겨 두면
+   * 밤새 120초마다 그 호출이 나간다. 한 달을 돌리려면 이걸 먼저 끊어야 한다.
+   *
+   * **시간대는 리스크 룰이 정한다.** 러너가 따로 들고 있으면 두 곳이 갈린다 —
+   * 사용자가 시간대를 늘리면 러너도 함께 늘어나야 한다.
+   */
+  const rules = await getRiskRules(config.accountId);
+  const inSession = withinSession(rules.sessionStart, rules.sessionEnd, new Date());
+  if (!inSession) {
+    /*
+     * 매 회차 적으면 밤새 수백 줄이 쌓여 낮의 기록을 덮는다. 들어가고 나올 때
+     * **한 번씩만** 적는다 — 그 두 순간이 사람이 알고 싶어 하는 전부다.
+     */
+    if (handle.wasInSession !== false) {
+      handle.wasInSession = false;
+      await recordAutoTraderRun({
+        accountId: config.accountId,
+        status: 'running',
+        message: `거래 시간대(${rules.sessionStart}~${rules.sessionEnd}) 밖이라 쉽니다 · 시간대가 되면 다시 돕니다`,
+        equity: handle.state.currentEquity,
+      });
+    }
+    return;
+  }
+  if (handle.wasInSession === false) {
+    handle.wasInSession = true;
+    await recordAutoTraderRun({
+      accountId: config.accountId,
+      status: 'running',
+      message: `거래 시간대(${rules.sessionStart}~${rules.sessionEnd})에 들어와 다시 돕니다`,
+      equity: handle.state.currentEquity,
+    });
+  }
+  handle.wasInSession = true;
 
   const account = getKisAccount(config.accountId);
   if (!account) throw new Error(`등록되지 않은 계좌입니다: ${config.accountId}`);
@@ -732,4 +800,33 @@ async function loadCandles(
       .filter((item): item is CandleCandidate => item !== undefined),
     skipped: loaded.map((item) => item.skip).filter((item): item is CandleSkip => item !== undefined),
   };
+}
+
+
+/**
+ * 프로세스가 죽을 때 돌고 있던 러너를 되살린다. 서버가 뜰 때 한 번 부른다.
+ *
+ * **되살리지 못한 것도 소리 내어 남긴다.** 조용히 실패하면 사람은 돌고 있다고
+ * 믿는데 실제로는 아무도 안 보는 포지션이 남는다 — 그게 이 기능을 만든 이유다.
+ *
+ * 계좌 조회가 필요하므로(시작 평가금액) 실패할 수 있다. 실패해도 다른 계좌는
+ * 이어서 시도한다.
+ */
+export async function resumeAutoTraders(deps: AutoTraderDeps): Promise<number> {
+  const desired = await listDesiredAutoTraders().catch(() => []);
+  let resumed = 0;
+  for (const { accountId, config } of desired) {
+    try {
+      await startAutoTrader(config as AutoTraderConfig, deps);
+      resumed += 1;
+    } catch (e) {
+      await recordAutoTraderRun({
+        accountId,
+        status: 'error',
+        message: `재시작 실패: ${e instanceof Error ? e.message : String(e)}`,
+      });
+      await clearDesiredAutoTrader(accountId).catch(() => undefined);
+    }
+  }
+  return resumed;
 }
