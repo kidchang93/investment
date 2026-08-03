@@ -19,6 +19,8 @@
  * 휴장일에 시계 조건이 통과해 버리거나 그 반대가 된다.
  */
 
+import { KRX_SESSION_MINUTES } from '@invest/shared';
+
 /** `HH:MM`을 자정부터의 분으로. 형식이 깨지면 null. */
 export function sessionMinutes(value: string): number | null {
   const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
@@ -63,4 +65,14 @@ export function withinSession(start: string, end: string, at: Date): boolean {
    */
   if (to < from) return now >= from || now <= to;
   return now >= from && now <= to;
+}
+
+
+/*
+ * 장후 시간외 종가매매 창(15:40~16:00). KRX 운영시간이고 `probeSessions.ts`가
+ * 같은 표를 들고 있다 — 값이 갈리지 않게 `KRX_SESSION_MINUTES`에서 가져온다.
+ */
+export function inAfterHoursCloseWindow(at: Date): boolean {
+  const now = kstMinutesOfDay(at);
+  return now >= KRX_SESSION_MINUTES.postOffHoursOpen && now < KRX_SESSION_MINUTES.singlePriceOpen;
 }

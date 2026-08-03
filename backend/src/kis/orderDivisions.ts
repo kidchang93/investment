@@ -50,9 +50,42 @@ export const CONFIRMED_ORDER_DIVISIONS = {
  * 내 보고 결과를 이 파일에 적어라 — 그러면 위 표로 올라간다.
  */
 export const UNCONFIRMED_ORDER_DIVISIONS = [
-  '장후 시간외 종가 (15:40~16:00) — 존재와 "단가 0" 규칙은 확인, 코드값 미확인',
   '시간외 단일가 (16:00~18:00) — 코드값 미확인',
 ] as const;
+
+/**
+ * 장후 시간외 종가(15:40~16:00)로 **추정하는** 코드. ★ 아직 확인되지 않았다.
+ *
+ * 확인된 표(`CONFIRMED_ORDER_DIVISIONS`)에 넣지 않은 것은 일부러다. 이 값을 쓰는
+ * 경로는 **자기가 미확인 값을 쓰고 있다는 것을 기록에 남겨야 한다.**
+ *
+ * ── 근거와 그 한계 ────────────────────────────────────────────────────────
+ *
+ * 공식 예제가 확인해 주는 것은 `05 = 장전 시간외`까지다. 장후 시간외은 존재와
+ * "단가 0" 규칙만 적혀 있고(715행) 코드값은 "나머지주문구분 API 문서 참조"로
+ * 미뤄져 있다. `06`은 **05 다음 자리라는 것 외에 근거가 없다.**
+ *
+ * 읽기 전용으로는 못 가른다 — 매수가능조회는 주문구분을 검증하지 않아 없는
+ * 코드(`99`)도 통과한다(`scripts/probeOrderDivisions.ts` 실측).
+ *
+ * ── 모의계좌로 내 봤다 (2026-08-03 15:56, 장후 시간외 창 안) ─────────────
+ *
+ * 보유 8종목 전부 이 코드로 매도를 냈고 8건 다 같은 답이 왔다.
+ *
+ *   40970000 · "모의투자에서 제공하지 않는 주문유형입니다."
+ *
+ * ★ **이 답이 말해 주는 것과 아닌 것을 가르자.**
+ *
+ * KIS는 "그런 주문구분은 없다"가 아니라 "그 **주문유형**을 모의가 제공하지
+ * 않는다"고 했다. 값을 알아듣고 되돌려준 것이라 `06`이 실재하는 주문구분이라는
+ * 쪽을 가리킨다. **그러나 그것이 장후 시간외라는 증명은 아니다** — 모의가 안
+ * 받는 다른 주문유형일 수도 있다.
+ *
+ * 확정된 것은 하나다: **모의계좌로는 여기까지가 끝이다.** 실전 계좌
+ * (`APP_ENV=prod`)에서 한 건 내 봐야 답이 나온다. 그때 접수되면 이 값을 위
+ * 표로 옮기고 여기를 지워라.
+ */
+export const AFTER_HOURS_CLOSE_CANDIDATE = '06';
 
 export type ConfirmedOrderDivision =
   (typeof CONFIRMED_ORDER_DIVISIONS)[keyof typeof CONFIRMED_ORDER_DIVISIONS];
@@ -65,5 +98,12 @@ export type ConfirmedOrderDivision =
  */
 export function usesZeroPrice(division: string): boolean {
   return division === CONFIRMED_ORDER_DIVISIONS.market
-    || division === CONFIRMED_ORDER_DIVISIONS.preMarketClose;
+    || division === CONFIRMED_ORDER_DIVISIONS.preMarketClose
+    || division === AFTER_HOURS_CLOSE_CANDIDATE;
+}
+
+/** 이 주문구분이 아직 확인되지 않은 값인가. 기록에 그 사실을 적으려고 쓴다. */
+export function isUnconfirmedDivision(division: string): boolean {
+  const confirmed: string[] = Object.values(CONFIRMED_ORDER_DIVISIONS);
+  return !confirmed.includes(division);
 }

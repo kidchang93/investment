@@ -9,7 +9,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { kstMinutesOfDay, sessionMinutes, withinSession } from './session.js';
+import {
+  inAfterHoursCloseWindow,
+  kstMinutesOfDay,
+  sessionMinutes,
+  withinSession,
+} from './session.js';
 
 /** KST 기준 그날 `HH:MM`. 서버 타임존과 무관하게 같은 값이어야 한다. */
 function kst(clock: string): Date {
@@ -72,5 +77,29 @@ describe('가동 시간대 판정', () => {
     assert.equal(withinSession('22:00', '02:00', kst('23:00')), true);
     assert.equal(withinSession('22:00', '02:00', kst('01:00')), true);
     assert.equal(withinSession('22:00', '02:00', kst('12:00')), false);
+  });
+});
+
+/*
+ * 장후 시간외 청산이 도는 창. 여기가 틀리면 정규장에 청산 주문이 나가거나
+ * (그건 시장가로 나가야 할 것이 종가주문으로 나가는 것) 창을 통째로 놓친다.
+ */
+describe('장후 시간외 종가 창 (15:40~16:00)', () => {
+  it('창 안이면 참이다', () => {
+    for (const clock of ['15:40', '15:50', '15:59']) {
+      assert.equal(inAfterHoursCloseWindow(kst(clock)), true, clock);
+    }
+  });
+
+  it('정규장과 마감 동시호가는 창이 아니다', () => {
+    for (const clock of ['09:00', '15:20', '15:30', '15:39']) {
+      assert.equal(inAfterHoursCloseWindow(kst(clock)), false, clock);
+    }
+  });
+
+  /* 16:00부터는 시간외 단일가라 주문구분이 또 다르다 — 아직 코드값을 모른다. */
+  it('16:00부터는 창이 아니다 — 거기부터는 단일가다', () => {
+    assert.equal(inAfterHoursCloseWindow(kst('16:00')), false);
+    assert.equal(inAfterHoursCloseWindow(kst('17:00')), false);
   });
 });

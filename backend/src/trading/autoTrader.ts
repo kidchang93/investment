@@ -27,6 +27,11 @@ import type {
 import { randomUUID } from 'node:crypto';
 
 import { getKisAccount, type KisAccountConfig } from '../config.js';
+import { isOrderTypeUnavailableOnServer } from '../kis/errorCodes.js';
+import {
+  AFTER_HOURS_CLOSE_CANDIDATE,
+  isUnconfirmedDivision,
+} from '../kis/orderDivisions.js';
 import {
   clearDesiredAutoTrader,
   listDesiredAutoTraders,
@@ -59,7 +64,7 @@ import {
   type CandleCandidate,
   type CandleSkip,
 } from './runCandles.js';
-import { withinSession } from './session.js';
+import { inAfterHoursCloseWindow, withinSession } from './session.js';
 import { getStrategy, type StrategyContext } from './strategy.js';
 
 /**
@@ -285,7 +290,20 @@ async function runOnce(handle: RunnerHandle, deps: AutoTraderDeps): Promise<void
    * 사용자가 시간대를 늘리면 러너도 함께 늘어나야 한다.
    */
   const rules = await getRiskRules(config.accountId);
-  const inSession = withinSession(rules.sessionStart, rules.sessionEnd, new Date());
+  const runAtNow = new Date();
+  /*
+   * ── 장후 시간외 청산 ────────────────────────────────────────────────────
+   *
+   * 이 창(15:40~16:00)은 **정규장 시간대 밖이라** 아래 절전 판정에 걸린다.
+   * 그래서 그보다 앞에 둔다. 전략에는 묻지 않는다 — 그 시간대에는 모든 체결이
+   * 종가 하나라 이동평균이 평평해지고 교차가 영원히 안 난다. 팔 것을 정하는 것은
+   * 전략이 아니라 "아직 들고 있다"는 사실이다.
+   */
+  if (config.afterHoursExit === true && inAfterHoursCloseWindow(runAtNow)) {
+    await exitPositionsAfterHours(handle);
+    return;
+  }
+  const inSession = withinSession(rules.sessionStart, rules.sessionEnd, runAtNow);
   if (!inSession) {
     /*
      * 매 회차 적으면 밤새 수백 줄이 쌓여 낮의 기록을 덮는다. 들어가고 나올 때
@@ -829,4 +847,180 @@ export async function resumeAutoTraders(deps: AutoTraderDeps): Promise<number> {
     }
   }
   return resumed;
+}
+
+/**
+ * 장후 시간외 종가로 남은 포지션을 내보낸다.
+ *
+ * ── 무엇을 하지 않는가 ────────────────────────────────────────────────────
+ *
+ * **사지 않는다.** 그 시간대에 매수는 값이 종가에 고정돼 있어 전략이 판단할
+ * 근거가 없고, 이 기능의 목적도 청산이다.
+ *
+ * **전략에 묻지 않는다.** 값이 안 움직여 이동평균 교차가 영원히 안 나므로
+ * 물어도 늘 `신호 없음`이다. 팔 것을 정하는 것은 "아직 들고 있다"는 사실이다.
+ *
+ * **최소 보유 시간은 그대로 지킨다.** 산 지 얼마 안 된 종목을 여기서 몰래
+ * 내보내면 그 설정이 거짓이 된다.
+ *
+ * ── 아직 확인되지 않은 주문구분을 쓴다 ────────────────────────────────────
+ *
+ * 장후 시간외 코드값은 공식 문서에서 못 찾았다(`kis/orderDivisions.ts`).
+ * **그 사실을 회차 기록에 함께 적는다** — 거절되면 그것이 곧 답이고, 접수되면
+ * 그때 확인된 표로 옮긴다.
+ */
+async function exitPositionsAfterHours(handle: RunnerHandle): Promise<void> {
+  const { config } = handle.state;
+  const account = getKisAccount(config.accountId);
+  if (!account) throw new Error(`등록되지 않은 계좌입니다: ${config.accountId}`);
+
+  const snapshot = await getKisDomesticAccountSnapshot(account);
+  handle.state.currentEquity = snapshot.totalEvaluation ?? snapshot.cashBalance ?? 0;
+  const held = snapshot.positions.filter((position) => position.quantity > 0);
+  if (held.length === 0) {
+    // 매 회차 적으면 20분 동안 열 줄이 쌓인다. 팔 것이 없다는 말은 한 번이면 된다.
+    if (handle.wasInSession !== false) {
+      handle.wasInSession = false;
+      await recordAutoTraderRun({
+        accountId: config.accountId,
+        status: 'running',
+        message: '장후 시간외 청산 · 남은 보유가 없습니다',
+        equity: handle.state.currentEquity,
+      });
+    }
+    return;
+  }
+  handle.wasInSession = true;
+
+  /*
+   * 최소 보유가 꺼져 있으면 조회하지 않는다 — 쓰지도 않을 값에 DB를 때린다.
+   * 조회가 실패해도 청산을 막지 않는다: **못 파는 쪽이 훨씬 위험하다**
+   * (`minHold.ts`의 ★ 절). 대신 그 사실이 아래 판정에서 `모름 → 통과`로 드러난다.
+   */
+  let boughtAtBySymbol = new Map<string, number>();
+  if (config.minHoldMinutes > 0) {
+    boughtAtBySymbol = await getLastBuySubmittedAt(
+      config.accountId,
+      held.map((position) => position.symbol),
+    ).catch(() => new Map<string, number>());
+  }
+  const unconfirmed = isUnconfirmedDivision(AFTER_HOURS_CLOSE_CANDIDATE);
+
+  for (const position of held) {
+    /*
+     * 미체결이 남아 있으면 또 내지 않는다. 정규장에서 같은 실수를 했었다 —
+     * 잔고가 늦게 갱신돼 같은 종목을 네 번 샀다(`pendingBuys.ts`).
+     */
+    const hold = checkMinHold({
+      side: 'sell',
+      minHoldMinutes: config.minHoldMinutes,
+      boughtAtMs: boughtAtBySymbol.get(position.symbol),
+      nowMs: Date.now(),
+    });
+    if (hold.defer) {
+      await recordAutoTraderRun({
+        accountId: config.accountId,
+        status: 'running',
+        message:
+          `${position.name} 장후 시간외 청산 보류 · ${describeMinHoldDefer(hold, config.minHoldMinutes)}`,
+        side: 'sell',
+        quantity: position.quantity,
+        equity: handle.state.currentEquity,
+      });
+      continue;
+    }
+
+    /*
+     * 리스크 룰은 그대로 통과해야 한다. **다만 거래 시간대 검사는 건너뛴다** —
+     * 이 창은 정의상 정규장 밖이고, 그 검사에 걸리라고 만든 경로가 아니다.
+     * 나머지(계좌 실주문 허용·차단 종목·일일 한도·개장일)는 전부 그대로 본다.
+     */
+    const verdict = await checkRiskRules({
+      accountId: config.accountId,
+      symbol: position.symbol,
+      side: 'sell',
+      orderType: 'limit',
+      quantity: position.quantity,
+      price: position.currentPrice,
+      skipSessionCheck: true,
+    });
+    if (!verdict.allowed) {
+      await recordAutoTraderRun({
+        accountId: config.accountId,
+        status: 'running',
+        message: `${position.name} 장후 시간외 청산 차단 · ${verdict.violations.join(' / ')}`,
+        side: 'sell',
+        quantity: position.quantity,
+        equity: handle.state.currentEquity,
+      });
+      continue;
+    }
+
+    if (config.mode === 'dry_run') {
+      await recordAutoTraderRun({
+        accountId: config.accountId,
+        status: 'running',
+        message: `[모의 실행] ${position.name} 장후 시간외 청산 ${position.quantity}주`,
+        side: 'sell',
+        quantity: position.quantity,
+        equity: handle.state.currentEquity,
+      });
+      continue;
+    }
+
+    try {
+      const result = await placeKisDomesticOrder(account, {
+        symbol: position.symbol,
+        side: 'sell',
+        orderType: 'limit',
+        quantity: position.quantity,
+        orderDivision: AFTER_HOURS_CLOSE_CANDIDATE,
+      });
+      await recordAutoTraderRun({
+        accountId: config.accountId,
+        status: 'running',
+        message:
+          `${position.name} 장후 시간외 청산 ${position.quantity}주 접수`
+          + ` · 주문번호 ${result.orderNo || '-'}`
+          + (unconfirmed
+            ? ` · ★ 주문구분 ${AFTER_HOURS_CLOSE_CANDIDATE}는 아직 확인되지 않은 값입니다`
+            : ''),
+        side: 'sell',
+        quantity: position.quantity,
+        equity: handle.state.currentEquity,
+      });
+    } catch (e) {
+      /*
+       * **이 서버가 그 주문유형을 안 받는 것이면 여기서 그만둔다.** 재시도해도
+       * 같은 답이라 나머지 종목에 같은 주문을 낼 이유가 없다 — 2026-08-03에
+       * 실제로 8번 내고 8번 같은 말을 들었다(`40970000`).
+       */
+      if (isOrderTypeUnavailableOnServer(e)) {
+        await recordAutoTraderRun({
+          accountId: config.accountId,
+          status: 'running',
+          message:
+            `장후 시간외 청산을 이 서버에서는 낼 수 없습니다 · ${e instanceof Error ? e.message : String(e)}`
+            + ` · 남은 ${held.length}종목도 같은 이유라 시도하지 않습니다`,
+          equity: handle.state.currentEquity,
+        });
+        return;
+      }
+      /*
+       * **거절도 답이다.** 주문구분이 틀렸다면 KIS가 그렇게 말해 주고, 그 말이
+       * 다음 후보를 가리킨다. 그래서 회차를 실패로 올리지 않고 여기서 적는다 —
+       * 연속 실패로 러너를 세우면 나머지 종목은 시도조차 못 한다.
+       */
+      await recordAutoTraderRun({
+        accountId: config.accountId,
+        status: 'running',
+        message:
+          `${position.name} 장후 시간외 청산 실패 · ${e instanceof Error ? e.message : String(e)}`
+          + (unconfirmed ? ` · 주문구분 ${AFTER_HOURS_CLOSE_CANDIDATE}가 틀렸을 수 있습니다` : ''),
+        side: 'sell',
+        quantity: position.quantity,
+        equity: handle.state.currentEquity,
+      });
+    }
+  }
 }

@@ -597,8 +597,16 @@ async function main(): Promise<void> {
     if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
     if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
 
-    const { mode, strategy, targetEquity, stopEquity, intervalSeconds, maxPositions, minHoldMinutes } =
-      req.body;
+    const {
+      mode,
+      strategy,
+      targetEquity,
+      stopEquity,
+      intervalSeconds,
+      maxPositions,
+      minHoldMinutes,
+      afterHoursExit,
+    } = req.body;
     if (mode !== 'dry_run' && mode !== 'live') {
       return reply.code(400).send({ message: "mode는 'dry_run' 또는 'live'여야 합니다." });
     }
@@ -640,6 +648,11 @@ async function main(): Promise<void> {
           intervalSeconds: Number(intervalSeconds) || 60,
           maxPositions: Number(maxPositions) || 1,
           minHoldMinutes: Math.floor(minHold),
+          /*
+           * 장후 시간외 청산. **명시적으로 참일 때만 켠다** — 아직 확인되지 않은
+           * 주문구분을 쓰는 경로라 실수로 켜지면 안 된다.
+           */
+          afterHoursExit: afterHoursExit === true,
         },
         AUTO_TRADER_DEPS,
       );

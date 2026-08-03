@@ -9,7 +9,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  AFTER_HOURS_CLOSE_CANDIDATE,
   CONFIRMED_ORDER_DIVISIONS,
+  isUnconfirmedDivision,
   UNCONFIRMED_ORDER_DIVISIONS,
   usesZeroPrice,
 } from './orderDivisions.js';
@@ -39,11 +41,23 @@ describe('주문구분 — 아직 모르는 것', () => {
    * 존재는 공식 예제 715행이 말하지만 **코드값은 어디에도 없다.**
    * 여기 남아 있는 한 주문 경로에 넣으면 안 된다.
    */
-  it('장후 시간외와 시간외 단일가는 확인된 표에 없다', () => {
+  it('장후 시간외 후보는 확인된 표에 없다 — 쓰더라도 미확인으로 남는다', () => {
     const confirmed: string[] = Object.values(CONFIRMED_ORDER_DIVISIONS);
-    assert.ok(!confirmed.includes('06'), '06을 확인 없이 넣지 않았다');
+    assert.ok(!confirmed.includes(AFTER_HOURS_CLOSE_CANDIDATE), '확인 없이 표에 올리지 않았다');
+    assert.equal(isUnconfirmedDivision(AFTER_HOURS_CLOSE_CANDIDATE), true);
+  });
+
+  it('시간외 단일가는 아직 후보조차 없다', () => {
+    const confirmed: string[] = Object.values(CONFIRMED_ORDER_DIVISIONS);
     assert.ok(!confirmed.includes('07'), '07을 확인 없이 넣지 않았다');
-    assert.equal(UNCONFIRMED_ORDER_DIVISIONS.length, 2);
+    assert.equal(UNCONFIRMED_ORDER_DIVISIONS.length, 1);
+  });
+
+  /* 확인된 값을 미확인이라 적으면 기록이 거짓말을 한다. 반대 방향도 못 박는다. */
+  it('확인된 값은 미확인으로 표시되지 않는다', () => {
+    for (const code of Object.values(CONFIRMED_ORDER_DIVISIONS)) {
+      assert.equal(isUnconfirmedDivision(code), false, code);
+    }
   });
 });
 
@@ -56,5 +70,10 @@ describe('단가를 비우는 주문구분', () => {
 
   it('지정가는 실제 단가를 보낸다', () => {
     assert.equal(usesZeroPrice(CONFIRMED_ORDER_DIVISIONS.limit), false);
+  });
+
+  /* 장후 시간외는 종가로만 거래되므로 단가를 보내면 안 된다(공식 예제 715행). */
+  it('장후 시간외 후보도 단가를 0으로 보낸다', () => {
+    assert.equal(usesZeroPrice(AFTER_HOURS_CLOSE_CANDIDATE), true);
   });
 });

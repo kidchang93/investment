@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  isOrderTypeUnavailableOnServer,
   isTrUnavailableOnServer,
   kisErrorCodeOf,
   kisErrorHint,
@@ -121,5 +122,33 @@ describe('이 서버에 없는 기능인지 가르기', () => {
     assert.equal(isTrUnavailableOnServer(new Error('fetch failed')), false);
     assert.equal(isTrUnavailableOnServer('EGW02006'), false);
     assert.equal(isTrUnavailableOnServer(undefined), false);
+  });
+});
+
+/*
+ * 2026-08-03 실측: 장후 시간외 주문구분(`06`)으로 모의계좌에 매도를 냈더니
+ * 8종목 전부 `40970000`으로 거절됐다 — "모의투자에서 제공하지 않는 주문유형입니다."
+ * 재시도해도 같은 답이라 첫 건에서 그만둬야 한다.
+ */
+describe('이 서버가 안 받는 주문유형인지 가르기', () => {
+  it('40970000이면 참이다', () => {
+    assert.equal(
+      isOrderTypeUnavailableOnServer(new KisRequestError('모의투자에서 제공하지 않는 주문유형입니다.', '40970000')),
+      true,
+    );
+  });
+
+  /* TR 자체가 없는 것(EGW02006)과는 다른 사실이다. 사람에게 할 말이 다르다. */
+  it('TR이 없는 것과 섞이지 않는다', () => {
+    const trGone = new KisRequestError('모의투자 TR 이 아닙니다.', 'EGW02006');
+    assert.equal(isOrderTypeUnavailableOnServer(trGone), false);
+    assert.equal(isTrUnavailableOnServer(trGone), true);
+
+    const typeGone = new KisRequestError('주문유형', '40970000');
+    assert.equal(isTrUnavailableOnServer(typeGone), false);
+  });
+
+  it('KIS 응답이 아닌 오류는 거짓이다', () => {
+    assert.equal(isOrderTypeUnavailableOnServer(new Error('fetch failed')), false);
   });
 });

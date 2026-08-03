@@ -9,6 +9,7 @@ import {
 import { getDomesticInstrumentsBySymbols } from '../db/instruments.js';
 import { credentialServer, getAccessToken, primaryCredentials, type KisCredentials } from './auth.js';
 import { kisErrorCodeOf, kisErrorSuffix, KisRequestError } from './errorCodes.js';
+import { CONFIRMED_ORDER_DIVISIONS, usesZeroPrice } from './orderDivisions.js';
 import {
   chunkQuoteCodes,
   MULTI_QUOTE_PATH,
@@ -2213,11 +2214,21 @@ export async function placeKisDomesticOrder(
     orderType: OrderType;
     quantity: number;
     limitPrice?: number;
+    /**
+     * 주문구분을 직접 정한다. 생략하면 `orderType`대로 지정가/시장가다.
+     *
+     * 시간외처럼 정규장 코드로는 못 내는 주문에 쓴다. **아직 확인되지 않은
+     * 값이 올 수 있으므로**(`orderDivisions.ts`) 호출부가 그 사실을 기록에 남긴다.
+     */
+    orderDivision?: string;
   },
 ): Promise<{ orderNo: string; orderBranchNo: string; acceptedAt: string; message: string }> {
   const isBuy = params.side === 'buy';
   const trId = config.env === 'prod' ? (isBuy ? 'TTTC0012U' : 'TTTC0011U') : isBuy ? 'VTTC0012U' : 'VTTC0011U';
   const isLimit = params.orderType === 'limit';
+  const division =
+    params.orderDivision
+    ?? (isLimit ? CONFIRMED_ORDER_DIVISIONS.limit : CONFIRMED_ORDER_DIVISIONS.market);
 
   const body = await kisPost(
     '/uapi/domestic-stock/v1/trading/order-cash',
@@ -2226,9 +2237,13 @@ export async function placeKisDomesticOrder(
       CANO: account.cano,
       ACNT_PRDT_CD: account.productCode,
       PDNO: params.symbol,
-      ORD_DVSN: isLimit ? '00' : '01',
+      ORD_DVSN: division,
       ORD_QTY: String(Math.floor(params.quantity)),
-      ORD_UNPR: isLimit ? String(Math.floor(params.limitPrice ?? 0)) : '0',
+      /*
+       * 단가를 비워야 하는 주문구분은 **빈 문자열이 아니라 `'0'`**이다
+       * (공식 예제 715행). 시간외·시장가가 여기 해당한다.
+       */
+      ORD_UNPR: usesZeroPrice(division) ? '0' : String(Math.floor(params.limitPrice ?? 0)),
       EXCG_ID_DVSN_CD: 'KRX',
       SLL_TYPE: isBuy ? '' : '01',
       CNDT_PRIC: '',
@@ -2237,7 +2252,15 @@ export async function placeKisDomesticOrder(
   );
 
   if (body.rt_cd !== '0') {
-    throw new Error(`KIS 주문 전송 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
+    /*
+     * **코드를 들고 던진다.** 호출부가 "모의 서버에 없는 기능"과 진짜 거절을
+     * 갈라야 한다 — 앞은 재시도해도 같은 답이라 그만둬야 하고, 뒤는 사유가 다르다.
+     */
+    throw new KisRequestError(
+      `KIS 주문 전송 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`
+      + ` (${String(body.msg_cd ?? '코드 없음')})`,
+      kisErrorCodeOf(body),
+    );
   }
 
   const output = (body.output ?? {}) as Record<string, string>;

@@ -23,12 +23,21 @@
  */
 
 /** 오류의 성질. 삼항 사슬 대신 표로 가른다(`docs/CODE_STYLE.md`). */
-export type KisErrorKind = 'serverMismatch' | 'trNotOnVts';
+export type KisErrorKind = 'serverMismatch' | 'trNotOnVts' | 'orderTypeNotOnVts';
 
 const KIS_ERROR_KINDS: Record<string, KisErrorKind> = {
   EGW02007: 'serverMismatch',
   EGW02004: 'serverMismatch',
   EGW02006: 'trNotOnVts',
+  /*
+   * 2026-08-03 실측. 장후 시간외 주문구분(`06`)으로 모의계좌에 매도를 냈더니
+   * 8종목 전부 이 코드로 거절됐다 — *"모의투자에서 제공하지 않는 주문유형입니다."*
+   *
+   * **`EGW02006`과 가른다.** 그건 TR 자체가 없는 것이고 이건 TR은 있는데 그
+   * **주문유형**을 모의가 안 받는 것이다. 고치는 방법은 같다(실전 서버로 가야 한다)
+   * 지만 사람에게 할 말이 다르다.
+   */
+  '40970000': 'orderTypeNotOnVts',
 };
 
 /**
@@ -45,6 +54,9 @@ const KIS_ERROR_HINTS: Record<string, string> = {
   EGW02006:
     '이 기능은 모의 서버에 없습니다 — 앱키가 틀린 것이 아닙니다.'
     + ' 실전 서버(APP_ENV=prod)에서만 쓸 수 있습니다.',
+  '40970000':
+    '이 주문유형은 모의 서버가 받지 않습니다 — 주문구분 값이 틀린 것이 아닐 수 있습니다.'
+    + ' 실전 서버(APP_ENV=prod)에서만 확인할 수 있습니다.',
 };
 
 export function kisErrorKind(msgCode: string): KisErrorKind | null {
@@ -111,4 +123,15 @@ export class KisRequestError extends Error {
 export function isTrUnavailableOnServer(error: unknown): boolean {
   if (!(error instanceof KisRequestError)) return false;
   return kisErrorKind(error.msgCode) === 'trNotOnVts';
+}
+
+/**
+ * 이 **주문유형**을 이 서버가 안 받는가.
+ *
+ * 재시도해도 같은 답이다. 보유 8종목에 같은 주문을 8번 내 볼 이유가 없다 —
+ * 2026-08-03에 실제로 8번 냈고 8번 다 같은 말을 들었다.
+ */
+export function isOrderTypeUnavailableOnServer(error: unknown): boolean {
+  if (!(error instanceof KisRequestError)) return false;
+  return kisErrorKind(error.msgCode) === 'orderTypeNotOnVts';
 }
