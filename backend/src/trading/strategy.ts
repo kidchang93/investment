@@ -22,10 +22,28 @@ import { RUNNER_CANDLE_AXIS } from './runCandles.js';
 export interface StrategyContext {
   /** 후보 종목. 이미 "살 수 있는 것"만 걸러져 있다 */
   candidates: Array<{ instrument: Instrument; candles: Candle[]; price: number }>;
-  /** 지금 들고 있는 종목 */
+  /**
+   * 이미 자리를 차지한 종목.
+   *
+   * **`quantity`가 0일 수 있다.** 매수 주문을 냈는데 아직 잔고에 안 잡힌
+   * 종목이다(`pendingBuys.ts`). 자리는 먹지만 **팔 수는 없다** — 없는 주식을
+   * 파는 주문이 나가면 KIS가 거부한다. 그래서 매도 후보는 `sellablePositions`로
+   * 거르고, 자리 계산(`maxPositions`)은 이 목록 전체로 한다.
+   */
   positions: Array<{ instrumentId: string; quantity: number; averagePrice: number }>;
   /** 동시에 들고 갈 수 있는 종목 수 */
   maxPositions: number;
+}
+
+/**
+ * 팔 수 있는 것만. **수량 0은 매도 후보가 아니다.**
+ *
+ * 세 전략이 각자 `context.positions`를 돌며 매도를 판단하는데, 그 목록에
+ * 미체결 매수가 섞이면서 "아직 없는 주식"에 매도 신호가 날 수 있게 됐다.
+ * 같은 규칙을 세 곳에 두면 한 곳만 고쳤을 때 조용히 갈라지므로 한 함수로 둔다.
+ */
+export function sellablePositions(context: StrategyContext): StrategyContext['positions'] {
+  return context.positions.filter((position) => position.quantity > 0);
 }
 
 export interface Strategy {
@@ -256,7 +274,7 @@ export class MovingAverageCrossStrategy implements Strategy {
     const heldIds = new Set(context.positions.map((position) => position.instrumentId));
 
     // 먼저 매도. 자리를 비워야 새로 살 수 있다.
-    for (const position of context.positions) {
+    for (const position of sellablePositions(context)) {
       const candidate = context.candidates.find((item) => item.instrument.id === position.instrumentId);
       if (!candidate) continue;
       const cross = this.crossOf(candidate.candles);
@@ -387,7 +405,7 @@ export class VolatilityBreakoutStrategy implements Strategy {
     const signals: StrategySignal[] = [];
     const heldIds = new Set(context.positions.map((position) => position.instrumentId));
 
-    for (const position of context.positions) {
+    for (const position of sellablePositions(context)) {
       const candidate = context.candidates.find((item) => item.instrument.id === position.instrumentId);
       if (!candidate) continue;
       const target = this.targetPrice(candidate.candles);
@@ -489,7 +507,7 @@ export class MeanReversionStrategy implements Strategy {
     const signals: StrategySignal[] = [];
     const heldIds = new Set(context.positions.map((position) => position.instrumentId));
 
-    for (const position of context.positions) {
+    for (const position of sellablePositions(context)) {
       const candidate = context.candidates.find((item) => item.instrument.id === position.instrumentId);
       if (!candidate) continue;
       const z = this.zScore(candidate.candles);

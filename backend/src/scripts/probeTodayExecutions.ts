@@ -34,7 +34,9 @@ for (const execution of snapshot.executions) {
       execution.side,
       `주문 ${execution.orderQuantity}주`,
       `체결 ${execution.filledQuantity}주`,
-      `체결가 ${execution.filledPrice}`,
+      `평균체결가 ${execution.averageFilledPrice}`,
+      `잔량 ${execution.remainQuantity}주`,
+      `거부 ${execution.rejectedQuantity}주`,
       execution.status,
     ].join(' · '),
   );

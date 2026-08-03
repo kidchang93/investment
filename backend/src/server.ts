@@ -48,6 +48,7 @@ import {
   stopAutoTrader,
 } from './trading/autoTrader.js';
 import { listStrategies } from './trading/strategy.js';
+import { pendingBuySymbols } from './trading/pendingBuys.js';
 import { loadAutoTraderCandidates } from './trading/universe.js';
 import {
   DEFAULT_SCREENING_LOOKUPS,
@@ -591,6 +592,15 @@ async function main(): Promise<void> {
           loadHeldInstruments: async (symbols) => [
             ...(await getDomesticInstrumentsBySymbols(symbols)).values(),
           ],
+          /*
+           * 접수했지만 아직 안 채워진 매수. **잔량으로 판단한다** — 시간 창으로
+           * 잡으면 그날 체결이 늦을 때 그대로 뚫린다(`pendingBuys.ts`).
+           * 조회 구간을 1일로 두는 것은 오늘 낸 주문만 자리를 먹으면 되기 때문이다.
+           */
+          loadPendingBuySymbols: async (accountId) => {
+            const snapshot = await getKisDomesticExecutions(getKisAccount(accountId) ?? null, 1);
+            return [...pendingBuySymbols(snapshot.executions)];
+          },
         },
       );
       return state;

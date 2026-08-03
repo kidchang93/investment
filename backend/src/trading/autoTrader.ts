@@ -81,6 +81,14 @@ export interface AutoTraderDeps {
    * 없는 것을 지어내지 않고 회차 기록에 몇 개를 못 찾았는지 적는다.
    */
   loadHeldInstruments(symbols: string[]): Promise<Instrument[]>;
+  /**
+   * 아직 채워지지 않은 매수 주문의 종목코드.
+   *
+   * 잔고만 보면 접수와 체결 사이 몇 분 동안 "아직 아무것도 안 샀다"로 보여
+   * 같은 종목을 매 회차 다시 산다 — 2026-08-03에 네 번 샀다. 근거는
+   * `pendingBuys.ts`에 있다.
+   */
+  loadPendingBuySymbols(accountId: string): Promise<string[]>;
 }
 
 interface RunnerHandle {
@@ -234,8 +242,21 @@ async function runOnce(handle: RunnerHandle, deps: AutoTraderDeps): Promise<void
    * 신호가 아예 날 수 없었다(`runCandles.ts`의 `candleTargets` 참고).
    */
   const symbolToPosition = new Map(snapshot.positions.map((position) => [position.symbol, position]));
+  /*
+   * **잔고에 아직 안 잡힌 매수 주문도 자리를 차지한 것으로 본다.** 잔고만 보면
+   * 접수와 체결 사이 몇 분이 "아직 아무것도 안 샀다"로 보인다 — 2026-08-03에
+   * 경방을 네 회차 연속으로 샀고, 자기 주문이 호가를 밀어 체결가가 8,247 →
+   * 8,279원으로 계단을 올라갔다. 근거는 `pendingBuys.ts`.
+   *
+   * 조회가 실패하면 **빈 목록이 아니라 예외**다. 여기서 조용히 비우면 결함이
+   * 그대로 돌아오는데, 러너는 그것을 회차 실패로 알릴 수 있다.
+   */
+  const pendingBuys = new Set(await deps.loadPendingBuySymbols(config.accountId));
   const heldSymbols = [
-    ...new Set(snapshot.positions.filter((position) => position.quantity > 0).map((position) => position.symbol)),
+    ...new Set([
+      ...snapshot.positions.filter((position) => position.quantity > 0).map((position) => position.symbol),
+      ...pendingBuys,
+    ]),
   ];
 
   const picked = await deps.loadCandidates(config.accountId, cash);
@@ -271,14 +292,34 @@ async function runOnce(handle: RunnerHandle, deps: AutoTraderDeps): Promise<void
     return;
   }
 
+  /*
+   * 자리를 차지한 종목. 잔고에 잡힌 것과 **주문만 나가 있는 것**이 함께 들어간다.
+   *
+   * 주문만 나가 있는 쪽은 `quantity: 0`이다. 자리는 먹지만 팔 수는 없다 —
+   * 없는 주식을 파는 주문이 나가면 KIS가 거부한다. 전략은 `sellablePositions`로
+   * 매도 후보를 거르고 자리 계산은 이 목록 전체로 한다.
+   */
   const positions = candidates
     .map((item) => {
       const held = symbolToPosition.get(item.instrument.symbol);
-      return held
-        ? { instrumentId: item.instrument.id, quantity: held.quantity, averagePrice: held.averagePrice }
-        : null;
+      if (held) {
+        return { instrumentId: item.instrument.id, quantity: held.quantity, averagePrice: held.averagePrice };
+      }
+      if (pendingBuys.has(item.instrument.symbol)) {
+        return { instrumentId: item.instrument.id, quantity: 0, averagePrice: 0 };
+      }
+      return null;
     })
     .filter((item): item is NonNullable<typeof item> => item !== null);
+
+  /*
+   * 자리를 먹고 있는 미체결이 있으면 회차 기록에 적는다. 적지 않으면 `신호 없음`만
+   * 쌓이고 왜 안 사는지 알 수 없다 — 이 결함이 그렇게 8분 동안 안 보였다.
+   */
+  const pendingHeldCount = positions.filter((position) => position.quantity <= 0).length;
+  if (pendingHeldCount > 0) {
+    runNotes.push(`미체결 매수 ${pendingHeldCount}종목이 자리를 차지하고 있습니다`);
+  }
 
   const context: StrategyContext = { candidates, positions, maxPositions: config.maxPositions };
   const signals = strategy.decide(context);

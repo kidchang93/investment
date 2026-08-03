@@ -103,6 +103,28 @@ describe('이동평균 교차 전략', () => {
     assert.deepEqual(strategy.decide(context([1, 2, 3])), []);
   });
 
+  /*
+   * 미체결 매수는 `quantity: 0`으로 들어온다. 2026-08-03에 이 자리가 비어 있어서
+   * 러너가 같은 종목을 네 회차 연속으로 샀다 — 잔고에 잡히기까지 8분이 걸렸다.
+   */
+  it('주문만 나가 있는 종목(수량 0)은 다시 사지 않는다', () => {
+    const positions: StrategyPositions = [
+      { instrumentId: instrument.id, quantity: 0, averagePrice: 0 },
+    ];
+    assert.deepEqual(strategy.decide(context([20, 18, 16, 14, 12, 10, 40], positions)), []);
+  });
+
+  /*
+   * 자리는 먹되 팔 수는 없어야 한다. 없는 주식을 파는 주문이 나가면 KIS가
+   * 거부하고, 그 회차는 매도도 매수도 못 한 채 끝난다.
+   */
+  it('주문만 나가 있는 종목은 데드크로스가 나도 팔지 않는다', () => {
+    const positions: StrategyPositions = [
+      { instrumentId: instrument.id, quantity: 0, averagePrice: 0 },
+    ];
+    assert.deepEqual(strategy.decide(context([10, 12, 14, 16, 18, 20, 1], positions)), []);
+  });
+
   it('maxPositions를 넘겨 사지 않는다', () => {
     const rise = [20, 18, 16, 14, 12, 10, 40];
     const second: Instrument = { ...instrument, id: 'KR:KOSPI:000002', symbol: '000002' };
