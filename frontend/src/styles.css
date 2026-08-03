@@ -6802,6 +6802,66 @@ span.sample-badge {
 }
 
 /*
+ * 회차가 살아 있는지 한 줄. 평소에는 조용한 글씨로 두고, 주기를 넘겼을 때만
+ * 눈에 띄게 한다 — 정상일 때 빨간 줄이 늘 떠 있으면 정작 멎었을 때 안 보인다.
+ */
+.auto-run__pulse {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.auto-run__pulse[data-overdue] {
+  color: var(--up);
+  font-weight: 600;
+}
+
+/*
+ * 회차 줄 앞에 붙는 짧은 표. 글(`message`)과 같은 크기로 두면 묻히므로 배경을
+ * 준다. 매수·매도 색은 주문 티켓과 같은 값을 쓴다 — 같은 사실에 다른 색을 쓰면
+ * 화면마다 매수가 무슨 색인지 다시 익혀야 한다.
+ */
+.auto-run__tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.auto-run__tag[data-side='buy'] {
+  background: rgba(229, 72, 77, 0.14);
+  color: #ff9b9f;
+}
+
+.auto-run__tag[data-side='sell'] {
+  background: rgba(59, 130, 246, 0.14);
+  color: #93c5fd;
+}
+
+/* 오류·중단선은 사람이 손을 대야 하는 회차다. 정지·목표 도달은 그렇지 않다. */
+.auto-run__tag[data-status='error'],
+.auto-run__tag[data-status='stopped_out'] {
+  background: rgba(229, 72, 77, 0.14);
+  color: #ff9b9f;
+}
+
+.auto-run__equity {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/*
  * 시작 버튼은 무엇이 일어날지를 색으로 알려준다. 연습은 조용하게, 실제 돈이
  * 나가는 쪽은 눈에 띄게. 매수 버튼 색을 그대로 쓰면 연습인데도 실주문처럼 보인다.
  */

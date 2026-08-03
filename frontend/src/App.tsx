@@ -468,6 +468,66 @@ const AUTO_TRADER_STATUS_LABEL: Record<string, string> = {
 };
 
 /*
+ * 회차 기록 한 줄에 붙는 짧은 상태 이름. 위 라벨과 다른 말을 쓴다 — 위는 러너
+ * 전체가 지금 어떤 상태인지이고, 여기는 **그 회차 하나가 어떻게 끝났는지**다.
+ * `정지: …` 회차에 `멈춤`이라고 적으면 지금도 멈춰 있다는 뜻으로 읽힌다.
+ */
+const AUTO_RUN_STATUS_LABEL: Record<string, string> = {
+  stopped: '정지',
+  target_reached: '목표 도달',
+  stopped_out: '중단선',
+  error: '오류',
+};
+
+/**
+ * 러너가 **지금도 도는지**를 회차 기록으로 판단한다.
+ *
+ * 상태값(`running`)으로는 알 수 없다. 그건 서버가 마지막으로 그렇게 적어 둔
+ * 값이라, 회차가 멎어도 누가 정지시키기 전까지 계속 `running`이다. 실제로 도는지는
+ * **마지막 회차가 언제였는지**로만 드러난다.
+ *
+ * ── 늦었다고 말하는 문턱 (2026-08-03 장중 실측으로 고쳤다) ───────────────────
+ *
+ * 처음에는 여유를 30초로 뒀다가 **실측에 반박당했다.** 기록 시각은 회차가
+ * 시작한 때가 아니라 **끝나고 적힌 때**라, 회차 수행 시간만큼 간격이 흔들린다.
+ * 주기 60초로 돌린 모의계좌에서 잰 실제 간격은 이랬다.
+ *
+ *   09:12:27 → 09:13:26(59초) → 09:14:27(61초) → 09:15:40(73초)
+ *            → 09:16:27(47초) → 09:17:54(**87초**)
+ *
+ * 모의 서버가 초당 1회라 후보 8종목 시세만 9초가 걸리고, 그 길이가 회차마다
+ * 다르다. 여기에 이 화면이 10초에 한 번만 묻는 것이 더해져 **표시값은 실제보다
+ * 최대 10초 더 길게** 보인다. 30초로 두면 87 + 10 = 97초가 헛경보가 된다.
+ *
+ * 그래서 45초로 잡는다. 헛경보는 이 줄 전체를 못 믿게 만드는데, 그러면 정작
+ * 러너가 멎었을 때 아무도 안 본다.
+ */
+const RUNNER_PULSE_GRACE_SECONDS = 45;
+
+interface RunnerPulse {
+  /** 마지막 회차 이후 지난 초 */
+  sinceSeconds: number;
+  /** 다음 회차까지 남은 초. 이미 지났으면 0 */
+  untilSeconds: number;
+  /** 주기 + 여유를 넘겼다. 러너가 멎었거나 회차가 걸려 있다는 뜻 */
+  overdue: boolean;
+}
+
+function runnerPulse(
+  lastRunAt: number | undefined,
+  intervalSeconds: number,
+  nowMs: number,
+): RunnerPulse | null {
+  if (lastRunAt === undefined || !Number.isFinite(intervalSeconds) || intervalSeconds <= 0) return null;
+  const since = Math.max(0, Math.round((nowMs - lastRunAt) / 1000));
+  return {
+    sinceSeconds: since,
+    untilSeconds: Math.max(0, intervalSeconds - since),
+    overdue: since > intervalSeconds + RUNNER_PULSE_GRACE_SECONDS,
+  };
+}
+
+/*
  * 자동매매 최소 보유 시간 선택지.
  *
  * 선택지를 동등하게 늘어놓지 않는다(`docs/CODE_STYLE.md`) — `<option>`에는 툴팁이
@@ -3917,6 +3977,14 @@ export function App(): JSX.Element {
    */
   const autoTraderUnknownLabel = autoTraderError ? '확인 실패' : '확인 중';
   const isAutoTraderKnown = autoTrader !== null && autoTraderError === null;
+  /*
+   * 돌고 있을 때만 잰다. 멈춘 러너에 "마지막 회차 3시간 전"이라고 적으면 늦은
+   * 것처럼 읽히는데, 멈춘 러너는 회차를 안 도는 게 맞는 동작이다.
+   */
+  const autoRunnerPulse =
+    autoTrader?.status === 'running'
+      ? runnerPulse(autoTrader.recentRuns[0]?.createdAt, autoTrader.config.intervalSeconds, nowMs)
+      : null;
   /*
    * `실계좌`를 앞에 붙인다.
    *
@@ -7883,6 +7951,28 @@ export function App(): JSX.Element {
                 {autoTrader?.stopReason && <p className="live-order__result">{autoTrader.stopReason}</p>}
                 {autoMessage && <p className="live-order__result">{autoMessage}</p>}
 
+                {/*
+                  회차가 실제로 돌고 있는지를 표 위에 적는다. 아래 기록은 시각이
+                  적혀 있지만 "그래서 지금 살아 있나"를 읽으려면 사람이 현재
+                  시각과 빼야 한다. 러너가 멎은 것과 낼 신호가 없는 것은 화면에서
+                  똑같이 `신호 없음`이 멈춰 있는 모습이라 구분되지 않았다.
+                */}
+                {autoRunnerPulse && (
+                  <p className="auto-run__pulse" data-overdue={autoRunnerPulse.overdue || undefined}>
+                    {/*
+                      주기를 이미 지난 회차에 `다음 회차까지 약 0초`라고 적으면
+                      1초 뒤에 온다는 뜻으로 읽힌다. 위 실측대로 회차 길이가
+                      들쭉날쭉해서 그건 알 수 없는 값이다 — 모르는 것을 숫자로
+                      적지 않고 기다리는 중이라고만 적는다.
+                    */}
+                    {autoRunnerPulse.overdue
+                      ? `마지막 회차가 ${autoRunnerPulse.sinceSeconds}초 전입니다 · 주기 ${autoTrader?.config.intervalSeconds}초를 넘겼습니다`
+                      : autoRunnerPulse.untilSeconds > 0
+                        ? `마지막 회차 ${autoRunnerPulse.sinceSeconds}초 전 · 다음 회차까지 약 ${autoRunnerPulse.untilSeconds}초`
+                        : `마지막 회차 ${autoRunnerPulse.sinceSeconds}초 전 · 다음 회차를 기다리는 중`}
+                  </p>
+                )}
+
                 <div className="portfolio-table portfolio-table--auto-runs">
                   <div className="portfolio-table__head">
                     <span>시각</span>
@@ -7898,12 +7988,51 @@ export function App(): JSX.Element {
                   <CollapsibleRows
                     limit={6}
                     moreLabel={(hidden) => `이전 기록 ${hidden}건 더 보기`}
-                    rows={(autoTrader?.recentRuns ?? []).map((run) => (
-                      <div className="portfolio-table__row" key={run.id}>
-                        <span>{formatLogTime(run.createdAt, nowMs)}</span>
-                        <span>{run.message}</span>
-                      </div>
-                    ))}
+                    rows={(autoTrader?.recentRuns ?? []).map((run, index, runs) => {
+                      /*
+                        `running` 회차에는 표를 안 붙인다. 그게 대부분이라 전부
+                        붙이면 눈에 띄어야 할 오류·정지가 같이 묻힌다.
+                      */
+                      const statusLabel = AUTO_RUN_STATUS_LABEL[run.status];
+                      /*
+                        새 회차가 앞이므로 **시간상 앞선 회차는 다음 칸**이다.
+                        가장 오래된 줄은 비교 대상이 없어 `undefined`인데, 그때는
+                        평가금액을 적지 않는다 — 안 변한 것과 모르는 것은 다르다.
+                      */
+                      const previous = runs[index + 1];
+                      const equityMoved =
+                        run.equity !== undefined &&
+                        previous?.equity !== undefined &&
+                        run.equity !== previous.equity;
+                      return (
+                        <div className="portfolio-table__row" key={run.id}>
+                          <span>{formatLogTime(run.createdAt, nowMs)}</span>
+                          <span>
+                            {statusLabel && (
+                              <em className="auto-run__tag" data-status={run.status}>
+                                {statusLabel}
+                              </em>
+                            )}
+                            {/*
+                              주문을 낸(또는 내려다 막힌) 회차는 사유가 message에
+                              글로 들어 있지만, 수량·값은 필드에만 있고 화면에
+                              전혀 안 나왔다. 실제로 무엇이 얼마에 나갔는지가
+                              러너 기록에서 가장 중요한 한 줄이다.
+                            */}
+                            {run.side && (
+                              <em className="auto-run__tag" data-side={run.side}>
+                                {run.side === 'buy' ? '매수' : '매도'}
+                                {run.quantity !== undefined && ` ${run.quantity.toLocaleString()}주`}
+                                {run.price !== undefined && run.price > 0 && ` · ${formatMoney(run.price)}`}
+                              </em>
+                            )}
+                            {run.message}
+                            {/* 매 회차 같은 값을 적으면 노이즈다. 움직인 회차에만 적는다. */}
+                            {equityMoved && <em className="auto-run__equity">평가 {formatMoney(run.equity)}</em>}
+                          </span>
+                        </div>
+                      );
+                    })}
                   />
                   {(autoTrader?.recentRuns ?? []).length === 0 && (
                     <div className="portfolio-table__empty">
