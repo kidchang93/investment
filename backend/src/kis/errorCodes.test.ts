@@ -16,7 +16,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { kisErrorCodeOf, kisErrorHint, kisErrorKind, kisErrorSuffix } from './errorCodes.js';
+import {
+  isTrUnavailableOnServer,
+  kisErrorCodeOf,
+  kisErrorHint,
+  kisErrorKind,
+  kisErrorSuffix,
+  KisRequestError,
+} from './errorCodes.js';
 
 describe('짝이 어긋난 오류를 가른다', () => {
   it('실전 앱키를 모의 서버에 보낸 것은 짝 문제다', () => {
@@ -83,5 +90,36 @@ describe('응답 본문에서 코드 꺼내기', () => {
     assert.equal(kisErrorCodeOf('<html>502 Bad Gateway</html>'), '');
     assert.equal(kisErrorCodeOf(''), '');
     assert.equal(kisErrorCodeOf(123), '');
+  });
+});
+
+/*
+ * 2026-08-03: 화면에 `KIS 예약주문 조회 실패: 502`가 하루 종일 떠 있었다.
+ * 실제 원인은 모의 서버에 그 TR이 없는 것(`EGW02006`)이라 장애가 아니었는데,
+ * 오류가 평범한 `Error`라 코드가 실려 오지 않아 라우트가 가를 수 없었다.
+ */
+describe('이 서버에 없는 기능인지 가르기', () => {
+  it('EGW02006이면 참이다 — 설정으로 못 고치는 것이라 장애가 아니다', () => {
+    assert.equal(isTrUnavailableOnServer(new KisRequestError('모의투자 TR 이 아닙니다.', 'EGW02006')), true);
+  });
+
+  /* 앱키·서버 짝이 어긋난 것은 고칠 수 있는 문제라 조용히 넘기면 안 된다. */
+  it('앱키와 서버가 어긋난 것은 거짓이다', () => {
+    for (const code of ['EGW02007', 'EGW02004']) {
+      assert.equal(isTrUnavailableOnServer(new KisRequestError('짝 불일치', code)), false, code);
+    }
+  });
+
+  it('한도·알 수 없는 코드는 거짓이다', () => {
+    for (const code of ['EGW00201', 'EGW00215', '']) {
+      assert.equal(isTrUnavailableOnServer(new KisRequestError('기타', code)), false, code);
+    }
+  });
+
+  /* 네트워크 끊김 같은 진짜 장애는 502로 알려야 한다. */
+  it('KIS 응답이 아닌 오류는 거짓이다', () => {
+    assert.equal(isTrUnavailableOnServer(new Error('fetch failed')), false);
+    assert.equal(isTrUnavailableOnServer('EGW02006'), false);
+    assert.equal(isTrUnavailableOnServer(undefined), false);
   });
 });

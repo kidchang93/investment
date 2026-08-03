@@ -8,6 +8,7 @@ import type {
   BrokerAccountRef,
   BrokerAccountSnapshot,
   BrokerAmendableOrder,
+  BrokerListSnapshot,
   BrokerOrderRecord,
   BrokerReservedOrder,
   BrokerSellability,
@@ -119,13 +120,24 @@ export async function fetchKisSellability(
   return res.json();
 }
 
-export async function fetchKisOpenOrders(accountId?: string): Promise<BrokerAmendableOrder[]> {
+/*
+ * 두 조회는 **모의 서버에 아예 없는 기능**이다(`EGW02006`). 그래서 목록과 함께
+ * `unavailable`이 올 수 있고, 그건 오류가 아니라 이 환경의 사실이다.
+ *
+ * 예전에는 성공이 배열, 실패가 `{message}`라 모양이 갈렸다. 읽는 쪽이 실패를
+ * 빈 목록으로 착각하기 딱 좋았고 실제로 그런 오독이 났다.
+ */
+export async function fetchKisOpenOrders(
+  accountId?: string,
+): Promise<BrokerListSnapshot<BrokerAmendableOrder>> {
   const res = await fetch(`${API_BASE}/api/broker/kis/open-orders${accountQuery(accountId)}`);
   if (!res.ok) throw new Error(`KIS 미체결 주문 조회 실패: ${res.status}`);
   return res.json();
 }
 
-export async function fetchKisReservedOrders(accountId?: string): Promise<BrokerReservedOrder[]> {
+export async function fetchKisReservedOrders(
+  accountId?: string,
+): Promise<BrokerListSnapshot<BrokerReservedOrder>> {
   const res = await fetch(`${API_BASE}/api/broker/kis/reserved-orders${accountQuery(accountId)}`);
   if (!res.ok) throw new Error(`KIS 예약주문 조회 실패: ${res.status}`);
   return res.json();

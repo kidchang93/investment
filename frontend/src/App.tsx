@@ -2754,6 +2754,14 @@ export function App(): JSX.Element {
    */
   const [kisOpenOrdersUpdatedAt, setKisOpenOrdersUpdatedAt] = useState<number | null>(null);
   const [kisReservedOrdersUpdatedAt, setKisReservedOrdersUpdatedAt] = useState<number | null>(null);
+  /*
+   * 이 환경에 그 조회 기능이 없을 때의 안내. **오류 상태가 아니다.**
+   * 모의 서버에는 예약주문·정정취소가능주문 TR이 없어(`EGW02006`) 늘 실패하는데,
+   * 예전에는 그것이 502로 올라와 화면 위쪽에 빨간 배너로 하루 종일 떠 있었다.
+   * 그러면 정작 진짜 장애가 났을 때 구별되지 않는다.
+   */
+  const [kisOpenOrdersUnavailable, setKisOpenOrdersUnavailable] = useState<string | null>(null);
+  const [kisReservedOrdersUnavailable, setKisReservedOrdersUnavailable] = useState<string | null>(null);
   const [isReservedCancelling, setIsReservedCancelling] = useState(false);
   const [reservedSide, setReservedSide] = useState<OrderSide>('buy');
   const [reservedQuantity, setReservedQuantity] = useState('1');
@@ -3279,8 +3287,9 @@ export function App(): JSX.Element {
   const refreshKisOpenOrders = useCallback((): void => {
     setIsKisOpenOrdersRefreshing(true);
     fetchKisOpenOrders(kisAccountId ?? undefined)
-      .then((orders) => {
-        setKisOpenOrders(orders);
+      .then((snapshot) => {
+        setKisOpenOrders(snapshot.items);
+        setKisOpenOrdersUnavailable(snapshot.unavailable ?? null);
         setKisOpenOrdersUpdatedAt(Date.now());
       })
       .catch((e) => setError(toErrorMessage(e)))
@@ -3422,8 +3431,9 @@ export function App(): JSX.Element {
 
   const refreshKisReservedOrders = useCallback((): void => {
     fetchKisReservedOrders(kisAccountId ?? undefined)
-      .then((orders) => {
-        setKisReservedOrders(orders);
+      .then((snapshot) => {
+        setKisReservedOrders(snapshot.items);
+        setKisReservedOrdersUnavailable(snapshot.unavailable ?? null);
         setKisReservedOrdersUpdatedAt(Date.now());
       })
       .catch((e) => setError(toErrorMessage(e)));
@@ -8259,7 +8269,9 @@ export function App(): JSX.Element {
                   <div>
                     <strong>실계좌 예약주문</strong>
                     <span>
-                      {kisReservedOrders.length}건 · 최근 30일 · 취소하지 않으면 다음 개장일에 주문이 나갑니다
+                      {kisReservedOrdersUnavailable !== null
+                        ? '조회할 수 없음'
+                        : `${kisReservedOrders.length}건 · 최근 30일 · 취소하지 않으면 다음 개장일에 주문이 나갑니다`}
                       {kisReservedOrdersUpdatedAt !== null && ` · 갱신 ${formatClock(kisReservedOrdersUpdatedAt)}`}
                     </span>
                   </div>
@@ -8383,7 +8395,15 @@ export function App(): JSX.Element {
                     ))}
                   </div>
                 )}
-                {kisReservedOrders.length === 0 ? (
+                {/*
+                  **없는 것과 못 본 것을 가른다.** 모의 서버에는 이 조회 TR이
+                  아예 없어서(`EGW02006`) 목록이 늘 비는데, 그것을 `예약주문이
+                  없습니다`로 적으면 "확인했더니 없더라"로 읽힌다 — 확인 자체를
+                  못 했다. 예전에는 502가 화면 위 빨간 배너로 올라왔다.
+                */}
+                {kisReservedOrdersUnavailable !== null ? (
+                  <div className="portfolio-table__empty">{kisReservedOrdersUnavailable}</div>
+                ) : kisReservedOrders.length === 0 ? (
                   <div className="portfolio-table__empty">예약주문이 없습니다 · 아래에서 등록하면 다음 개장일에 주문이 나갑니다</div>
                 ) : (
                   <div className="portfolio-table portfolio-table--reserved">
@@ -8812,7 +8832,9 @@ export function App(): JSX.Element {
                 {/* `안 팔린`이라고 적으면 매수 주문이 빠진다. 미체결은 사고파는 양쪽 다 해당한다. */}
                 <strong>체결을 기다리는 주문</strong>
                 <span>
-                  {kisOpenOrders.length}건 · 값을 고치거나 취소할 수 있습니다
+                  {kisOpenOrdersUnavailable !== null
+                    ? '조회할 수 없음'
+                    : `${kisOpenOrders.length}건 · 값을 고치거나 취소할 수 있습니다`}
                   {kisOpenOrdersUpdatedAt !== null && ` · 갱신 ${formatClock(kisOpenOrdersUpdatedAt)}`}
                 </span>
                 <button
@@ -8835,7 +8857,10 @@ export function App(): JSX.Element {
                   ))}
                 </div>
               )}
-              {kisOpenOrders.length === 0 ? (
+              {/* 위와 같은 이유. 이 조회도 모의 서버에 없다. */}
+              {kisOpenOrdersUnavailable !== null ? (
+                <div className="portfolio-table__empty">{kisOpenOrdersUnavailable}</div>
+              ) : kisOpenOrders.length === 0 ? (
                 <div className="portfolio-table__empty">아직 체결되지 않은 주문이 없습니다 · 지정가 주문을 내면 여기에서 값을 고치거나 취소할 수 있습니다</div>
               ) : (
                 <div className="portfolio-table portfolio-table--open-orders">

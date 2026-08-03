@@ -48,7 +48,14 @@ import {
   stopAutoTrader,
 } from './trading/autoTrader.js';
 import { listStrategies } from './trading/strategy.js';
+import { isTrUnavailableOnServer } from './kis/errorCodes.js';
 import { pendingBuySymbols } from './trading/pendingBuys.js';
+
+/**
+ * 모의 서버에 없는 기능을 화면에 어떻게 말할지. 두 라우트가 같은 말을 쓴다.
+ * **오류가 아니다** — 설정으로 못 고치고 `APP_ENV=prod`에서만 쓸 수 있다.
+ */
+const TR_UNAVAILABLE_NOTE = '모의투자 서버에는 이 조회 기능이 없습니다 · 실전 계좌에서만 볼 수 있습니다';
 import { loadAutoTraderCandidates } from './trading/universe.js';
 import {
   DEFAULT_SCREENING_LOOKUPS,
@@ -326,8 +333,14 @@ async function main(): Promise<void> {
     const account = resolveAccount(req.query.accountId);
     if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
     try {
-      return await getKisDomesticAmendableOrders(account);
+      return { items: await getKisDomesticAmendableOrders(account) };
     } catch (err) {
+      /*
+       * **모의 서버에 없는 기능은 장애가 아니다.** 이 TR은 실전에만 있어
+       * `APP_ENV=vts`인 동안 늘 `EGW02006`으로 실패한다. 502로 알리면 화면에
+       * 빨간 배너가 하루 종일 뜨고, 정작 진짜 장애가 났을 때 구별되지 않는다.
+       */
+      if (isTrUnavailableOnServer(err)) return { items: [], unavailable: TR_UNAVAILABLE_NOTE };
       req.log.warn({ err, accountId: req.query.accountId }, 'KIS 정정취소가능주문 조회 실패');
       return reply.code(502).send({ message: 'KIS 정정취소가능주문을 조회할 수 없습니다.' });
     }
@@ -340,8 +353,14 @@ async function main(): Promise<void> {
       if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
       const days = Number(req.query.days ?? DEFAULT_EXECUTION_DAYS);
       try {
-        return await getKisDomesticReservedOrders(account, Number.isFinite(days) ? days : DEFAULT_EXECUTION_DAYS);
+        const items = await getKisDomesticReservedOrders(
+          account,
+          Number.isFinite(days) ? days : DEFAULT_EXECUTION_DAYS,
+        );
+        return { items };
       } catch (err) {
+        // 위와 같은 이유. 이 TR도 모의 서버에 없다.
+        if (isTrUnavailableOnServer(err)) return { items: [], unavailable: TR_UNAVAILABLE_NOTE };
         req.log.warn({ err, accountId: req.query.accountId }, 'KIS 예약주문 조회 실패');
         return reply.code(502).send({ message: 'KIS 예약주문을 조회할 수 없습니다.' });
       }

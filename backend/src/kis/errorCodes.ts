@@ -79,3 +79,36 @@ export function kisErrorSuffix(body: unknown): string {
   const hint = kisErrorHint(kisErrorCodeOf(body));
   return hint ? ` — ${hint}` : '';
 }
+
+/**
+ * KIS가 거절한 요청. **코드를 들고 다닌다.**
+ *
+ * 예전에는 평범한 `Error`에 본문을 문자열로 이어 붙여 던졌다. 그래서 호출부가
+ * 원인을 가르려면 메시지를 정규식으로 뒤져야 했고, 실제로는 아무도 안 갈랐다 —
+ * 라우트가 전부 502로 뭉갰다.
+ *
+ * 화면에 `KIS 예약주문 조회 실패: 502`가 계속 떴는데 실제 원인은 `EGW02006`,
+ * **모의 서버에 그 TR이 없는 것**이었다. 장애가 아니라 이 환경에 없는 기능이고,
+ * 502는 "게이트웨이가 맛이 갔다"는 뜻이라 사람을 엉뚱한 곳으로 보낸다.
+ */
+export class KisRequestError extends Error {
+  constructor(
+    message: string,
+    /** KIS `msg_cd`. 못 읽었으면 빈 문자열 */
+    readonly msgCode: string,
+  ) {
+    super(message);
+    this.name = 'KisRequestError';
+  }
+}
+
+/**
+ * 이 서버에 **애초에 없는 기능**이라 실패한 것인가.
+ *
+ * 설정으로 못 고친다 — `APP_ENV=prod`로 가야만 쓸 수 있다. 그래서 재시도할 것도,
+ * 장애로 알릴 것도 아니다. 화면은 "이 환경에 없다"고만 말하면 된다.
+ */
+export function isTrUnavailableOnServer(error: unknown): boolean {
+  if (!(error instanceof KisRequestError)) return false;
+  return kisErrorKind(error.msgCode) === 'trNotOnVts';
+}

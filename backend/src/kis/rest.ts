@@ -8,7 +8,7 @@ import {
 } from '../config.js';
 import { getDomesticInstrumentsBySymbols } from '../db/instruments.js';
 import { credentialServer, getAccessToken, primaryCredentials, type KisCredentials } from './auth.js';
-import { kisErrorSuffix } from './errorCodes.js';
+import { kisErrorCodeOf, kisErrorSuffix, KisRequestError } from './errorCodes.js';
 import {
   chunkQuoteCodes,
   MULTI_QUOTE_PATH,
@@ -95,7 +95,10 @@ async function kisPost(
     });
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`KIS POST ${path} 실패 (${res.status}): ${text}${kisErrorSuffix(text)}`);
+      throw new KisRequestError(
+        `KIS POST ${path} 실패 (${res.status}): ${text}${kisErrorSuffix(text)}`,
+        kisErrorCodeOf(text),
+      );
     }
     return (await res.json()) as Record<string, unknown>;
   });
@@ -239,7 +242,10 @@ async function kisGetWithHeaders(
     }
     if (!res.ok && !isRateLimited(body)) {
       // 짝이 어긋났다는 뜻의 코드면 그렇게 말해 준다. 아니면 덧말이 빈 문자열이다.
-      throw new Error(`KIS GET ${path} 실패 (${res.status}): ${text}${kisErrorSuffix(body)}`);
+      throw new KisRequestError(
+        `KIS GET ${path} 실패 (${res.status}): ${text}${kisErrorSuffix(body)}`,
+        kisErrorCodeOf(body),
+      );
     }
     return { body, headers: res.headers };
   }
