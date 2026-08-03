@@ -276,8 +276,39 @@ export function verdictFor(quote: Quote, elapsed: number, cash: number): Screeni
   return screened ?? 'pass';
 }
 
-function isOrderable(instrument: Instrument): boolean {
+/*
+ * 레버리지·인버스 상품을 가리는 이름 패턴.
+ *
+ * ── 왜 빼나 (2026-08-03 장중 실측) ────────────────────────────────────────
+ *
+ * 후보를 **거래대금 순**으로 고치자마자 러너가 이것들을 샀다. 자리 8개 중 셋이
+ * 같은 기초자산이었다.
+ *
+ *   TIGER SK하이닉스단일종목레버리지  12,912,225 × 2배 = 25,824,450
+ *   KODEX SK하이닉스단일종목레버리지  12,888,780 × 2배 = 25,777,560
+ *   SK하이닉스(현물)                 12,712,000 × 1배 = 12,712,000
+ *   ────────────────────────────────────────────────────────────
+ *   SK하이닉스 실효 노출              64,314,010 = **총평가의 64.6%**
+ *
+ * `maxPositions`는 **종목 수**를 세지 위험을 세지 않는다. 여덟 자리가 여덟 개의
+ * 다른 위험이라고 가정했는데 실제로는 한 종목의 파생 셋이었다. 분산이 아니라
+ * 한 종목 몰빵이고, 거래대금 순 정렬이 이것을 부른다 — 단일종목 레버리지 ETF는
+ * 거래대금이 크고 서로 상관이 1에 가깝다.
+ *
+ * 레버리지 상품에는 이 중복과 별개의 문제도 있다. **일간 수익률의 배수**를
+ * 좇으므로 오르내림이 반복되면 기초자산이 제자리여도 값이 깎인다(변동성 끌림).
+ * 이 레포의 백테스트는 그 성질을 모형에 넣지 않는다.
+ *
+ * 2026-08-03 기준 국내 ETF·ETN 1,158개 중 103개가 이 패턴에 걸린다.
+ * 종목명으로 거르는 것은 어림이다 — 기초자산 구성 데이터가 없다. 그래서
+ * **덜 사는 쪽으로 틀린다**: 이름에 표시가 없는 파생은 못 거르지만, 거른 것이
+ * 파생이 아닌 경우는 없다.
+ */
+const LEVERAGED_NAME_PATTERN = /레버리지|인버스|\dX/;
+
+export function isOrderableForAutoTrader(instrument: Instrument): boolean {
   if (instrument.country !== 'KR') return false;
+  if (LEVERAGED_NAME_PATTERN.test(instrument.name)) return false;
   return instrument.assetType === 'stock' || instrument.assetType === 'etf' || instrument.assetType === 'etn';
 }
 
@@ -424,7 +455,7 @@ export async function loadAutoTraderCandidates(accountId: string, cash: number):
   );
   const usable = pools.map((pool) =>
     pool
-      .filter(isOrderable)
+      .filter(isOrderableForAutoTrader)
       .filter((instrument) => !blocked.has(instrument.symbol))
       .filter((instrument) => (allowed ? allowed.has(instrument.symbol) : true)),
   );
