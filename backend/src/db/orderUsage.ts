@@ -76,6 +76,22 @@ export interface DailyOrderUsage {
    * 따로 필요하지 않다.
    */
   buyCount: number;
+  /**
+   * 그중 **매수** 금액의 합. 일일 금액 한도도 이 값으로만 판정한다.
+   *
+   * ── 왜 갈랐나 (2026-08-03 오후, 실제로 막혔다) ──────────────────────────
+   *
+   * 건수를 매수만 세도록 고쳤는데 **금액은 그대로 양쪽을 세고 있었다.** 같은
+   * 사고가 다른 문으로 그대로 돌아왔다.
+   *
+   *   13:33 KODEX AI반도체TOP2플러스 매도 차단 · 일일 주문 금액 한도
+   *         300,000,000원을 초과합니다 (오늘 299,693,845원)
+   *   13:38 삼성전기 매도 차단 · 같은 사유
+   *
+   * 보유 8종목이 팔 수 없는 채로 앉아 있었다. 한도가 막으려던 것은 **얼마나
+   * 태우는가**이지 빠져나오는 것이 아니다 — 매도는 오히려 노출을 줄인다.
+   */
+  buyNotional: number;
   /** 그중 금액을 아는 것들의 합 */
   notional: number;
   /** 금액을 알 수 없어 합에서 빠진 건수. 이 값이 0이 아니면 합은 **하한**일 뿐이다 */
@@ -98,13 +114,17 @@ export function summarizeDailyOrderUsage(rows: DailyOrderUsageRow[]): DailyOrder
   let notional = 0;
   let unpricedCount = 0;
   let buyCount = 0;
+  let buyNotional = 0;
   for (const row of rows) {
-    if (row.side === 'buy') buyCount += 1;
     const amount = orderNotional(row.quantity, usageUnitPrice(row));
+    if (row.side === 'buy') {
+      buyCount += 1;
+      if (amount !== undefined) buyNotional += amount;
+    }
     if (amount === undefined) unpricedCount += 1;
     else notional += amount;
   }
-  return { count: rows.length, buyCount, notional, unpricedCount };
+  return { count: rows.length, buyCount, notional, buyNotional, unpricedCount };
 }
 
 /**
@@ -118,7 +138,7 @@ export function dailyLimitViolations(input: {
   usage: DailyOrderUsage;
   /** 지금 내려는 주문의 금액. 모르면 `undefined` — 0으로 채우지 않는다 */
   notional: number | undefined;
-  /** 지금 내려는 주문의 방향. 매도는 건수 한도를 지나간다 */
+  /** 지금 내려는 주문의 방향. **매도는 건수·금액 한도를 둘 다 지나간다** */
   side?: OrderSide;
 }): string[] {
   const { rules, usage, notional } = input;
@@ -136,17 +156,26 @@ export function dailyLimitViolations(input: {
       `일일 매수 건수 한도 ${rules.dailyOrderCountLimit}건을 초과합니다 (오늘 ${usage.buyCount}건).`,
     );
   }
-  if (notional !== undefined && usage.notional + notional > rules.dailyNotionalLimit) {
+  /*
+   * **매수 금액만 센다.** 건수와 같은 이유다 — 합쳐 세면 한도가 차는 순간
+   * 매도가 잠겨 그날 포지션을 닫을 수 없다. 2026-08-03 오후에 실제로 그랬다.
+   * 매도는 이 잣대를 아예 지나간다.
+   */
+  if (
+    input.side !== 'sell' &&
+    notional !== undefined &&
+    usage.buyNotional + notional > rules.dailyNotionalLimit
+  ) {
     violations.push(
-      `일일 주문 금액 한도 ${rules.dailyNotionalLimit.toLocaleString('ko-KR')}원을 초과합니다 ` +
-        `(오늘 ${usage.notional.toLocaleString('ko-KR')}원).`,
+      `일일 매수 금액 한도 ${rules.dailyNotionalLimit.toLocaleString('ko-KR')}원을 초과합니다 ` +
+        `(오늘 ${usage.buyNotional.toLocaleString('ko-KR')}원).`,
     );
   }
   /*
    * 금액을 알 수 없는 접수 건이 있으면 위 합은 **하한**일 뿐이다. 0으로 세면 한도가
    * 조용히 헐거워지므로 모르는 동안에는 막힌 쪽에 둔다 — 개장일을 확인 못 했을 때와 같다.
    */
-  if (usage.unpricedCount > 0) {
+  if (input.side !== 'sell' && usage.unpricedCount > 0) {
     violations.push(
       '오늘 접수된 주문 중 금액을 알 수 없는 건이 있어 일일 금액 한도를 확인할 수 없습니다 ' +
         `(${usage.unpricedCount}건).`,

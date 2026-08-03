@@ -444,7 +444,12 @@ async function buyQuantityForAccount(
     maxOrderQuantity: rules.maxOrderQuantity,
     maxOrderNotional: rules.maxOrderNotional,
     dailyNotionalLimit: rules.dailyNotionalLimit,
-    usedNotional: usage.notional,
+    /*
+     * **매수 금액만 뺀다.** 여기는 "얼마나 더 태울 수 있나"를 묻는 자리라
+     * 매도까지 세면 팔수록 살 수 없어진다. 한도 판정(`dailyLimitViolations`)이
+     * 보는 값과 같은 것을 봐야 둘이 갈리지 않는다.
+     */
+    usedNotional: usage.buyNotional,
     totalAskQuantity,
   });
 }

@@ -114,7 +114,7 @@ describe('일일 사용량 — 모르는 것은 0이 아니다', () => {
       marketRow({ quantity: '', limitPrice: '', estimatedPrice: '' }),
       limitRow(),
     ]);
-    assert.deepEqual(usage, { count: 3, buyCount: 3, notional: 100_000, unpricedCount: 2 });
+    assert.deepEqual(usage, { count: 3, buyCount: 3, notional: 100_000, buyNotional: 100_000, unpricedCount: 2 });
   });
 });
 
@@ -132,6 +132,7 @@ describe('일일 사용량 — 건수', () => {
       count: 0,
       buyCount: 0,
       notional: 0,
+      buyNotional: 0,
       unpricedCount: 0,
     });
   });
@@ -146,7 +147,11 @@ function usage(overrides: Partial<DailyOrderUsage> = {}): DailyOrderUsage {
    * 기준이라, 여기서 0으로 두면 건수 한도 시험이 통째로 무력해진다.
    */
   const base = { count: 0, notional: 0, unpricedCount: 0, ...overrides };
-  return { ...base, buyCount: overrides.buyCount ?? base.count };
+  return {
+    ...base,
+    buyCount: overrides.buyCount ?? base.count,
+    buyNotional: overrides.buyNotional ?? base.notional,
+  };
 }
 
 describe('일일 한도 판정 — 시장가가 실제로 한도에 걸린다', () => {
@@ -159,7 +164,7 @@ describe('일일 한도 판정 — 시장가가 실제로 한도에 걸린다', 
 
     const blocked = dailyLimitViolations({ rules: LIMITS, usage: today, notional: 240_000 });
     assert.equal(blocked.length, 1, blocked.join(' / '));
-    assert.match(blocked[0], /일일 주문 금액 한도 5,000,000원을 초과합니다 \(오늘 4,800,000원\)/);
+    assert.match(blocked[0], /일일 매수 금액 한도 5,000,000원을 초과합니다 \(오늘 4,800,000원\)/);
   });
 
   it('예전 계산(시장가 0원)이었다면 통과했을 주문을 막는다', () => {
@@ -201,6 +206,48 @@ describe('일일 한도 판정 — 건수 (회귀 방지)', () => {
     );
   });
 
+  /*
+   * ★ 이 시험이 있는 이유: 건수만 고치고 **금액을 안 고쳐서 같은 사고가 다시
+   * 났다**(2026-08-03 오후). 보유 8종목이 팔 수 없는 채로 앉아 있었다.
+   *
+   *   13:33 KODEX AI반도체TOP2플러스 매도 차단 · 일일 주문 금액 한도
+   *         300,000,000원을 초과합니다 (오늘 299,693,845원)
+   *   13:38 삼성전기 매도 차단 · 같은 사유
+   *
+   * 한 잣대만 고치면 다른 문으로 그대로 돌아온다. 두 잣대를 함께 못 박는다.
+   */
+  it('금액 한도가 꽉 차도 매도는 막지 않는다', () => {
+    const full = usage({ count: 29, buyCount: 20, notional: 299_693_845, buyNotional: 299_693_845 });
+    const rules = { dailyOrderCountLimit: 40, dailyNotionalLimit: 300_000_000 };
+    assert.deepEqual(
+      dailyLimitViolations({ rules, usage: full, notional: 13_000_000, side: 'sell' }),
+      [],
+    );
+    assert.equal(
+      dailyLimitViolations({ rules, usage: full, notional: 13_000_000, side: 'buy' }).length,
+      1,
+    );
+  });
+
+  /* 금액을 모르는 건이 있어도 그것이 매도를 잠그면 안 된다 — 같은 사고의 세 번째 문. */
+  it('금액을 모르는 건이 있어도 매도는 막지 않는다', () => {
+    const murky = usage({ count: 5, buyCount: 5, unpricedCount: 2 });
+    assert.deepEqual(
+      dailyLimitViolations({ rules: LIMITS, usage: murky, notional: undefined, side: 'sell' }),
+      [],
+    );
+    assert.ok(
+      dailyLimitViolations({ rules: LIMITS, usage: murky, notional: undefined, side: 'buy' }).length > 0,
+    );
+  });
+
+  it('매도 금액은 매수 한도를 먹지 않는다', () => {
+    // 오늘 3억이 오갔지만 매수는 1억뿐인 상태 — 매수가 더 나갈 수 있어야 한다.
+    const mixed = usage({ count: 30, buyCount: 10, notional: 300_000_000, buyNotional: 100_000_000 });
+    const rules = { dailyOrderCountLimit: 40, dailyNotionalLimit: 300_000_000 };
+    assert.deepEqual(dailyLimitViolations({ rules, usage: mixed, notional: 13_000_000, side: 'buy' }), []);
+  });
+
   it('매수만 센다 — 매도가 쌓여도 매수 한도를 먹지 않는다', () => {
     // 오늘 30건이 접수됐지만 매수는 5건뿐인 상태.
     const mixed = usage({ count: 30, buyCount: 5 });
@@ -223,7 +270,7 @@ describe('일일 한도 판정 — 모르면 막힌 쪽', () => {
   it('오늘 접수분 중 금액을 모르는 건이 있으면 한도를 확인할 수 없다고 막는다', () => {
     const blocked = dailyLimitViolations({
       rules: LIMITS,
-      usage: usage({ count: 3, buyCount: 3, notional: 100_000, unpricedCount: 2 }),
+      usage: usage({ count: 3, buyCount: 3, notional: 100_000, buyNotional: 100_000, unpricedCount: 2 }),
       notional: 10_000,
     });
     assert.equal(blocked.length, 1);
