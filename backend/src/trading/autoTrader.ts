@@ -41,7 +41,12 @@ import {
 } from '../kis/rest.js';
 import { checkBuyFundamentals } from './fundamentals.js';
 import { checkMinHold, describeMinHoldDefer, describeMinHoldSetting } from './minHold.js';
-import { buyQuantityWithinRules, describeBuySizeBound, type BuySize } from './orderSizing.js';
+import {
+  buyQuantityWithinRules,
+  describeBuySizeBound,
+  spendableCash,
+  type BuySize,
+} from './orderSizing.js';
 import {
   candleTargets,
   classifyCandles,
@@ -256,7 +261,11 @@ async function runOnce(handle: RunnerHandle, deps: AutoTraderDeps): Promise<void
     return;
   }
 
-  const cash = snapshot.cashBalance ?? 0;
+  /*
+   * **예수금이 아니라 정산 기준 현금이다.** 예수금은 D+2 결제 전까지 안 줄어서
+   * 오늘 6,862만원을 쓰고도 1억으로 보였다 — 근거는 `spendableCash`에 있다.
+   */
+  const cash = spendableCash(snapshot);
   /*
    * KIS 잔고는 종목코드(symbol)만 준다. 전략은 instrumentId로 이야기하므로
    * 코드로 종목을 찾아 맞춰준다.

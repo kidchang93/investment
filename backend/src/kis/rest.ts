@@ -1468,6 +1468,13 @@ export async function getKisDomesticAccountSnapshot(
     accountLabel: `${account.label} · ${maskKisAccount(account.cano, account.productCode)}`,
     baseCurrency: 'KRW',
     cashBalance: firstNumber(summary, ['dnca_tot_amt', 'nxdy_excc_amt']) ?? 0,
+    /*
+     * 결제 기준 현금. D+2(`prvs_rcdl_excc_amt`)가 오늘 낸 주문까지 반영한 값이고,
+     * 없으면 D+1(`nxdy_excc_amt`)로 내려간다. **둘 다 없으면 `undefined`로 둔다** —
+     * 여기서 `dnca_tot_amt`로 떨어뜨리면 오늘 산 것이 안 빠진 값이 "쓸 수 있는 돈"인
+     * 척하게 되고, 그게 정확히 이 필드를 만든 이유다.
+     */
+    settlementCash: firstNumber(summary, ['prvs_rcdl_excc_amt', 'nxdy_excc_amt']),
     totalEvaluation: firstNumber(summary, ['tot_evlu_amt']),
     stockEvaluation: firstNumber(summary, ['scts_evlu_amt']),
     purchaseAmount: firstNumber(summary, ['pchs_amt_smtl_amt']),

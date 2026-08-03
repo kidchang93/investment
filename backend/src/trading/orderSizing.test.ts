@@ -16,7 +16,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { buyQuantityWithinRules, describeBuySizeBound, type BuySizeBound, type BuySizeInput } from './orderSizing.js';
+import {
+  buyQuantityWithinRules,
+  describeBuySizeBound,
+  spendableCash,
+  type BuySizeBound,
+  type BuySizeInput,
+} from './orderSizing.js';
 
 /*
  * 수량과 사유만 본다. `askDepthShare`는 나중에 상한을 실측으로 바꾸려고 남기는
@@ -187,5 +193,30 @@ describe('매수 수량 — 호가 잔량 상한', () => {
     });
     assert.equal(result.boundBy, 'orderNotional');
     assert.equal(result.askDepthShare, 121 / 2_000);
+  });
+});
+
+/*
+ * 2026-08-03 실측: 6,862만원어치를 사고도 `cashBalance`가 1억 그대로였다.
+ * 결제가 D+2라 예수금이 안 줄기 때문이다. 그 값으로 수량을 정하면 러너는
+ * 하루 종일 있지도 않은 돈만큼 살 수 있다고 믿는다.
+ */
+describe('살 수 있는 돈 — 예수금이 아니라 정산 기준', () => {
+  it('정산 기준 현금이 있으면 그것을 쓴다', () => {
+    // 같은 시각 실측값. 예수금 1억, 매입 6,862만, 정산 기준 3,136만.
+    assert.equal(spendableCash({ cashBalance: 100_000_000, settlementCash: 31_362_295 }), 31_362_295);
+  });
+
+  it('정산 기준을 모르면 예수금으로 내려간다 — 0으로 두면 아무것도 못 산다', () => {
+    assert.equal(spendableCash({ cashBalance: 100_000_000 }), 100_000_000);
+    assert.equal(spendableCash({ cashBalance: 100_000_000, settlementCash: Number.NaN }), 100_000_000);
+  });
+
+  it('음수는 0으로 본다 — 그대로 나누면 수량이 음수가 된다', () => {
+    assert.equal(spendableCash({ cashBalance: 100_000_000, settlementCash: -5_000_000 }), 0);
+  });
+
+  it('둘 다 없으면 0이다', () => {
+    assert.equal(spendableCash({}), 0);
   });
 });

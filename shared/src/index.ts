@@ -1173,7 +1173,20 @@ export interface BrokerAccountSnapshot {
   accountId: string;
   accountLabel: string;
   baseCurrency: string;
+  /**
+   * 예수금 총액(D+0). **오늘 산 것이 빠져 있지 않다.**
+   *
+   * 결제가 D+2라 오늘 매수한 금액만큼 줄지 않는다 — 2026-08-03에 6,860만원어치를
+   * 사고도 1억 그대로였다. "지금 더 살 수 있는 돈"으로 쓰면 안 된다.
+   * 그 값은 `settlementCash`다.
+   */
   cashBalance?: number;
+  /**
+   * 오늘 낸 주문까지 반영한 정산 기준 현금(KIS 가수도정산금액, D+2).
+   * **모르면 `undefined`다** — 0으로 채우지 않는다. 이 값을 안 주는 계좌·경로에서
+   * 0을 쓰면 살 수 있는 돈이 없는 것으로 보여 아무것도 못 산다.
+   */
+  settlementCash?: number;
   totalEvaluation?: number;
   stockEvaluation?: number;
   purchaseAmount?: number;

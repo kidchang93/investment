@@ -142,6 +142,32 @@ export function buyQuantityWithinRules(input: BuySizeInput): BuySize {
   return { quantity, boundBy: boundBy ?? 'cash', askDepthShare };
 }
 
+/**
+ * 지금 더 쓸 수 있는 현금.
+ *
+ * ── 왜 예수금을 그대로 쓰면 안 되나 (2026-08-03 실측) ────────────────────
+ *
+ * `cashBalance`는 예수금 총액(`dnca_tot_amt`, D+0)이라 **결제 전까지 줄지 않는다.**
+ * 그날 6,862만원어치를 사고도 1억 그대로였다 — 러너에게는 하루 종일 현금이 안 준
+ * 것으로 보이고, 그 값으로 수량을 정하면 있지도 않은 돈만큼 계속 살 수 있다고 믿는다.
+ *
+ * `settlementCash`(가수도정산금액, D+2)는 오늘 낸 주문이 빠진 값이다. 같은 시각
+ * 실측에서 31,362,295원으로 `1억 − 매입 6,862만`과 맞았다.
+ *
+ * **모르면 예수금으로 내려간다.** 이 값을 안 주는 계좌·경로가 있는데 거기서 0으로
+ * 두면 아무것도 못 산다. 내려갈 때 덜 정확해지는 것은 사실이고, 그건
+ * `maxPositions`와 1회 금액 한도가 함께 막는다.
+ */
+export function spendableCash(snapshot: {
+  cashBalance?: number;
+  settlementCash?: number;
+}): number {
+  const settled = snapshot.settlementCash;
+  // 음수는 이미 한도를 넘겨 쓴 것이다. 그대로 나누면 수량이 음수가 된다.
+  if (settled !== undefined && Number.isFinite(settled)) return Math.max(0, settled);
+  return Math.max(0, snapshot.cashBalance ?? 0);
+}
+
 /** 수량을 무엇이 정했는지 사람이 읽을 한 조각. 실행 기록에 붙는다. */
 export function describeBuySizeBound(bound: BuySizeBound): string {
   switch (bound) {
