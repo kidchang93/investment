@@ -1501,6 +1501,57 @@ export async function getKisDomesticAccountSnapshot(
  * `nrcvb_*`는 미수(외상) 없는 값, `max_*`는 미수를 포함한 값이라 서로 다르다.
  * 주문 게이트는 보수적으로 미수 없는 값을 기준 삼도록 둘 다 노출한다.
  */
+/**
+ * 주문구분 코드(`ORD_DVSN`)가 이 계좌에서 받아들여지는지 **주문 없이** 확인한다.
+ *
+ * 시간외 매도를 만들려면 그 코드를 알아야 하는데, 이 레포가 실측으로 아는 것은
+ * `00`(지정가)·`01`(시장가) 둘뿐이다. 공식 GitHub 예제는 값을 열거하지 않고,
+ * 웹 검색으로 나오는 표는 옛 eFriend API 것이라 **이 레포가 검증한 값과 어긋난다**
+ * (그 표는 `02`를 지정가라 하는데 우리는 `00`이 지정가인 것을 실주문으로 확인했다).
+ *
+ * 매수가능조회는 `ORD_DVSN`을 인자로 받는 **조회**다. 모르는 코드를 넣었을 때
+ * 거절하면 그 코드는 없는 것이고, 정상 응답하면 적어도 그 자리에서는 유효하다.
+ *
+ * **알 수 있는 것**: 그 코드가 존재하는가.
+ * **알 수 없는 것**: 그 코드로 지금 주문이 나가는가 — 시간대·종목 상태에 따라
+ * 주문은 따로 거절될 수 있고 그건 실제 주문으로만 확인된다.
+ */
+export async function probeOrderDivision(
+  account: KisAccountConfig,
+  symbol: string,
+  orderDivision: string,
+  price: number,
+): Promise<{ accepted: boolean; message: string }> {
+  const trId = config.env === 'prod' ? 'TTTC8908R' : 'VTTC8908R';
+  try {
+    const { body } = await kisGetWithHeaders(
+      '/uapi/domestic-stock/v1/trading/inquire-psbl-order',
+      trId,
+      {
+        CANO: account.cano,
+        ACNT_PRDT_CD: account.productCode,
+        PDNO: symbol,
+        // 시장가만 단가를 비운다. 지정가 계열은 단가가 없으면 수량이 0으로 내려온다.
+        ORD_UNPR: orderDivision === '01' ? '0' : String(Math.floor(price)),
+        ORD_DVSN: orderDivision,
+        CMA_EVLU_AMT_ICLD_YN: 'N',
+        OVRS_ICLD_YN: 'N',
+      },
+      '',
+      toCredentials(account),
+    );
+    const record = body as Record<string, unknown>;
+    return {
+      accepted: String(record.rt_cd ?? '') === '0',
+      message: String(record.msg1 ?? '').trim(),
+    };
+  } catch (e) {
+    const text = e instanceof Error ? e.message : String(e);
+    // KIS가 한 말만 뽑는다. 본문 전체를 그대로 두면 한 줄로 못 읽는다.
+    return { accepted: false, message: /"msg1":"([^"]*)"/.exec(text)?.[1] ?? text.slice(0, 80) };
+  }
+}
+
 export async function getKisDomesticOrderability(
   account: KisAccountConfig | null,
   symbol: string,
