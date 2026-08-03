@@ -52,13 +52,28 @@ import {
 import { getStrategy, type StrategyContext } from './strategy.js';
 
 /**
- * 후보 종목의 분봉을 받는 데 쓸 호출 예산. 호출 제한을 태우지 않는다.
+ * 한 회차에 분봉을 받을 종목 수. 호출 제한을 태우지 않는다.
  *
- * **보유 종목은 이 예산 밖이다.** 자르면 팔 수 없는 종목이 생긴다 — 근거는
- * `runCandles.ts`의 `candleTargets` 주석에 있다. 한 회차 호출 수는
- * `max(이 값, 보유 종목 수)`다.
+ * **보유 종목이 이 예산을 먼저 먹는다.** 보유는 잘리지 않지만(잘리면 팔 수 없는
+ * 종목이 생긴다 — `runCandles.ts`의 `candleTargets`) 자리는 차지하므로, 이 값이
+ * `maxPositions`보다 크지 않으면 **자리가 다 찬 순간 후보가 0이 된다.**
+ *
+ * 2026-08-03에 실제로 그랬다. `maxPositions`를 8로 올렸는데 이 값이 8이라
+ * 보유 1종목에 후보가 7종목이었고, 8자리를 채우면 더는 살 후보를 못 본다.
+ *
+ * ── 20으로 잡은 근거: 모의 서버 호출 예산 ────────────────────────────────
+ *
+ * 모의(`vts`)는 초당 1회라 호출 간격이 1,100ms다(`KIS_MIN_CALL_GAP_BY_SERVER`).
+ * 한 회차가 쓰는 호출은 대략 이렇다.
+ *
+ *   시세(멀티) 8 + 잔고 2 + 미체결 매수 1 = 11회 ≈ 12초
+ *   분봉 = 보유 + 후보, 최대 20회 ≈ 22초
+ *   재무 = 매수 신호 하나당 3회. 신호가 몰리면 여기가 제일 크다
+ *
+ * 주기 60초는 54회가 한계라 신호가 여럿 나면 넘긴다. 그래서 이 값을 올릴 때
+ * **주기도 함께 늘려야 한다** — 지금은 120초로 돌린다(109회).
  */
-const MAX_CANDIDATES_PER_RUN = 8;
+const MAX_CANDIDATES_PER_RUN = 20;
 
 /** 이만큼 연속으로 실패하면 멈춘다. 같은 오류로 무한히 주문을 시도하지 않게 한다. */
 const MAX_CONSECUTIVE_ERRORS = 3;
@@ -71,7 +86,16 @@ export interface AutoTraderDeps {
   loadCandidates(
     accountId: string,
     cash: number,
-  ): Promise<{ instruments: Instrument[]; note?: string }>;
+  ): Promise<{
+    instruments: Instrument[];
+    /**
+     * 종목별 총 매도잔량. 주문 크기가 호가를 몇 칸 밀지 재는 데 쓴다 —
+     * 멀티시세가 이미 주는 값이라 여기서 넘기면 호가 조회가 따로 안 나간다.
+     * 값이 없는 종목은 **키가 없다**(0을 넣지 않는다).
+     */
+    askDepthByInstrumentId: Map<string, number>;
+    note?: string;
+  }>;
   /**
    * 보유 종목의 `Instrument`. KIS 잔고는 종목코드만 주는데 전략은 instrumentId로
    * 이야기한다.
@@ -380,7 +404,7 @@ async function runOnce(handle: RunnerHandle, deps: AutoTraderDeps): Promise<void
     await executeSignal(handle, signal, candidates, positions, cash, equity, account, {
       boughtAtBySymbol,
       nowMs: runAt.getTime(),
-    });
+    }, picked.askDepthByInstrumentId);
   }
 }
 
@@ -397,7 +421,13 @@ interface MinHoldContext {
  * 룰과 오늘 쓴 금액을 여기서 한 번 읽는다. 신호가 난 회차에만 부르므로 회차마다
  * 나가는 조회가 아니다. 판정 자체는 `orderSizing.ts`의 순수 함수가 한다.
  */
-async function buyQuantityForAccount(accountId: string, cash: number, price: number): Promise<BuySize> {
+async function buyQuantityForAccount(
+  accountId: string,
+  cash: number,
+  price: number,
+  /* 이번 회차 멀티시세가 준 총 매도잔량. 못 받은 종목은 undefined다 */
+  totalAskQuantity: number | undefined,
+): Promise<BuySize> {
   const [rules, usage] = await Promise.all([getRiskRules(accountId), getTodayUsage(accountId)]);
   return buyQuantityWithinRules({
     cash,
@@ -406,6 +436,7 @@ async function buyQuantityForAccount(accountId: string, cash: number, price: num
     maxOrderNotional: rules.maxOrderNotional,
     dailyNotionalLimit: rules.dailyNotionalLimit,
     usedNotional: usage.notional,
+    totalAskQuantity,
   });
 }
 
@@ -418,10 +449,16 @@ async function executeSignal(
   equity: number,
   account: KisAccountConfig,
   minHold: MinHoldContext,
+  /*
+   * 이번 회차 멀티시세가 준 종목별 총 매도잔량. 주문 크기가 호가를 몇 칸
+   * 밀지를 여기서만 알 수 있다 — 값이 없는 종목은 키가 없다.
+   */
+  askDepthByInstrumentId: Map<string, number>,
 ): Promise<void> {
   const { config } = handle.state;
   const candidate = candidates.find((item) => item.instrument.id === signal.instrumentId);
   if (!candidate) return;
+  const askDepth = askDepthByInstrumentId.get(signal.instrumentId);
 
   /*
    * 매수 수량은 **리스크 룰 안에서** 정한다. 예전에는 `floor(cash / price)`라
@@ -434,7 +471,7 @@ async function executeSignal(
    */
   const sizing =
     signal.side === 'buy'
-      ? await buyQuantityForAccount(config.accountId, cash, candidate.price)
+      ? await buyQuantityForAccount(config.accountId, cash, candidate.price, askDepth)
       : undefined;
   const quantity =
     sizing !== undefined
@@ -622,6 +659,15 @@ async function executeSignal(
     message:
       `${candidate.instrument.name} ${signal.side === 'buy' ? '매수' : '매도'} ${quantity}주 접수`
       + ` · 주문번호 ${result.orderNo || '-'} · ${signal.reason}`
+      /*
+       * 수량을 무엇이 정했는지와 **그때 호가 잔량의 몇 %였는지**를 남긴다.
+       * 잔량 상한 10%는 아직 잰 값이 아니라 출발점이다(`orderSizing.ts`).
+       * 실측으로 바꾸려면 이 비율이 체결가 괴리와 짝지어 쌓여 있어야 한다.
+       */
+      + (sizing ? ` · ${describeBuySizeBound(sizing.boundBy)}` : '')
+      + (sizing?.askDepthShare !== undefined
+        ? ` · 매도잔량의 ${(sizing.askDepthShare * 100).toFixed(1)}%`
+        : '')
       // 실제로 나간 주문일수록 왜 샀는지가 남아야 한다. 나중에 채점할 근거다.
       + (fundamentalsNote ? ` · ${fundamentalsNote}` : ''),
     instrumentId: signal.instrumentId,

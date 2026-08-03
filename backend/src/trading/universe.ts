@@ -289,21 +289,138 @@ function isOrderable(instrument: Instrument): boolean {
  */
 export interface CandidateResult {
   instruments: Instrument[];
+  /**
+   * 후보의 총 매도잔량(주). 주문 수량 상한을 재는 데 쓴다.
+   *
+   * 멀티시세가 주는 값이라 **여기서 넘기지 않으면 다시 물어야 한다** — 종목마다
+   * 호가 조회 1회가 더 나간다. 값이 없는 종목은 키가 아예 없다(0을 넣지 않는다).
+   */
+  askDepthByInstrumentId: Map<string, number>;
   /** 비어 있을 때 왜 비었는지. 그대로 실행 기록에 남는다 */
   note?: string;
 }
 
+/*
+ * 이번 회차에 훑기 시작할 자리. **회차마다 앞으로 밀린다.**
+ *
+ * ── 왜 (2026-08-03) ───────────────────────────────────────────────────────
+ *
+ * 이 함수는 늘 풀 **앞 240종목**만 값을 물었다. 풀은 `ORDER BY symbol`이라
+ * 언제나 `000020 동화약품`부터다. 4,041종목 중 6%를, 그것도 매일 같은 6%를
+ * 봤다. 그중 후보가 되는 것은 다시 앞 8종목이라 러너가 실제로 판단하는 대상은
+ * **매 회차 같은 8종목(0.2%)**이었다. 종목 선정이 사실상 가나다순이었다.
+ *
+ * 한 회차에 전 종목을 물을 수는 없다 — 4,041종목이면 멀티시세 135회이고,
+ * 모의 서버는 초당 1회라 148초다. 주기(60초)를 넘긴다.
+ *
+ * 그래서 **회차마다 다른 구간**을 본다. 17회차(약 17분)면 한 바퀴 돌고, 그동안
+ * 본 종목의 거래대금을 아래 `turnoverBySymbol`에 쌓아 순위를 만든다. 호출 수는
+ * 그대로다.
+ */
+let scanOffset = 0;
+
+/*
+ * 회차를 넘어 쌓이는 거래대금. **순위를 매기는 데만 쓴다.**
+ *
+ * 이 값으로 주문을 내지 않는다 — 값이 묵었을 수 있다. 주문에 쓰는 값(가격·
+ * 잔량)은 언제나 이번 회차에 받은 것이다. 여기 쌓는 것은 "다음에 누구를 물어볼까"의
+ * 근거일 뿐이다.
+ *
+ * 프로세스가 다시 뜨면 비고 17분에 걸쳐 다시 찬다. 그동안은 아는 만큼으로 고른다.
+ */
+const turnoverBySymbol = new Map<string, { turnover: number; at: number }>();
+
+/** 시험이 회차 간 상태에 기대지 않게 하는 초기화. */
+export function resetUniverseScanState(): void {
+  scanOffset = 0;
+  turnoverBySymbol.clear();
+}
+
+/*
+ * 한 회차에서 **아직 안 본 종목**에 쓸 자리.
+ *
+ * 전부 거래대금 상위에만 쓰면 처음에 우연히 본 종목들이 계속 이기고 나머지는
+ * 영영 후보가 못 된다. 반대로 전부 탐색에 쓰면 실제로 살 종목의 값이 묵는다.
+ *
+ * 자리가 남으면(아직 아는 종목이 적으면) 탐색이 더 가져간다 — 그래서 초반
+ * 열몇 회차는 거의 전부 탐색이고, 4,041종목을 240씩 훑어 **약 17분**이면 한
+ * 바퀴가 돈다. 그 뒤로는 상위 180 + 탐색 60이 된다.
+ */
+const EXPLORE_SLOTS = MULTI_QUOTE_MAX_CODES * 2;
+
+/**
+ * 이번 회차에 값을 물어볼 종목.
+ *
+ * **활용과 탐색을 섞는다.** 활용은 지금까지 본 것 중 거래대금 상위 — 1억을
+ * 실제로 태울 수 있는 종목은 그쪽에 있고, 살 종목의 값이 가장 신선해야 한다.
+ * 탐색은 아직 안 본 종목 — 순위를 만들려면 일단 값이 있어야 한다.
+ *
+ * 여기 쌓인 거래대금으로 **주문을 내지는 않는다.** 값이 묵었을 수 있다.
+ * 주문에 쓰는 가격·잔량은 언제나 이번 회차에 받은 것이다.
+ */
+export function scanTargets(pool: Instrument[], size: number): Instrument[] {
+  const unseen = pool.filter((instrument) => !turnoverBySymbol.has(instrument.symbol));
+  const ranked = pool
+    .filter((instrument) => turnoverBySymbol.has(instrument.symbol))
+    .sort(
+      (a, b) =>
+        (turnoverBySymbol.get(b.symbol)?.turnover ?? 0) - (turnoverBySymbol.get(a.symbol)?.turnover ?? 0),
+    );
+
+  const exploreRoom = Math.min(unseen.length, Math.max(EXPLORE_SLOTS, size - ranked.length));
+  const explore =
+    exploreRoom > 0
+      ? (() => {
+          const start = scanOffset % unseen.length;
+          scanOffset += exploreRoom;
+          return [...unseen.slice(start), ...unseen.slice(0, start)].slice(0, exploreRoom);
+        })()
+      : [];
+
+  // 같은 종목을 두 번 묻지 않는다. 묻는 자리가 한 칸 낭비된다.
+  const picked: Instrument[] = [];
+  const seen = new Set<string>();
+  for (const instrument of [...ranked.slice(0, size - explore.length), ...explore]) {
+    if (seen.has(instrument.id)) continue;
+    seen.add(instrument.id);
+    picked.push(instrument);
+    if (picked.length >= size) break;
+  }
+  return picked;
+}
+
+/** 이번 회차에 받은 거래대금을 순위 재료로 쌓는다. */
+export function rememberTurnover(symbol: string, turnover: number, at: number): void {
+  if (!Number.isFinite(turnover) || turnover < 0) return;
+  turnoverBySymbol.set(symbol, { turnover, at });
+}
+
+/* 후보가 없는 회차는 잔량도 없다. 매번 새 Map을 만들지 않는다. */
+const EMPTY_ASK_DEPTH = new Map<string, number>();
+
 export async function loadAutoTraderCandidates(accountId: string, cash: number): Promise<CandidateResult> {
   const account = getKisAccount(accountId);
-  if (!account) return { instruments: [], note: '등록된 계좌가 아닙니다' };
-  if (cash <= 0) return { instruments: [], note: '현금이 없습니다' };
+  if (!account) {
+    return { instruments: [], askDepthByInstrumentId: EMPTY_ASK_DEPTH, note: '등록된 계좌가 아닙니다' };
+  }
+  if (cash <= 0) {
+    return { instruments: [], askDepthByInstrumentId: EMPTY_ASK_DEPTH, note: '현금이 없습니다' };
+  }
 
   const rules = await getRiskRules(accountId);
   const blocked = new Set(rules.symbolBlocklist);
   const allowed = rules.symbolAllowlist.length > 0 ? new Set(rules.symbolAllowlist) : null;
 
+  /*
+   * 국내 전 종목을 풀에 담는다. 예전에는 카테고리당 200개였다 — 그것만으로도
+   * 조회 상한(240종목)을 채우니 문제가 안 보였는데, **풀 자체가 코드순 앞
+   * 400종목**이라 4,041종목 중 나머지는 후보가 될 길이 없었다.
+   *
+   * 여기는 로컬 Postgres라 다 담아도 싸다. 실제로 몇 종목에 값을 물을지는
+   * `scanTargets`가 정하고 그건 여전히 회차당 240종목이다.
+   */
   const pools = await Promise.all(
-    SOURCE_CATEGORIES.map((category) => getCategoryInstruments(category, 200).catch(() => [])),
+    SOURCE_CATEGORIES.map((category) => getCategoryInstruments(category, 5_000).catch(() => [])),
   );
   const usable = pools.map((pool) =>
     pool
@@ -320,10 +437,13 @@ export async function loadAutoTraderCandidates(accountId: string, cash: number):
    * (여기 원래 "국내 전체 목록은 **시총 순**이라 앞쪽이 전부 대형주"라고 적혀
    * 있었는데 틀렸다 — `getByFilter`는 검색어가 없으면 `ORDER BY symbol`이라 풀
    * 앞쪽은 `000020 동화약품`·`0000D0` ETF다. 결론은 그대로지만 근거가 달랐다.)
+   *
+   * **이제 여기서 자르지 않는다.** 자르면 잘린 종목은 `scanTargets`가 영영 못
+   * 본다. 자르는 자리는 값을 물어보는 곳 하나뿐이다.
    */
   const pool: Instrument[] = [];
   const seen = new Set<string>();
-  for (let index = 0; pool.length < MAX_PRICE_LOOKUPS * 4; index += 1) {
+  for (let index = 0; ; index += 1) {
     let added = false;
     for (const list of usable) {
       const instrument = list[index];
@@ -338,6 +458,7 @@ export async function loadAutoTraderCandidates(accountId: string, cash: number):
   if (pool.length === 0) {
     return {
       instruments: [],
+      askDepthByInstrumentId: EMPTY_ASK_DEPTH,
       note: allowed
         ? `리스크 룰의 허용 종목(${rules.symbolAllowlist.join(', ')}) 중 주문 가능한 국내 종목이 없습니다`
         : '주문 가능한 국내 종목을 찾지 못했습니다',
@@ -345,18 +466,20 @@ export async function loadAutoTraderCandidates(accountId: string, cash: number):
   }
 
   /*
-   * 값을 모르면 고를 수 없다. 전 종목을 훑을 수는 없으니 앞에서 잘라 확인하고,
-   * 확인한 것 중 통과한 것만 전략에게 넘어간다.
+   * 값을 모르면 고를 수 없다. 전 종목을 한 회차에 훑을 수는 없으니
+   * (4,041종목 = 멀티시세 135회 = 모의 서버에서 148초, 주기 60초를 넘긴다)
+   * 회차마다 240종목씩 묻고, 확인한 것 중 통과한 것만 전략에게 넘어간다.
    *
-   * 조회는 멀티시세로 30종목씩 묶어 나간다 — 종목당 1회이던 때는 24종목이
-   * 24회였고, 지금은 240종목이 8회다.
+   * **누구에게 물을지는 `scanTargets`가 정한다** — 예전에는 `pool.slice(0, 240)`,
+   * 즉 언제나 종목코드 앞쪽이었다.
    */
-  const targets = pool.slice(0, MAX_PRICE_LOOKUPS);
+  const targets = scanTargets(pool, MAX_PRICE_LOOKUPS);
   const prices: number[] = [];
   const rejections: UniverseRejections = { tooExpensive: 0, noOrderBook: 0, illiquid: 0, costHeavy: 0 };
   const elapsed = sessionElapsedRatio();
   const batch = await getInstrumentQuotes(targets);
-  const instruments: Instrument[] = [];
+  const scannedAt = Date.now();
+  const passed: Array<{ instrument: Instrument; turnover: number; askDepth?: number }> = [];
 
   for (const instrument of targets) {
     const quote = batch.quotes.get(instrument.id);
@@ -365,6 +488,12 @@ export async function loadAutoTraderCandidates(accountId: string, cash: number):
     const price = quote.price;
     if (!Number.isFinite(price) || price <= 0) continue;
     prices.push(price);
+    const turnover = quote.turnover ?? price * quote.accVolume;
+    /*
+     * 거른 종목의 거래대금도 쌓는다. 다음 회차에 누구를 물어볼지 정하는
+     * 재료라, 오늘 예수금으로 못 사는 종목이라도 순위는 알아야 한다.
+     */
+    rememberTurnover(instrument.symbol, turnover, scannedAt);
     /*
      * 살 수 있다고 다 후보는 아니다. 백테스트에서 나온 숫자를 실제로
      * 거둘 수 있는 종목만 남긴다 — 호가가 있어야 애초에 체결되고, 물량이
@@ -376,9 +505,26 @@ export async function loadAutoTraderCandidates(accountId: string, cash: number):
       rejections[verdict] += 1;
       continue;
     }
-    instruments.push(instrument);
+    passed.push({ instrument, turnover, askDepth: quote.totalAskQuantity });
   }
-  if (instruments.length > 0) return { instruments };
+
+  if (passed.length > 0) {
+    /*
+     * **거래대금 내림차순으로 넘긴다.** 러너는 이 목록 앞에서부터 잘라 쓰므로
+     * (`candleTargets`) 순서가 곧 선정이다. 예전에는 여기가 종목코드 순이라
+     * 러너가 실제로 판단하는 8종목이 언제나 `000020`부터였다 — 선정이랄 것이 없었다.
+     *
+     * 거래대금으로 줄 세우는 것은 그것이 **체결 비용이 갈리는 축**이라서다.
+     * 일봉 축 측정에서 표본을 층으로 가른 기준과 같다.
+     */
+    passed.sort((a, b) => b.turnover - a.turnover);
+    const askDepthByInstrumentId = new Map<string, number>();
+    for (const item of passed) {
+      // 값이 없는 종목은 키를 넣지 않는다. 0을 넣으면 "잔량이 0"이 되어 못 산다.
+      if (item.askDepth !== undefined) askDepthByInstrumentId.set(item.instrument.id, item.askDepth);
+    }
+    return { instruments: passed.map((item) => item.instrument), askDepthByInstrumentId };
+  }
 
   /*
    * 못 물어본 종목을 말하지 않으면 "물어본 것 중에 없었다"와 "물었는데 값이
@@ -411,12 +557,14 @@ export async function loadAutoTraderCandidates(accountId: string, cash: number):
     if (rejections.costHeavy > 0) parts.push(`왕복 비용이 하루 변동폭의 절반을 넘음 ${rejections.costHeavy}종목`);
     return {
       instruments: [],
+      askDepthByInstrumentId: EMPTY_ASK_DEPTH,
       note: `살 수 있는 종목은 있었지만 모두 걸러졌습니다 — ${parts.join(' · ')}. ${priceHint}${unresolvedHint}`,
     };
   }
 
   return {
     instruments: [],
+    askDepthByInstrumentId: EMPTY_ASK_DEPTH,
     note: allowed
       ? `허용 종목(${rules.symbolAllowlist.join(', ')})을 현금 ${Math.floor(cash).toLocaleString()}원으로 1주도 살 수 없습니다 · ${priceHint}${unresolvedHint}`
       : `현금 ${Math.floor(cash).toLocaleString()}원으로 1주라도 살 수 있는 종목이 없습니다 · ${priceHint}${unresolvedHint}`,

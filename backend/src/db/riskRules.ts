@@ -158,12 +158,13 @@ export async function upsertRiskRules(rules: RiskRuleSet): Promise<RiskRuleSet> 
 export async function getTodayUsage(accountId: string): Promise<DailyOrderUsage> {
   const { rows } = await pool.query<{
     order_type: OrderType | null;
+    side: OrderSide | null;
     quantity: string | null;
     limit_price: string | null;
     estimated_price: string | null;
   }>(
     `
-      SELECT order_type, quantity, limit_price, estimated_price
+      SELECT order_type, side, quantity, limit_price, estimated_price
       FROM trading_broker_orders
       WHERE account_id = $1
         AND action = 'place'
@@ -175,6 +176,7 @@ export async function getTodayUsage(accountId: string): Promise<DailyOrderUsage>
   return summarizeDailyOrderUsage(
     rows.map((row) => ({
       orderType: row.order_type,
+      side: row.side,
       quantity: row.quantity,
       limitPrice: row.limit_price,
       estimatedPrice: row.estimated_price,
@@ -302,7 +304,7 @@ export async function checkRiskRules(input: RiskCheckInput): Promise<RiskVerdict
   }
 
   const usage = await getTodayUsage(input.accountId);
-  violations.push(...dailyLimitViolations({ rules, usage, notional }));
+  violations.push(...dailyLimitViolations({ rules, usage, notional, side: input.side }));
 
   return {
     allowed: violations.length === 0,

@@ -18,7 +18,7 @@
  *    이 레포는 `Number('')`이 0이 되어 "거래가 없었다"가 지어진 전례가 있다.
  */
 
-import type { OrderType, RiskRuleSet } from '@invest/shared';
+import type { OrderSide, OrderType, RiskRuleSet } from '@invest/shared';
 
 /** `numeric` 컬럼은 pg가 문자열로 준다. 계산 전에 한 곳에서 좁힌다. */
 export type NumericLike = string | number | null | undefined;
@@ -51,6 +51,7 @@ export function orderNotional(quantity: NumericLike, price: NumericLike): number
 /** 일일 한도 집계에 넣을 주문 한 줄. `trading_broker_orders`에서 오늘 접수분만 골라 온다. */
 export interface DailyOrderUsageRow {
   orderType: OrderType | null;
+  side: OrderSide | null;
   quantity: NumericLike;
   /** 지정가 단가 */
   limitPrice: NumericLike;
@@ -61,6 +62,20 @@ export interface DailyOrderUsageRow {
 export interface DailyOrderUsage {
   /** 오늘 접수된 건수. 금액을 몰라도 건수는 전부 센다 */
   count: number;
+  /**
+   * 그중 **매수** 건수. 일일 건수 한도는 이 값으로만 판정한다.
+   *
+   * ── 왜 갈랐나 (2026-08-03) ──────────────────────────────────────────────
+   *
+   * 예전에는 매수·매도를 합쳐 셌다. 그러면 하루 한도가 차는 순간 **팔지도 못한다** —
+   * 종목 8개를 들고 20건을 다 쓰면 그날은 어떤 포지션도 닫을 수 없고, 자본이
+   * 갇힌 채 장이 끝난다. 한도가 막으려던 것은 "끝없이 사는 것"이지 "빠져나오는
+   * 것"이 아니다.
+   *
+   * 매도는 들고 있는 만큼만 낼 수 있어 그 자체로 상한이 있다. 폭주를 막는 잣대가
+   * 따로 필요하지 않다.
+   */
+  buyCount: number;
   /** 그중 금액을 아는 것들의 합 */
   notional: number;
   /** 금액을 알 수 없어 합에서 빠진 건수. 이 값이 0이 아니면 합은 **하한**일 뿐이다 */
@@ -82,12 +97,14 @@ export function usageUnitPrice(row: DailyOrderUsageRow): number | undefined {
 export function summarizeDailyOrderUsage(rows: DailyOrderUsageRow[]): DailyOrderUsage {
   let notional = 0;
   let unpricedCount = 0;
+  let buyCount = 0;
   for (const row of rows) {
+    if (row.side === 'buy') buyCount += 1;
     const amount = orderNotional(row.quantity, usageUnitPrice(row));
     if (amount === undefined) unpricedCount += 1;
     else notional += amount;
   }
-  return { count: rows.length, notional, unpricedCount };
+  return { count: rows.length, buyCount, notional, unpricedCount };
 }
 
 /**
@@ -101,12 +118,23 @@ export function dailyLimitViolations(input: {
   usage: DailyOrderUsage;
   /** 지금 내려는 주문의 금액. 모르면 `undefined` — 0으로 채우지 않는다 */
   notional: number | undefined;
+  /** 지금 내려는 주문의 방향. 매도는 건수 한도를 지나간다 */
+  side?: OrderSide;
 }): string[] {
   const { rules, usage, notional } = input;
   const violations: string[] = [];
 
-  if (usage.count + 1 > rules.dailyOrderCountLimit) {
-    violations.push(`일일 주문 건수 한도 ${rules.dailyOrderCountLimit}건을 초과합니다 (오늘 ${usage.count}건).`);
+  /*
+   * **매수만 센다.** 합쳐 세면 한도가 차는 순간 매도까지 막혀 그날 포지션을
+   * 닫을 수 없다 — 한도가 막으려던 것은 끝없이 사는 것이지 빠져나오는 것이
+   * 아니다. 근거는 `DailyOrderUsage.buyCount` 주석에 있다.
+   *
+   * 그래서 매도 주문은 이 잣대를 아예 지나간다.
+   */
+  if (input.side !== 'sell' && usage.buyCount + 1 > rules.dailyOrderCountLimit) {
+    violations.push(
+      `일일 매수 건수 한도 ${rules.dailyOrderCountLimit}건을 초과합니다 (오늘 ${usage.buyCount}건).`,
+    );
   }
   if (notional !== undefined && usage.notional + notional > rules.dailyNotionalLimit) {
     violations.push(
