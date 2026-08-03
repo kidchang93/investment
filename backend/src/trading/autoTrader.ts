@@ -33,7 +33,7 @@ import {
   completeClaimedOrder,
   getLastBuySubmittedAt,
 } from '../db/brokerOrders.js';
-import { checkRiskRules } from '../db/riskRules.js';
+import { checkRiskRules, getRiskRules, getTodayUsage } from '../db/riskRules.js';
 import {
   getKisDomesticAccountSnapshot,
   getInstrumentIntradayCandles,
@@ -41,6 +41,7 @@ import {
 } from '../kis/rest.js';
 import { checkBuyFundamentals } from './fundamentals.js';
 import { checkMinHold, describeMinHoldDefer, describeMinHoldSetting } from './minHold.js';
+import { buyQuantityWithinRules, describeBuySizeBound, type BuySize } from './orderSizing.js';
 import {
   candleTargets,
   classifyCandles,
@@ -349,6 +350,24 @@ interface MinHoldContext {
   nowMs: number;
 }
 
+/**
+ * 이 계좌의 리스크 룰을 읽어 살 수 있는 수량을 정한다.
+ *
+ * 룰과 오늘 쓴 금액을 여기서 한 번 읽는다. 신호가 난 회차에만 부르므로 회차마다
+ * 나가는 조회가 아니다. 판정 자체는 `orderSizing.ts`의 순수 함수가 한다.
+ */
+async function buyQuantityForAccount(accountId: string, cash: number, price: number): Promise<BuySize> {
+  const [rules, usage] = await Promise.all([getRiskRules(accountId), getTodayUsage(accountId)]);
+  return buyQuantityWithinRules({
+    cash,
+    price,
+    maxOrderQuantity: rules.maxOrderQuantity,
+    maxOrderNotional: rules.maxOrderNotional,
+    dailyNotionalLimit: rules.dailyNotionalLimit,
+    usedNotional: usage.notional,
+  });
+}
+
 async function executeSignal(
   handle: RunnerHandle,
   signal: StrategySignal,
@@ -363,9 +382,22 @@ async function executeSignal(
   const candidate = candidates.find((item) => item.instrument.id === signal.instrumentId);
   if (!candidate) return;
 
-  const quantity =
+  /*
+   * 매수 수량은 **리스크 룰 안에서** 정한다. 예전에는 `floor(cash / price)`라
+   * 늘 전액이었고, 1회 100만원·일일 500만원 룰이 걸린 예수금 1억 계좌에서는
+   * 신호가 날 때마다 세 잣대에 동시에 걸렸다 — 근거와 실측은 `orderSizing.ts`에
+   * 적었다. 그 계좌에서 러너는 주문을 낼 수 없는 구조였다.
+   *
+   * 매도는 줄이지 않는다. 보유한 만큼 판다 — 팔다 남기면 그 종목에 갇히고,
+   * 여기서 산 수량이 이미 한도 안이라 매도도 한도 안이다.
+   */
+  const sizing =
     signal.side === 'buy'
-      ? Math.floor(cash / candidate.price)
+      ? await buyQuantityForAccount(config.accountId, cash, candidate.price)
+      : undefined;
+  const quantity =
+    sizing !== undefined
+      ? sizing.quantity
       : (positions.find((position) => position.instrumentId === signal.instrumentId)?.quantity ?? 0);
 
   if (quantity <= 0) {
@@ -373,8 +405,9 @@ async function executeSignal(
       accountId: config.accountId,
       status: 'running',
       message:
-        signal.side === 'buy'
-          ? `${candidate.instrument.name} 매수 보류 · 현금 ${cash.toLocaleString()}원으로 1주(${candidate.price.toLocaleString()}원)를 살 수 없음`
+        sizing !== undefined
+          ? `${candidate.instrument.name} 매수 보류 · ${describeBuySizeBound(sizing.boundBy)}가 0주입니다`
+            + ` · 현금 ${cash.toLocaleString()}원 · 1주 ${candidate.price.toLocaleString()}원`
           : `${candidate.instrument.name} 매도 보류 · 보유 수량 없음`,
       instrumentId: signal.instrumentId,
       side: signal.side,

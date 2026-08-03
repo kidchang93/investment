@@ -155,7 +155,7 @@ export async function upsertRiskRules(rules: RiskRuleSet): Promise<RiskRuleSet> 
  *
  * 건수는 행 수 그대로다 — 금액을 몰라도 접수는 접수다(`COUNT(*)`와 같다).
  */
-async function getTodayUsage(accountId: string): Promise<DailyOrderUsage> {
+export async function getTodayUsage(accountId: string): Promise<DailyOrderUsage> {
   const { rows } = await pool.query<{
     order_type: OrderType | null;
     quantity: string | null;
