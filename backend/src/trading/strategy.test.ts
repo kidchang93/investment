@@ -247,3 +247,33 @@ describe('전략 판정문의 축', () => {
     }
   });
 });
+
+/*
+ * 2026-08-04: 퀀트 판정이 "오늘은 새로 사지 마라"였다(거울 검증에서 방향성 우위
+ * +0.0019% = 왕복 비용의 1/226). 그때 러너를 통째로 멈추면 데드크로스 청산도
+ * 같이 멈춰 **보유 종목이 아무도 안 보는 채로 남는다.**
+ *
+ * `maxPositions: 0`이 그 자리를 메운다 — 매수만 멈추고 매도는 계속한다.
+ */
+describe('maxPositions 0 — 매수만 멈춘다', () => {
+  it('자리가 0이면 골든크로스가 나도 사지 않는다', () => {
+    const list = candles([20, 18, 16, 14, 12, 10, 40]);
+    const signals = strategy.decide({
+      candidates: [{ instrument, candles: list, price: list[list.length - 1].close }],
+      positions: [],
+      maxPositions: 0,
+    });
+    assert.deepEqual(signals, []);
+  });
+
+  it('자리가 0이어도 보유 종목의 데드크로스는 판다', () => {
+    const list = candles([10, 12, 14, 16, 18, 20, 1]);
+    const signals = strategy.decide({
+      candidates: [{ instrument, candles: list, price: list[list.length - 1].close }],
+      positions: [{ instrumentId: instrument.id, quantity: 1, averagePrice: 100 }],
+      maxPositions: 0,
+    });
+    assert.equal(signals.length, 1);
+    assert.equal(signals[0].side, 'sell');
+  });
+});

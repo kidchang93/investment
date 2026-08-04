@@ -648,7 +648,20 @@ async function main(): Promise<void> {
           targetEquity: Number(targetEquity),
           stopEquity: Number(stopEquity),
           intervalSeconds: Number(intervalSeconds) || 60,
-          maxPositions: Number(maxPositions) || 1,
+          /*
+           * **0은 뜻이 있는 값이다 — 매수만 멈추고 매도는 계속한다.**
+           *
+           * `strategy.ts`가 매도 신호를 먼저 만들고 그 뒤에 `maxPositions - 보유`로
+           * 살 자리를 계산한다. 0이면 자리가 없어 새로 사지 않지만 데드크로스
+           * 청산은 그대로 나간다. 러너를 통째로 멈추면 청산도 같이 멈춰
+           * **보유 종목이 아무도 안 보는 채로 남는다.**
+           *
+           * 예전에는 `Number(x) || 1`이라 0이 조용히 1이 됐다. 그러면 "오늘은
+           * 사지 말자"는 판단을 넣을 방법이 없다.
+           */
+          maxPositions: Number.isFinite(Number(maxPositions)) && Number(maxPositions) >= 0
+            ? Math.floor(Number(maxPositions))
+            : 1,
           minHoldMinutes: Math.floor(minHold),
           /*
            * 장후 시간외 청산. **명시적으로 참일 때만 켠다** — 아직 확인되지 않은
