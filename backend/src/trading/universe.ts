@@ -19,7 +19,11 @@ import { hasEmptyOrderBook, KRX_SESSION_MINUTES } from '@invest/shared';
 import { getKisAccount } from '../config.js';
 import { getCategoryInstruments } from '../db/instruments.js';
 import { getRiskRules } from '../db/riskRules.js';
-import { getInstrumentQuotes, MULTI_QUOTE_MAX_CODES } from '../kis/rest.js';
+import {
+  getDomesticTurnoverRanking,
+  getInstrumentQuotes,
+  MULTI_QUOTE_MAX_CODES,
+} from '../kis/rest.js';
 import { DEFAULT_COSTS } from './backtest.js';
 
 /*
@@ -429,6 +433,25 @@ export function rememberTurnover(symbol: string, turnover: number, at: number): 
 /* 후보가 없는 회차는 잔량도 없다. 매번 새 Map을 만들지 않는다. */
 const EMPTY_ASK_DEPTH = new Map<string, number>();
 
+/**
+ * 거래소가 매긴 거래대금 상위 종목 중 **이 풀에 있는 것**.
+ *
+ * 풀에 없는 것은 조용히 빠진다 — 레버리지·인버스이거나 차단 목록에 있거나
+ * 허용 목록 밖인 종목이다. 그 판정은 이미 풀을 만들 때 끝났고, 여기서 다시
+ * 하면 두 곳에 같은 규칙이 생긴다.
+ */
+async function loadRankedInstruments(pool: Instrument[]): Promise<Instrument[]> {
+  const symbols = await getDomesticTurnoverRanking(MULTI_QUOTE_MAX_CODES);
+  if (symbols.length === 0) return [];
+  const bySymbol = new Map(pool.map((instrument) => [instrument.symbol, instrument]));
+  const ordered: Instrument[] = [];
+  for (const symbol of symbols) {
+    const instrument = bySymbol.get(symbol);
+    if (instrument) ordered.push(instrument);
+  }
+  return ordered;
+}
+
 export async function loadAutoTraderCandidates(accountId: string, cash: number): Promise<CandidateResult> {
   const account = getKisAccount(accountId);
   if (!account) {
@@ -504,7 +527,33 @@ export async function loadAutoTraderCandidates(accountId: string, cash: number):
    * **누구에게 물을지는 `scanTargets`가 정한다** — 예전에는 `pool.slice(0, 240)`,
    * 즉 언제나 종목코드 앞쪽이었다.
    */
-  const targets = scanTargets(pool, MAX_PRICE_LOOKUPS);
+  /*
+   * ── 거래소 순위를 먼저 넣는다 (2026-08-04) ──────────────────────────────
+   *
+   * 예전에는 `scanTargets`만 썼다. 그런데 그것은 마스터를 **코드순으로** 240개씩
+   * 훑는 것이라, 거래대금 상위 20종목 중 그 안에 든 것이 SK하이닉스 하나뿐이었다
+   * (2026-08-04 실측). 삼성전자는 풀 406번째, NAVER는 1,131번째, SK이터닉스는
+   * 3,702번째다. 회차마다 밀어 17분이면 한 바퀴 돌게 해 뒀지만 **서버가 재기동되면
+   * 그 진행이 0으로 돌아가고**, 그날 아침에만 4번 재기동됐다.
+   *
+   * 거래소에 직접 물으면 훑을 필요가 없다. **KIS 호출 1회**로 지금 돈이 몰린
+   * 종목이 온다.
+   *
+   * 훑기를 없애지는 않는다. 순위는 상위 몇십 종목까지만 주므로, 남는 조회 예산은
+   * 그대로 훑기에 쓴다 — 순위 밖에도 살 만한 종목이 있고 그건 훑어야 안다.
+   *
+   * 순위 조회가 실패해도 후보 선정을 멈추지 않는다. 훑기만으로도 돌아간다 —
+   * 예전 동작 그대로다.
+   */
+  const ranked = await loadRankedInstruments(pool).catch(() => [] as Instrument[]);
+  const scanned = scanTargets(pool, Math.max(0, MAX_PRICE_LOOKUPS - ranked.length));
+  const targets: Instrument[] = [];
+  const targetSeen = new Set<string>();
+  for (const instrument of [...ranked, ...scanned]) {
+    if (targetSeen.has(instrument.id)) continue;
+    targetSeen.add(instrument.id);
+    targets.push(instrument);
+  }
   const prices: number[] = [];
   const rejections: UniverseRejections = { tooExpensive: 0, noOrderBook: 0, illiquid: 0, costHeavy: 0 };
   const elapsed = sessionElapsedRatio();

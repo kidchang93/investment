@@ -837,6 +837,66 @@ export interface InstrumentQuoteBatchResult {
  * 묶을 수 없어 하나씩 부른다. 반환 키를 `Instrument.id`로 맞춰 부른 쪽이
  * `getInstrumentQuote`와 같은 값을 쓰게 한다.
  */
+/**
+ * 거래소가 매긴 **거래대금 상위 종목코드.** 한 번 호출로 전 종목 순위가 온다.
+ *
+ * ── 왜 필요했나 (2026-08-04 실측) ────────────────────────────────────────
+ *
+ * 러너는 종목 마스터를 **코드순으로 240개씩** 훑으며 거래대금을 쌓아 순위를
+ * 만들고 있었다. 그런데 그 240개는 풀 3,929종목의 **6.1%**이고, 거래대금 상위
+ * 20종목 중 그 안에 든 것은 **SK하이닉스 하나**였다.
+ *
+ *   005930 삼성전자   풀 406번째      035420 NAVER      풀 1,131번째
+ *   009150 삼성전기   풀 540번째      475150 SK이터닉스  풀 3,702번째
+ *
+ * 회차마다 60종목씩 밀어 약 17분이면 한 바퀴 돌게 해 뒀지만, **서버가 재기동되면
+ * 그 진행이 0으로 돌아간다**(모듈 상태). 오늘 아침에만 4번 재기동됐고 한 바퀴를
+ * 돈 적이 없다. 결과적으로 "거래대금 순 정렬"이 **코드순 앞 6% 슬라이스 안에서만**
+ * 작동했다 — 러너의 2순위 후보(대한전선 245억)가 시장 20위(784억)에도 못 미쳤다.
+ *
+ * 거래소에 직접 물으면 이 문제가 통째로 사라진다. 훑을 필요가 없다.
+ *
+ * ── 무엇을 주고 무엇을 안 주나 ───────────────────────────────────────────
+ *
+ * `fid_blng_cls_code`가 무엇으로 줄 세울지 정한다. `3`이 거래금액순이다.
+ * 응답은 **상위 몇십 종목까지**다 — 전 종목 순위표가 아니다. 후보를 고르는 데는
+ * 그것으로 충분하지만, "이 목록에 없으면 거래대금이 낮다"고 읽으면 안 된다.
+ *
+ * 여기서는 **종목코드만** 돌려준다. 가격·잔량은 부른 쪽이 멀티시세로 받는다 —
+ * 이 TR의 값은 필드 이름이 다르고, 같은 사실을 두 경로로 읽으면 갈린다.
+ */
+export async function getDomesticTurnoverRanking(limit = 30): Promise<string[]> {
+  const { body } = await kisGetWithHeaders(
+    '/uapi/domestic-stock/v1/quotations/volume-rank',
+    'FHPST01710000',
+    {
+      fid_cond_mrkt_div_code: 'J',
+      fid_cond_scr_div_code: '20171',
+      // `0000`이 전체 시장이다. 특정 업종만 보려면 여기를 바꾼다.
+      fid_input_iscd: '0000',
+      fid_div_cls_code: '0',
+      // 3 = 거래금액순. 0(거래량순)과 다르다 — 값싼 종목이 거래량으로는 위에 온다.
+      fid_blng_cls_code: '3',
+      fid_trgt_cls_code: '111111111',
+      fid_trgt_exls_cls_code: '000000',
+      fid_input_price_1: '',
+      fid_input_price_2: '',
+      fid_vol_cnt: '',
+      fid_input_date_1: '',
+    },
+  );
+  const rows = Array.isArray(body.output) ? (body.output as Array<Record<string, string>>) : [];
+  const symbols: string[] = [];
+  for (const row of rows) {
+    const code = String(row.mksc_shrn_iscd ?? '').trim();
+    // 빈 자리를 종목으로 세지 않는다. KIS는 응답을 고정 길이로 채워 보낼 때가 있다.
+    if (code.length === 0) continue;
+    symbols.push(code);
+    if (symbols.length >= limit) break;
+  }
+  return symbols;
+}
+
 export async function getInstrumentQuotes(instruments: Instrument[]): Promise<InstrumentQuoteBatchResult> {
   const result: InstrumentQuoteBatchResult = { quotes: new Map(), blank: [], failed: [], calls: 0 };
 
