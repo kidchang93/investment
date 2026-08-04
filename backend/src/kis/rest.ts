@@ -865,6 +865,78 @@ export interface InstrumentQuoteBatchResult {
  * 여기서는 **종목코드만** 돌려준다. 가격·잔량은 부른 쪽이 멀티시세로 받는다 —
  * 이 TR의 값은 필드 이름이 다르고, 같은 사실을 두 경로로 읽으면 갈린다.
  */
+/** 하루치 투자자별 순매수. **수량이 아니라 금액**이 필요하면 부른 쪽이 값을 곱한다. */
+export interface InvestorFlowDay {
+  /** 거래일 `YYYYMMDD` */
+  tradingDay: string;
+  /** 그날 종가. 수급을 가격과 맞춰 보려면 같은 응답의 값을 써야 어긋나지 않는다 */
+  close: number;
+  /** 개인 순매수 수량(주). 음수면 순매도 */
+  individual: number;
+  foreign: number;
+  institution: number;
+}
+
+/**
+ * 종목별 투자자 매매동향(일별) — `FHPTJ04160001`.
+ *
+ * ── 왜 이걸 보나 (2026-08-04) ────────────────────────────────────────────
+ *
+ * 지금까지 이 레포가 잰 것은 **전부 가격에서 가격을 예측**하는 것이었다
+ * (이동평균 교차·변동성 돌파·평균 회귀). 오늘 거울 검증에서 1분봉 축의 방향
+ * 정보가 **0**으로 나왔다 — 가격만으로는 그 축에서 아무것도 못 한다는 뜻이다.
+ *
+ * 수급은 **가격 밖의 정보**다. 사용자가 말한 *"자본이 많이 투입되고 빠져나가고를
+ * 반복한다"*를 잴 수 있는 형태로 바꾸면 두 물음이 된다.
+ *
+ *   ① 유입·유출이 **이어지는가** — 오늘 순매수가 내일을 말해 주는가
+ *   ② 그것이 **가격에 남는가** — 순매수 상위를 사서 N일 뒤 팔면 어땠나
+ *
+ * ①만 참이고 ②가 거짓이면 **이미 값에 반영된 것**이라 우리에게는 0이다.
+ * 수급 데이터는 공개돼 있고 무료라, ②를 반드시 재야 한다.
+ *
+ * ── 주의 ─────────────────────────────────────────────────────────────────
+ *
+ * **순매수는 수량(주)이다.** 금액이 아니다 — 값이 다른 종목끼리 크기를 견주려면
+ * 종가를 곱해야 한다. 그 종가도 같은 응답에 있으니 함께 담아 돌려준다.
+ * 다른 경로로 받은 가격과 섞으면 수정주가·거래일 경계에서 어긋난다.
+ */
+export async function getInvestorFlowDaily(
+  symbol: string,
+  endDate: string,
+  credentials?: KisCredentials,
+): Promise<InvestorFlowDay[]> {
+  const { body } = await kisGetWithHeaders(
+    '/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily',
+    'FHPTJ04160001',
+    {
+      fid_cond_mrkt_div_code: 'J',
+      fid_input_iscd: symbol,
+      fid_input_date_1: endDate,
+      // 0 = 수정주가. 액면분할·병합을 지나면 원주가는 이어지지 않는다.
+      fid_org_adj_prc: '0',
+      fid_etc_cls_code: '1',
+    },
+    '',
+    credentials ?? primaryCredentials,
+  );
+  const rows = Array.isArray(body.output2) ? (body.output2 as Array<Record<string, string>>) : [];
+  const days: InvestorFlowDay[] = [];
+  for (const row of rows) {
+    const day = String(row.stck_bsop_date ?? '').trim();
+    // 빈 자리를 거래일로 세지 않는다. KIS는 응답을 고정 길이로 채울 때가 있다.
+    if (!/^\d{8}$/.test(day)) continue;
+    days.push({
+      tradingDay: day,
+      close: Number(row.stck_clpr ?? 0),
+      individual: Number(row.prsn_ntby_qty ?? 0),
+      foreign: Number(row.frgn_ntby_qty ?? 0),
+      institution: Number(row.orgn_ntby_qty ?? 0),
+    });
+  }
+  return days;
+}
+
 export async function getDomesticTurnoverRanking(limit = 30): Promise<string[]> {
   const { body } = await kisGetWithHeaders(
     '/uapi/domestic-stock/v1/quotations/volume-rank',
