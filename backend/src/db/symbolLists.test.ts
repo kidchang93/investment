@@ -107,3 +107,68 @@ describe('종목 목록 — 나오는 것은 막지 않는다', () => {
     );
   });
 });
+
+/*
+ * 2026-08-04 11:54:29 실측: *"SK텔레콤 매도 차단 · 1회 주문 금액 한도
+ * 13,000,000원을 초과합니다."* 143주 × 91,700원 = 13.1M. 그 종목이 팔 수 없는
+ * 채로 갇혔다 — 값이 오르면 더 못 판다.
+ *
+ * 오늘 같은 착각을 **네 번** 고쳤다(일일 건수 · 일일 금액 · 종목 목록 · 1회 한도).
+ * 그래서 규칙 자체를 시험으로 못 박는다.
+ */
+function perOrderViolations(input: {
+  side: OrderSide;
+  quantity: number;
+  notional: number | undefined;
+  maxQuantity: number;
+  maxNotional: number;
+}): string[] {
+  const violations: string[] = [];
+  if (input.side !== 'sell') {
+    if (input.quantity > input.maxQuantity) violations.push('1회 수량 초과');
+    if (input.notional === undefined) violations.push('단가 모름');
+    else if (input.notional > input.maxNotional) violations.push('1회 금액 초과');
+  }
+  return violations;
+}
+
+describe('1회 한도 — 사는 것만 막는다', () => {
+  const LIMITS = { maxQuantity: 50_000, maxNotional: 13_000_000 };
+
+  it('한도를 넘는 매수는 막는다', () => {
+    assert.deepEqual(
+      perOrderViolations({ side: 'buy', quantity: 143, notional: 13_113_100, ...LIMITS }),
+      ['1회 금액 초과'],
+    );
+  });
+
+  /* 그날 실제로 갇힌 조합. 이제 나갈 수 있어야 한다. */
+  it('한도를 넘어도 매도는 막지 않는다 — 갇히지 않게', () => {
+    assert.deepEqual(
+      perOrderViolations({ side: 'sell', quantity: 143, notional: 13_113_100, ...LIMITS }),
+      [],
+    );
+  });
+
+  it('수량 한도도 매도는 안 막는다', () => {
+    assert.deepEqual(
+      perOrderViolations({ side: 'sell', quantity: 999_999, notional: 1_000, ...LIMITS }),
+      [],
+    );
+  });
+
+  /*
+   * 단가를 모르면 매수는 보류한다(얼마나 큰 베팅인지 모른다). 매도는 수량이
+   * 보유량으로 정해져 있어 그 걱정이 성립하지 않는다.
+   */
+  it('단가를 몰라도 매도는 나간다', () => {
+    assert.deepEqual(
+      perOrderViolations({ side: 'sell', quantity: 143, notional: undefined, ...LIMITS }),
+      [],
+    );
+    assert.deepEqual(
+      perOrderViolations({ side: 'buy', quantity: 143, notional: undefined, ...LIMITS }),
+      ['단가 모름'],
+    );
+  });
+});

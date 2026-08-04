@@ -247,13 +247,36 @@ export async function checkRiskRules(input: RiskCheckInput): Promise<RiskVerdict
    */
   const notional = orderNotional(input.quantity, input.price);
 
-  if (input.quantity > rules.maxOrderQuantity) {
-    violations.push(`1회 주문 수량 한도 ${rules.maxOrderQuantity.toLocaleString('ko-KR')}주를 초과합니다.`);
-  }
-  if (notional === undefined) {
-    violations.push('주문 금액을 계산할 단가를 알 수 없어 주문을 보류합니다.');
-  } else if (notional > rules.maxOrderNotional) {
-    violations.push(`1회 주문 금액 한도 ${rules.maxOrderNotional.toLocaleString('ko-KR')}원을 초과합니다.`);
+  /*
+   * ── 1회 한도도 **사는 것만** 막는다 (2026-08-04, 네 번째) ────────────────
+   *
+   * 11:54:29에 실제로 났다: *"SK텔레콤 매도 차단 · 1회 주문 금액 한도
+   * 13,000,000원을 초과합니다."* 143주 × 91,700원 = 13.1M으로 한도를 아슬하게
+   * 넘었고, **그 종목은 팔 수 없는 채로 갇혔다.** 값이 오르면 더 못 팔고,
+   * 한도를 올리지 않는 한 영영 못 나온다.
+   *
+   * 오늘 같은 착각을 네 번 고쳤다 — 일일 건수 · 일일 금액 · 종목 목록 · 여기.
+   * 규칙은 하나다: **안전장치는 들어가는 것을 막지 나오는 것을 막지 않는다.**
+   * 1회 한도가 막으려던 것은 **한 번에 너무 큰 베팅**이고, 매도는 베팅이
+   * 아니라 베팅을 거두는 것이다.
+   *
+   * ★ **큰 매도가 호가를 미는 문제는 이걸로 안 풀린다.** 그건 주문을 쪼개거나
+   * 호가 잔량으로 크기를 정해야 하는 별개의 일이다(매수 쪽은 `orderSizing.ts`가
+   * 그렇게 한다). 막아서 못 나가게 하는 것은 그 문제의 답이 아니다 — 못 판
+   * 종목은 그대로 남아 위험이 줄지 않는다.
+   *
+   * 단가를 모를 때의 보류도 매수에만 건다. 매도는 수량이 보유량으로 정해져
+   * 있어 "얼마나 큰 베팅인지 모른다"는 걱정이 성립하지 않는다.
+   */
+  if (input.side !== 'sell') {
+    if (input.quantity > rules.maxOrderQuantity) {
+      violations.push(`1회 주문 수량 한도 ${rules.maxOrderQuantity.toLocaleString('ko-KR')}주를 초과합니다.`);
+    }
+    if (notional === undefined) {
+      violations.push('주문 금액을 계산할 단가를 알 수 없어 주문을 보류합니다.');
+    } else if (notional > rules.maxOrderNotional) {
+      violations.push(`1회 주문 금액 한도 ${rules.maxOrderNotional.toLocaleString('ko-KR')}원을 초과합니다.`);
+    }
   }
   if (input.orderType === 'market' && !rules.allowMarketOrder) {
     violations.push('이 계좌는 시장가 주문이 막혀 있습니다.');
