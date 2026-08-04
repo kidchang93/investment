@@ -36,6 +36,8 @@ import { getThemePulses, THEME_PULSE_MAX_THEMES } from './themes/pulse.js';
 import { createOrderIntent, ensureTradingSchema, getFillByOrderId, getTradingOverview } from './db/trading.js';
 import { ensureAutoTraderSchema, getAutoTraderRuns } from './db/autoTrader.js';
 import { ensureDailySelectionSchema } from './db/dailySelection.js';
+import { ensureMarketSnapshotSchema } from './db/marketSnapshot.js';
+import { startDailySnapshot } from './trading/dailySnapshot.js';
 import { ensureSignalScoreSchema, getSignalScoreSummary } from './db/signalScores.js';
 import {
   claimClientOrderId,
@@ -260,6 +262,13 @@ async function main(): Promise<void> {
   await ensureRiskRuleSchema();
   await ensureAutoTraderSchema();
   await ensureDailySelectionSchema();
+  await ensureMarketSnapshotSchema();
+  /*
+   * 그날의 시장 상태를 그날 찍어 둔다. **러너와 따로 돈다** — 러너가 꺼진 날도
+   * 자료는 쌓여야 한다. 오늘(2026-08-04) look-ahead가 측정 결론을 통째로
+   * 뒤집었고(20일 기준선 +10.3% → −5.7%), 그걸 없애려면 이 자료가 필요하다.
+   */
+  startDailySnapshot((message) => app.log.info(message));
   /*
    * 프로세스가 죽을 때 돌고 있던 러너를 되살린다. 2026-08-03 장중에 개발 서버가
    * 내려갔고 보유 8종목이 아무도 안 보는 채로 남았다 — 사람이 알아채기 전까지는
