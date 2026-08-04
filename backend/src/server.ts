@@ -52,7 +52,7 @@ import {
 } from './trading/autoTrader.js';
 import { listStrategies } from './trading/strategy.js';
 import { isTrUnavailableOnServer } from './kis/errorCodes.js';
-import { pendingBuySymbols } from './trading/pendingBuys.js';
+import { pendingBuySymbols, pendingSellQuantities } from './trading/pendingBuys.js';
 
 /**
  * 모의 서버에 없는 기능을 화면에 어떻게 말할지. 두 라우트가 같은 말을 쓴다.
@@ -76,6 +76,14 @@ const AUTO_TRADER_DEPS: AutoTraderDeps = {
   loadPendingBuySymbols: async (accountId) => {
     const snapshot = await getKisDomesticExecutions(getKisAccount(accountId) ?? null, 1);
     return [...pendingBuySymbols(snapshot.executions)];
+  },
+  /*
+   * 매도 주문에 묶인 물량. 같은 조회를 두 번 하는 셈이지만 러너가 회차마다
+   * 한 번씩만 부르고, 두 판정이 같은 스냅샷을 봐야 어긋나지 않는다.
+   */
+  loadPendingSellQuantities: async (accountId) => {
+    const snapshot = await getKisDomesticExecutions(getKisAccount(accountId) ?? null, 1);
+    return pendingSellQuantities(snapshot.executions);
   },
 };
 

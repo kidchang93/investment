@@ -27,7 +27,7 @@ import type {
 import { randomUUID } from 'node:crypto';
 
 import { getKisAccount, type KisAccountConfig } from '../config.js';
-import { isOrderTypeUnavailableOnServer } from '../kis/errorCodes.js';
+import { isOrderRefused, isOrderTypeUnavailableOnServer } from '../kis/errorCodes.js';
 import {
   AFTER_HOURS_CLOSE_CANDIDATE,
   isUnconfirmedDivision,
@@ -131,6 +131,14 @@ export interface AutoTraderDeps {
    * `pendingBuys.ts`에 있다.
    */
   loadPendingBuySymbols(accountId: string): Promise<string[]>;
+  /**
+   * 아직 채워지지 않은 **매도** 주문이 묶고 있는 수량(종목코드 → 주).
+   *
+   * 매수 쪽과 같은 사고가 매도에서도 났다 — 매도가 나간 뒤 잔고가 안 줄어
+   * 같은 종목을 또 팔려 했고 `40240000`(잔고 없음) 세 번에 러너가 멈췄다
+   * (2026-08-04 15:27). 근거는 `pendingBuys.ts`.
+   */
+  loadPendingSellQuantities(accountId: string): Promise<Map<string, number>>;
 }
 
 interface RunnerHandle {
@@ -373,6 +381,11 @@ async function runOnce(handle: RunnerHandle, deps: AutoTraderDeps): Promise<void
    * 그대로 돌아오는데, 러너는 그것을 회차 실패로 알릴 수 있다.
    */
   const pendingBuys = new Set(await deps.loadPendingBuySymbols(config.accountId));
+  /*
+   * 매도 주문에 이미 묶인 물량. 보유 수량에서 빼면 **팔 수 있는 수량**이 되고,
+   * 0이면 `sellablePositions`가 매도 후보에서 뺀다 — 자리는 그대로 먹은 채로.
+   */
+  const pendingSells = await deps.loadPendingSellQuantities(config.accountId);
   const heldSymbols = [
     ...new Set([
       ...snapshot.positions.filter((position) => position.quantity > 0).map((position) => position.symbol),
@@ -436,7 +449,13 @@ async function runOnce(handle: RunnerHandle, deps: AutoTraderDeps): Promise<void
     .map((item) => {
       const held = symbolToPosition.get(item.instrument.symbol);
       if (held) {
-        return { instrumentId: item.instrument.id, quantity: held.quantity, averagePrice: held.averagePrice };
+        // 매도 주문에 묶인 만큼은 이미 나간 것이다. 또 팔면 KIS가 거절한다.
+        const locked = pendingSells.get(item.instrument.symbol) ?? 0;
+        return {
+          instrumentId: item.instrument.id,
+          quantity: Math.max(0, held.quantity - locked),
+          averagePrice: held.averagePrice,
+        };
       }
       if (pendingBuys.has(item.instrument.symbol)) {
         return { instrumentId: item.instrument.id, quantity: 0, averagePrice: 0 };
@@ -754,6 +773,31 @@ async function executeSignal(
       quantity,
       estimatedPrice: candidate.price,
     });
+    /*
+     * **거절은 회차 실패가 아니다.** KIS가 주문을 알아듣고 안 받은 것이지
+     * 서버가 아픈 게 아니다 — 다음 회차에는 정상으로 돌아간다.
+     *
+     * 2026-08-04 15:22~15:27에 이걸로 러너가 죽었다. 매도가 나간 뒤 잔고가
+     * 아직 안 줄어 같은 종목을 또 팔려 했고, `40240000`(잔고 없음) 세 번에
+     * **마감 3분 전 자동매매가 통째로 멈췄다.**
+     *
+     * 네트워크·인증 실패는 그대로 던진다. 그건 진짜로 시스템이 아픈 것이고
+     * 그때는 멈추는 쪽이 안전하다.
+     */
+    if (isOrderRefused(e)) {
+      await recordAutoTraderRun({
+        accountId: config.accountId,
+        status: 'running',
+        message:
+          `${candidate.instrument.name} ${signal.side === 'buy' ? '매수' : '매도'} 거절 · ${message}`,
+        instrumentId: signal.instrumentId,
+        side: signal.side,
+        quantity,
+        price: candidate.price,
+        equity,
+      });
+      return;
+    }
     throw e;
   }
   await completeClaimedOrder(clientOrderId, {
