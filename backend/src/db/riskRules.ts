@@ -258,11 +258,27 @@ export async function checkRiskRules(input: RiskCheckInput): Promise<RiskVerdict
   if (input.orderType === 'market' && !rules.allowMarketOrder) {
     violations.push('이 계좌는 시장가 주문이 막혀 있습니다.');
   }
-  if (rules.symbolBlocklist.includes(input.symbol)) {
-    violations.push(`차단 종목입니다 (${input.symbol}).`);
-  }
-  if (rules.symbolAllowlist.length > 0 && !rules.symbolAllowlist.includes(input.symbol)) {
-    violations.push(`허용 종목 목록에 없습니다 (${input.symbol}).`);
+  /*
+   * ── 종목 목록은 **사는 것만** 막는다 (2026-08-04) ──────────────────────
+   *
+   * 둘 다 "이 종목을 건드리지 마라"는 뜻인데, 매도까지 막으면 **이미 들고 있는
+   * 것이 갇힌다.** 목록에서 빠진 순간 그 종목은 영영 못 파는 자산이 된다.
+   *
+   * 이 사고가 이번이 세 번째다 — 일일 건수 한도, 일일 금액 한도, 그리고 여기.
+   * 셋 다 같은 착각이었다: **안전장치는 들어가는 것을 막지 나오는 것을 막지 않는다.**
+   * 위험한 종목일수록 빠져나오는 길은 열려 있어야 한다.
+   *
+   * 특히 허용목록은 **매일 바뀔 값**이다. 에이전트가 그날의 종목을 여기에 써넣는
+   * 구조라(축 B → 축 A), 어제 산 것이 오늘 목록에 없는 것은 정상이다. 그때
+   * 매도가 막히면 계좌가 하루 만에 통째로 얼어붙는다.
+   */
+  if (input.side !== 'sell') {
+    if (rules.symbolBlocklist.includes(input.symbol)) {
+      violations.push(`차단 종목입니다 (${input.symbol}).`);
+    }
+    if (rules.symbolAllowlist.length > 0 && !rules.symbolAllowlist.includes(input.symbol)) {
+      violations.push(`허용 종목 목록에 없습니다 (${input.symbol}).`);
+    }
   }
 
   if (!input.skipSessionCheck) {
