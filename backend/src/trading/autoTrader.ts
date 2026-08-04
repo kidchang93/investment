@@ -32,6 +32,7 @@ import {
   AFTER_HOURS_CLOSE_CANDIDATE,
   isUnconfirmedDivision,
 } from '../kis/orderDivisions.js';
+import { recordDailySelection } from '../db/dailySelection.js';
 import {
   clearDesiredAutoTrader,
   listDesiredAutoTraders,
@@ -61,6 +62,7 @@ import {
   candleTargets,
   classifyCandles,
   describeCandleSkips,
+  kstDayKey,
   type CandleCandidate,
   type CandleSkip,
 } from './runCandles.js';
@@ -418,6 +420,18 @@ async function runOnce(handle: RunnerHandle, deps: AutoTraderDeps): Promise<void
    * 없는 주식을 파는 주문이 나가면 KIS가 거부한다. 전략은 `sellablePositions`로
    * 매도 후보를 거르고 자리 계산은 이 목록 전체로 한다.
    */
+  /*
+   * **오늘 숫자 규칙이 무엇을 골랐는지 하루 한 번 남긴다.**
+   *
+   * 회차 기록에는 `후보 12종목`이라고만 적혀 어떤 종목이었는지 되짚을 수 없다.
+   * 에이전트 선정(축 B)이 이 기준선보다 나았는지 나중에 재려면 **둘 다** 있어야
+   * 한다 — 없으면 `TRADING_ROADMAP.md`가 경고한 "검증할 방법이 영영 없어진다"가
+   * 그대로 일어난다.
+   *
+   * 기록이 실패해도 회차를 멈추지 않는다. 매매가 기록 때문에 끊기면 더 곤란하다.
+   */
+  void recordNumericSelectionOnce(config.accountId, candidates, runAt);
+
   const positions = candidates
     .map((item) => {
       const held = symbolToPosition.get(item.instrument.symbol);
@@ -1023,4 +1037,38 @@ async function exitPositionsAfterHours(handle: RunnerHandle): Promise<void> {
       });
     }
   }
+}
+
+/**
+ * 오늘 숫자 규칙이 고른 후보를 **하루 한 번만** 남긴다.
+ *
+ * 회차마다 적으면 하루에 수백 줄이 쌓이는데, 알고 싶은 것은 "그날 무엇을
+ * 후보로 봤나" 하나다. 프로세스가 다시 뜨면 그날 것을 한 번 더 적을 수 있는데,
+ * 그건 **덮어쓰지 않고 쌓는다** — 재시작 뒤 후보가 달라졌다면 그것도 사실이다.
+ */
+const numericSelectionLoggedOn = new Map<string, string>();
+
+async function recordNumericSelectionOnce(
+  accountId: string,
+  candidates: StrategyContext['candidates'],
+  runAt: Date,
+): Promise<void> {
+  const day = kstDayKey(runAt);
+  if (day === undefined) return;
+  if (numericSelectionLoggedOn.get(accountId) === day) return;
+  numericSelectionLoggedOn.set(accountId, day);
+
+  const tradingDay = `${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6, 8)}`;
+  await recordDailySelection({
+    tradingDay,
+    accountId,
+    source: 'numeric',
+    symbols: candidates.map((item) => item.instrument.symbol),
+    rationale:
+      '러너의 숫자 규칙 — 거래대금 내림차순으로 훑어 유동성·비용·호가 필터를 통과한 종목'
+      + ` (이번 회차 ${candidates.length}종목, ${runAt.toISOString()} 기준)`,
+  }).catch(() => {
+    // 기록이 실패하면 다음 회차에 다시 시도한다.
+    numericSelectionLoggedOn.delete(accountId);
+  });
 }

@@ -35,6 +35,7 @@ import { QuoteCache } from './quoteCache.js';
 import { getThemePulses, THEME_PULSE_MAX_THEMES } from './themes/pulse.js';
 import { createOrderIntent, ensureTradingSchema, getFillByOrderId, getTradingOverview } from './db/trading.js';
 import { ensureAutoTraderSchema, getAutoTraderRuns } from './db/autoTrader.js';
+import { ensureDailySelectionSchema } from './db/dailySelection.js';
 import { ensureSignalScoreSchema, getSignalScoreSummary } from './db/signalScores.js';
 import {
   claimClientOrderId,
@@ -250,6 +251,7 @@ async function main(): Promise<void> {
   await ensureBrokerOrderSchema();
   await ensureRiskRuleSchema();
   await ensureAutoTraderSchema();
+  await ensureDailySelectionSchema();
   /*
    * 프로세스가 죽을 때 돌고 있던 러너를 되살린다. 2026-08-03 장중에 개발 서버가
    * 내려갔고 보유 8종목이 아무도 안 보는 채로 남았다 — 사람이 알아채기 전까지는
