@@ -80,8 +80,13 @@ async function kisPost(
   if (mismatch) throw new Error(mismatch);
 
   const token = await getAccessToken(credentials);
-  // 주문은 재시도하지 않는다. 중복 접수 위험이 조회 실패보다 훨씬 크다.
-  return scheduleKisCall(async () => {
+  /*
+   * 주문은 재시도하지 않는다. 중복 접수 위험이 조회 실패보다 훨씬 크다.
+   *
+   * 줄은 `config.env` 것에 선다 — 주문은 `config.restBase`에 고정이고
+   * (CLAUDE.md 7번) 위에서 `orderServerMismatch`가 이미 짝을 확인했다.
+   */
+  return scheduleKisCall(config.env, async () => {
     const res = await fetch(config.restBase + path, {
       method: 'POST',
       headers: {
@@ -142,7 +147,16 @@ const KIS_MIN_CALL_GAP_BY_SERVER: Record<KisServer, number> = {
 
 const KIS_RATE_LIMIT_BACKOFF_MS = 400;
 
-let kisCallChain: Promise<unknown> = Promise.resolve();
+/**
+ * **서버마다 따로 줄을 선다.**
+ *
+ * 초당 한도는 서버(와 그 서버에 등록된 앱키)의 것이지 이 프로세스의 것이 아니다.
+ * 실전으로 나가는 조회와 모의로 나가는 조회는 서로의 한도를 먹지 않는다.
+ */
+const kisCallChains: Record<KisServer, Promise<unknown>> = {
+  prod: Promise.resolve(),
+  vts: Promise.resolve(),
+};
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -151,18 +165,33 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
- * KIS REST 호출을 한 줄로 세워 최소 간격을 둔다.
+ * KIS REST 호출을 줄 세워 최소 간격을 둔다.
+ *
  * 포트폴리오 화면이 계좌·체결·예약주문·매매손익을 동시에 띄우면 초당 한도에 걸려
  * 일부 카드만 502로 비는 일이 생긴다. 순서를 지키는 대신 조금 느리게 간다.
+ *
+ * ── 서버마다 줄을 가른다 (2026-08-05) ────────────────────────────────────
+ *
+ * 예전에는 줄이 하나였고 간격을 `config.env`로 정했다. 그 주석의 근거는
+ * *"개장일 조회 **하나**가 다른 서버로 나가지만 줄은 하나라 느린 쪽에 맞춘다"*
+ * 였는데, **그 전제가 깨졌다.** 측정 스크립트가 실전 자격증명으로 조회를 수백 번
+ * 낸다(수급 150종목 × 4회 = 600회).
+ *
+ * `APP_ENV=vts`인 채로 실전 조회를 내면 간격이 1,100ms로 잡혀 **실전 한도(70ms)의
+ * 16배**로 기어간다. 2026-08-05 실측: 600회에 **14분**이 걸렸고 그중 11분이 순수
+ * 대기였다(CPU는 10분 30초 동안 0.3초만 썼다). 70ms면 같은 일이 3분이다.
+ *
+ * 한도는 **서버와 그 앱키의 것**이지 이 프로세스의 것이 아니다. 실전으로 나가는
+ * 조회와 모의로 나가는 조회는 서로의 한도를 먹지 않으므로 줄을 갈라도 안전하다.
+ *
+ * ★ 간격은 **그 호출이 실제로 가는 서버**로 정한다(`credentialServer`). 목적지
+ * (`restBaseFor`)를 정하는 것과 같은 값이어야 한다 — 어긋나면 빠른 간격으로
+ * 느린 서버를 두드려 `EGW00201`을 부른다.
  */
-function scheduleKisCall<T>(run: () => Promise<T>): Promise<T> {
-  /*
-   * 간격은 **그 실행의 기본 서버**로 정한다. 개장일 조회 하나가 다른 서버로 나가지만
-   * 줄은 하나라, 느린 쪽(모의)에 맞춰 두는 것이 안전하다.
-   */
-  const gap = KIS_MIN_CALL_GAP_BY_SERVER[config.env];
-  const result = kisCallChain.then(run, run);
-  kisCallChain = result.then(
+function scheduleKisCall<T>(server: KisServer, run: () => Promise<T>): Promise<T> {
+  const gap = KIS_MIN_CALL_GAP_BY_SERVER[server];
+  const result = kisCallChains[server].then(run, run);
+  kisCallChains[server] = result.then(
     () => delay(gap),
     () => delay(gap),
   );
@@ -251,11 +280,13 @@ async function kisGetWithHeaders(
     return { body, headers: res.headers };
   }
 
-  const first = await scheduleKisCall(callOnce);
+  // 목적지를 정하는 값과 같은 것으로 줄을 고른다. 어긋나면 한도를 잘못 먹는다.
+  const server = credentialServer(credentials);
+  const first = await scheduleKisCall(server, callOnce);
   // 한도에 걸리면 잠시 쉬고 한 번만 더 시도한다. 계속 두드리면 더 오래 막힌다.
   if (!isRateLimited(first.body)) return first;
   await delay(KIS_RATE_LIMIT_BACKOFF_MS);
-  const second = await scheduleKisCall(callOnce);
+  const second = await scheduleKisCall(server, callOnce);
   /*
    * 두 번째도 한도면 그대로 넘기지 않는다. 빈 본문이 정상 응답처럼 흘러가면
    * 호출한 쪽은 `캔들 0건`을 사실로 받아들인다 — 이번 작업 내내 고쳐 온 그
