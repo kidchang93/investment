@@ -909,6 +909,88 @@ export interface InvestorFlowDay {
 }
 
 /**
+ * 하루치 시세·공매도. **한 번 호출에 100거래일**이 온다.
+ *
+ * 필드 이름은 실제로 찍어 확인했다(`scripts/probeNewDataApis.ts`, 2026-08-05).
+ */
+export interface DailyMarketBar {
+  /** 거래일 `YYYYMMDD` */
+  tradingDay: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  /** 거래량(주) */
+  volume: number;
+  /** 거래대금(원) */
+  turnover: number;
+  /** 그날 거래량 중 공매도 비중(%). KIS가 계산해 준 값이다 */
+  shortRatio: number;
+  /** 공매도 체결 수량(주) */
+  shortVolume: number;
+  /** 그날 거래량 가중 평균가. 체결 비용을 재는 데 쓸 수 있다 */
+  vwap: number;
+}
+
+/**
+ * 종목별 일별 시세 + 공매도 — `FHPST04830000`.
+ *
+ * ── 왜 이 TR인가 (2026-08-05) ────────────────────────────────────────────
+ *
+ * 신호 후보를 늘리려면 종가만으로는 부족하다 — 거래량·고저·거래대금이 있어야
+ * 변동성·유동성·범위 계열을 만들 수 있다. 그런데 이 TR 하나가 **OHLC + 거래량
+ * + 거래대금 + 공매도 비중**을 한꺼번에 주고, **한 번에 100거래일**이 온다
+ * (투자자 매매동향은 30일씩이다).
+ *
+ * 공매도 비중이 특히 값어치가 있다. 남들이 덜 보는 축이고, "빌려서 파는 쪽이
+ * 무엇을 아는가"라는 가설은 수급(사는 쪽)과 다른 정보다.
+ *
+ * ── 주의 ─────────────────────────────────────────────────────────────────
+ *
+ * 일별 행은 **`output2`**에 있다. `output1`은 그 종목의 **현재** 요약이라
+ * 과거 측정에 쓰면 안 된다 — 처음 찍었을 때 그것만 보고 "1행뿐"이라고 읽을 뻔했다.
+ */
+export async function getDailyMarketBars(
+  symbol: string,
+  fromDate: string,
+  toDate: string,
+  credentials?: KisCredentials,
+): Promise<DailyMarketBar[]> {
+  const { body } = await kisGetWithHeaders(
+    '/uapi/domestic-stock/v1/quotations/daily-short-sale',
+    'FHPST04830000',
+    {
+      FID_COND_MRKT_DIV_CODE: 'J',
+      FID_INPUT_ISCD: symbol,
+      FID_INPUT_DATE_1: fromDate,
+      FID_INPUT_DATE_2: toDate,
+    },
+    '',
+    credentials ?? primaryCredentials,
+  );
+  const rows = Array.isArray(body.output2) ? (body.output2 as Array<Record<string, string>>) : [];
+  const bars: DailyMarketBar[] = [];
+  for (const row of rows) {
+    const day = String(row.stck_bsop_date ?? '').trim();
+    // 빈 자리를 거래일로 세지 않는다. KIS는 응답을 고정 길이로 채울 때가 있다.
+    if (!/^\d{8}$/.test(day)) continue;
+    bars.push({
+      tradingDay: day,
+      open: Number(row.stck_oprc ?? 0),
+      high: Number(row.stck_hgpr ?? 0),
+      low: Number(row.stck_lwpr ?? 0),
+      close: Number(row.stck_clpr ?? 0),
+      volume: Number(row.acml_vol ?? 0),
+      turnover: Number(row.acml_tr_pbmn ?? 0),
+      shortRatio: Number(row.ssts_vol_rlim ?? 0),
+      shortVolume: Number(row.ssts_cntg_qty ?? 0),
+      vwap: Number(row.avrg_prc ?? 0),
+    });
+  }
+  return bars;
+}
+
+/**
  * 종목별 투자자 매매동향(일별) — `FHPTJ04160001`.
  *
  * ── 왜 이걸 보나 (2026-08-04) ────────────────────────────────────────────
@@ -966,6 +1048,29 @@ export async function getInvestorFlowDaily(
     });
   }
   return days;
+}
+
+/**
+ * **조사 전용** 원본 조회. 응답 필드를 짐작하지 않고 찍어 보려고 둔다.
+ *
+ * 새 TR을 붙일 때마다 필드 이름을 문서에서 베끼면 어긋난다 — 이 레포는 KIS가
+ * 값 없는 자리에 빈 문자열을 주고, 문서에 없는 필드를 주고, 문서에 있는 필드를
+ * 안 주는 것을 여러 번 겪었다. **먼저 찍고 그 다음 타입을 짓는다.**
+ *
+ * 제품 경로에서 쓰지 마라. 정규화를 안 하므로 KIS 원본 필드명이 그대로 나온다
+ * (CLAUDE.md 1번).
+ */
+export async function probeRawQuery(
+  account: KisAccountConfig,
+  path: string,
+  trId: string,
+  params: Record<string, string>,
+): Promise<Record<string, unknown>> {
+  const { body } = await kisGetWithHeaders(path, trId, params, '', {
+    ...toCredentials(account),
+    crossServerRead: true,
+  });
+  return body;
 }
 
 export async function getDomesticTurnoverRanking(limit = 30): Promise<string[]> {
