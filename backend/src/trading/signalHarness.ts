@@ -51,6 +51,32 @@ export interface HarnessCell {
   days: number;
   /** 상위 버킷 표본 수 */
   samples: number;
+  /**
+   * **시장을 뺀 뒤의** 상위−하위 평균(%)과 그 t.
+   *
+   * ── 왜 필요한가 (2026-08-04 결과를 보고) ────────────────────────────────
+   *
+   * 첫 실행에서 저변동성이 20일 축 우위 +5.807%(t 10.68)로 살아남았다. 그런데
+   * 그 구간은 **평범한 종목이 20일에 −5.7% 빠지던 장**이었다. 시장이 빠지면
+   * 고변동 종목이 더 크게 빠지므로 "저변동이 이긴다"가 **자동으로** 나온다.
+   *
+   * 그건 우위가 아니라 **노출**이다. 사고팔아서 번 것이 아니라 덜 위험한 것을
+   * 들고 있어서 덜 잃은 것이고, 시장이 오르는 구간에서는 반대로 뒤집힌다.
+   *
+   * ── 어떻게 빼나 ──────────────────────────────────────────────────────────
+   *
+   * 날짜별 상위−하위(`spread`)를 같은 날 **전체 평균 수익**(시장 대용)에 회귀하고
+   * **절편**을 본다. 기울기가 그 신호의 시장 민감도이고, 절편이 시장이 제자리일 때
+   * 남는 몫이다.
+   *
+   * 전체 평균을 시장 대용으로 쓰는 것은 **어림**이다 — 진짜 시장 지수가 아니라
+   * 이 표본의 동일가중 평균이다. 다만 같은 표본에서 나온 값이라 상위·하위가
+   * 공유하는 것을 걷어내는 데는 그쪽이 오히려 맞다.
+   */
+  alpha: number;
+  alphaT: number;
+  /** 시장 민감도(기울기). 1에 가까우면 그 신호는 시장 방향에 얹혀 있다 */
+  beta: number;
 }
 
 export interface HarnessResult {
@@ -98,6 +124,7 @@ function evaluateCell(
   const top: number[] = [];
   const bottom: number[] = [];
   const dailySpread: number[] = [];
+  const dailyMarket: number[] = [];
 
   const days = new Set<string>();
   for (const bars of input.barsBySymbol.values()) for (const b of bars) days.add(b.tradingDay);
@@ -130,6 +157,8 @@ function evaluateCell(
       else if (i >= snapshot.length - cut) { bottom.push(snapshot[i].forward); dayBottom.push(snapshot[i].forward); }
     }
     dailySpread.push((mean(dayTop) - mean(dayBottom)) * 100);
+    // 같은 날 전체 평균. 시장 대용이다 — 상위·하위가 함께 타는 것을 걷어낼 재료다.
+    dailyMarket.push(mean(snapshot.map((s) => s.forward)) * 100);
   }
 
   const dm = mean(dailySpread);
@@ -139,6 +168,8 @@ function evaluateCell(
       : 0;
   const se = variance > 0 ? Math.sqrt(variance / dailySpread.length) : 0;
 
+  const { alpha, alphaT, beta } = regressOnMarket(dailySpread, dailyMarket);
+
   return {
     signalKey: signal.key,
     horizon,
@@ -147,7 +178,43 @@ function evaluateCell(
     t: se > 0 ? dm / se : 0,
     days: dailySpread.length,
     samples: top.length,
+    alpha,
+    alphaT,
+    beta,
   };
+}
+
+/**
+ * 날짜별 상위−하위를 같은 날 시장 수익에 회귀한다.
+ *
+ * 절편(`alpha`)이 **시장이 제자리일 때 남는 몫**이고, 기울기(`beta`)가 시장
+ * 방향에 얼마나 얹혀 있는지다. 신호가 진짜 우위면 `alpha`가 살아남고,
+ * 노출일 뿐이면 `alpha`가 0으로 무너지면서 `beta`만 남는다.
+ *
+ * **이 t도 부풀려진 쪽이다** — 겹치는 선도수익률은 여기서도 안 없어진다.
+ */
+function regressOnMarket(
+  spread: number[],
+  market: number[],
+): { alpha: number; alphaT: number; beta: number } {
+  const n = Math.min(spread.length, market.length);
+  if (n < 3) return { alpha: 0, alphaT: 0, beta: 0 };
+  const my = mean(spread.slice(0, n));
+  const mx = mean(market.slice(0, n));
+  let sxy = 0;
+  let sxx = 0;
+  for (let i = 0; i < n; i += 1) {
+    sxy += (market[i] - mx) * (spread[i] - my);
+    sxx += (market[i] - mx) ** 2;
+  }
+  const beta = sxx > 0 ? sxy / sxx : 0;
+  const alpha = my - beta * mx;
+  // 잔차로 절편의 표준오차를 낸다.
+  let sse = 0;
+  for (let i = 0; i < n; i += 1) sse += (spread[i] - (alpha + beta * market[i])) ** 2;
+  const mse = n > 2 ? sse / (n - 2) : 0;
+  const seAlpha = mse > 0 && sxx > 0 ? Math.sqrt(mse * (1 / n + (mx * mx) / sxx)) : 0;
+  return { alpha, alphaT: seAlpha > 0 ? alpha / seAlpha : 0, beta };
 }
 
 export function runSignalHarness(input: HarnessInput): HarnessResult {
