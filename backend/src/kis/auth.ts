@@ -170,6 +170,39 @@ export async function getAccessToken(credentials: KisCredentials = primaryCreden
   return issuing;
 }
 
+/**
+ * 캐시를 버리고 **다시 발급받는다.** KIS가 `EGW00123`으로 거부했을 때만 부른다.
+ *
+ * ── 왜 필요한가 (2026-08-05 실측) ────────────────────────────────────────
+ *
+ * 캐시의 `expiresAt`이 아직 남았는데도 KIS가 *"기간이 만료된 token 입니다"*로
+ * 거부하는 일이 있다. 같은 앱키로 **다른 곳에서 토큰을 새로 받으면 앞의 토큰이
+ * 죽기** 때문이다 — 이 레포는 서버와 조사 스크립트가 같은 실전 앱키를 쓰고 있어
+ * 조사 스크립트를 돌리는 것만으로 서버의 토큰이 죽는다.
+ *
+ * 그때 `getAccessToken`은 **여전히 캐시가 유효하다고 보고 죽은 토큰을 계속 준다.**
+ * 무인 운용에서는 이게 조용한 정지다: 사람이 붙어 서버를 다시 띄울 때까지 모든
+ * 조회가 실패하고, 리스크 룰이 개장일을 못 물어 매매가 통째로 보류된다.
+ *
+ * ★ **발급 횟수 제한이 있다.** 그래서 오류를 확인한 뒤 한 번만 부른다 —
+ * 만료를 앞질러 미리 받거나, 실패할 때마다 반복해서 부르지 않는다.
+ */
+export async function reissueAccessToken(
+  credentials: KisCredentials = primaryCredentials,
+): Promise<string> {
+  const key = tokenCacheKey(credentials.id, credentialServer(credentials));
+  /*
+   * 같은 순간에 여러 요청이 죽은 토큰으로 실패한다. 하나만 발급하고 나머지는
+   * 그 결과를 기다리게 한다 — 안 그러면 한 번의 만료가 발급 수십 번이 된다.
+   */
+  const pending = inFlightTokens.get(key);
+  if (pending) return pending;
+
+  const issuing = issueAccessToken(credentials).finally(() => inFlightTokens.delete(key));
+  inFlightTokens.set(key, issuing);
+  return issuing;
+}
+
 export async function getApprovalKey(credentials: KisCredentials = primaryCredentials): Promise<string> {
   const key = tokenCacheKey(credentials.id, credentialServer(credentials));
   const cached = approvalKeys.get(key);

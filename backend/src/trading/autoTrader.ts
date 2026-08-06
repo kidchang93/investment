@@ -21,6 +21,7 @@ import type {
   AutoTraderStatus,
   Candle,
   Instrument,
+  OrderType,
   StrategySignal,
 } from '@invest/shared';
 
@@ -48,6 +49,8 @@ import { checkRiskRules, getRiskRules, getTodayUsage } from '../db/riskRules.js'
 import {
   getKisDomesticAccountSnapshot,
   getInstrumentIntradayCandles,
+  getOrderBook,
+  getQuote,
   placeKisDomesticOrder,
 } from '../kis/rest.js';
 import { checkBuyFundamentals } from './fundamentals.js';
@@ -66,6 +69,7 @@ import {
   type CandleCandidate,
   type CandleSkip,
 } from './runCandles.js';
+import { planPriceSource, resolveTradablePrice } from './preOpenPrice.js';
 import { inAfterHoursCloseWindow, withinSession } from './session.js';
 import { getStrategy, type StrategyContext } from './strategy.js';
 
@@ -573,6 +577,54 @@ async function buyQuantityForAccount(
   });
 }
 
+/**
+ * 이 주문을 **어떤 유형으로, 어떤 값에** 낼지.
+ *
+ * 정규장이면 지금까지 그대로 시장가다. 개장 전이면 지정가여야 하는데
+ * (NXT 프리마켓에는 시장가가 없다) 그 지정가에 쓸 **살아 있는 값**이 있어야 한다.
+ * 없으면 `tradable: false`이고 호출부가 주문을 만들지 않는다.
+ */
+interface PreOpenPricing {
+  tradable: boolean;
+  orderType: OrderType;
+  /** 금액 한도를 재는 잣대이자 지정가 단가. `tradable`이 false면 뜻이 없다 */
+  price: number;
+  /** 기록에 남길 한 마디. 값의 출처가 셋으로 갈리므로 반드시 남긴다 */
+  note: string;
+}
+
+/**
+ * 개장 전이면 살아 있는 시세를 찾아 지정가를 만든다. 정규장이면 아무것도 안 한다.
+ *
+ * ★ **정규장 경로에 KIS 호출을 더하지 않는다.** `planPriceSource`가 먼저 시각을
+ * 보고 `krxLast`면 그대로 돌아온다 — 하루의 대부분이 이 길이라, 여기에 조회를
+ * 하나 더 붙이면 회차마다 종목 수만큼 호출이 는다.
+ */
+async function resolvePreOpenPricing(
+  symbol: string,
+  regularPrice: number,
+  at: Date,
+): Promise<PreOpenPricing> {
+  const plan = planPriceSource(at);
+  if (plan.kind === 'krxLast') {
+    return { tradable: true, orderType: 'market', price: regularPrice, note: '정규장 시장가' };
+  }
+
+  const resolved = await resolveTradablePrice(symbol, at, {
+    lastPrice: async (code, exchange) => (await getQuote(code, exchange)).price,
+    expectedPrice: async (code) => (await getOrderBook(code)).expected?.price ?? 0,
+  });
+  if (!resolved.live) {
+    return { tradable: false, orderType: 'limit', price: 0, note: resolved.note };
+  }
+  return {
+    tradable: true,
+    orderType: 'limit',
+    price: resolved.price,
+    note: `개장 전 지정가 ${resolved.price.toLocaleString()}원 · ${resolved.note}`,
+  };
+}
+
 async function executeSignal(
   handle: RunnerHandle,
   signal: StrategySignal,
@@ -686,20 +738,48 @@ async function executeSignal(
   }
 
   /*
-   * 시장가로 낸다. 신호가 난 순간의 가격에 붙어야 해서 지정가로는 체결을 놓친다.
-   * 다만 리스크 룰에서 시장가를 막아뒀다면 그 판정이 이긴다.
+   * 정규장에는 시장가로 낸다. 신호가 난 순간의 가격에 붙어야 해서 지정가로는
+   * 체결을 놓친다. 다만 리스크 룰에서 시장가를 막아뒀다면 그 판정이 이긴다.
    *
    * 여기 넘기는 `candidate.price`가 곧 금액 한도를 재는 잣대이므로 **주문 기록에도
    * 같은 값을 남긴다**(`estimatedPrice`). 남기지 않으면 이 주문이 일일 금액 한도에
-   * 0원으로 쌓이는데, 러너는 늘 시장가라 한도가 영영 차지 않는다.
+   * 0원으로 쌓이는데, 정규장 주문은 늘 시장가라 한도가 영영 차지 않는다.
+   *
+   * ── 개장 전(08:00~09:00)은 다르다 (2026-08-05) ─────────────────────────
+   *
+   * 그 시각 `candidate.price`는 **전일 종가**다 — KRX가 닫혀 있는데 `getQuote`가
+   * 오류 없이 어제 값을 준다. 그걸로 지정가를 걸면 어제 가격에 주문을 내는 것이고,
+   * **갭이 큰 날일수록 크게 틀린다.** 그리고 갭이 큰 날이 우리가 거래하려는 날이다.
+   *
+   * 그래서 개장 전에는 `preOpenPrice`가 살아 있는 값을 따로 찾고, **못 찾으면
+   * 주문을 만들지 않는다.** 전일 종가로 "일단 걸어 두는" 길은 없다.
    */
+  /*
+   * 회차 시작 시각이 아니라 **지금**을 본다. 회차가 08:49에 시작해 08:51에 여기
+   * 닿으면 NXT는 이미 닫혀 있다 — 그 2분 차이로 닫힌 시장에 지정가를 건다.
+   */
+  const orderAt = new Date();
+  const pricing = await resolvePreOpenPricing(candidate.instrument.symbol, candidate.price, orderAt);
+  if (!pricing.tradable) {
+    await recordAutoTraderRun({
+      accountId: config.accountId,
+      status: 'running',
+      message: `${candidate.instrument.name} 주문 보류 · ${pricing.note}`,
+      instrumentId: signal.instrumentId,
+      side: signal.side,
+      quantity,
+      equity,
+    });
+    return;
+  }
+
   const verdict = await checkRiskRules({
     accountId: config.accountId,
     symbol: candidate.instrument.symbol,
     side: signal.side,
-    orderType: 'market',
+    orderType: pricing.orderType,
     quantity,
-    price: candidate.price,
+    price: pricing.price,
   });
   if (!verdict.allowed) {
     await recordAutoTraderRun({
@@ -759,8 +839,10 @@ async function executeSignal(
     result = await placeKisDomesticOrder(account, {
       symbol: candidate.instrument.symbol,
       side: signal.side,
-      orderType: 'market',
+      orderType: pricing.orderType,
       quantity,
+      // 시장가면 무시된다. 지정가일 때만 값이 들어가고, 그 값은 살아 있는 시세다.
+      limitPrice: pricing.orderType === 'limit' ? pricing.price : undefined,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
@@ -769,9 +851,9 @@ async function executeSignal(
       message,
       side: signal.side,
       symbol: candidate.instrument.symbol,
-      orderType: 'market',
+      orderType: pricing.orderType,
       quantity,
-      estimatedPrice: candidate.price,
+      estimatedPrice: pricing.price,
     });
     /*
      * **거절은 회차 실패가 아니다.** KIS가 주문을 알아듣고 안 받은 것이지
@@ -805,9 +887,9 @@ async function executeSignal(
     message: result.message,
     side: signal.side,
     symbol: candidate.instrument.symbol,
-    orderType: 'market',
+    orderType: pricing.orderType,
     quantity,
-    estimatedPrice: candidate.price,
+    estimatedPrice: pricing.price,
     orderNo: result.orderNo,
     orderBranchNo: result.orderBranchNo,
   });
@@ -896,12 +978,29 @@ export async function resumeAutoTraders(deps: AutoTraderDeps): Promise<number> {
       await startAutoTrader(config as AutoTraderConfig, deps);
       resumed += 1;
     } catch (e) {
+      /*
+       * ★ **되살리기 실패로는 기록을 지우지 않는다.** 2026-08-05에 지웠다가 당했다.
+       *
+       * `stopAutoTrader`가 지우는 것은 **내려진 판단**이다 — 목표 도달·중단선·
+       * 사용자 정지. 그건 되살리면 판단을 무시하는 셈이라 지우는 게 맞다.
+       * 그런데 여기는 판단이 아니라 **못 뜬 것**이고, 원인은 대개 잠깐이다
+       * (DB가 아직 안 뜸·KIS 일시 장애·빌드가 순간 깨짐).
+       *
+       * 지우면 그 다음 부팅에서 빌드가 멀쩡해도 러너가 안 돌아온다. 그때
+       * **보유 종목이 있으면 아무도 안 보는 채로 남는다** — 이 기능을 만든 바로
+       * 그 사고가 이 catch 때문에 다시 난다. 실제로 났다: 빌드가 15초 깨진 사이
+       * 기록이 지워져 KODEX 코스닥150 952주가 방치됐다.
+       *
+       * 남겨 두면 영영 못 뜨는 설정이 매 부팅 오류를 남긴다. 그건 시끄러울 뿐이고,
+       * 조용히 방치되는 포지션보다 훨씬 낫다.
+       */
       await recordAutoTraderRun({
         accountId,
         status: 'error',
-        message: `재시작 실패: ${e instanceof Error ? e.message : String(e)}`,
+        message:
+          `재시작 실패: ${e instanceof Error ? e.message : String(e)}`
+          + ' · 복구 기록은 남겨 두었습니다. 다음 부팅에서 다시 시도합니다.',
       });
-      await clearDesiredAutoTrader(accountId).catch(() => undefined);
     }
   }
   return resumed;

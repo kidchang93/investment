@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  isExpiredToken,
   isOrderTypeUnavailableOnServer,
   isTrUnavailableOnServer,
   kisErrorCodeOf,
@@ -52,6 +53,28 @@ describe('기능이 없는 것은 짝 문제가 아니다', () => {
     const hint = kisErrorHint('EGW02006') ?? '';
     assert.match(hint, /앱키가 틀린 것이 아닙니다/);
     assert.doesNotMatch(hint, /짝이 어긋/);
+  });
+});
+
+describe('죽은 토큰은 설정 문제가 아니다', () => {
+  it('EGW00123은 재발급으로 푸는 것이라 성질 표에 없다', () => {
+    assert.equal(isExpiredToken({ msg_cd: 'EGW00123' }), true);
+    /*
+     * 성질 표에 들어가면 호출부가 "APP_ENV를 고치세요"라고 말하게 된다. 다시
+     * 받으면 풀릴 일에 사람을 설정 파일로 보내는 셈이라 둘을 갈라 둔다.
+     */
+    assert.equal(kisErrorKind('EGW00123'), null);
+    assert.equal(kisErrorHint('EGW00123'), null);
+  });
+
+  it('다른 코드를 만료로 읽지 않는다', () => {
+    for (const code of ['EGW00201', 'EGW02006', 'EGW02007', '40240000', '']) {
+      assert.equal(isExpiredToken({ msg_cd: code }), false, code);
+    }
+    assert.equal(isExpiredToken({}), false);
+    assert.equal(isExpiredToken(undefined), false);
+    // 본문이 문자열로 남아 있는 자리가 있다(POST 실패는 원문을 그대로 들고 다닌다).
+    assert.equal(isExpiredToken('{"msg_cd":"EGW00123"}'), true);
   });
 });
 

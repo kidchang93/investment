@@ -1550,6 +1550,55 @@ export interface RiskRuleSet {
   symbolAllowlist: string[];
   /** 항상 차단할 종목 */
   symbolBlocklist: string[];
+
+  /*
+   * ── 여기부터는 **계좌 상태**를 봐야 하는 잣대다 (2026-08-05) ──────────
+   *
+   * 위 항목들은 주문 한 건만 보고 판정하지만, 아래 셋은 "지금 무엇을 들고
+   * 있는가"를 알아야 한다. 판정은 `backend/src/trading/positionGuard.ts`가 한다.
+   *
+   * 원래 러너 설정(`AutoTraderConfig`)에 있었다. 판단자가 알고리즘에서
+   * 에이전트로 옮겨가면서 **러너를 끄면 값이 갈 곳이 없어져** 계좌 룰로 올렸다.
+   * 누가 주문하든 같은 바닥을 지나야 한다.
+   */
+
+  /** 동시에 들 수 있는 종목 수. 0이면 검사하지 않는다 */
+  maxPositions: number;
+  /** 산 지 이만큼 안 지났으면 매도를 미룬다(분). 0이면 끔 */
+  minHoldMinutes: number;
+  /**
+   * 평가금액이 이 값 **이하**면 매수를 전면 차단한다. 0이면 끔.
+   *
+   * 매도는 막지 않는다 — 바닥에 닿았다고 못 나가게 하면 위험이 줄지 않는다.
+   */
+  stopEquity: number;
+}
+
+/**
+ * 국내 업종/지수 현재값 (KOSPI·KOSDAQ 등).
+ *
+ * ★ **종목 시세가 아니다.** 조회 TR도 시장 구분 코드도 다르다 —
+ * 종목은 `FID_COND_MRKT_DIV_CODE='J'`, 업종은 **`'U'`**다. 섞으면 응답이 비어 온다.
+ *
+ * 이 레포는 2026-08-05까지 지수를 **한 번도 못 재고 있었다.** 에이전트가 시장
+ * 맥락을 판단해야 하는데 언론 값을 인용할 수밖에 없었다 — 우리가 잰 값이 아니었다.
+ * ETF 대용(069500)과 지수는 다르다. 섞으면 안 된다.
+ */
+export interface DomesticIndexQuote {
+  /** 업종코드. 0001 코스피 · 1001 코스닥 · 2001 코스피200 */
+  code: string;
+  name: string;
+  value: number;
+  change: number;
+  changeRate: number;
+  sign: PriceSign;
+  /** 오른 종목 수 / 내린 종목 수. 지수보다 장의 폭을 잘 말해 준다 */
+  advancing: number;
+  declining: number;
+  unchanged: number;
+  /** 누적 거래대금(원) */
+  turnover: number;
+  fetchedAt: number;
 }
 
 /** 주문 1건에 대한 리스크 판정 결과 */

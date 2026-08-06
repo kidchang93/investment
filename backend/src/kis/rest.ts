@@ -7,8 +7,16 @@ import {
   type KisServer,
 } from '../config.js';
 import { getDomesticInstrumentsBySymbols } from '../db/instruments.js';
-import { credentialServer, getAccessToken, primaryCredentials, type KisCredentials } from './auth.js';
-import { kisErrorCodeOf, kisErrorSuffix, KisRequestError } from './errorCodes.js';
+import {
+  credentialServer,
+  getAccessToken,
+  primaryCredentials,
+  reissueAccessToken,
+  type KisCredentials,
+} from './auth.js';
+import { DEFAULT_EXCHANGE, marketDivCode, type KisExchange } from './exchanges.js';
+import { assertVenueUsable, DEFAULT_ORDER_VENUE, type OrderVenue } from './orderVenues.js';
+import { isExpiredToken, kisErrorCodeOf, kisErrorSuffix, KisRequestError } from './errorCodes.js';
 import { CONFIRMED_ORDER_DIVISIONS, usesZeroPrice } from './orderDivisions.js';
 import {
   chunkQuoteCodes,
@@ -27,6 +35,7 @@ import {
 import type {
   BrokerAccountSnapshot,
   BrokerExecution,
+  DomesticIndexQuote,
   BrokerExecutionSnapshot,
   BrokerExecutionStatus,
   BrokerAmendableOrder,
@@ -240,12 +249,11 @@ async function kisGetWithHeaders(
     if (mismatch) throw new Error(`KIS 조회를 보내지 않았습니다 (${path}, 자격증명 ${credentials.id}). ${mismatch}`);
   }
 
-  const token = await getAccessToken(credentials);
   const url = new URL(restBaseFor(credentialServer(credentials)) + path);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 
   const headers: Record<string, string> = {
-    authorization: `Bearer ${token}`,
+    authorization: `Bearer ${await getAccessToken(credentials)}`,
     appkey: credentials.appKey,
     appsecret: credentials.appSecret,
     tr_id: trId,
@@ -270,7 +278,7 @@ async function kisGetWithHeaders(
     } catch {
       body = {};
     }
-    if (!res.ok && !isRateLimited(body)) {
+    if (!res.ok && !isRateLimited(body) && !isExpiredToken(body)) {
       // 짝이 어긋났다는 뜻의 코드면 그렇게 말해 준다. 아니면 덧말이 빈 문자열이다.
       throw new KisRequestError(
         `KIS GET ${path} 실패 (${res.status}): ${text}${kisErrorSuffix(body)}`,
@@ -282,7 +290,27 @@ async function kisGetWithHeaders(
 
   // 목적지를 정하는 값과 같은 것으로 줄을 고른다. 어긋나면 한도를 잘못 먹는다.
   const server = credentialServer(credentials);
-  const first = await scheduleKisCall(server, callOnce);
+  let first = await scheduleKisCall(server, callOnce);
+
+  /*
+   * 토큰이 죽었으면 **한 번만** 다시 받아 재시도한다. 캐시의 만료 시각이 남아 있어도
+   * 온다 — 같은 앱키로 다른 곳에서 새 토큰을 받으면 앞의 토큰이 죽는다.
+   *
+   * 이걸 안 하면 무인 운용이 조용히 멈춘다: 모든 조회가 실패하고, 리스크 룰이
+   * 개장일을 못 물어 매매가 통째로 보류된 채 사람이 붙을 때까지 그대로다.
+   *
+   * ★ 재시도는 한 번뿐이다. 발급에는 횟수 제한이 있어 실패마다 부르면 그게 더 큰 사고다.
+   */
+  if (isExpiredToken(first.body)) {
+    headers.authorization = `Bearer ${await reissueAccessToken(credentials)}`;
+    first = await scheduleKisCall(server, callOnce);
+    if (isExpiredToken(first.body)) {
+      throw new KisRequestError(
+        `KIS GET ${path} 실패: 토큰을 다시 받았는데도 만료라고 합니다 (자격증명 ${credentials.id}).`,
+        kisErrorCodeOf(first.body),
+      );
+    }
+  }
   // 한도에 걸리면 잠시 쉬고 한 번만 더 시도한다. 계속 두드리면 더 오래 막힌다.
   if (!isRateLimited(first.body)) return first;
   await delay(KIS_RATE_LIMIT_BACKOFF_MS);
@@ -736,12 +764,18 @@ async function getOverseasIntradayCandles(instrument: Instrument): Promise<Candl
   return { code: instrument.id, name: instrument.name, candles };
 }
 
-/** 현재가 스냅샷 (주식현재가 시세, tr_id: FHKST01010100). */
-export async function getQuote(code: string): Promise<Quote> {
+/**
+ * 현재가 스냅샷 (주식현재가 시세, tr_id: FHKST01010100).
+ *
+ * `exchange`를 생략하면 KRX다 — **기존 호출부의 동작이 그대로여야 한다.**
+ * 개장 전(08:00~08:50)에는 KRX가 닫혀 있어 이 함수가 **전일 종가**를 준다.
+ * 그 시각의 살아 있는 값은 `'NXT'`로만 나온다(`exchanges.ts`).
+ */
+export async function getQuote(code: string, exchange: KisExchange = DEFAULT_EXCHANGE): Promise<Quote> {
   const json = await kisGet(
     '/uapi/domestic-stock/v1/quotations/inquire-price',
     'FHKST01010100',
-    { FID_COND_MRKT_DIV_CODE: 'J', FID_INPUT_ISCD: code },
+    { FID_COND_MRKT_DIV_CODE: marketDivCode(exchange), FID_INPUT_ISCD: code },
   );
   /*
    * 응답을 받은 순간을 찍는다. KIS는 시세에 시각을 주지 않는다 — 이 응답의
@@ -955,12 +989,22 @@ export async function getDailyMarketBars(
   fromDate: string,
   toDate: string,
   credentials?: KisCredentials,
+  /**
+   * 어느 거래소의 일봉인가. 생략하면 KRX — **기존 호출부가 그대로여야 한다.**
+   *
+   * ★ `'UNIFIED'`는 거래량·거래대금·공매도만 합쳐 주고 **OHLC는 NXT 것**을 준다.
+   * 가격을 쓸 거면 `'KRX'`나 `'NXT'` 중 뜻하는 쪽을 골라야 한다(`exchanges.ts`).
+   *
+   * `'NXT'`의 시가는 **08:00 프리마켓 시가**다(2026-08-04 분봉 대조 확인:
+   * 005930 일봉 시가 239,000 = 08:00 분봉 시가). 고저종은 20:00까지를 덮는다.
+   */
+  exchange: KisExchange = DEFAULT_EXCHANGE,
 ): Promise<DailyMarketBar[]> {
   const { body } = await kisGetWithHeaders(
     '/uapi/domestic-stock/v1/quotations/daily-short-sale',
     'FHPST04830000',
     {
-      FID_COND_MRKT_DIV_CODE: 'J',
+      FID_COND_MRKT_DIV_CODE: marketDivCode(exchange),
       FID_INPUT_ISCD: symbol,
       FID_INPUT_DATE_1: fromDate,
       FID_INPUT_DATE_2: toDate,
@@ -1071,6 +1115,60 @@ export async function probeRawQuery(
     crossServerRead: true,
   });
   return body;
+}
+
+/**
+ * 국내 업종 현재지수 — `FHPUP02100000`.
+ *
+ * ── 왜 지금 붙었나 (2026-08-06) ──────────────────────────────────────────
+ *
+ * 판단자가 에이전트로 바뀌면서 **시장 맥락을 스스로 재야 하는데** 이 레포에는
+ * 지수 조회가 없었다. 2026-08-05 회의에서 코스피 등락률을 **언론 기사에서 인용**해
+ * 판단했다 — 우리가 잰 값이 아니었고, 기사끼리도 값이 갈렸다.
+ *
+ * ★ **시장 구분 코드가 `'U'`다.** 종목 시세의 `'J'`가 아니다(공식 예제 확인).
+ * 섞으면 응답이 빈다. 그래서 `exchanges.ts`의 `KisExchange`를 여기 쓰지 않는다 —
+ * 그건 종목 거래소를 고르는 값이고 이건 **업종이라는 다른 축**이다.
+ *
+ * 모의 서버에서도 된다(2026-08-05 실측).
+ */
+export const DOMESTIC_INDEX_CODES = {
+  kospi: '0001',
+  kosdaq: '1001',
+  kospi200: '2001',
+} as const;
+
+const DOMESTIC_INDEX_NAMES: Record<string, string> = {
+  '0001': '코스피',
+  '1001': '코스닥',
+  '2001': '코스피200',
+};
+
+export async function getDomesticIndex(code: string): Promise<DomesticIndexQuote> {
+  const json = await kisGet(
+    '/uapi/domestic-stock/v1/quotations/inquire-index-price',
+    'FHPUP02100000',
+    // 업종은 'U'다. 종목의 'J'를 넣으면 빈 응답이 온다.
+    { FID_COND_MRKT_DIV_CODE: 'U', FID_INPUT_ISCD: code },
+  );
+  const o = (json.output ?? {}) as Record<string, string>;
+  const value = toNumber(o.bstp_nmix_prpr);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`지수 응답에 현재가가 없습니다 (${code}).`);
+  }
+  return {
+    code,
+    name: DOMESTIC_INDEX_NAMES[code] ?? code,
+    value,
+    change: toNumber(o.bstp_nmix_prdy_vrss),
+    changeRate: toNumber(o.bstp_nmix_prdy_ctrt),
+    sign: parseSign(o.prdy_vrss_sign),
+    advancing: toNumber(o.ascn_issu_cnt),
+    declining: toNumber(o.down_issu_cnt),
+    unchanged: toNumber(o.stnr_issu_cnt),
+    turnover: toNumber(o.acml_tr_pbmn),
+    fetchedAt: Date.now(),
+  };
 }
 
 export async function getDomesticTurnoverRanking(limit = 30): Promise<string[]> {
@@ -1251,11 +1349,14 @@ export async function getMarketMovers(direction: 'up' | 'down'): Promise<MarketM
  *
  * 호출 비용이 있으므로(종목당 1회) 관심목록 전체가 아니라 보고 있는 종목에만 쓴다.
  */
-export async function getOrderBook(code: string): Promise<OrderBook> {
+export async function getOrderBook(
+  code: string,
+  exchange: KisExchange = DEFAULT_EXCHANGE,
+): Promise<OrderBook> {
   const json = await kisGet(
     '/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn',
     'FHKST01010200',
-    { FID_COND_MRKT_DIV_CODE: 'J', FID_INPUT_ISCD: code },
+    { FID_COND_MRKT_DIV_CODE: marketDivCode(exchange), FID_INPUT_ISCD: code },
   );
   const book = (json.output1 ?? {}) as Record<string, string>;
   const summary = (json.output2 ?? {}) as Record<string, string>;
@@ -2489,8 +2590,18 @@ export async function placeKisDomesticOrder(
      * 값이 올 수 있으므로**(`orderDivisions.ts`) 호출부가 그 사실을 기록에 남긴다.
      */
     orderDivision?: string;
+    /**
+     * 어느 거래소로 보낼지. 생략하면 `KRX` — **지금까지의 동작 그대로다.**
+     *
+     * ★ 모의 서버는 KRX만 받으므로 다른 값이면 `assertVenueUsable`이 **보내기 전에**
+     * 던진다. 보낸 뒤 거절을 읽으면 "NXT를 못 쓴다"인지 "모의라서 안 되는 것"인지
+     * 구분이 안 된다.
+     */
+    venue?: OrderVenue;
   },
 ): Promise<{ orderNo: string; orderBranchNo: string; acceptedAt: string; message: string }> {
+  const venue = params.venue ?? DEFAULT_ORDER_VENUE;
+  assertVenueUsable(venue);
   const isBuy = params.side === 'buy';
   const trId = config.env === 'prod' ? (isBuy ? 'TTTC0012U' : 'TTTC0011U') : isBuy ? 'VTTC0012U' : 'VTTC0011U';
   const isLimit = params.orderType === 'limit';
@@ -2512,7 +2623,7 @@ export async function placeKisDomesticOrder(
        * (공식 예제 715행). 시간외·시장가가 여기 해당한다.
        */
       ORD_UNPR: usesZeroPrice(division) ? '0' : String(Math.floor(params.limitPrice ?? 0)),
-      EXCG_ID_DVSN_CD: 'KRX',
+      EXCG_ID_DVSN_CD: venue,
       SLL_TYPE: isBuy ? '' : '01',
       CNDT_PRIC: '',
     },
@@ -2558,8 +2669,15 @@ export async function amendKisDomesticOrder(
     quantity?: number;
     limitPrice?: number;
     quantityAll: boolean;
+    /**
+     * **원주문이 나간 거래소여야 한다.** 다른 곳으로 정정·취소를 보내면 그 주문을
+     * 못 찾는다. 생략하면 `KRX` — 지금까지 모든 주문이 그리로 갔다.
+     */
+    venue?: OrderVenue;
   },
 ): Promise<{ orderNo: string; acceptedAt: string; message: string }> {
+  const venue = params.venue ?? DEFAULT_ORDER_VENUE;
+  assertVenueUsable(venue);
   const trId = config.env === 'prod' ? 'TTTC0013U' : 'VTTC0013U';
   const isCancel = params.action === 'cancel';
 
@@ -2576,7 +2694,7 @@ export async function amendKisDomesticOrder(
       ORD_QTY: params.quantityAll ? '0' : String(Math.floor(params.quantity ?? 0)),
       ORD_UNPR: isCancel ? '0' : String(Math.floor(params.limitPrice ?? 0)),
       QTY_ALL_ORD_YN: params.quantityAll ? 'Y' : 'N',
-      EXCG_ID_DVSN_CD: 'KRX',
+      EXCG_ID_DVSN_CD: venue,
     },
     toCredentials(account),
   );

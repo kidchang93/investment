@@ -76,6 +76,20 @@ export function kisErrorKind(msgCode: string): KisErrorKind | null {
   return KIS_ERROR_KINDS[msgCode] ?? null;
 }
 
+/**
+ * 토큰이 죽었다는 뜻인가.
+ *
+ * ★ **`KIS_ERROR_KINDS` 표에 넣지 않는다.** 저 표는 "사람이 설정을 고쳐야 하는 것"과
+ * "그 서버에 없는 것"을 가르는 표이고, 이건 **다시 받으면 되는 것**이라 성질이 다르다.
+ * 섞으면 호출부가 재발급으로 풀릴 오류에 "APP_ENV를 고치세요"라고 말하게 된다.
+ *
+ * 만료 시각이 남았는데도 온다 — 같은 앱키로 다른 곳에서 토큰을 새로 받으면
+ * 앞의 토큰이 죽는다(2026-08-05 실측). `reissueAccessToken`이 짝이다.
+ */
+export function isExpiredToken(body: unknown): boolean {
+  return kisErrorCodeOf(body) === 'EGW00123';
+}
+
 export function kisErrorHint(msgCode: string): string | null {
   return KIS_ERROR_HINTS[msgCode] ?? null;
 }
