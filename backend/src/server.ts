@@ -36,6 +36,8 @@ import { getThemePulses, THEME_PULSE_MAX_THEMES } from './themes/pulse.js';
 import { createOrderIntent, ensureTradingSchema, getFillByOrderId, getTradingOverview } from './db/trading.js';
 import { ensureAutoTraderSchema, getAutoTraderRuns } from './db/autoTrader.js';
 import { ensureDailySelectionSchema } from './db/dailySelection.js';
+import { getLastBuySubmittedAt } from './db/brokerOrders.js';
+import { checkPositionGuard } from './trading/positionGuard.js';
 import { ensureMarketSnapshotSchema } from './db/marketSnapshot.js';
 import { startDailySnapshot } from './trading/dailySnapshot.js';
 import { ensureSignalScoreSchema, getSignalScoreSummary } from './db/signalScores.js';
@@ -128,6 +130,8 @@ import { INSTRUMENT_QUOTE_BATCH } from '@invest/shared';
 import type {
   AmendLiveOrderRequest,
   AutoTraderConfig,
+  BrokerExecution,
+  BrokerPosition,
   ClientMessage,
   ClientSubscribeInstrument,
   CreateOrderRequest,
@@ -865,6 +869,94 @@ async function main(): Promise<void> {
         blockers: verdict.violations,
       });
       return reply.code(403).send({ message: '리스크 룰에 막혔습니다.', verdict });
+    }
+
+    /*
+     * ── 계좌 상태 관문 (2026-08-05) ──────────────────────────────────────
+     *
+     * `checkRiskRules`는 주문 한 건만 본다. **지금 무엇을 들고 있는지**를 봐야
+     * 하는 잣대 — 미체결 매도·최소 보유·자리 수·중단선 — 는 여기서 건다.
+     *
+     * 원래 이 넷은 러너 안에만 있었다. 판단자가 에이전트로 옮겨가면서 러너를
+     * 끄면 함께 사라지는데, 그중 둘은 이번 주에 실제로 돈을 잃은 버그다.
+     * **누가 주문하든 같은 바닥을 지나야 한다.**
+     *
+     * ★ 조회가 실패하면 **막지 않는다.** 계좌 조회 한 번 실패로 매도까지 막히면
+     * 종목이 갇힌다 — 못 파는 쪽이 훨씬 위험하다(`minHold.ts`의 ★ 절과 같은 판단).
+     * 대신 적용하지 못했다는 사실을 감사 기록에 남긴다.
+     */
+    const guardRules = verdict.rules;
+    const needsGuard =
+      guardRules.maxPositions > 0 || guardRules.minHoldMinutes > 0 || guardRules.stopEquity > 0;
+    if (needsGuard) {
+      let guardState: {
+        positions: Array<{ symbol: string; quantity: number }>;
+        executions: BrokerExecution[];
+        equity: number | undefined;
+      } | null = null;
+      try {
+        const [snapshot, executions] = await Promise.all([
+          getKisDomesticAccountSnapshot(account),
+          getKisDomesticExecutions(account, 1)
+            .then((r) => r.executions)
+            .catch((): BrokerExecution[] => []),
+        ]);
+        guardState = {
+          positions: snapshot.positions.map((p: BrokerPosition) => ({
+            symbol: p.symbol,
+            quantity: p.quantity,
+          })),
+          executions,
+          equity: snapshot.totalEvaluation ?? undefined,
+        };
+      } catch (err) {
+        req.log.warn({ err }, '계좌 상태를 못 읽어 포지션 관문을 적용하지 못했습니다');
+        await audit({
+          ...placeAudit,
+          status: 'submitted',
+          message: '계좌 상태를 못 읽어 포지션 관문을 적용하지 않았습니다.',
+        });
+      }
+
+      if (guardState) {
+        /*
+         * 매수 시각은 **매도일 때만** 읽는다. 매수에는 쓰이지 않는데 조회는
+         * 그대로 나가므로, 안 쓰는 호출로 초당 한도를 먹지 않게 한다.
+         */
+        let boughtAtBySymbol = new Map<string, number>();
+        if (side === 'sell' && guardRules.minHoldMinutes > 0) {
+          boughtAtBySymbol = await getLastBuySubmittedAt(
+            account.id,
+            guardState.positions.map((p) => p.symbol),
+          ).catch(() => new Map<string, number>());
+        }
+
+        const guard = checkPositionGuard({
+          symbol: instrument.providerSymbol,
+          side,
+          quantity,
+          nowMs: Date.now(),
+          positions: guardState.positions,
+          executions: guardState.executions,
+          boughtAtBySymbol,
+          maxPositions: guardRules.maxPositions,
+          minHoldMinutes: guardRules.minHoldMinutes,
+          equity: guardState.equity,
+          stopEquity: guardRules.stopEquity > 0 ? guardRules.stopEquity : undefined,
+        });
+        if (!guard.allowed) {
+          await audit({
+            ...placeAudit,
+            status: 'blocked',
+            message: '계좌 상태 관문에 막혔습니다.',
+            blockers: guard.violations,
+          });
+          return reply.code(403).send({
+            message: '계좌 상태 관문에 막혔습니다.',
+            verdict: { allowed: false, violations: guard.violations, rules: guardRules },
+          });
+        }
+      }
     }
 
     /*

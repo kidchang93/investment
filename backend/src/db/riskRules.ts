@@ -30,6 +30,10 @@ interface RiskRuleRow {
   session_end: string;
   symbol_allowlist: string[] | null;
   symbol_blocklist: string[] | null;
+  /* 나중에 붙은 열. 옛 행에도 `ALTER TABLE ... DEFAULT 0`으로 채워져 있다 */
+  max_positions: string;
+  min_hold_minutes: string;
+  stop_equity: string;
 }
 
 /**
@@ -60,6 +64,16 @@ const DEFAULT_RULES: Omit<RiskRuleSet, 'accountId'> = {
   sessionEnd: '15:30',
   symbolAllowlist: [],
   symbolBlocklist: [],
+  /*
+   * 계좌 상태 잣대의 기본값. **셋 다 0(끔)이다.**
+   *
+   * 켜진 채로 시작하면 이 값을 모르는 사람이 "왜 주문이 막히지"를 겪는다.
+   * 안전장치는 켜는 것이 기본이어야 할 것 같지만, 여기는 **막는 쪽이 아니라
+   * 세는 쪽**이라 잘못 켜지면 팔지도 사지도 못하게 된다. 쓰는 사람이 정한다.
+   */
+  maxPositions: 0,
+  minHoldMinutes: 0,
+  stopEquity: 0,
 };
 
 export async function ensureRiskRuleSchema(): Promise<void> {
@@ -79,6 +93,16 @@ export async function ensureRiskRuleSchema(): Promise<void> {
       symbol_blocklist jsonb NOT NULL DEFAULT '[]'::jsonb,
       updated_at timestamptz NOT NULL DEFAULT now()
     );
+  `);
+  /*
+   * 나중에 붙은 열은 `ADD COLUMN IF NOT EXISTS`로 채운다. `CREATE TABLE IF NOT
+   * EXISTS`는 이미 있는 표를 손대지 않으므로, 위에만 적으면 기존 계좌에 열이 안 생긴다.
+   */
+  await pool.query(`
+    ALTER TABLE trading_risk_rules
+      ADD COLUMN IF NOT EXISTS max_positions    integer        NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS min_hold_minutes integer        NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS stop_equity      numeric(20, 4) NOT NULL DEFAULT 0
   `);
 }
 
@@ -102,6 +126,14 @@ export async function getRiskRules(accountId: string): Promise<RiskRuleSet> {
     sessionEnd: row.session_end,
     symbolAllowlist: row.symbol_allowlist ?? [],
     symbolBlocklist: row.symbol_blocklist ?? [],
+    /*
+     * 열이 아직 없는 DB에서 읽으면 `undefined`가 온다. `Number(undefined)`는
+     * NaN이고, NaN은 어떤 비교에도 거짓이라 **잣대가 조용히 사라진다.**
+     * 0(끔)으로 떨어뜨려 "검사 안 함"이 분명하게 드러나게 한다.
+     */
+    maxPositions: Number(row.max_positions) || 0,
+    minHoldMinutes: Number(row.min_hold_minutes) || 0,
+    stopEquity: Number(row.stop_equity) || 0,
   };
 }
 
@@ -111,9 +143,10 @@ export async function upsertRiskRules(rules: RiskRuleSet): Promise<RiskRuleSet> 
       INSERT INTO trading_risk_rules (
         account_id, enabled, max_order_notional, max_order_quantity, daily_notional_limit,
         daily_order_count_limit, allow_market_order, session_start, session_end,
-        symbol_allowlist, symbol_blocklist, updated_at
+        symbol_allowlist, symbol_blocklist, max_positions, min_hold_minutes, stop_equity,
+        updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, now())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, now())
       ON CONFLICT (account_id) DO UPDATE SET
         enabled = EXCLUDED.enabled,
         max_order_notional = EXCLUDED.max_order_notional,
@@ -125,6 +158,9 @@ export async function upsertRiskRules(rules: RiskRuleSet): Promise<RiskRuleSet> 
         session_end = EXCLUDED.session_end,
         symbol_allowlist = EXCLUDED.symbol_allowlist,
         symbol_blocklist = EXCLUDED.symbol_blocklist,
+        max_positions = EXCLUDED.max_positions,
+        min_hold_minutes = EXCLUDED.min_hold_minutes,
+        stop_equity = EXCLUDED.stop_equity,
         updated_at = now()
     `,
     [
@@ -139,6 +175,9 @@ export async function upsertRiskRules(rules: RiskRuleSet): Promise<RiskRuleSet> 
       rules.sessionEnd,
       JSON.stringify(rules.symbolAllowlist),
       JSON.stringify(rules.symbolBlocklist),
+      rules.maxPositions,
+      rules.minHoldMinutes,
+      rules.stopEquity,
     ],
   );
   return getRiskRules(rules.accountId);
