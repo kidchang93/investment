@@ -77,6 +77,67 @@ export interface HarnessCell {
   alphaT: number;
   /** 시장 민감도(기울기). 1에 가까우면 그 신호는 시장 방향에 얹혀 있다 */
   beta: number;
+
+  /*
+   * ── ★ 매수 다리만 (2026-08-06에 추가) ──────────────────────────────────
+   *
+   * **위의 `spreadMean`·`alpha`로 판정하면 안 된다.** 그것은 상위 십분위를 사고
+   * 하위 십분위를 **파는** 것을 반씩 센 값인데, **우리는 공매도를 못 한다.**
+   *
+   * 2026-08-06에 `turnoverSurge` 20일을 갈라 보고 드러났다 — 알파 스프레드
+   * +6.154%(절반 +3.077%로 "★ 생존")였는데, **상위분위−시장이 +2.224%(t 2.25)**로
+   * 그 실행이 세운 문턱 2.74를 못 넘었다. 스프레드의 **36%만** 살 수 있는 쪽에
+   * 있었고, 하위분위−시장 −4.002%가 나머지를 만들고 있었다.
+   *
+   * 갭 측정에서는 "쓸 수 있는 다리는 하나뿐"을 계속 지켰는데 하네스만 안 지키고
+   * 있었다. **원장에 남은 지난 생존 판정들은 전부 이 결함 위에 있다.**
+   *
+   * 여기 값은 **날짜별 (상위 평균 − 그날 전체 평균)** 이라 구조상 이미 시장이
+   * 빠져 있다. 회귀로 다시 뺄 필요가 없다.
+   */
+
+  /** 상위분위 − 그날 전체 평균(%). **우리가 실제로 살 수 있는 전부** */
+  topLegMean: number;
+  topLegMedian: number;
+  /** 위 값의 날짜 군집 t. **생존 판정은 이것으로 한다** */
+  topLegT: number;
+  /**
+   * 위아래 10%를 자른 평균(%). 꼬리 몇 날이 만든 값인지 가른다.
+   *
+   * `turnoverSurge`는 56일 중 **상위 5일이 합계의 73.1%**였다. 평균만 보면
+   * 못 본다.
+   */
+  topLegTrimmed10: number;
+  /**
+   * 절대값 상위 5일이 합계에서 차지하는 몫(0~1). 1에 가까우면 관계가 아니라 사건이다.
+   *
+   * ★ **합계가 0에 가까우면 이 값은 뜻이 없다.** 비율이 폭발한다(2026-08-06 실측:
+   * 4201%·−522%). 그때는 `undefined`를 준다 — 큰 수를 찍어서 "꼬리가 심하다"로
+   * 오해하게 두지 않는다.
+   */
+  topLegTop5Share: number | undefined;
+
+  /*
+   * ── ★ 매수 다리의 **알파** (2026-08-06에 추가) ──────────────────────────
+   *
+   * `topLegMean`만으로는 부족하다. 그것은 `상위분위 − 그날 전체 평균`이라 시장이
+   * 움직인 **수준**은 빼지만, 종목들이 그 움직임에 **다르게 반응하는 것**은 남는다.
+   *
+   * 저변동성이 정확히 그 자리다 — 시장이 빠지면 변동 큰 종목이 더 크게 빠지므로
+   * "저변동이 이긴다"가 자동으로 나온다. 2026-08-06 재측정에서 살아남은 넷이 전부
+   * 저변동성 계열이었고 베타가 −0.75~−1.32였다. `parkinsonVol` 20일은 매수 다리가
+   * **+9.535%/20일 ≈ 월 9.5%**로, 학계 팩터(월 0.5~2.6%)의 네 배다 — 그 크기 자체가
+   * 우위가 아니라 노출이라는 신호다.
+   *
+   * 그래서 **날짜별 매수 다리를 같은 날 시장 수익에 회귀하고 절편을 본다.**
+   * 그것이 시장이 제자리일 때 남는 몫이다.
+   */
+
+  /** 매수 다리에서 시장을 뺀 몫(%). **최종 판정은 이것으로 한다** */
+  topLegAlpha: number;
+  topLegAlphaT: number;
+  /** 매수 다리의 시장 민감도. **위의 `beta`와 다른 값이다** — 그건 스프레드의 것이다 */
+  topLegBeta: number;
 }
 
 export interface HarnessResult {
@@ -88,6 +149,37 @@ export interface HarnessResult {
 }
 
 const mean = (v: number[]): number => (v.length === 0 ? 0 : v.reduce((a, b) => a + b, 0) / v.length);
+
+/**
+ * 위아래 `fraction`씩 잘라낸 평균. 꼬리에 휘둘리는지 보는 데 쓴다.
+ *
+ * 자를 개수가 0이 되면 그냥 평균이다 — 표본이 적으면 절사가 아무 일도 안 한다는
+ * 사실을 감추지 않는다.
+ */
+function trimmedMean(v: number[], fraction: number): number {
+  if (v.length === 0) return 0;
+  const cut = Math.floor(v.length * fraction);
+  if (cut === 0) return mean(v);
+  const sorted = [...v].sort((a, b) => a - b);
+  return mean(sorted.slice(cut, sorted.length - cut));
+}
+
+/**
+ * 절대값 상위 `n`일이 합계에서 차지하는 몫.
+ *
+ * ★ **합이 0에 가까우면 `undefined`다.** 작은 분모로 나누면 비율이 폭발해
+ * 4201% 같은 값이 나오고, 그걸 보고 "꼬리가 심하다"고 읽게 된다. 실제로는
+ * **합이 0이라 몫을 물을 수 없는 것**이다. 문턱은 각 날 값의 평균 절대값에
+ * 견주어 정한다 — 절대 크기로 정하면 축마다 뜻이 달라진다.
+ */
+function topDaysShare(v: number[], n: number): number | undefined {
+  if (v.length === 0) return undefined;
+  const total = v.reduce((a, x) => a + x, 0);
+  const scale = mean(v.map(Math.abs));
+  if (scale <= 0 || Math.abs(total) < scale) return undefined;
+  const top = [...v].sort((a, b) => Math.abs(b) - Math.abs(a)).slice(0, n);
+  return top.reduce((a, x) => a + x, 0) / total;
+}
 
 function median(v: number[]): number {
   if (v.length === 0) return 0;
@@ -125,6 +217,8 @@ function evaluateCell(
   const bottom: number[] = [];
   const dailySpread: number[] = [];
   const dailyMarket: number[] = [];
+  /** 날짜별 (상위분위 − 그날 전체 평균). **생존 판정의 재료** */
+  const dailyTopLeg: number[] = [];
 
   const days = new Set<string>();
   for (const bars of input.barsBySymbol.values()) for (const b of bars) days.add(b.tradingDay);
@@ -158,7 +252,13 @@ function evaluateCell(
     }
     dailySpread.push((mean(dayTop) - mean(dayBottom)) * 100);
     // 같은 날 전체 평균. 시장 대용이다 — 상위·하위가 함께 타는 것을 걷어낼 재료다.
-    dailyMarket.push(mean(snapshot.map((s) => s.forward)) * 100);
+    const dayMarket = mean(snapshot.map((s) => s.forward));
+    dailyMarket.push(dayMarket * 100);
+    /*
+     * ★ **우리가 실제로 살 수 있는 것.** 상위분위가 그날 평균 종목보다 앞선 몫.
+     * 같은 날 안의 차이라 시장이 통째로 움직인 몫은 구조상 이미 빠져 있다.
+     */
+    dailyTopLeg.push((mean(dayTop) - dayMarket) * 100);
   }
 
   const dm = mean(dailySpread);
@@ -169,6 +269,18 @@ function evaluateCell(
   const se = variance > 0 ? Math.sqrt(variance / dailySpread.length) : 0;
 
   const { alpha, alphaT, beta } = regressOnMarket(dailySpread, dailyMarket);
+
+  const tlMean = mean(dailyTopLeg);
+  const tlVariance =
+    dailyTopLeg.length > 1
+      ? dailyTopLeg.reduce((a, v) => a + (v - tlMean) ** 2, 0) / (dailyTopLeg.length - 1)
+      : 0;
+  const tlSe = tlVariance > 0 ? Math.sqrt(tlVariance / dailyTopLeg.length) : 0;
+  /*
+   * ★ 매수 다리에서 시장을 뺀다. `regressOnMarket`을 스프레드 대신 매수 다리에
+   * 태우는 것이라 함수를 새로 만들 필요가 없다 — 같은 회귀다.
+   */
+  const topLegFit = regressOnMarket(dailyTopLeg, dailyMarket);
 
   return {
     signalKey: signal.key,
@@ -181,6 +293,14 @@ function evaluateCell(
     alpha,
     alphaT,
     beta,
+    topLegMean: tlMean,
+    topLegMedian: median(dailyTopLeg),
+    topLegT: tlSe > 0 ? tlMean / tlSe : 0,
+    topLegTrimmed10: trimmedMean(dailyTopLeg, 0.1),
+    topLegTop5Share: topDaysShare(dailyTopLeg, 5),
+    topLegAlpha: topLegFit.alpha,
+    topLegAlphaT: topLegFit.alphaT,
+    topLegBeta: topLegFit.beta,
   };
 }
 

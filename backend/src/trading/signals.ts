@@ -23,13 +23,28 @@
  * 미래 값을 바꿔 가며 점수가 흔들리지 않는지 확인한다.
  */
 
-/** 하루치. `getInvestorFlowDaily`가 주는 것과 같은 모양이다. */
+/**
+ * 하루치.
+ *
+ * `close`와 수급 셋은 `getInvestorFlowDaily`(30일씩)가 주고, 나머지는
+ * `getDailyMarketBars`(100일씩)가 준다. **두 TR을 날짜로 합쳐야 채워진다.**
+ *
+ * 시세 쪽이 `undefined`일 수 있는 이유가 여기 있다 — 수급만 받고 돌리는 호출부가
+ * 있고, 그때 0으로 채우면 "시가가 종가와 같았다"는 거짓이 된다.
+ */
 export interface DailyBar {
   tradingDay: string;
   close: number;
   individual: number;
   foreign: number;
   institution: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  /** 거래대금(원). 회전·유동성 계열의 재료 */
+  turnover?: number;
+  /** 그날 거래량 중 공매도 비중(%) */
+  shortRatio?: number;
 }
 
 export interface SignalContext {
@@ -71,6 +86,45 @@ function pastReturn(ctx: SignalContext, back: number): number | undefined {
   const a = ctx.history[from].close;
   const b = ctx.history[ctx.index].close;
   return a > 0 && b > 0 ? b / a - 1 : undefined;
+}
+
+/**
+ * `from`부터 `to`까지(양끝 포함) 어떤 값의 평균. **하나라도 없으면 undefined다.**
+ *
+ * 시세 필드는 수급만 받은 호출부에서 비어 있을 수 있다. 없는 것을 빼고 평균 내면
+ * 종목마다 다른 개수로 잰 값을 나란히 줄 세우게 된다 — 그게 더 나쁘다.
+ */
+function windowMean(
+  ctx: SignalContext,
+  from: number,
+  to: number,
+  pick: (bar: DailyBar) => number | undefined,
+): number | undefined {
+  if (from < 0 || to >= ctx.history.length || from > to) return undefined;
+  let total = 0;
+  for (let i = from; i <= to; i += 1) {
+    const value = pick(ctx.history[i]);
+    if (value === undefined || !Number.isFinite(value)) return undefined;
+    total += value;
+  }
+  return total / (to - from + 1);
+}
+
+/**
+ * **그 종목 자기 기준의** 거래대금 급증 배수 — 최근 5일 평균 ÷ 그 앞 20일 평균.
+ *
+ * 종목 간 절대 거래대금을 비교하면 대형주만 위로 몰린다(그건 크기이지 사건이
+ * 아니다). 자기 과거로 나누면 **평소보다 얼마나 몰렸나**가 남고, 그게 사용자가
+ * 말한 "자본이 많이 투입되고 빠져나가고를 반복한다"에 해당하는 값이다.
+ */
+function turnoverSurge(ctx: SignalContext): number | undefined {
+  const recent = windowMean(ctx, ctx.index - 4, ctx.index, (b) => b.turnover);
+  const base = windowMean(ctx, ctx.index - 24, ctx.index - 5, (b) => b.turnover);
+  if (recent === undefined || base === undefined) return undefined;
+  // 앞 20일이 통째로 거래정지면 배수를 만들 수 없다. 1로 채우면 "평소였다"는 거짓이다.
+  if (!(base > 0) || !(recent >= 0)) return undefined;
+  // 배수는 오른쪽 꼬리가 길다(10배가 흔하다). 로그로 줄 세워야 몇 종목이 순위를 삼키지 않는다.
+  return Math.log(recent / base);
 }
 
 /** 최근 `days`일 순매수 비중의 합. 하루치 잡음을 줄인다. */
@@ -206,6 +260,64 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
         total += Math.abs(b / a - 1);
       }
       return total > 0 ? -total / 20 : undefined;
+    },
+  },
+  {
+    key: 'turnoverSurge',
+    label: '거래대금 급증 (자기 20일 대비 최근 5일)',
+    rationale:
+      '사용자 관찰을 그대로 잰다 — "세력이 아니고서야 자본이 많이 투입되고 빠져나가고를'
+      + ' 반복한다". 평소보다 자금이 몰린 종목에서 값이 움직인다면 급증 자체가 축이다.'
+      + ' 절대 거래대금이 아니라 **자기 과거 대비**라 대형주 쏠림이 없다.',
+    minHistory: 24,
+    score: (ctx) => turnoverSurge(ctx),
+  },
+  {
+    key: 'surgeMomentum',
+    label: '거래대금 급증 × 20일 모멘텀',
+    rationale:
+      '자금이 몰리는 것만으로는 방향을 모른다 — 사려고 몰릴 수도 팔려고 몰릴 수도 있다.'
+      + ' 오르는 중에 몰린 것과 빠지는 중에 몰린 것을 가른다. 곱이라 상위는 "오르며 몰림",'
+      + ' 하위는 "빠지며 몰림"이 되어 하네스의 하위 분위가 그대로 거울이 된다.',
+    minHistory: 24,
+    score: (ctx) => {
+      const surge = turnoverSurge(ctx);
+      const momentum = pastReturn(ctx, 20);
+      return surge === undefined || momentum === undefined ? undefined : surge * momentum;
+    },
+  },
+  {
+    key: 'shortRatioLow',
+    label: '공매도 비중 낮음 (5일 평균, 역방향)',
+    rationale:
+      '빌려서 파는 쪽은 사는 쪽과 다른 정보를 본다. 공매도가 많이 걸린 종목이 이후 못 간다는'
+      + ' 주장이 널리 있어 **부호를 뒤집어** 넣었다 — 통념이 맞으면 양(+)이 나온다.'
+      + ' 이 레포는 공매도를 한 번도 안 쟀고, 수급(사는 쪽)과 겹치지 않는 축이다.',
+    minHistory: 4,
+    score: (ctx) => {
+      const avg = windowMean(ctx, ctx.index - 4, ctx.index, (b) => b.shortRatio);
+      return avg === undefined ? undefined : -avg;
+    },
+  },
+  {
+    key: 'parkinsonVol',
+    label: '저변동성 · 고저 범위 기준 (20일, 역방향)',
+    rationale:
+      '`lowVolatility`와 **같은 가설을 다른 자로** 잰다. 종가끼리만 보면 장중에 크게'
+      + ' 흔들리고 제자리로 온 날이 "조용한 날"로 잡히는데, 고저 범위는 그것을 잡는다.'
+      + ' ★ 둘 중 하나만 살아남으면 그건 더 좋은 자가 아니라 **잡음**이라는 뜻이다.',
+    minHistory: 19,
+    score: (ctx) => {
+      // Parkinson: √( Σ ln(고/저)² / (4·ln2·N) ). 고저가 같은 날(상한가 직행)은 0이라 문제없다.
+      let total = 0;
+      for (let i = ctx.index - 19; i <= ctx.index; i += 1) {
+        if (i < 0) return undefined;
+        const { high, low } = ctx.history[i];
+        if (high === undefined || low === undefined) return undefined;
+        if (!(high > 0) || !(low > 0) || high < low) return undefined;
+        total += Math.log(high / low) ** 2;
+      }
+      return -Math.sqrt(total / (4 * Math.LN2 * 20));
     },
   },
 ];

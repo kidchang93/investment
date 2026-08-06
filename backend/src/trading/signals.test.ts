@@ -21,6 +21,15 @@ function bar(day: number, close: number, foreign = 100, institution = 50, indivi
     foreign,
     institution,
     individual,
+    /*
+     * 시세 쪽도 채운다. 안 채우면 그 필드를 쓰는 신호가 늘 `undefined`가 되어
+     * **미래를 보는지 검사하지 못한 채 통과한다** — 있으나 마나 한 시험이 된다.
+     */
+    open: close * 0.99,
+    high: close * (1.02 + (day % 3) * 0.01),
+    low: close * (0.97 - (day % 4) * 0.005),
+    turnover: 1_000_000_000 + (day % 6) * 300_000_000,
+    shortRatio: 1 + (day % 5) * 0.8,
   };
 }
 
@@ -42,7 +51,20 @@ describe('신호 — 미래를 보지 않는다', () => {
     for (const signal of SIGNAL_CANDIDATES) {
       const before = signal.score({ history: base, index });
       const tampered = base.map((b, i) =>
-        i <= index ? b : { ...b, close: b.close * 3, foreign: -99_999, institution: 42, individual: 7 },
+        i <= index
+          ? b
+          : {
+              ...b,
+              close: b.close * 3,
+              foreign: -99_999,
+              institution: 42,
+              individual: 7,
+              open: b.close * 3,
+              high: b.close * 9,
+              low: b.close * 0.1,
+              turnover: 987_654_321_000,
+              shortRatio: 44.4,
+            },
       );
       const after = signal.score({ history: tampered, index });
       assert.deepEqual(after, before, `${signal.key}: 미래를 보고 있다`);
@@ -87,6 +109,30 @@ describe('신호 — 모르는 것을 0으로 채우지 않는다', () => {
       const signal = SIGNAL_CANDIDATES.find((s) => s.key === key);
       assert.ok(signal, key);
       assert.equal(signal.score({ history: bars, index: 28 }), undefined, `${key}: 0으로 채웠다`);
+    }
+  });
+
+  /*
+   * 수급 TR만 받고 돌리는 호출부가 있어 시세 필드가 통째로 빌 수 있다. 그때
+   * 0으로 채우면 **모든 종목이 같은 점수**가 되어 십분위가 사실상 무작위가 된다 —
+   * 그러고도 하네스는 정상으로 보이는 표를 찍는다. 그게 제일 나쁜 실패다.
+   */
+  it('시세 필드가 없으면 시세 기반 신호는 undefined다', () => {
+    const flowOnly = series().map(({ tradingDay, close, foreign, institution, individual }) => ({
+      tradingDay,
+      close,
+      foreign,
+      institution,
+      individual,
+    }));
+    for (const key of ['turnoverSurge', 'surgeMomentum', 'shortRatioLow', 'parkinsonVol']) {
+      const signal = SIGNAL_CANDIDATES.find((s) => s.key === key);
+      assert.ok(signal, key);
+      assert.equal(
+        signal.score({ history: flowOnly, index: 28 }),
+        undefined,
+        `${key}: 시세가 없는데 값을 냈다`,
+      );
     }
   });
 });
