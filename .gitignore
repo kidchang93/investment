@@ -12,6 +12,9 @@ build/
 # KIS 토큰 캐시
 backend/.cache/
 
+# launchd 개장 전 소집이 남기는 실행 로그·브리핑
+.cron-logs/
+
 .DS_Store
 .idea/
 .vscode/
