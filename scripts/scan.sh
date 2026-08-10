@@ -99,10 +99,19 @@ fi
 # ── 3. 테마 맥박 — 섹터가 통째로 움직이는지 ───────────────────────────
 echo
 echo "── 테마 맥박 ($THEMES) ──"
-curl -s -m 40 "http://localhost:4000/api/themes/pulse?codes=$THEMES" \
+# 타임아웃을 넉넉히 준다 — 테마 3개면 백엔드가 KIS를 7~8회 치고, 모의 서버 유량이 얇아
+# 40초로는 모자랐다(2026-08-10 13:01에 실제로 넘겼다).
+curl -s -m 90 "http://localhost:4000/api/themes/pulse?codes=$THEMES" \
   | python3 -c "
 import json, sys
-d = json.load(sys.stdin)
+raw = sys.stdin.read()
+# 빈 응답·잘린 JSON에 파이썬 traceback을 뱉지 않는다. 실패는 실패라고 적는다.
+if not raw.strip():
+    print('  조회실패: 빈 응답(타임아웃일 가능성). 다음 회차에 다시 본다'); sys.exit()
+try:
+    d = json.loads(raw)
+except json.JSONDecodeError:
+    print(f'  조회실패: JSON 아님 (앞 120자) {raw[:120]!r}'); sys.exit()
 if 'message' in d:
     print('  조회실패:', d['message']); sys.exit()
 print(f\"  (호출 {d.get('quoteCalls','?')}/{d.get('maxQuoteCalls','?')})\")
