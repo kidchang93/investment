@@ -8236,6 +8236,16 @@ export function App(): JSX.Element {
                           {record.quantity !== undefined ? `${formatNumber(record.quantity)}주` : '-'}
                           {record.limitPrice !== undefined ? ` · ${formatMoney(record.limitPrice)}` : ''}
                           {/*
+                            스톱가는 단가와 성질이 다르다 — "얼마에 나가는가"가 아니라
+                            "언제 나가는가"다. 합쳐 적으면 손절이 걸린 주문과 그냥 지정가
+                            주문이 기록에서 똑같이 보인다.
+                          */}
+                          {record.stopPrice !== undefined && (
+                            <span title="스톱가입니다. 현재가가 여기 닿으면 위 단가로 주문이 나갑니다.">
+                              {` · 스톱 ${formatMoney(record.stopPrice)}`}
+                            </span>
+                          )}
+                          {/*
                             시장가에는 단가가 없다. 대신 한도 판정에 쓴 추정 단가를 적되
                             어림값이라고 밝힌다 — 그냥 적으면 지정가로 낸 주문으로 읽힌다.
                           */}

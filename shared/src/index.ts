@@ -1489,6 +1489,17 @@ export interface PlaceLiveOrderRequest {
   quantity: number;
   /** 지정가일 때 필수 */
   limitPrice?: number;
+  /**
+   * 스톱가. **이 값이 오면 스톱지정가로 접수한다** — 현재가가 여기 닿는 순간
+   * `limitPrice`로 주문이 나간다.
+   *
+   * 감시하는 주체가 **우리가 아니라 거래소**라는 것이 이 값의 전부다. 서버가
+   * 꺼져 있어도, 사람이 화면을 안 보고 있어도 손절이 살아 있다.
+   *
+   * 지정가와 **함께** 온다(`orderType: 'limit'` + `limitPrice`). 스톱가만으로는
+   * 닿았을 때 얼마에 낼지가 정해지지 않는다.
+   */
+  stopPrice?: number;
   /** 사용자 2단계 확인. 서버가 값 자체를 검증한다. */
 }
 
@@ -1647,6 +1658,14 @@ export interface BrokerOrderRecord {
    * 이 값으로 재므로 어림값이라는 사실과 함께 남긴다.
    */
   estimatedPrice?: number;
+  /**
+   * 스톱가. 스톱지정가로 낸 주문에만 있다.
+   *
+   * `limitPrice`와 갈라 둔다 — **성질이 다른 값이다.** 스톱가는 "언제 나가는가"이고
+   * 지정가는 "얼마에 나가는가"다. 합쳐 적으면 손절 조건이 붙은 주문과 그냥 지정가
+   * 주문이 기록에서 똑같이 보인다.
+   */
+  stopPrice?: number;
   orderNo?: string;
   orderBranchNo?: string;
   /** 정정·취소 대상 원주문번호 */

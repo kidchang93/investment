@@ -24,6 +24,7 @@ interface BrokerOrderRow {
   quantity: string | null;
   limit_price: string | null;
   estimated_price: string | null;
+  stop_price: string | null;
   order_no: string | null;
   order_branch_no: string | null;
   original_order_no: string | null;
@@ -53,6 +54,14 @@ export interface BrokerOrderAttempt {
    * 일일 금액 한도가 이 값으로 쌓인다 — 없으면 그 주문은 한도에 안 잡힌다.
    */
   estimatedPrice?: number;
+  /**
+   * 스톱가. 스톱지정가로 낸 주문에만 넣는다.
+   *
+   * `limitPrice`에 합치지 않는다 — **성질이 다른 값이다.** 스톱가는 "언제 나가는가",
+   * 지정가는 "얼마에 나가는가"다. 합치면 손절 조건이 붙은 주문과 그냥 지정가
+   * 주문이 기록에서 똑같이 보인다.
+   */
+  stopPrice?: number;
   orderNo?: string;
   orderBranchNo?: string;
   originalOrderNo?: string;
@@ -100,6 +109,15 @@ export async function ensureBrokerOrderSchema(): Promise<void> {
     ALTER TABLE trading_broker_orders ADD COLUMN IF NOT EXISTS estimated_price numeric(20, 6);
 
     /*
+     * 스톱가(스톱지정가 주문의 조건가격). 그 주문에만 값이 있다.
+     *
+     * limit_price와 갈라 둔다 — 스톱가는 "언제 나가는가"이고 지정가는 "얼마에
+     * 나가는가"다. 한 칸에 합치면 손절 조건이 붙은 주문과 그냥 지정가 주문이
+     * 기록에서 구별되지 않는다. 손절이 걸려 있었는지는 나중에 반드시 물어보게 된다.
+     */
+    ALTER TABLE trading_broker_orders ADD COLUMN IF NOT EXISTS stop_price numeric(20, 6);
+
+    /*
      * 멱등성 키. 같은 키로 다시 요청하면 새 주문을 내지 않고 앞선 결과를 돌려준다.
      * 네트워크가 끊겨 재시도할 때 같은 주문이 두 번 나가는 것을 막는 유일한 장치라
      * DB 유니크 제약으로 건다 — 애플리케이션에서 조회 후 삽입하면 동시 요청 사이에
@@ -130,10 +148,10 @@ export async function recordBrokerOrderAttempt(attempt: BrokerOrderAttempt): Pro
       `
         INSERT INTO trading_broker_orders (
           id, account_id, action, status, side, instrument_id, requested_instrument_id, symbol,
-          order_type, quantity, limit_price, estimated_price, order_no, order_branch_no, original_order_no,
-          message, blockers, client_order_id
+          order_type, quantity, limit_price, estimated_price, stop_price, order_no, order_branch_no,
+          original_order_no, message, blockers, client_order_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19)
       `,
       [
         randomUUID(),
@@ -148,6 +166,7 @@ export async function recordBrokerOrderAttempt(attempt: BrokerOrderAttempt): Pro
         attempt.quantity ?? null,
         attempt.limitPrice ?? null,
         attempt.estimatedPrice ?? null,
+        attempt.stopPrice ?? null,
         attempt.orderNo ?? null,
         attempt.orderBranchNo ?? null,
         attempt.originalOrderNo ?? null,
@@ -178,7 +197,7 @@ export async function getBrokerOrderRecords(
     `
       SELECT
         id, account_id, action, status, side, symbol, requested_instrument_id,
-        order_type, quantity, limit_price, estimated_price,
+        order_type, quantity, limit_price, estimated_price, stop_price,
         order_no, order_branch_no, original_order_no, message, blockers,
         (EXTRACT(EPOCH FROM created_at) * 1000)::bigint::text AS created_at_ms
       FROM trading_broker_orders
@@ -212,6 +231,7 @@ function rowToBrokerOrderRecord(row: BrokerOrderRow): BrokerOrderRecord {
     quantity: optionalNumber(row.quantity),
     limitPrice: optionalNumber(row.limit_price),
     estimatedPrice: optionalNumber(row.estimated_price),
+    stopPrice: optionalNumber(row.stop_price),
     orderNo: row.order_no ?? undefined,
     orderBranchNo: row.order_branch_no ?? undefined,
     originalOrderNo: row.original_order_no ?? undefined,
@@ -260,8 +280,9 @@ export async function completeClaimedOrder(
       `
         UPDATE trading_broker_orders SET
           status = $2, side = $3, instrument_id = $4, requested_instrument_id = $5, symbol = $6,
-          order_type = $7, quantity = $8, limit_price = $9, estimated_price = $10, order_no = $11,
-          order_branch_no = $12, original_order_no = $13, message = $14, blockers = $15::jsonb
+          order_type = $7, quantity = $8, limit_price = $9, estimated_price = $10, stop_price = $11,
+          order_no = $12, order_branch_no = $13, original_order_no = $14, message = $15,
+          blockers = $16::jsonb
         WHERE client_order_id = $1
       `,
       [
@@ -275,6 +296,7 @@ export async function completeClaimedOrder(
         attempt.quantity ?? null,
         attempt.limitPrice ?? null,
         attempt.estimatedPrice ?? null,
+        attempt.stopPrice ?? null,
         attempt.orderNo ?? null,
         attempt.orderBranchNo ?? null,
         attempt.originalOrderNo ?? null,

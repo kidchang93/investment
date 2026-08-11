@@ -63,3 +63,26 @@ export function venueAcceptsMarketOrder(venue: OrderVenue, inExtendedSession: bo
   if (venue === 'KRX') return true;
   return !inExtendedSession;
 }
+
+/**
+ * 이 거래소가 **스톱지정가(`22`)를 받는가.**
+ *
+ * 서로 다른 두 출처가 같은 말을 한다 — 개발자센터 `ORD_DVSN` 표는 `21`~`24`
+ * (중간가·스톱지정가)를 KRX·NXT에만 달아 뒀고, 미래에셋은 *"SOR 주문에는
+ * 중간가·스톱지정가호가를 제공하지 않는다"*고 적었다.
+ *
+ * ★ **`OrderVenue` 타입에 없는 `SOR`을 표에 적어 둔 것은 일부러다.** 지금은 타입이
+ * 막고 있지만 언젠가 SOR을 열 수 있고, 그때 스톱지정가가 함께 열리면 안 된다.
+ * 표에 **없는 값도 `false`**다 — 모르는 거래소에 검증 안 된 주문유형을 보내지 않는다.
+ *
+ * 삼항 사슬 대신 표로 가른다(`docs/CODE_STYLE.md`).
+ */
+const VENUE_ACCEPTS_STOP_LIMIT: Record<string, boolean> = {
+  KRX: true,
+  NXT: true,
+  SOR: false,
+};
+
+export function venueAcceptsStopLimit(venue: string): boolean {
+  return VENUE_ACCEPTS_STOP_LIMIT[venue] === true;
+}

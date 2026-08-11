@@ -17,7 +17,9 @@ import {
   claimClientOrderId,
   completeClaimedOrder,
   ensureBrokerOrderSchema,
+  getBrokerOrderRecords,
   getOrderByClientOrderId,
+  recordBrokerOrderAttempt,
 } from './brokerOrders.js';
 
 let usable = false;
@@ -92,5 +94,63 @@ describe('멱등성 키', { skip: false }, () => {
   it('없는 키를 조회하면 null', async (t) => {
     if (!usable) return t.skip('DB에 붙지 못해 건너뜀');
     assert.equal(await getOrderByClientOrderId(`test-none-${randomUUID()}`), null);
+  });
+});
+
+/*
+ * ★ `recordBrokerOrderAttempt`는 **실패해도 던지지 않고 false를 돌려준다** —
+ * 기록 실패가 주문 응답을 깨뜨리면 안 되기 때문이다. 뒤집어 말하면 컬럼을
+ * 하나 빠뜨려도 아무 소리 없이 기록만 사라진다. 그래서 넣고 되읽는 것까지 잰다.
+ */
+describe('감사 기록 — 스톱가는 지정가와 갈라서 남는다', () => {
+  it('넣은 값이 그대로 되읽힌다', async (t) => {
+    if (!usable) return t.skip('DB에 붙지 못해 건너뜀');
+    const key = `test-${randomUUID()}`;
+    const accountId = `test-stop-${randomUUID()}`;
+    created.push(key);
+
+    const saved = await recordBrokerOrderAttempt({
+      accountId,
+      clientOrderId: key,
+      action: 'place',
+      status: 'blocked',
+      message: '시험용 기록 — 주문은 보내지 않았습니다',
+      side: 'buy',
+      symbol: '005930',
+      orderType: 'limit',
+      quantity: 1,
+      limitPrice: 27_000,
+      stopPrice: 26_000,
+    });
+    assert.equal(saved, true, '기록이 조용히 실패하면 안 된다');
+
+    const { records } = await getBrokerOrderRecords(accountId, 1);
+    assert.equal(records.length, 1);
+    // 둘이 서로 다른 칸에 남아야 한다. 합치면 손절이 걸린 주문인지 알 수 없다.
+    assert.equal(records[0].limitPrice, 27_000);
+    assert.equal(records[0].stopPrice, 26_000);
+  });
+
+  it('스톱가가 없는 주문에는 그 칸이 비어 있다 — 0으로 채우지 않는다', async (t) => {
+    if (!usable) return t.skip('DB에 붙지 못해 건너뜀');
+    const key = `test-${randomUUID()}`;
+    const accountId = `test-nostop-${randomUUID()}`;
+    created.push(key);
+
+    await recordBrokerOrderAttempt({
+      accountId,
+      clientOrderId: key,
+      action: 'place',
+      status: 'blocked',
+      message: '시험용 기록 — 주문은 보내지 않았습니다',
+      side: 'buy',
+      symbol: '005930',
+      orderType: 'limit',
+      quantity: 1,
+      limitPrice: 27_000,
+    });
+
+    const { records } = await getBrokerOrderRecords(accountId, 1);
+    assert.equal(records[0].stopPrice, undefined);
   });
 });

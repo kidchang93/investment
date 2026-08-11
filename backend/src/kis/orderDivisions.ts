@@ -87,6 +87,50 @@ export const UNCONFIRMED_ORDER_DIVISIONS = [
  */
 export const AFTER_HOURS_CLOSE_CANDIDATE = '06';
 
+/**
+ * 스톱지정가호가. **스톱가에 닿는 순간 지정가 주문이 나간다.**
+ *
+ * ── 왜 필요한가 ──────────────────────────────────────────────────────────
+ *
+ * 감시하는 주체가 **우리가 아니라 거래소**다. 접수된 뒤에도 조건이 주문에 남아
+ * 효력 발생을 기다린다 — 조회 응답에 `stpm_efct_occr_yn`(효력발생여부)와
+ * `stpm_efct_occr_dtmd`(효력발생상세시각)가 있는 것이 그 증거다. 접수 시점에
+ * 소비되는 값이라면 그 두 필드가 존재할 수 없다(`docs/TRADING_API.md`).
+ *
+ * 그래서 *"러너는 서버 메모리에 살고 재시작하면 멈춘다"*(`docs/ARCHITECTURE.md`)와
+ * 부딪히지 않는다. 손절이 우리 프로세스의 수명에 매달려 있지 않다.
+ *
+ * ── 값은 어디서 왔나 ─────────────────────────────────────────────────────
+ *
+ * 개발자센터 `주식주문(현금)` 문서의 `ORD_DVSN` 표. 거래소별로 갈려 있고
+ * **KRX·NXT는 받고 SOR은 받지 않는다** — 미래에셋이 *"SOR 주문에는 중간가·
+ * 스톱지정가호가를 제공하지 않는다"*고 적은 것과 같은 말이다. 서로 다른 두
+ * 출처가 일치한다.
+ *
+ * ── ★ 아직 접수시켜 본 적 없다 ───────────────────────────────────────────
+ *
+ * 그래서 `CONFIRMED_ORDER_DIVISIONS`에 넣지 않았다. `isUnconfirmedDivision('22')`는
+ * **true**이고, 이 값으로 주문을 내는 경로는 그 사실을 기록에 남긴다.
+ *
+ * 특히 **모의 서버가 이 주문유형을 받는지 모른다.** 문서는 *"모의투자는
+ * `EXCG_ID_DVSN_CD`가 KRX만 가능"*이라고만 적었지 주문유형은 말하지 않는다.
+ * 안 받으면 `40970000`(*"모의투자에서 제공하지 않는 주문유형입니다"*)으로
+ * 돌아온다 — `kis/errorCodes.ts`가 그것을 진짜 거절과 가른다. 접수되면 이
+ * 주석을 고치고 확인된 표로 옮겨라.
+ */
+export const STOP_LIMIT_ORDER_DIVISION = '22';
+
+/**
+ * 이 주문구분이 **조건가격(`CNDT_PRIC`)을 요구하는가.**
+ *
+ * 문서 원문: *"스탑지정가호가 주문 (ORD_DVSN이 22) 사용 시에만 필수"*.
+ * `usesZeroPrice`와 짝이다 — 저쪽은 단가를 **비우는** 주문구분, 이쪽은 조건가격을
+ * **채워야 하는** 주문구분이다. 스톱지정가는 둘 다 필요하다(지정가 + 스톱가).
+ */
+export function needsConditionPrice(division: string): boolean {
+  return division === STOP_LIMIT_ORDER_DIVISION;
+}
+
 export type ConfirmedOrderDivision =
   (typeof CONFIRMED_ORDER_DIVISIONS)[keyof typeof CONFIRMED_ORDER_DIVISIONS];
 

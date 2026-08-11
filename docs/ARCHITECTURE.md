@@ -42,6 +42,9 @@ backend/src/
     ├── rest.ts        # 일봉(getDailyCandles)·현재가(getQuote/getDomesticQuotes) 조회 + 정규화
     ├── normalize.ts   # KIS 원본 문자열 → 숫자·부호 (rest/multiQuote가 같은 규칙을 쓴다)
     ├── multiQuote.ts  # 멀티시세(FHKST11300006) 요청 조립 + 응답 자리 검산
+    ├── orderCash.ts   # 현금 주문 본문 조립 (★스톱지정가의 짝이 안 맞으면 보내기 전에 던진다)
+    ├── orderDivisions.ts # 주문구분(ORD_DVSN) 코드 — 확인된 것과 아닌 것을 값으로 가른다
+    ├── orderVenues.ts    # 주문 거래소(EXCG_ID_DVSN_CD) — 조회의 거래소와 다른 필드다
     ├── realtime.ts    # KisRealtime: 실시간 체결 WS 클라이언트 (EventEmitter)
     ├── domesticMaster.ts     # 국내 종목 마스터(.mst) 고정폭 레이아웃 + 행 파서
     ├── indexSectorMaster.ts  # 지수·업종 코드 마스터(idxcode.mst) 레이아웃 + 코드→이름 표
@@ -55,6 +58,11 @@ backend/src/
 `multiQuote.ts`를 `rest.ts`에서 떼어 둔 이유는 마스터 파서들과 같다 — **자리(순서)를
 맞추는 계산**이라 시험으로 못 박아야 하고, 그 시험이 네트워크·DB 없이 돌아야 한다.
 `rest.ts`는 HTTP만 치고 해석은 이 모듈이 한다.
+
+`orderCash.ts`도 같은 이유로 떨어져 있다. 조회는 틀리면 다시 부르면 되지만 **주문은
+한 번 나가면 되돌릴 수 없어서**, 본문이 어떻게 조립되는지를 실주문 없이 시험에
+태울 수 있어야 한다. 스톱지정가(`ORD_DVSN=22`)의 조건가격 검사가 여기 있다 —
+짝이 안 맞으면 **보내기 전에** 던진다(`assertVenueUsable`과 같은 자리다).
 
 `quoteCache.ts`를 `server.ts`에서 떼어 둔 이유도 시험이다. 캐시가 라우트 안에 인라인으로
 있던 동안에는 "적중일 때 어떤 시각이 나가는가"를 서버를 띄우지 않고 잴 방법이 없었고,

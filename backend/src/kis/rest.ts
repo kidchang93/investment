@@ -17,7 +17,8 @@ import {
 import { DEFAULT_EXCHANGE, marketDivCode, type KisExchange } from './exchanges.js';
 import { assertVenueUsable, DEFAULT_ORDER_VENUE, type OrderVenue } from './orderVenues.js';
 import { isExpiredToken, kisErrorCodeOf, kisErrorSuffix, KisRequestError } from './errorCodes.js';
-import { CONFIRMED_ORDER_DIVISIONS, usesZeroPrice } from './orderDivisions.js';
+import { orderCashPayload } from './orderCash.js';
+import { CONFIRMED_ORDER_DIVISIONS } from './orderDivisions.js';
 import {
   chunkQuoteCodes,
   MULTI_QUOTE_PATH,
@@ -2571,6 +2572,7 @@ export async function getKisDomesticReservedOrders(
  * 주의할 점:
  * - `EXCG_ID_DVSN_CD`(거래소ID구분코드)가 필수다. 국내 정규장은 'KRX'.
  * - 시장가는 `ORD_DVSN='01'` + `ORD_UNPR='0'`, 지정가는 `'00'` + 실제 단가.
+ * - 스톱지정가는 `'22'` + `ORD_UNPR`(지정가) + `CNDT_PRIC`(스톱가). 셋이 다 있어야 한다.
  * - `SLL_TYPE`은 매도에만 쓴다(01 일반매도). 매수에는 빈 값을 넣는다.
  * - 응답 output의 `ODNO`(주문번호)와 `KRX_FWDG_ORD_ORGNO`(주문채번지점번호)를 반드시 보관해야
  *   이후 정정·취소를 보낼 수 있다.
@@ -2598,6 +2600,16 @@ export async function placeKisDomesticOrder(
      * 구분이 안 된다.
      */
     venue?: OrderVenue;
+    /**
+     * 스톱가(`CNDT_PRIC`). **`orderDivision`이 스톱지정가(`22`)일 때만** 넣는다.
+     * 현재가가 이 값에 닿는 순간 `limitPrice`로 주문이 나가고, 그 감시는
+     * 우리 서버가 아니라 거래소가 한다.
+     *
+     * ★ `22`인데 이 값이 없거나, `22`가 아닌데 이 값이 오면 **보내기 전에
+     * 던진다**(`orderCash.ts`). 조용히 무시하면 손절을 걸었다고 믿는 주문이
+     * 손절 없이 시장에 남는다.
+     */
+    conditionPrice?: number;
   },
 ): Promise<{ orderNo: string; orderBranchNo: string; acceptedAt: string; message: string }> {
   const venue = params.venue ?? DEFAULT_ORDER_VENUE;
@@ -2609,24 +2621,25 @@ export async function placeKisDomesticOrder(
     params.orderDivision
     ?? (isLimit ? CONFIRMED_ORDER_DIVISIONS.limit : CONFIRMED_ORDER_DIVISIONS.market);
 
+  /*
+   * 본문 조립과 값 검사는 `orderCash.ts`가 한다 — 보내기 전에 던져야 하는 계산이라
+   * 네트워크 없이 시험에 태울 수 있어야 한다. 단가를 `'0'`으로 보내는 규칙,
+   * 스톱지정가의 조건가격 검사가 전부 거기 있다.
+   */
   const body = await kisPost(
     '/uapi/domestic-stock/v1/trading/order-cash',
     trId,
-    {
-      CANO: account.cano,
-      ACNT_PRDT_CD: account.productCode,
-      PDNO: params.symbol,
-      ORD_DVSN: division,
-      ORD_QTY: String(Math.floor(params.quantity)),
-      /*
-       * 단가를 비워야 하는 주문구분은 **빈 문자열이 아니라 `'0'`**이다
-       * (공식 예제 715행). 시간외·시장가가 여기 해당한다.
-       */
-      ORD_UNPR: usesZeroPrice(division) ? '0' : String(Math.floor(params.limitPrice ?? 0)),
-      EXCG_ID_DVSN_CD: venue,
-      SLL_TYPE: isBuy ? '' : '01',
-      CNDT_PRIC: '',
-    },
+    orderCashPayload({
+      cano: account.cano,
+      productCode: account.productCode,
+      symbol: params.symbol,
+      side: params.side,
+      division,
+      quantity: params.quantity,
+      limitPrice: params.limitPrice,
+      venue,
+      conditionPrice: params.conditionPrice,
+    }),
     toCredentials(account),
   );
 

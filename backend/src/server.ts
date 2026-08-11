@@ -124,6 +124,7 @@ import {
   getQuote,
   getUsdKrwExchangeRate,
 } from './kis/rest.js';
+import { isUnconfirmedDivision, STOP_LIMIT_ORDER_DIVISION } from './kis/orderDivisions.js';
 import { KisRealtime } from './kis/realtime.js';
 import { WATCHLIST } from './watchlist.js';
 import { INSTRUMENT_QUOTE_BATCH } from '@invest/shared';
@@ -753,7 +754,8 @@ async function main(): Promise<void> {
   // 게이트가 열려 있어야만 동작한다. 기본값은 항상 차단이다.
   // 보내지 못한 시도도 trading_broker_orders에 blocked로 남긴다.
   app.post<{ Body: Partial<PlaceLiveOrderRequest> }>('/api/broker/kis/orders', async (req, reply) => {
-    const { accountId, instrumentId, side, orderType, quantity, limitPrice, clientOrderId } = req.body;
+    const { accountId, instrumentId, side, orderType, quantity, limitPrice, stopPrice, clientOrderId } =
+      req.body;
     const auditBase = {
       accountId: accountId ?? '(미지정)',
       action: 'place' as const,
@@ -762,6 +764,8 @@ async function main(): Promise<void> {
       orderType: orderType === 'market' || orderType === 'limit' ? orderType : undefined,
       quantity: typeof quantity === 'number' && Number.isFinite(quantity) ? quantity : undefined,
       limitPrice: typeof limitPrice === 'number' && Number.isFinite(limitPrice) ? limitPrice : undefined,
+      // 스톱가는 지정가와 갈라 남긴다 — 손절이 걸린 주문인지가 기록에서 보여야 한다.
+      stopPrice: typeof stopPrice === 'number' && Number.isFinite(stopPrice) ? stopPrice : undefined,
     };
 
     async function audit(attempt: Parameters<typeof recordBrokerOrderAttempt>[0]): Promise<void> {
@@ -792,6 +796,29 @@ async function main(): Promise<void> {
     if (orderType === 'limit' && (typeof limitPrice !== 'number' || !Number.isFinite(limitPrice) || limitPrice <= 0)) {
       const message = '지정가 주문은 단가가 필요합니다.';
       await block(message, ['지정가 단가 누락']);
+      return reply.code(400).send({ message });
+    }
+
+    /*
+     * ── 스톱지정가 ────────────────────────────────────────────────────────
+     *
+     * `stopPrice`가 오면 스톱지정가로 접수한다. 현재가가 그 값에 닿는 순간
+     * 지정가로 주문이 나가고, **감시는 우리 서버가 아니라 거래소가 한다** —
+     * 서버가 꺼져 있어도 손절이 살아 있다는 것이 이 경로의 전부다.
+     *
+     * 지정가와 함께여야 성립한다. 스톱가만으로는 닿았을 때 얼마에 낼지가 없고,
+     * 시장가에는 조건가격 자리가 없다. `kis/orderCash.ts`가 보내기 전에 한 번 더
+     * 막지만, 여기서 먼저 걸러야 **왜 막혔는지가 감사 기록에 남는다.**
+     */
+    const stopLimit = stopPrice !== undefined;
+    if (stopLimit && (typeof stopPrice !== 'number' || !Number.isFinite(stopPrice) || stopPrice <= 0)) {
+      const message = '스톱가는 0보다 커야 합니다.';
+      await block(message, ['스톱가 오류']);
+      return reply.code(400).send({ message });
+    }
+    if (stopLimit && orderType !== 'limit') {
+      const message = '스톱지정가는 지정가로만 낼 수 있습니다 — 스톱가에 닿았을 때 얼마에 낼지가 필요합니다.';
+      await block(message, ['스톱지정가에 단가 없음']);
       return reply.code(400).send({ message });
     }
 
@@ -992,6 +1019,16 @@ async function main(): Promise<void> {
       }
     }
 
+    /*
+     * 스톱지정가는 **아직 이 레포가 접수시켜 본 적 없는 주문구분**이다
+     * (`kis/orderDivisions.ts`). 그 사실을 기록과 응답에 적는다 — 접수됐다는 말만
+     * 남으면 나중에 "저 경로는 검증된 것"으로 읽힌다.
+     */
+    const stopLimitNote =
+      stopLimit && isUnconfirmedDivision(STOP_LIMIT_ORDER_DIVISION)
+        ? ` · ★ 스톱지정가(주문구분 ${STOP_LIMIT_ORDER_DIVISION})는 아직 접수를 확인하지 못한 경로입니다`
+        : '';
+
     try {
       const result = await placeKisDomesticOrder(account, {
         symbol: instrument.providerSymbol,
@@ -999,11 +1036,13 @@ async function main(): Promise<void> {
         orderType,
         quantity,
         limitPrice,
+        orderDivision: stopLimit ? STOP_LIMIT_ORDER_DIVISION : undefined,
+        conditionPrice: stopLimit ? stopPrice : undefined,
       });
       const done = {
         ...placeAudit,
         status: 'submitted' as const,
-        message: result.message,
+        message: result.message + stopLimitNote,
         orderNo: result.orderNo,
         orderBranchNo: result.orderBranchNo,
       };
@@ -1022,7 +1061,7 @@ async function main(): Promise<void> {
         orderNo: result.orderNo,
         orderBranchNo: result.orderBranchNo,
         acceptedAt: result.acceptedAt,
-        message: result.message,
+        message: result.message + stopLimitNote,
       } satisfies PlaceLiveOrderResult;
     } catch (err) {
       const message = String(err instanceof Error ? err.message : err);
