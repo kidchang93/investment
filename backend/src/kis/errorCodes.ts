@@ -135,10 +135,75 @@ export class KisRequestError extends Error {
     message: string,
     /** KIS `msg_cd`. 못 읽었으면 빈 문자열 */
     readonly msgCode: string,
+    /**
+     * HTTP 상태. 모르면 `undefined`다.
+     *
+     * **0으로 채우지 않는다** — 상태를 못 본 것과 0인 것은 다른 사실이고,
+     * 재시도 판정(`isRetriableTransportError`)이 5xx만 다시 시도하기 때문에
+     * 모르는 것이 0이 되면 "서버 잘못이 아니다"로 읽힌다.
+     */
+    readonly status?: number,
   ) {
     super(message);
     this.name = 'KisRequestError';
   }
+}
+
+/**
+ * 잠깐 아픈 것인가 — **다시 보내면 될 오류인가.**
+ *
+ * ── 왜 필요한가 (2026-08-11 실측) ────────────────────────────────────────
+ *
+ * 일봉을 종목당 4페이지씩 연달아 받다가 세 번째 종목에서 KIS가 소켓을 끊었다.
+ *
+ *     TypeError: fetch failed
+ *       cause: SocketError: other side closed (UND_ERR_SOCKET)
+ *
+ * 이건 **그 종목에 문제가 있는 것이 아니다.** 그런데 오류 하나로 종목을 건너뛰면
+ * 전 종목 21년치를 받는 밤샘 작업이 구멍 뚫린 채 끝나고, 구멍이 어디인지는
+ * 나중에 알 수 없다. 잠깐 아픈 것과 애초에 안 되는 것을 갈라야 한다.
+ *
+ * **가르는 기준은 "다시 보내면 답이 달라질 수 있는가" 하나다.**
+ * `EGW02006`(그 서버에 없는 기능)·`EGW02004`(짝 불일치)는 백 번 보내도 같은
+ * 답이라 여기서 거짓이다. 한도(`EGW00201`)는 성질이 달라 `rest.ts`가 가른다.
+ */
+const RETRIABLE_TRANSPORT_CODES = new Set([
+  'UND_ERR_SOCKET', // 상대가 소켓을 닫았다 (실측)
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EPIPE',
+  'EAI_AGAIN', // DNS가 잠깐 안 되는 것
+]);
+
+export function isRetriableTransportError(error: unknown): boolean {
+  /*
+   * KIS가 5xx로 답한 것은 서버 쪽 사정이라 다시 보내 볼 값이 있다. 단, 코드에
+   * 이름이 붙은 것(짝 불일치·기능 없음)은 500으로 와도 다시 보내지 않는다 —
+   * `chk-holiday`가 실제로 HTTP 500 + `EGW02006`으로 온다.
+   */
+  if (error instanceof KisRequestError) {
+    if (kisErrorKind(error.msgCode)) return false;
+    return typeof error.status === 'number' && error.status >= 500;
+  }
+  if (!(error instanceof Error)) return false;
+  if (error.name === 'AbortError' || error.name === 'TimeoutError') return true;
+
+  /*
+   * undici는 원인을 `cause`에 감싼다. 몇 겹까지 감싸는지는 판마다 다르므로
+   * 사슬을 따라 내려가며 본다 — 겉면은 늘 `TypeError: fetch failed`다.
+   */
+  let cause: unknown = error;
+  for (let depth = 0; cause instanceof Error && depth < 5; depth += 1) {
+    const code = (cause as Error & { code?: unknown }).code;
+    if (typeof code === 'string' && RETRIABLE_TRANSPORT_CODES.has(code)) return true;
+    cause = (cause as Error & { cause?: unknown }).cause;
+  }
+  // 원인을 못 읽어도 `fetch failed`는 네트워크가 끊긴 것이다. 지어내지 않는 선에서 여기까지.
+  return error.message.includes('fetch failed');
 }
 
 /**

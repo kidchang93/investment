@@ -259,7 +259,7 @@ backend/src/trading/
 
 | 축 | 재는 것 | 받는 것 |
 |------|------|------|
-| 일봉 | `scripts/measureStrategies.ts` | 같은 스크립트 (종목당 1회라 싸다) |
+| 일봉 | `scripts/measureStrategies.ts` | 같은 스크립트 (그때그때 받는다) · 21년치는 `db/dailyBars.ts`(아래) |
 | **1분봉 — 러너가 도는 축** | `scripts/measureStrategiesIntraday.ts` | `scripts/collectMinuteCandles.ts` |
 
 분봉 쪽이 갈라져 있는 것은 종목·하루당 5회이기 때문이다. 20종목 × 15거래일이면
@@ -345,6 +345,41 @@ backend/src/trading/
 
 `getInstrumentIntradayCandles`(오늘 한 창·120봉)는 그대로 남는다. 날짜를 안 거르고,
 그 판정은 `trading/runCandles.ts`가 마지막 봉의 KST 날짜로 한다.
+
+### 일봉 저장소 — 전 종목 21년치를 한 번 받아 두고 계속 쓴다
+
+```
+scripts/collectDailyBars.ts   받아서 넣기 (밤새 돌린다. 재개 가능)
+  │  kis/rest.ts  getDailyCandleWindow(code, start, end)   ← 창 하나 = KIS 1회
+  ▼
+db/dailyBars.ts               trading_daily_bars · trading_daily_bar_cursor
+```
+
+**왜 저장소가 생겼나.** 잴 때마다 KIS에서 다시 받았고, 그래서 측정 유니버스가
+143~149종목(국내 활성 주식·ETF의 3.7%)에 묶여 있었다. walk-forward 검증
+(2005~2010에서 찾아 2011에 검증 … 15번)은 21년치가 DB에 있어야 돌아간다.
+
+**계약 셋.** 자세한 근거는 `db/dailyBars.ts` 상단 주석에 있다.
+
+| | 규칙 | 왜 |
+|------|------|------|
+| `vintage` | 줄마다 **받은 날짜**를 적고, 한 종목은 **한 세션에서 통째로** 받는다 | KIS 수정주가는 요청 시점 기준이다. 나눠 받는 동안 액면분할이 나면 옛 줄과 새 줄이 다른 기준으로 섞이는데 **값으로는 알아볼 수 없다** |
+| 증분 갱신 | 최근 창을 다시 받아 **겹치는 구간을 대조**하고, 하나라도 어긋나면 그 종목 전체를 다시 받는다 | 호출 1회로 모든 수정주가 변경을 잡는다. 겹치는 날이 없으면(오래 안 돌렸으면) 대조를 못 한 것이므로 그때도 전체를 다시 받는다 |
+| 빈 값 | 거래량·거래대금이 **안 온 것은 `NULL`** | 안 온 것과 0인 것은 다른 사실이다. KIS는 거래정지일에 실제로 `0`을 준다 — 그 0은 사실이라 그대로 담는다 |
+
+**오늘 봉은 담지 않는다.** 장중에 받으면 미완성 봉이 완성된 하루로 저장된다
+(14:15에 받은 005930 봉이 실제로 그랬다). 하루 늦는 대신 거짓이 없다.
+
+**페이징을 수집기가 들고 있다.** `getDailyCandleHistory`(내부 페이징·기본 5쪽)를
+쓰지 않고 `getDailyCandleWindow`(창 하나)로 직접 돈다. 60쪽을 통째로 안고 있으면
+중간에 소켓이 끊길 때 그때까지 받은 것이 전부 버려지고, **60쪽 안에 한 번이라도
+끊기는 종목은 영영 끝나지 않는다**(2026-08-11 실측: 네 쪽짜리에서도 끊겼다).
+`getDailyCandleHistory`의 기본값(5)은 화면 경로(`trading/scoring.ts`)가 쓰므로
+그대로 둔다 — 올리면 화면 한 번에 KIS 호출이 폭증한다.
+
+**다시 보내면 될 오류인지는 `kis/errorCodes.ts`가 가른다**(`isRetriableTransportError`).
+소켓 절단·5xx는 재시도하고, `EGW02006`처럼 그 서버에 없는 기능은 500으로 와도
+재시도하지 않는다. 한도(`EGW00201`)는 성질이 달라 `rest.ts`의 `isRateLimitedError`다.
 
 후보에서 빠진 사유(`ScreeningVerdict`)는 **자동매매와 화면이 같은 함수**로 낸다 —
 `verdictFor(quote, elapsed, cash)`. 예전에는 `loadAutoTraderCandidates`와

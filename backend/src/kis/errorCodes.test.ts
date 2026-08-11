@@ -19,6 +19,7 @@ import { describe, it } from 'node:test';
 import {
   isExpiredToken,
   isOrderTypeUnavailableOnServer,
+  isRetriableTransportError,
   isTrUnavailableOnServer,
   kisErrorCodeOf,
   kisErrorHint,
@@ -173,5 +174,73 @@ describe('이 서버가 안 받는 주문유형인지 가르기', () => {
 
   it('KIS 응답이 아닌 오류는 거짓이다', () => {
     assert.equal(isOrderTypeUnavailableOnServer(new Error('fetch failed')), false);
+  });
+});
+
+/*
+ * 2026-08-11 실측: 일봉을 종목당 4페이지씩 연달아 받다가 세 번째 종목에서
+ * KIS가 소켓을 끊었다.
+ *
+ *     TypeError: fetch failed
+ *       cause: SocketError: other side closed (UND_ERR_SOCKET)
+ *
+ * 전 종목 21년치를 밤새 받는 수집기에서 이걸 종목 문제로 읽으면 구멍이 뚫린
+ * 채로 끝나고, 어디가 뚫렸는지는 나중에 알 수 없다. 반대로 "그 서버에 없는
+ * 기능"을 다시 보내면 같은 답만 세 번 듣는다.
+ */
+describe('다시 보내면 될 오류인지 가르기', () => {
+  /** undici가 실제로 던지는 모양. 원인이 `cause`에 감싸여 온다. */
+  function socketCut(): Error {
+    const cause = new Error('other side closed') as Error & { code: string };
+    cause.name = 'SocketError';
+    cause.code = 'UND_ERR_SOCKET';
+    return new TypeError('fetch failed', { cause });
+  }
+
+  it('소켓이 끊긴 것은 다시 보낸다', () => {
+    assert.equal(isRetriableTransportError(socketCut()), true);
+  });
+
+  it('원인을 못 읽어도 fetch failed면 다시 보낸다', () => {
+    assert.equal(isRetriableTransportError(new TypeError('fetch failed')), true);
+  });
+
+  it('타임아웃·연결 끊김도 다시 보낸다', () => {
+    for (const code of ['ECONNRESET', 'ETIMEDOUT', 'UND_ERR_HEADERS_TIMEOUT', 'EAI_AGAIN']) {
+      const error = new Error('네트워크') as Error & { code: string };
+      error.code = code;
+      assert.equal(isRetriableTransportError(error), true, code);
+    }
+  });
+
+  it('KIS가 5xx로 답하면 다시 보낸다', () => {
+    assert.equal(isRetriableTransportError(new KisRequestError('서버 오류', '', 500)), true);
+    assert.equal(isRetriableTransportError(new KisRequestError('게이트웨이', '', 502)), true);
+  });
+
+  /*
+   * ★ `chk-holiday`는 HTTP **500** + `EGW02006`으로 온다. 상태만 보면 다시
+   * 보내게 되는데, 그건 모의 서버에 없는 기능이라 백 번 보내도 같은 답이다.
+   */
+  it('상태가 500이어도 그 서버에 없는 기능이면 다시 보내지 않는다', () => {
+    assert.equal(isRetriableTransportError(new KisRequestError('모의투자 TR 이 아닙니다.', 'EGW02006', 500)), false);
+  });
+
+  it('앱키와 서버의 짝이 어긋난 것은 다시 보내지 않는다', () => {
+    for (const code of ['EGW02004', 'EGW02007']) {
+      assert.equal(isRetriableTransportError(new KisRequestError('짝 불일치', code, 500)), false, code);
+    }
+  });
+
+  it('4xx와 상태를 모르는 것은 다시 보내지 않는다', () => {
+    assert.equal(isRetriableTransportError(new KisRequestError('잘못된 요청', '', 400)), false);
+    // 상태를 못 본 것을 0으로 채우면 "서버 잘못이 아니다"로 읽힌다. undefined 그대로 둔다.
+    assert.equal(isRetriableTransportError(new KisRequestError('알 수 없음', '')), false);
+  });
+
+  it('오류가 아닌 것에는 던지지 않는다', () => {
+    assert.equal(isRetriableTransportError('UND_ERR_SOCKET'), false);
+    assert.equal(isRetriableTransportError(undefined), false);
+    assert.equal(isRetriableTransportError(null), false);
   });
 });

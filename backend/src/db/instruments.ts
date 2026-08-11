@@ -322,6 +322,39 @@ export async function searchInstruments(query: string, limit = 30): Promise<Inst
   return result.rows.map(rowToInstrument);
 }
 
+/**
+ * 일봉 저장소가 받아 둘 국내 종목 전부. **앞에서 자르지 않는다.**
+ *
+ * 지금까지 측정 유니버스가 143~149종목이었던 것은 `getCategoryInstruments(..., limit)`가
+ * 검색어 없이는 `ORDER BY symbol`이라 **종목코드가 작은 순 앞쪽**을 잘라 왔기
+ * 때문이다. 여기서는 조건에 맞는 것을 전부 준다 — 자르는 것은 부르는 쪽의 일이고,
+ * 자를 때 몇 개 중 몇 개인지 적어야 한다.
+ *
+ * **KONEX는 뺀다.** 유동성이 없어 측정에 쓸 수 없고(2026-08-11 기준 109종목),
+ * 받는 데만 시간이 든다. 뺐다는 사실은 부르는 쪽이 화면에 적는다.
+ *
+ * 순서는 종목코드 오름차순이다. 밤새 도는 수집이 죽었다 살아나도 같은 순서라야
+ * "어디까지 왔나"가 말이 된다.
+ */
+export async function getDomesticHistoryUniverse(
+  assetTypes: Array<'stock' | 'etf'> = ['stock', 'etf'],
+): Promise<Instrument[]> {
+  if (assetTypes.length === 0) return [];
+  const result = await pool.query<InstrumentRow>(
+    `
+      SELECT ${instrumentColumns()}
+      FROM instruments
+      WHERE country = 'KR'
+        AND is_active = true
+        AND asset_type = ANY($1)
+        AND market <> 'KONEX'
+      ORDER BY symbol
+    `,
+    [assetTypes],
+  );
+  return result.rows.map(rowToInstrument);
+}
+
 export async function getInstrument(id: string): Promise<Instrument | null> {
   const result = await pool.query<InstrumentRow>(
     `

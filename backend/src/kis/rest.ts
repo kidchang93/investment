@@ -212,6 +212,17 @@ export function isRateLimited(body: Record<string, unknown>): boolean {
   return KIS_RATE_LIMIT_CODES.has(String(body.msg_cd ?? ''));
 }
 
+/**
+ * 던져진 오류가 **한도 때문**인가.
+ *
+ * 코드 표가 여기 있으므로 판정도 여기 둔다(`errorCodes.ts`는 "설정을 고쳐야 하는
+ * 것"과 "그 서버에 없는 것"을 가르는 표라 성질이 다르다). 오래 도는 수집기가
+ * 이것을 일시적 실패로 세려면 필요하다 — 더 기다리면 풀린다.
+ */
+export function isRateLimitedError(error: unknown): boolean {
+  return error instanceof KisRequestError && KIS_RATE_LIMIT_CODES.has(error.msgCode);
+}
+
 /** KIS REST GET 공통 헬퍼. tr_id별로 헤더/인증을 채워 호출한다. */
 async function kisGet(
   path: string,
@@ -284,6 +295,7 @@ async function kisGetWithHeaders(
       throw new KisRequestError(
         `KIS GET ${path} 실패 (${res.status}): ${text}${kisErrorSuffix(body)}`,
         kisErrorCodeOf(body),
+        res.status,
       );
     }
     return { body, headers: res.headers };
@@ -322,7 +334,15 @@ async function kisGetWithHeaders(
    * 모양이다. 실패는 실패로 알린다.
    */
   if (isRateLimited(second.body)) {
-    throw new Error(`KIS GET ${path} 실패: 초당 호출 한도를 넘었습니다 (${String(second.body.msg_cd ?? '')})`);
+    /*
+     * 코드를 실어 던진다. 두 번 쉬고도 막혔다는 것은 **더 오래 기다리면 풀릴
+     * 일**이라, 밤새 도는 수집기가 이것을 일시적 실패로 알아볼 수 있어야 한다
+     * (`isRateLimitedError`). 평범한 `Error`면 메시지를 정규식으로 뒤져야 한다.
+     */
+    throw new KisRequestError(
+      `KIS GET ${path} 실패: 초당 호출 한도를 넘었습니다 (${String(second.body.msg_cd ?? '')})`,
+      kisErrorCodeOf(second.body),
+    );
   }
   return second;
 }
@@ -409,6 +429,11 @@ async function fetchDailyCandlePage(
       const y = Number(r.stck_bsop_date.slice(0, 4));
       const m = Number(r.stck_bsop_date.slice(4, 6));
       const d = Number(r.stck_bsop_date.slice(6, 8));
+      /*
+       * 거래대금(`acml_tr_pbmn`)은 **없으면 undefined로 둔다.** 0으로 채우면
+       * "그날 한 주도 안 거래됐다"가 지어진다 — `toNumberOrNaN`이 있는 이유다.
+       */
+      const turnover = toNumberOrNaN(r.acml_tr_pbmn);
       return {
         time: Math.floor(Date.UTC(y, m - 1, d) / 1000),
         open: toNumber(r.stck_oprc),
@@ -416,6 +441,7 @@ async function fetchDailyCandlePage(
         low: toNumber(r.stck_lwpr),
         close: toNumber(r.stck_clpr),
         volume: toNumber(r.acml_vol),
+        turnover: isNonNegativeFinite(turnover) ? turnover : undefined,
       };
     })
     .filter(
@@ -445,7 +471,27 @@ export async function getDailyCandles(code: string, days = 120): Promise<Candles
 }
 
 /** 한 페이지에 요청할 달력 일수. 약 90거래일이라 100건 상한에 걸리지 않는다. */
-const DAILY_PAGE_CALENDAR_DAYS = 130;
+export const DAILY_PAGE_CALENDAR_DAYS = 130;
+
+/**
+ * 일봉 창 하나. **페이징을 부르는 쪽이 들고 있어야 할 때** 쓴다.
+ *
+ * `getDailyCandleHistory`는 페이지를 내부에서 다 돌기 때문에, 중간에 소켓이
+ * 끊기면 그때까지 받은 페이지가 통째로 버려진다. 21년치(60페이지)를 받는
+ * 수집기에서는 그게 치명적이다 — 2026-08-11에 KIS가 종목 세 개째에서
+ * `UND_ERR_SOCKET`으로 끊었고, 60페이지 안에 한 번이라도 끊기면 그 종목은
+ * 영영 끝나지 않는다. 그래서 수집기는 창 단위로 받아 **페이지마다** 재시도한다.
+ *
+ * 화면 경로는 그대로 `getDailyCandles`(1회)·`getDailyCandleHistory`(5회)를 쓴다.
+ */
+export async function getDailyCandleWindow(
+  code: string,
+  start: Date,
+  end: Date,
+): Promise<CandlesResponse> {
+  const page = await fetchDailyCandlePage(code, start, end);
+  return { code, name: page.name, candles: page.candles };
+}
 
 /** 페이지 사이 간격. 백테스트는 느려도 되니 넉넉히 둔다. */
 const KIS_PAGE_GAP_MS = 250;

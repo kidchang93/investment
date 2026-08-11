@@ -20,6 +20,14 @@ export interface Candle {
   low: number;
   close: number;
   volume?: number;
+  /**
+   * 그 봉의 거래대금(원). **`undefined`와 0은 다른 사실이다** — 값이 안 온 것과
+   * 한 주도 안 거래된 것을 섞지 않으려고 옵셔널로 둔다(`toNumberOrNaN` 참고).
+   *
+   * 일봉에만 온다(`acml_tr_pbmn`). 분봉 응답에는 이 값이 없어 늘 `undefined`다.
+   * 유동성 문턱(`illiquid`)이 보는 축이라 일봉 저장소가 이 값을 함께 담는다.
+   */
+  turnover?: number;
 }
 
 /**
