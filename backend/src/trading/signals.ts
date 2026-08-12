@@ -52,13 +52,44 @@ export interface SignalContext {
   history: DailyBar[];
   /** 판정하는 날의 자리. **이 뒤를 보면 안 된다** */
   index: number;
+  /**
+   * 종목코드. **위약 신호(`makePlaceboSignals`)만 쓴다.**
+   *
+   * 실신호가 이걸 보면 그 순간 종목 정체성으로 점수를 내는 셈이고, 그건 데이터
+   * 뒤지기다 — 표본 안에서는 완벽하고 표본 밖에서는 아무것도 아니다. 위약은
+   * 반대로 **종목마다 달라야** 십분위가 뜻을 가지므로 이 값이 필요하다.
+   * 없으면 위약은 `undefined`를 낸다(전 종목 같은 점수로 만들지 않는다).
+   */
+  symbol?: string;
 }
+
+/**
+ * 이 신호가 **어떤 데이터를 요구하는가.**
+ *
+ * ── 왜 값으로 들고 있나 (2026-08-12) ─────────────────────────────────────
+ *
+ * 일봉 저장소(`trading_daily_bars`)에는 시세만 있고 수급·공매도가 없다. 그런데
+ * 수급 신호를 그대로 태우면 오류가 아니라 **조용히 `undefined`**가 되고, 날짜 수만
+ * 줄어든 표가 정상처럼 찍힌다. 2026-08-10 결함이 정확히 그것이었다.
+ *
+ * 표시를 값으로 들고 있으면 부른 쪽이 **무엇이 왜 빠졌는지 찍을 수 있다.**
+ */
+export type SignalDataRequirement = 'price' | 'flow' | 'short';
 
 export interface SignalCandidate {
   key: string;
   label: string;
   /** 왜 이게 우위가 있을 수 있나. **재기 전에 적는다** */
   rationale: string;
+  /** 무엇이 있어야 점수가 나오나. 없는 데이터면 부른 쪽이 **밝히고** 뺀다 */
+  dataRequirement: SignalDataRequirement;
+  /**
+   * 가설을 못 박은 날 `YYYY-MM-DD`.
+   *
+   * 표본 밖 검증은 "이 가설을 **데이터를 보기 전에** 정했다"가 성립할 때만 뜻이
+   * 있다. 날짜가 없으면 나중에 정의를 손보고도 "원래 그랬다"고 말할 수 있다.
+   */
+  frozenAt: string;
   /**
    * 점수가 나오는 **가장 이른 `index`**.
    *
@@ -153,6 +184,8 @@ function flowSum(
 export const SIGNAL_CANDIDATES: SignalCandidate[] = [
   {
     key: 'foreign1',
+    dataRequirement: 'flow',
+    frozenAt: '2026-08-04',
     label: '외국인 순매수 비중 (1일)',
     rationale:
       '외국인은 정보·자금이 앞선다고 흔히 이야기된다. 2026-08-04에 이것만 따로 쟀고'
@@ -162,6 +195,8 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
   },
   {
     key: 'foreign5',
+    dataRequirement: 'flow',
+    frozenAt: '2026-08-04',
     label: '외국인 순매수 비중 (5일 누적)',
     rationale:
       '하루치는 잡음이 크다. 며칠 이어진 유입이라면 한 번의 큰 주문보다 뜻이 있을 수 있다.'
@@ -171,6 +206,8 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
   },
   {
     key: 'institution5',
+    dataRequirement: 'flow',
+    frozenAt: '2026-08-04',
     label: '기관 순매수 비중 (5일 누적)',
     rationale:
       '기관은 외국인과 다른 시점에 움직인다. 자기상관이 −0.100으로 오히려 되돌림 쪽이라'
@@ -180,6 +217,8 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
   },
   {
     key: 'individualContrarian5',
+    dataRequirement: 'flow',
+    frozenAt: '2026-08-04',
     label: '개인 순매도 비중 (5일 누적, 역방향)',
     rationale:
       '개인이 많이 산 종목을 피한다는 통념을 그대로 잰다. 부호를 뒤집어 넣었으므로'
@@ -192,6 +231,8 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
   },
   {
     key: 'smartMoney5',
+    dataRequirement: 'flow',
+    frozenAt: '2026-08-04',
     label: '외국인+기관 − 개인 (5일 누적)',
     rationale:
       '"큰손 대 개인"이라는 구도를 한 값으로 만든다. 셋이 서로의 반대편이라'
@@ -201,6 +242,8 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
   },
   {
     key: 'momentum20',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-12',
     label: '20일 모멘텀',
     rationale:
       '오른 것이 더 오른다는 가장 오래된 주장. 이 레포는 아직 일봉 축 모멘텀을'
@@ -210,6 +253,8 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
   },
   {
     key: 'reversal1',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-12',
     label: '1일 반전 (전일 하락폭)',
     rationale:
       '많이 떨어진 것이 되돌아온다는 주장. 부호를 뒤집어 넣었으므로 통념이 맞으면'
@@ -222,6 +267,8 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
   },
   {
     key: 'reversal5',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-12',
     label: '5일 반전',
     rationale: '위와 같은 가설을 조금 긴 축에서. 1일보다 잡음이 적고 비용 부담도 낮다.',
     minHistory: 5,
@@ -232,6 +279,8 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
   },
   {
     key: 'flowMomentum',
+    dataRequirement: 'flow',
+    frozenAt: '2026-08-04',
     label: '외국인 수급 × 20일 모멘텀',
     rationale:
       '둘 다 약해도 함께 볼 때 갈릴 수 있다 — "오르는 종목을 외국인이 사고 있다".'
@@ -245,6 +294,8 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
   },
   {
     key: 'lowVolatility',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-12',
     label: '저변동성 (20일 일간 변동 평균의 역)',
     rationale:
       '변동이 작은 종목이 위험 대비 낫다는 주장(저변동성 이상현상). 이 레포에는'
@@ -264,6 +315,8 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
   },
   {
     key: 'turnoverSurge',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-12',
     label: '거래대금 급증 (자기 20일 대비 최근 5일)',
     rationale:
       '사용자 관찰을 그대로 잰다 — "세력이 아니고서야 자본이 많이 투입되고 빠져나가고를'
@@ -274,6 +327,8 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
   },
   {
     key: 'surgeMomentum',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-12',
     label: '거래대금 급증 × 20일 모멘텀',
     rationale:
       '자금이 몰리는 것만으로는 방향을 모른다 — 사려고 몰릴 수도 팔려고 몰릴 수도 있다.'
@@ -288,6 +343,8 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
   },
   {
     key: 'shortRatioLow',
+    dataRequirement: 'short',
+    frozenAt: '2026-08-06',
     label: '공매도 비중 낮음 (5일 평균, 역방향)',
     rationale:
       '빌려서 파는 쪽은 사는 쪽과 다른 정보를 본다. 공매도가 많이 걸린 종목이 이후 못 간다는'
@@ -301,6 +358,8 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
   },
   {
     key: 'parkinsonVol',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-12',
     label: '저변동성 · 고저 범위 기준 (20일, 역방향)',
     rationale:
       '`lowVolatility`와 **같은 가설을 다른 자로** 잰다. 종가끼리만 보면 장중에 크게'
@@ -321,3 +380,69 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
     },
   },
 ];
+
+/*
+ * ── 위약 신호 ────────────────────────────────────────────────────────────
+ *
+ * **우위가 없는 것이 확실한 신호를 같은 절차에 태운다.** 절차가 위약에서도
+ * "좋은 것"을 찾아낸다면, 실신호에서 나온 값도 절차가 만든 것이다.
+ *
+ * 이 레포는 이미 그 함정에 빠질 뻔했다 — 문턱을 누적으로 올리지 않았다면
+ * 850칸 중 하나가 우연히 유의한 것을 "찾았다"고 믿었을 것이다. 위약은 그
+ * 문턱이 실제로 맞는지를 **재서** 보여 준다.
+ *
+ * ★ **결정론적이어야 한다.** 같은 시드면 같은 점수가 나와야 실행을 재현할 수
+ * 있고, 시드가 다르면 서로 다른 표본이 되어야 여러 개를 태우는 뜻이 있다.
+ * 난수 발생기를 쓰면 둘 다 깨진다 — 그래서 `hash(종목|날짜|시드)`다.
+ *
+ * ★ **위약은 반증 요구다. 원장의 검정 수에 세지 않는다** — 떨어뜨릴 수만 있고
+ * 무언가를 "찾아낼" 수는 없기 때문이다.
+ */
+
+/**
+ * FNV-1a 32비트 + 뭉침 풀기.
+ *
+ * 뒤에 붙은 세 줄(avalanche)이 없으면 이웃한 문자열의 해시가 이웃한 값이 되어
+ * **날짜가 하루 밀릴 때마다 점수가 조금씩 움직인다.** 그러면 위약에 없어야 할
+ * 시계열 구조가 생긴다.
+ */
+export function hashUnitInterval(text: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  h ^= h >>> 16;
+  h = Math.imul(h, 2246822507) >>> 0;
+  h ^= h >>> 13;
+  h = Math.imul(h, 3266489909) >>> 0;
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+
+/** 위약 신호 하나. 시드만 다르고 나머지는 같다. */
+export function placeboSignal(seed: number): SignalCandidate {
+  return {
+    key: `placebo${seed}`,
+    dataRequirement: 'price',
+    frozenAt: '2026-08-12',
+    label: `위약 ${seed} (해시 난수)`,
+    rationale:
+      '우위가 있을 이유가 **없다.** 그것이 이 신호의 목적이다 — 절차가 이것에서도'
+      + ' 무언가를 찾아낸다면 실신호에서 나온 값도 절차가 만든 것이다.'
+      + ' hash(종목|거래일|시드)라 결정론적이고, 같은 시드는 언제나 같은 표를 낸다.',
+    minHistory: 0,
+    score: (ctx) => {
+      // 종목을 모르면 전 종목이 같은 점수가 되어 십분위가 뜻을 잃는다. 지어내지 않는다.
+      if (ctx.symbol === undefined) return undefined;
+      return hashUnitInterval(`${ctx.symbol}|${ctx.history[ctx.index].tradingDay}|${seed}`);
+    },
+  };
+}
+
+/** `seedFrom`부터 `seedTo`까지(양끝 포함). */
+export function makePlaceboSignals(seedFrom: number, seedTo: number): SignalCandidate[] {
+  const signals: SignalCandidate[] = [];
+  for (let seed = seedFrom; seed <= seedTo; seed += 1) signals.push(placeboSignal(seed));
+  return signals;
+}

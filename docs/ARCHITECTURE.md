@@ -188,6 +188,10 @@ backend/src/trading/
 ├── backtest.ts    # 성과 측정 (다음 봉 시가 체결, 비용 차감, in/out-of-sample)
 │                  # ★winRate는 **판 것들만**의 승률이다 — 아래 「미청산」 참고
 ├── measurementSample.ts  # 측정 표본을 고르고 세는 계산 (순수 함수, 재는 쪽 전용)
+├── signals.ts     # 후보 신호 + 요구 데이터 표시(dataRequirement) + 위약 생성기
+├── signalHarness.ts   # 한 구간을 같은 잣대로 재기 (★진입은 익일 시가)
+├── panel.ts       # 날짜×종목 판 (TypedArray 컬럼) + 유니버스 마스크 (순수 함수)
+├── walkForward.ts # 표본 밖 검증 절차 + 검정 넷 + 반증 셋 (순수 함수)
 └── rangeExpansion.ts  # 문턱을 정하려고 재는 계산 (순수 함수, 아래 참고)
 ```
 
@@ -380,6 +384,63 @@ db/dailyBars.ts               trading_daily_bars · trading_daily_bar_cursor
 **다시 보내면 될 오류인지는 `kis/errorCodes.ts`가 가른다**(`isRetriableTransportError`).
 소켓 절단·5xx는 재시도하고, `EGW02006`처럼 그 서버에 없는 기능은 500으로 와도
 재시도하지 않는다. 한도(`EGW00201`)는 성질이 달라 `rest.ts`의 `isRateLimitedError`다.
+
+### Walk-forward 측정 — 찾는 곳과 재는 곳을 시간으로 가른다
+
+```
+scripts/verifyDailyBars.ts     재기 전에 저장소를 검사한다 (DB만, KIS 0회)
+scripts/measureWalkForward.ts  절차를 돌린다 (DB만, KIS 0회, 주문 없음)
+  │
+  ├─ trading/panel.ts       Panel(TypedArray 컬럼) · buildScoreMatrix · 유니버스 마스크
+  ▼
+  └─ trading/walkForward.ts CellSeries · 검정 넷 · runWalkForward/AntiSelection/Mirror
+```
+
+**두 결함이 이 구조를 정했다.**
+
+| | 옛 하네스 | 지금 | 왜 |
+|------|------|------|------|
+| 진입 | 신호일 **종가** | **익일 시가**(`EntryBasis`) | 종가를 아는 시각은 15:30, 살 수 있는 가장 이른 시각은 다음 날 09:00이다. 리스크 룰이 시장가·시간외를 막아 종가 동시체결은 아예 불가능하다 |
+| 자리 찾기 | `bars.findIndex(...)`가 날짜 루프 안 | `Panel.localIndex` | 21년 × 3,900종목이면 1.5e12다 |
+| 청산봉 없음 | `continue`로 **버렸다** | 마지막 봉 강제청산 + `truncated` | 폐지·정지로 끝난 매매가 통째로 사라지면 지는 쪽만 골라 안 세는 셈이다 |
+
+`Panel`이 객체가 아니라 **컬럼마다 `Float64Array`**인 이유는 크기다 — 봉 5.3M개를
+객체로 들면 640MB, 컬럼으로 들면 254MB다(+`localIndex` 82MB). 실측은 1,172종목 ×
+5,288거래일 · 5.63M봉에 **힙 697MB · 6.4초**였고, 실행에
+`--max-old-space-size=4096`을 붙인다.
+
+**계산의 열쇠는 셀당 한 번만 훑는 것이다.** 셀 `(신호, 축)`의 그날 십분위 구성은
+그날 횡단면만으로 정해져 학습 창이 확장이든 이동이든 안 바뀐다. 그래서 진입일별
+계열(`CellSeries`)을 한 번 만들고, 창 15개 × 셀 35개는 전부 **그 계열의 구간
+집계**다(실측 35칸 7.0초, 전체 17초).
+
+**판정 t는 넷 중 |t| 최소다.** 순진한 t·Newey-West(겹치는 선도수익률)·블록
+부트스트랩(정규성 없이)·비겹침 넷을 다 내고 `verdictT = min|t|`로 못 박는다 —
+가장 너그러운 검정을 골라 쓰는 것이 이 일에서 가장 흔한 자기기만이라 **고를 수
+없게** 값으로 둔다.
+
+**반증 셋은 검정 수에 세지 않는다.** 거울(`runMirror`)·위약
+(`makePlaceboSignals`)·안티셀렉션(`runAntiSelection`)은 후보를 **떨어뜨릴 수만
+있고** 찾아낼 수 없어서 다중검정 부담이 아니다. 대신 결과는 원장에 값으로 남는다
+(`anti_t`·`mirror_t`·`placebo_max_t`). 셋 중 `runAntiSelection`이 가장 강하다 —
+학습 순위에 정보가 있다면 최하위를 고르는 절차는 **크기가 비슷한 음수**여야 하고,
+0 근처면 학습 순위가 표본 밖으로 아무것도 안 넘긴다는 뜻이다.
+
+**신호가 요구하는 데이터를 값으로 들고 있다**(`SignalCandidate.dataRequirement`).
+일봉 저장소에는 수급·공매도가 없어서, 표시가 없으면 그 신호들이 오류가 아니라
+**조용히 `undefined`**가 되고 날짜 수만 줄어든 표가 정상처럼 찍힌다(2026-08-10
+결함). 지금은 자동으로 빠지고 **무엇이 왜 빠졌는지 찍힌다.**
+
+**유니버스는 전부 as-of-date다** — 단 하나, 종목 자격(주식·시장·우선주)만 오늘
+마스터 기준이라 결과에 `survivorshipExposed`로 적어 둔다. 우선주는 **코드 끝자리와
+이름 중 하나라도 우선주라고 하면 뺀다**(두 방식이 갈리는 종목이 실제로 있다).
+가격제한폭을 넘는 봉(수정주가 파탄)이 있으면 **그 봉 이전을 종목째 버린다** —
+봉 하나만 빼면 앞뒤가 다른 자로 잰 값이 이어 붙는다.
+
+**원장은 `dataset_key` + `test_unit`으로 갈린다.** 옛 850+176칸은 (KIS 수급
+2025H2~2026H1) 데이터를 (신호×축) 단위로 **살 수 없는 종가 진입**으로 잰 것이고,
+walk-forward는 창 15개가 **한 검정**이다. ★ 키를 새로 만들면 문턱이 리셋되므로
+**재는 단위가 실제로 달라졌을 때만** 만든다.
 
 후보에서 빠진 사유(`ScreeningVerdict`)는 **자동매매와 화면이 같은 함수**로 낸다 —
 `verdictFor(quote, elapsed, cash)`. 예전에는 `loadAutoTraderCandidates`와

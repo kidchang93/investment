@@ -15,17 +15,34 @@
  * 5. **평균과 중앙값 둘 다** — 평균만 크면 꼬리 몇 개가 만든 값이다.
  *    2026-08-04 수급 20일 축이 그랬다(평균 +1.722%, 중앙 +0.022%).
  *
+ * ── ★ 2026-08-12에 고친 것 셋 ────────────────────────────────────────────
+ *
+ * **① 진입이 실행 불가능했다.** 그날 종가로 점수를 내고 **그 종가로 샀다**
+ * (`const entry = bars[index].close`). 종가를 알 수 있는 시각은 15:30이고 우리가
+ * 살 수 있는 가장 이른 시각은 다음 날 09:00이다. 리스크 룰이 시장가·시간외를
+ * 막고 있어 종가 동시체결은 아예 불가능하다. **기본값을 익일 시가로 바꿨다**
+ * (`HarnessInput.entryBasis`). **원장에 남은 176줄은 전부 옛 basis의 값이다.**
+ *
+ * **② 자리 찾기가 `findIndex`였다.** 날짜 루프 안에 있어 21년 × 3,900종목이면
+ * 1.5e12다. `Panel.localIndex`로 미리 세운다.
+ *
+ * **③ 청산봉이 없으면 버렸다.** `continue`로 넘겼는데, 그러면 폐지·장기정지로
+ * 끝난 매매가 통째로 사라진다 — 지는 쪽만 골라 안 세는 셈이다. **마지막 봉으로
+ * 강제청산하고 `truncatedExits`에 센다.**
+ *
  * ── 이 하네스가 **못** 지키는 것 ─────────────────────────────────────────
  *
  * - **표본 선정** — 어떤 종목을 넣을지는 부른 쪽이 정한다. 그게 오늘 결론을
  *   통째로 뒤집은 자리다(거래대금순 vs 코드순). 부른 쪽이 밝혀야 한다.
  * - **겹치는 선도수익률** — N일 축의 관측은 서로 겹친다. 날짜 군집 t도
- *   **부풀려진 쪽**이다. 여기서 못 넘기면 볼 것이 없다는 뜻이지, 넘겼다고
- *   확정된 것은 아니다.
+ *   **부풀려진 쪽**이다. 그래서 `tNeweyWest`를 나란히 낸다 — 그쪽이 진짜에 가깝다.
  * - **생존 편향** — 상장폐지된 종목은 마스터에 없다.
+ * - **표본 밖 검증** — 그건 `walkForward.ts`가 한다. 여기는 한 구간을 잰다.
  */
 
+import { buildPanel, localAt, type Panel } from './panel.js';
 import type { DailyBar, SignalCandidate, SignalContext } from './signals.js';
+import { legReturn, neweyWestT, type EntryBasis } from './walkForward.js';
 
 export interface HarnessInput {
   /** 종목코드 → 날짜 오름차순 계열 */
@@ -37,6 +54,14 @@ export interface HarnessInput {
   minNamesPerDay: number;
   /** 상·하위 몇 분위로 자를지. 10이면 십분위 */
   buckets: number;
+  /**
+   * 무엇으로 사고파나. **기본은 익일 시가(`nextOpen`)다.**
+   *
+   * `sameClose`는 옛 값과 견주려고만 남겨 둔다 — 그 값은 실행할 수 없다.
+   * 익일 시가로 재려면 `DailyBar.open`이 채워져 있어야 하고, 없으면 그 자리는
+   * `noEntry`로 **세어진다**(조용히 사라지지 않는다).
+   */
+  entryBasis?: EntryBasis;
 }
 
 export interface HarnessCell {
@@ -47,6 +72,14 @@ export interface HarnessCell {
   spreadMedian: number;
   /** 날짜 군집 t */
   t: number;
+  /**
+   * ★ **겹치는 선도수익률까지 잡은 t** (Newey-West, 대역폭 `2h−1`).
+   *
+   * 매일 진입하고 h일 들고 있으면 이웃한 관측이 h−1일을 공유한다. 위의 `t`는
+   * 그 겹침을 못 봐서 **√h만큼 부풀어** 있다. 판정은 이 둘 중 **작은 쪽**으로
+   * 읽어야 한다.
+   */
+  tNeweyWest: number;
   /** 관측에 쓴 날짜 수 */
   days: number;
   /** 상위 버킷 표본 수 */
@@ -138,6 +171,43 @@ export interface HarnessCell {
   topLegAlphaT: number;
   /** 매수 다리의 시장 민감도. **위의 `beta`와 다른 값이다** — 그건 스프레드의 것이다 */
   topLegBeta: number;
+
+  /*
+   * ── ★ 매도 다리 (2026-08-12에 추가) ────────────────────────────────────
+   *
+   * 지금까지 하위분위를 **스프레드 안에서만** 봤다. 그래서 두 다리의 **부호**를
+   * 나란히 볼 수가 없었다. 진짜 우위면 상위는 +, 하위는 −여야 한다. 둘 다 같은
+   * 부호면 그건 신호가 아니라 표본이 통째로 가진 성질이다.
+   *
+   * 우리는 공매도를 못 하므로 이 값으로 매매하지 않는다. **반증용이다.**
+   */
+
+  /** 하위분위 − 그날 전체 평균(%) */
+  botLegMean: number;
+  /** 하위 다리에서 시장까지 뺀 몫(%)과 그 t */
+  botLegAlpha: number;
+  botLegAlphaT: number;
+
+  /*
+   * ── ★ 표가 정상으로 보이는데 속이 빈 경우 (2026-08-12에 추가) ──────────
+   */
+
+  /**
+   * 상위분위 안에서 점수가 겹치는 정도(0~1)의 날짜 평균.
+   *
+   * 1에 가까우면 그 십분위는 **점수가 고른 것이 아니라 배열 순서가 고른 것**이다.
+   * 그래도 표는 멀쩡하게 찍힌다 — 그게 제일 나쁜 실패다.
+   */
+  tieShare: number;
+  /** 위 값의 중앙값이 0.5를 넘나. 넘으면 이 칸의 숫자는 읽을 것이 못 된다 */
+  degenerate: boolean;
+  /** 청산봉이 없어 **마지막 봉으로 강제청산**한 건수. 버린 것이 아니다 */
+  truncatedExits: number;
+  /** 진입할 봉·가격이 없어 못 산 건수. 조용히 사라지지 않게 센다 */
+  noEntry: number;
+  /** 날짜별 종목 수의 중앙값·최소. 표본이 얇은 날이 섞였는지 본다 */
+  namesPerDayMedian: number;
+  namesPerDayMin: number;
 }
 
 export interface HarnessResult {
@@ -146,6 +216,8 @@ export interface HarnessResult {
   cellCount: number;
   /** 이 칸 수에서의 |t| 문턱 (양측 5%) */
   bonferroniT: number;
+  /** **무엇으로 사고팔았나.** 표를 섞어 읽지 못하게 결과에 남는다 */
+  entryBasis: EntryBasis;
 }
 
 const mean = (v: number[]): number => (v.length === 0 ? 0 : v.reduce((a, b) => a + b, 0) / v.length);
@@ -188,6 +260,15 @@ function median(v: number[]): number {
   return s.length % 2 === 0 ? (s[m - 1] + s[m]) / 2 : s[m];
 }
 
+/** 날짜별 값의 군집 t. 표본이 하나면 0 — 0으로 나누지 않는다. */
+function clusterT(values: number[]): number {
+  if (values.length < 2) return 0;
+  const m = mean(values);
+  const variance = values.reduce((a, v) => a + (v - m) ** 2, 0) / (values.length - 1);
+  const se = variance > 0 ? Math.sqrt(variance / values.length) : 0;
+  return se > 0 ? m / se : 0;
+}
+
 /**
  * 본페로니 보정된 |t| 문턱 (양측 5%).
  *
@@ -203,6 +284,42 @@ export function bonferroniThreshold(cellCount: number): number {
 }
 
 /**
+ * `(날짜, 종목)` 점수판. **축마다 다시 계산하지 않는다** — 점수는 축과 무관하다.
+ *
+ * `panel.ts`의 `buildScoreMatrix`를 안 쓰는 이유는 그쪽이 수급 셋을 `NaN`으로
+ * 세우기 때문이다. 하네스의 입력에는 수급이 실제로 들어 있어서, 원본 계열을
+ * 그대로 신호에 먹여야 수급 신호가 잰다.
+ */
+function scoreMatrix(
+  panel: Panel,
+  barsBySymbol: Map<string, DailyBar[]>,
+  signal: SignalCandidate,
+): Float64Array {
+  const symbolCount = panel.symbols.length;
+  const scores = new Float64Array(panel.days.length * symbolCount).fill(Number.NaN);
+  for (let s = 0; s < symbolCount; s += 1) {
+    const history = barsBySymbol.get(panel.symbols[s]) ?? [];
+    const dayOfBar = panel.dayIndexOfBar[s];
+    for (let i = signal.minHistory; i < history.length; i += 1) {
+      const ctx: SignalContext = { history, index: i, symbol: panel.symbols[s] };
+      const value = signal.score(ctx);
+      if (value === undefined || !Number.isFinite(value)) continue;
+      scores[dayOfBar[i] * symbolCount + s] = value;
+    }
+  }
+  return scores;
+}
+
+/** 상위분위 안에서 점수가 겹치는 정도. 1에 가까우면 그 십분위는 사실상 임의다. */
+function tieShareOf(scores: number[]): number {
+  if (scores.length <= 1) return 0;
+  const sorted = [...scores].sort((a, b) => a - b);
+  let distinct = 1;
+  for (let i = 1; i < sorted.length; i += 1) if (sorted[i] !== sorted[i - 1]) distinct += 1;
+  return 1 - distinct / sorted.length;
+}
+
+/**
  * 한 신호·한 축을 잰다.
  *
  * 그날 신호로 종목을 줄 세워 상·하위 버킷의 **선도수익률**을 모으고, 날짜마다
@@ -210,35 +327,44 @@ export function bonferroniThreshold(cellCount: number): number {
  */
 function evaluateCell(
   input: HarnessInput,
+  panel: Panel,
+  scores: Float64Array,
   signal: SignalCandidate,
   horizon: number,
+  entryBasis: EntryBasis,
 ): HarnessCell {
+  const symbolCount = panel.symbols.length;
   const top: number[] = [];
   const bottom: number[] = [];
   const dailySpread: number[] = [];
   const dailyMarket: number[] = [];
   /** 날짜별 (상위분위 − 그날 전체 평균). **생존 판정의 재료** */
   const dailyTopLeg: number[] = [];
+  /** 날짜별 (하위분위 − 그날 전체 평균). **반증용 거울** */
+  const dailyBotLeg: number[] = [];
+  const dailyTie: number[] = [];
+  const namesPerDay: number[] = [];
+  let truncatedExits = 0;
+  let noEntry = 0;
 
-  const days = new Set<string>();
-  for (const bars of input.barsBySymbol.values()) for (const b of bars) days.add(b.tradingDay);
-
-  for (const day of [...days].sort()) {
+  for (let d = 0; d < panel.days.length; d += 1) {
     const snapshot: Array<{ score: number; forward: number }> = [];
-    for (const bars of input.barsBySymbol.values()) {
-      const index = bars.findIndex((b) => b.tradingDay === day);
-      if (index < 0) continue;
-      // 점수를 내는 데 필요한 앞 봉이 모자라면 그 종목은 그날 빠진다.
-      if (index < signal.minHistory) continue;
-      // 선도수익률을 낼 뒤 봉이 없으면 뺀다. 없는 것을 0으로 채우지 않는다.
-      if (index + horizon >= bars.length) continue;
-      const ctx: SignalContext = { history: bars, index };
-      const score = signal.score(ctx);
-      if (score === undefined || !Number.isFinite(score)) continue;
-      const entry = bars[index].close;
-      const exit = bars[index + horizon].close;
-      if (!(entry > 0) || !(exit > 0)) continue;
-      snapshot.push({ score, forward: exit / entry - 1 });
+    for (let s = 0; s < symbolCount; s += 1) {
+      const score = scores[d * symbolCount + s];
+      if (!Number.isFinite(score)) continue;
+      const local = localAt(panel, d, s);
+      if (local < 0) continue;
+      /*
+       * ★ 진입은 **다음 봉의 시가**다. 청산봉이 없으면 마지막 봉으로 나가고
+       * 세어 둔다 — 버리면 폐지·정지로 끝난 매매가 통째로 사라진다.
+       */
+      const leg = legReturn(panel, s, local, horizon, entryBasis);
+      if (!leg.ok) {
+        noEntry += 1;
+        continue;
+      }
+      if (leg.truncated) truncatedExits += 1;
+      snapshot.push({ score, forward: leg.value / 100 });
     }
     if (snapshot.length < input.minNamesPerDay) continue;
 
@@ -246,9 +372,16 @@ function evaluateCell(
     const cut = Math.max(1, Math.floor(snapshot.length / input.buckets));
     const dayTop: number[] = [];
     const dayBottom: number[] = [];
+    const dayTopScores: number[] = [];
     for (let i = 0; i < snapshot.length; i += 1) {
-      if (i < cut) { top.push(snapshot[i].forward); dayTop.push(snapshot[i].forward); }
-      else if (i >= snapshot.length - cut) { bottom.push(snapshot[i].forward); dayBottom.push(snapshot[i].forward); }
+      if (i < cut) {
+        top.push(snapshot[i].forward);
+        dayTop.push(snapshot[i].forward);
+        dayTopScores.push(snapshot[i].score);
+      } else if (i >= snapshot.length - cut) {
+        bottom.push(snapshot[i].forward);
+        dayBottom.push(snapshot[i].forward);
+      }
     }
     dailySpread.push((mean(dayTop) - mean(dayBottom)) * 100);
     // 같은 날 전체 평균. 시장 대용이다 — 상위·하위가 함께 타는 것을 걷어낼 재료다.
@@ -259,48 +392,49 @@ function evaluateCell(
      * 같은 날 안의 차이라 시장이 통째로 움직인 몫은 구조상 이미 빠져 있다.
      */
     dailyTopLeg.push((mean(dayTop) - dayMarket) * 100);
+    dailyBotLeg.push((mean(dayBottom) - dayMarket) * 100);
+    dailyTie.push(tieShareOf(dayTopScores));
+    namesPerDay.push(snapshot.length);
   }
 
-  const dm = mean(dailySpread);
-  const variance =
-    dailySpread.length > 1
-      ? dailySpread.reduce((a, v) => a + (v - dm) ** 2, 0) / (dailySpread.length - 1)
-      : 0;
-  const se = variance > 0 ? Math.sqrt(variance / dailySpread.length) : 0;
-
   const { alpha, alphaT, beta } = regressOnMarket(dailySpread, dailyMarket);
-
-  const tlMean = mean(dailyTopLeg);
-  const tlVariance =
-    dailyTopLeg.length > 1
-      ? dailyTopLeg.reduce((a, v) => a + (v - tlMean) ** 2, 0) / (dailyTopLeg.length - 1)
-      : 0;
-  const tlSe = tlVariance > 0 ? Math.sqrt(tlVariance / dailyTopLeg.length) : 0;
-  /*
-   * ★ 매수 다리에서 시장을 뺀다. `regressOnMarket`을 스프레드 대신 매수 다리에
-   * 태우는 것이라 함수를 새로 만들 필요가 없다 — 같은 회귀다.
-   */
   const topLegFit = regressOnMarket(dailyTopLeg, dailyMarket);
+  const botLegFit = regressOnMarket(dailyBotLeg, dailyMarket);
 
   return {
     signalKey: signal.key,
     horizon,
     spreadMean: (mean(top) - mean(bottom)) * 100,
     spreadMedian: (median(top) - median(bottom)) * 100,
-    t: se > 0 ? dm / se : 0,
+    t: clusterT(dailySpread),
+    /*
+     * 대역폭 `2h−1`. Bartlett 커널은 잘라 낸 만큼 분산을 덜 세는데, `h−1`에서
+     * 자르면 h=5일 때 참값의 68%만 잡는다. `2h−1`로 늘리면 84%까지 온다 —
+     * 그래도 **조금 덜 세는 쪽**이라 이 t도 너그러운 편이다.
+     */
+    tNeweyWest: neweyWestT(dailyTopLeg, 2 * horizon - 1),
     days: dailySpread.length,
     samples: top.length,
     alpha,
     alphaT,
     beta,
-    topLegMean: tlMean,
+    topLegMean: mean(dailyTopLeg),
     topLegMedian: median(dailyTopLeg),
-    topLegT: tlSe > 0 ? tlMean / tlSe : 0,
+    topLegT: clusterT(dailyTopLeg),
     topLegTrimmed10: trimmedMean(dailyTopLeg, 0.1),
     topLegTop5Share: topDaysShare(dailyTopLeg, 5),
     topLegAlpha: topLegFit.alpha,
     topLegAlphaT: topLegFit.alphaT,
     topLegBeta: topLegFit.beta,
+    botLegMean: mean(dailyBotLeg),
+    botLegAlpha: botLegFit.alpha,
+    botLegAlphaT: botLegFit.alphaT,
+    tieShare: mean(dailyTie),
+    degenerate: median(dailyTie) > 0.5,
+    truncatedExits,
+    noEntry,
+    namesPerDayMedian: median(namesPerDay),
+    namesPerDayMin: namesPerDay.length === 0 ? 0 : Math.min(...namesPerDay),
   };
 }
 
@@ -312,6 +446,7 @@ function evaluateCell(
  * 노출일 뿐이면 `alpha`가 0으로 무너지면서 `beta`만 남는다.
  *
  * **이 t도 부풀려진 쪽이다** — 겹치는 선도수익률은 여기서도 안 없어진다.
+ * 그래서 `tNeweyWest`를 나란히 낸다.
  */
 function regressOnMarket(
   spread: number[],
@@ -338,15 +473,20 @@ function regressOnMarket(
 }
 
 export function runSignalHarness(input: HarnessInput): HarnessResult {
+  const entryBasis = input.entryBasis ?? 'nextOpen';
+  const panel = buildPanel(input.barsBySymbol);
   const cells: HarnessCell[] = [];
   for (const signal of input.signals) {
+    // ★ 점수는 축과 무관하다. 축마다 다시 내면 축 수만큼 헛일이다.
+    const scores = scoreMatrix(panel, input.barsBySymbol, signal);
     for (const horizon of input.horizons) {
-      cells.push(evaluateCell(input, signal, horizon));
+      cells.push(evaluateCell(input, panel, scores, signal, horizon, entryBasis));
     }
   }
   return {
     cells,
     cellCount: cells.length,
     bonferroniT: bonferroniThreshold(cells.length),
+    entryBasis,
   };
 }

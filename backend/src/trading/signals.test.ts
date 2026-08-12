@@ -12,7 +12,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { SIGNAL_CANDIDATES, type DailyBar, type SignalContext } from './signals.js';
+import {
+  SIGNAL_CANDIDATES,
+  makePlaceboSignals,
+  placeboSignal,
+  type DailyBar,
+  type SignalContext,
+} from './signals.js';
 
 function bar(day: number, close: number, foreign = 100, institution = 50, individual = -150): DailyBar {
   return {
@@ -165,5 +171,132 @@ describe('신호 — 목록이 규율을 지킨다', () => {
         `${signal.key}: minHistory ${signal.minHistory}인데 그 자리에서 값이 안 나온다`,
       );
     }
+  });
+
+  /*
+   * 일봉 저장소에는 시세만 있다. 수급·공매도 신호를 그대로 태우면 오류가 아니라
+   * **조용히 `undefined`**가 되고 날짜 수만 줄어든 표가 정상처럼 찍힌다.
+   * 표시가 값으로 있어야 부른 쪽이 "무엇이 왜 빠졌는지"를 적을 수 있다.
+   */
+  it('모든 후보가 요구 데이터와 가설을 못 박은 날을 적어 두었다', () => {
+    for (const signal of SIGNAL_CANDIDATES) {
+      assert.ok(
+        ['price', 'flow', 'short'].includes(signal.dataRequirement),
+        `${signal.key}: dataRequirement가 없다`,
+      );
+      assert.match(signal.frozenAt, /^\d{4}-\d{2}-\d{2}$/, `${signal.key}: frozenAt이 날짜가 아니다`);
+    }
+  });
+
+  it('수급을 쓰는 신호는 flow로, 공매도를 쓰는 신호는 short로 표시돼 있다', () => {
+    const requirementOf = (key: string): string =>
+      SIGNAL_CANDIDATES.find((s) => s.key === key)?.dataRequirement ?? '(없음)';
+    for (const key of [
+      'foreign1', 'foreign5', 'institution5', 'individualContrarian5', 'smartMoney5', 'flowMomentum',
+    ]) {
+      assert.equal(requirementOf(key), 'flow', key);
+    }
+    assert.equal(requirementOf('shortRatioLow'), 'short');
+    for (const key of [
+      'momentum20', 'reversal1', 'reversal5', 'lowVolatility', 'parkinsonVol',
+      'turnoverSurge', 'surgeMomentum',
+    ]) {
+      assert.equal(requirementOf(key), 'price', key);
+    }
+  });
+
+  /*
+   * ★ 표시가 실제와 어긋나면 표시가 있으나 마나다. **시세만 있는 계열**을 태워
+   * `price`라고 적은 신호가 정말 점수를 내는지 잰다 — 일봉 저장소가 주는 것이
+   * 정확히 이 모양이다(수급 셋이 NaN).
+   */
+  it("price라고 적은 신호는 수급이 NaN이어도 점수를 낸다", () => {
+    const priceOnly = series().map((b) => ({
+      ...b,
+      individual: Number.NaN,
+      foreign: Number.NaN,
+      institution: Number.NaN,
+      shortRatio: undefined,
+    }));
+    for (const signal of SIGNAL_CANDIDATES.filter((s) => s.dataRequirement === 'price')) {
+      const score = signal.score({ history: priceOnly, index: 28 });
+      assert.notEqual(score, undefined, `${signal.key}: price라는데 값이 안 나온다`);
+      assert.ok(Number.isFinite(score as number), `${signal.key}: ${score}`);
+    }
+    for (const signal of SIGNAL_CANDIDATES.filter((s) => s.dataRequirement !== 'price')) {
+      const score = signal.score({ history: priceOnly, index: 28 });
+      const usable = score !== undefined && Number.isFinite(score);
+      assert.equal(usable, false, `${signal.key}: 수급이 없는데 쓸 수 있는 점수를 냈다`);
+    }
+  });
+});
+
+/*
+ * ── 위약 ─────────────────────────────────────────────────────────────────
+ *
+ * 우위가 없는 것이 확실한 신호를 같은 절차에 태워, 절차 자체가 무언가를
+ * "찾아내는지"를 잰다. 그러려면 두 가지가 성립해야 한다 —
+ * **같은 시드는 언제나 같은 점수**(실행 재현), **시드가 다르면 다른 점수**(표본이 여럿).
+ */
+describe('위약 신호', () => {
+  const bars = series();
+
+  it('같은 시드·같은 종목·같은 날이면 언제나 같은 점수다', () => {
+    const a = placeboSignal(7).score({ history: bars, index: 12, symbol: '005930' });
+    const b = placeboSignal(7).score({ history: bars, index: 12, symbol: '005930' });
+    assert.equal(a, b);
+    assert.ok(a !== undefined && a >= 0 && a < 1, String(a));
+  });
+
+  it('시드가 다르면 점수가 다르다', () => {
+    const a = placeboSignal(1).score({ history: bars, index: 12, symbol: '005930' });
+    const b = placeboSignal(2).score({ history: bars, index: 12, symbol: '005930' });
+    assert.notEqual(a, b);
+  });
+
+  it('종목이 다르면 점수가 다르다 — 아니면 십분위가 뜻을 잃는다', () => {
+    const a = placeboSignal(1).score({ history: bars, index: 12, symbol: '005930' });
+    const b = placeboSignal(1).score({ history: bars, index: 12, symbol: '000660' });
+    assert.notEqual(a, b);
+  });
+
+  it('종목을 모르면 점수를 내지 않는다 — 전 종목 같은 값으로 채우지 않는다', () => {
+    assert.equal(placeboSignal(1).score({ history: bars, index: 12 }), undefined);
+  });
+
+  it('미래를 보지 않는다', () => {
+    const index = 20;
+    const before = placeboSignal(3).score({ history: bars, index, symbol: 'A' });
+    const tampered = bars.map((b, i) => (i <= index ? b : { ...b, close: b.close * 5 }));
+    assert.equal(placeboSignal(3).score({ history: tampered, index, symbol: 'A' }), before);
+  });
+
+  it('여러 개를 시드 범위로 만든다 — 양끝을 포함한다', () => {
+    const signals = makePlaceboSignals(1, 20);
+    assert.equal(signals.length, 20);
+    assert.equal(new Set(signals.map((s) => s.key)).size, 20);
+    for (const signal of signals) {
+      assert.equal(signal.dataRequirement, 'price');
+      assert.ok(signal.rationale.length > 30, signal.key);
+    }
+  });
+
+  /*
+   * 값이 [0,1)에 고르게 퍼져야 십분위가 실제로 십분위다. 한쪽으로 쏠리면
+   * 위약이 "우위 없음"이 아니라 다른 무언가를 재게 된다.
+   */
+  it('점수가 [0,1)에 고르게 퍼진다', () => {
+    const signal = placeboSignal(42);
+    const buckets = new Array(10).fill(0);
+    for (let i = 0; i < 10_000; i += 1) {
+      const score = signal.score({
+        history: [{ tradingDay: String(20200101 + i), close: 1, individual: 0, foreign: 0, institution: 0 }],
+        index: 0,
+        symbol: `S${i % 97}`,
+      });
+      assert.ok(score !== undefined);
+      buckets[Math.min(9, Math.floor(score * 10))] += 1;
+    }
+    for (const count of buckets) assert.ok(count > 800 && count < 1_200, buckets.join(','));
   });
 });

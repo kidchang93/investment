@@ -14,6 +14,12 @@ import { describe, it } from 'node:test';
 import { bonferroniThreshold, runSignalHarness } from './signalHarness.js';
 import type { DailyBar, SignalCandidate } from './signals.js';
 
+/**
+ * ★ **`open`을 채운다.** 하네스가 2026-08-12부터 **익일 시가**로 진입하므로,
+ * 시가가 없으면 표본이 0건이 되고 그 사실이 `noEntry`로 세어진다. 여기서는
+ * 시가=종가로 두어 갭 없이 하루만 밀린 계열을 만든다 — 이 시험이 재는 것은
+ * 시장 노출이지 진입 basis가 아니다.
+ */
 function bars(closes: number[]): DailyBar[] {
   return closes.map((close, i) => ({
     tradingDay: String(20260101 + i),
@@ -21,6 +27,9 @@ function bars(closes: number[]): DailyBar[] {
     individual: -100,
     foreign: 60,
     institution: 40,
+    open: close,
+    high: close,
+    low: close,
   }));
 }
 
@@ -30,6 +39,8 @@ function fixedScore(scoreBySymbolIndex: (index: number) => number): SignalCandid
     key: 'fixed',
     label: '고정 점수',
     rationale: '계산을 재려고 만든 것이다. 실제 후보가 아니며 값에 뜻이 없다.',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-04',
     minHistory: 0,
     score: (ctx) => scoreBySymbolIndex(ctx.history[0].close),
   };
@@ -79,6 +90,8 @@ describe('시장을 빼면 노출과 우위가 갈린다', () => {
           key: 'beta',
           label: '시장 배수',
           rationale: '고유 수익 없이 시장 배수만 다른 경우를 만들어 알파가 0인지 본다.',
+          dataRequirement: 'price',
+          frozenAt: '2026-08-04',
           minHistory: 1,
           // 앞 두 봉의 변화 크기가 곧 그 종목의 배수다.
           score: (ctx) => Math.abs(ctx.history[1].close / ctx.history[0].close - 1),
@@ -110,5 +123,122 @@ describe('시장을 빼면 노출과 우위가 갈린다', () => {
       buckets: 2,
     });
     assert.equal(result.cells[0].alphaT, 0);
+  });
+});
+
+/*
+ * ── ★ 진입 basis (2026-08-12) ────────────────────────────────────────────
+ *
+ * 옛 하네스는 그날 종가로 점수를 내고 **그 종가로 샀다.** 종가를 알 수 있는
+ * 시각은 15:30이고 우리가 살 수 있는 가장 이른 시각은 다음 날 09:00이다.
+ * 원장에 남은 176줄이 전부 그 위에 있다.
+ */
+describe('하네스 — 진입 basis', () => {
+  function marketBars(gap: number): Map<string, DailyBar[]> {
+    const map = new Map<string, DailyBar[]>();
+    for (let s = 0; s < 40; s += 1) {
+      const list: DailyBar[] = [];
+      let close = 10_000 + s * 50;
+      for (let d = 0; d < 40; d += 1) {
+        const open = close * (1 + ((s % 5) - 2) * gap);
+        close = open * (1 + ((d + s) % 4) * 0.004 - 0.005);
+        list.push({
+          tradingDay: String(20260101 + d),
+          close,
+          individual: -100,
+          foreign: 60,
+          institution: 40,
+          open,
+          high: Math.max(open, close),
+          low: Math.min(open, close),
+        });
+      }
+      map.set(`S${String(s).padStart(2, '0')}`, list);
+    }
+    return map;
+  }
+
+  const signal: SignalCandidate = {
+    key: 'reversal',
+    label: '전날 하락폭',
+    rationale: '많이 떨어진 것이 되돌아온다는 통념. 여기서는 basis 차이를 드러낼 재료로만 쓴다.',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-12',
+    minHistory: 1,
+    score: (ctx) => -(ctx.history[ctx.index].close / ctx.history[ctx.index - 1].close - 1),
+  };
+
+  it('기본값이 익일 시가다 — 결과에 값으로 남는다', () => {
+    const result = runSignalHarness({
+      barsBySymbol: marketBars(0.006),
+      signals: [signal],
+      horizons: [5],
+      minNamesPerDay: 30,
+      buckets: 10,
+    });
+    assert.equal(result.entryBasis, 'nextOpen');
+  });
+
+  it('익일 시가와 종가 진입이 다른 값을 낸다', () => {
+    const barsBySymbol = marketBars(0.006);
+    const run = (entryBasis: 'nextOpen' | 'sameClose'): number =>
+      runSignalHarness({
+        barsBySymbol, signals: [signal], horizons: [5], minNamesPerDay: 30, buckets: 10, entryBasis,
+      }).cells[0].topLegMean;
+    assert.notEqual(run('nextOpen'), run('sameClose'));
+  });
+
+  /*
+   * ★ 시가가 없는 계열(수급 TR만 받은 경우)에서 표본이 조용히 0이 되면 안 된다.
+   * **몇 건을 못 샀는지가 값으로 남아야** 그 표를 읽는 사람이 속지 않는다.
+   */
+  it('시가가 없으면 못 산 건수를 센다 — 조용히 사라지지 않는다', () => {
+    const flowOnly = new Map<string, DailyBar[]>();
+    for (const [key, list] of marketBars(0.006)) {
+      flowOnly.set(key, list.map(({ tradingDay, close, individual, foreign, institution }) => ({
+        tradingDay, close, individual, foreign, institution,
+      })));
+    }
+    const cell = runSignalHarness({
+      barsBySymbol: flowOnly, signals: [signal], horizons: [5], minNamesPerDay: 30, buckets: 10,
+    }).cells[0];
+    assert.equal(cell.days, 0);
+    assert.ok(cell.noEntry > 0, '시가가 없는데 못 산 건수가 0이다');
+  });
+
+  it('청산봉이 없으면 마지막 봉으로 나가고 센다', () => {
+    const barsBySymbol = new Map<string, DailyBar[]>();
+    for (const [key, list] of marketBars(0.002)) {
+      // 절반을 12봉에서 끊는다(폐지·장기정지). 축 20일이라 청산봉이 없다.
+      barsBySymbol.set(key, key < 'S20' ? list.slice(0, 12) : list);
+    }
+    const cell = runSignalHarness({
+      barsBySymbol, signals: [signal], horizons: [20], minNamesPerDay: 30, buckets: 10,
+    }).cells[0];
+    assert.ok(cell.truncatedExits > 0, '강제청산이 한 건도 안 세어졌다');
+  });
+
+  it('두 다리를 나란히 낸다 — 부호가 갈리는지 볼 수 있게', () => {
+    const cell = runSignalHarness({
+      barsBySymbol: marketBars(0.006),
+      signals: [signal],
+      horizons: [5],
+      minNamesPerDay: 30,
+      buckets: 10,
+    }).cells[0];
+    // 상위−하위가 두 다리의 차이와 맞아야 계산이 어긋나지 않은 것이다.
+    assert.ok(Math.abs((cell.topLegMean - cell.botLegMean) - cell.spreadMean) < 1e-6);
+  });
+
+  it('겹치는 선도수익률용 t를 나란히 낸다', () => {
+    const cell = runSignalHarness({
+      barsBySymbol: marketBars(0.006),
+      signals: [signal],
+      horizons: [5],
+      minNamesPerDay: 30,
+      buckets: 10,
+    }).cells[0];
+    assert.ok(Number.isFinite(cell.tNeweyWest));
+    assert.ok(cell.namesPerDayMin > 0 && cell.namesPerDayMedian >= cell.namesPerDayMin);
   });
 });

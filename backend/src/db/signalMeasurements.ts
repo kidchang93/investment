@@ -29,6 +29,16 @@
  *   "지금까지 몇 칸을 쟀나"        → `cumulativeCellCount()` (본페로니의 분모)
  *   "이 신호는 이미 죽였나"        → `findMeasurements({ signalKey })`
  *   "살아남은 것이 있나"           → `findMeasurements({ survivedOnly: true })`
+ *
+ * ── ★ 반증 요구는 세지 않는다 (2026-08-12) ───────────────────────────────
+ *
+ * **거울(`runMirror`) · 위약(`makePlaceboSignals`) · 안티셀렉션(`runAntiSelection`) ·
+ * 부호일치(`halfSigns`)는 검정 수에 들어가지 않는다.** 그것들은 후보를
+ * **떨어뜨릴 수만 있고** 무언가를 "찾아낼" 수는 없기 때문이다. 다중검정 부담은
+ * "우연히 좋아 보일 기회를 몇 번 줬나"인데, 반증은 그 기회를 주지 않는다.
+ *
+ * 반대로 그 결과는 **줄에 값으로 남긴다**(`anti_t`·`mirror_t`·`placebo_max_t`).
+ * 안 남기면 "반증을 돌렸다"는 말만 남고 무엇이 나왔는지는 사라진다.
  */
 
 import { pool } from './client.js';
@@ -94,7 +104,66 @@ export interface SignalMeasurement {
   bonferroniT: number;
   survived: boolean;
   note: string;
+
+  /*
+   * ── ★ 데이터셋과 재는 단위 (2026-08-12 추가) ───────────────────────────
+   *
+   * 옛 176줄은 **KIS에서 그때그때 받은 수급+시세 2025H2~2026H1**로 잰 것이고,
+   * 지금부터는 **DB에 쌓은 21년 일봉**으로 잰다. 같은 신호라도 다른 데이터·다른
+   * 진입 basis라 **한 표에서 나란히 읽으면 안 된다.**
+   *
+   * ★ **키를 새로 만들면 본페로니 분모가 리셋된다. 그것이 이 필드의 위험이다.**
+   * 새 키는 "재는 단위가 실제로 달라졌을 때"만 만든다 — 같은 것을 다시 재면서
+   * 키만 바꾸면 이 원장은 거짓이 된다.
+   */
+
+  /** 어떤 데이터로 쟀나. 예: `kis-flow-2025h2-2026h1` / `dailybars-20260812` */
+  datasetKey?: string;
+  /**
+   * **무엇 하나를 한 검정으로 세나.**
+   *
+   *   `harness-cell`      신호 × 축 한 칸
+   *   `walkforward-run`   walk-forward 절차 한 번 (창 15개가 한 검정이다)
+   */
+  testUnit?: string;
+  /** 무엇으로 사고팔았나. `nextOpen`(익일 시가) / `sameClose`(옛 기준, 실행 불가) */
+  entryBasis?: string;
+  /** 그 실행에 쓴 왕복 비용(%). 학습·검증에 같은 값이어야 한다 */
+  costRoundTrip?: number;
+  /** 표본 밖 구간의 길이(년) */
+  oosYears?: number;
+  /** 겹침·정규성·비겹침을 각각 잡은 t */
+  tNeweyWest?: number;
+  tBlockBoot?: number;
+  tNonOverlap?: number;
+  /** ★ 넷 중 |t| 최소. **판정은 이것으로 한다** */
+  verdictT?: number;
+  /** 창이 바뀔 때 고른 칸이 얼마나 자주 바뀌었나(0~1) */
+  selectionTurnover?: number;
+  /** 앞 반쪽·뒤 반쪽의 부호(−1·0·+1). 반쪽에서만 나오면 그건 그 시절이다 */
+  half1Sign?: number;
+  half2Sign?: number;
+  /** ★ 반증 셋. **검정 수에 세지 않지만 값은 남긴다** */
+  antiT?: number;
+  mirrorT?: number;
+  placeboMaxT?: number;
+  /** 표본이 오늘 살아 있는 종목만인가. 감추면 판정문이 거짓말을 한다 */
+  survivorshipExposed?: boolean;
+  /** 청산봉이 없어 마지막 봉으로 나간 건수 */
+  truncatedExits?: number;
 }
+
+/**
+ * 원장이 생기기 전부터 쓰던 데이터셋 키.
+ *
+ * 옛 176줄은 `dataset_key`가 없던 시절의 것이라 이 값으로 백필한다.
+ * `PRE_LEDGER_CELL_COUNT`(850)도 **이 키에만** 얹힌다 — 그 850칸이 전부 이
+ * 데이터·이 진입 basis로 잰 것이기 때문이다.
+ */
+export const LEGACY_DATASET_KEY = 'kis-flow-2025h2-2026h1';
+
+/** 옛 줄이 실제로 쓰던 재는 단위. 신호 × 축 한 칸이 한 검정이었다. */
+export const HARNESS_CELL_UNIT = 'harness-cell';
 
 export async function ensureSignalMeasurementSchema(): Promise<void> {
   await pool.query(`
@@ -137,8 +206,44 @@ export async function ensureSignalMeasurementSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS verdict_basis      TEXT,
       ADD COLUMN IF NOT EXISTS top_leg_alpha      DOUBLE PRECISION,
       ADD COLUMN IF NOT EXISTS top_leg_alpha_t    DOUBLE PRECISION,
-      ADD COLUMN IF NOT EXISTS top_leg_beta       DOUBLE PRECISION
+      ADD COLUMN IF NOT EXISTS top_leg_beta       DOUBLE PRECISION,
+      ADD COLUMN IF NOT EXISTS dataset_key        TEXT,
+      ADD COLUMN IF NOT EXISTS test_unit          TEXT,
+      ADD COLUMN IF NOT EXISTS entry_basis        TEXT,
+      ADD COLUMN IF NOT EXISTS cost_round_trip    DOUBLE PRECISION,
+      ADD COLUMN IF NOT EXISTS oos_years          DOUBLE PRECISION,
+      ADD COLUMN IF NOT EXISTS t_newey_west       DOUBLE PRECISION,
+      ADD COLUMN IF NOT EXISTS t_block_boot       DOUBLE PRECISION,
+      ADD COLUMN IF NOT EXISTS t_non_overlap      DOUBLE PRECISION,
+      ADD COLUMN IF NOT EXISTS verdict_t          DOUBLE PRECISION,
+      ADD COLUMN IF NOT EXISTS selection_turnover DOUBLE PRECISION,
+      ADD COLUMN IF NOT EXISTS half1_sign         INTEGER,
+      ADD COLUMN IF NOT EXISTS half2_sign         INTEGER,
+      ADD COLUMN IF NOT EXISTS anti_t             DOUBLE PRECISION,
+      ADD COLUMN IF NOT EXISTS mirror_t           DOUBLE PRECISION,
+      ADD COLUMN IF NOT EXISTS placebo_max_t      DOUBLE PRECISION,
+      ADD COLUMN IF NOT EXISTS survivorship_exposed BOOLEAN,
+      ADD COLUMN IF NOT EXISTS truncated_exits    INTEGER
   `);
+  /*
+   * ★ **옛 줄에 데이터셋·단위·진입 basis를 적어 넣는다.**
+   *
+   * 이 줄들은 전부 (KIS 수급+시세 2025H2~2026H1) 데이터를, 신호×축 한 칸 단위로,
+   * **신호일 종가에 사서 종가에 파는** 방식으로 쟀다. 그 셋 다 지금과 다르다.
+   * 비워 두면 새 줄과 한 표에 섞여 읽히고, 그러면 원장이 스스로 거짓말을 한다.
+   *
+   * `verdict_basis`가 NULL인 옛 줄은 그대로 둔다 — 그건 "매수 다리를 안 재고
+   * 판정했다"는 **사실 자체가 기록**이라 채워 넣으면 안 된다. 여기 셋은 값을
+   * 몰라서 빈 것이 아니라 칸이 없어서 빈 것이므로 성질이 다르다.
+   */
+  await pool.query(
+    `UPDATE trading_signal_measurements
+        SET dataset_key = COALESCE(dataset_key, $1),
+            test_unit   = COALESCE(test_unit, $2),
+            entry_basis = COALESCE(entry_basis, 'sameClose')
+      WHERE dataset_key IS NULL OR test_unit IS NULL OR entry_basis IS NULL`,
+    [LEGACY_DATASET_KEY, HARNESS_CELL_UNIT],
+  );
   /*
    * 같은 (신호·축·구간·표본)을 다시 재면 **덮어쓰지 않고 한 줄 더 쌓는다.**
    * 두 번 잰 것은 두 번 잰 것이다 — 그것도 다중검정 부담이다. 대신 조회가
@@ -160,9 +265,14 @@ export async function recordSignalMeasurements(rows: SignalMeasurement[]): Promi
           universe, symbols_count, days_count, samples, spread_mean, spread_median, t_stat,
           alpha, alpha_t, beta, run_cell_count, bonferroni_t, survived, note,
           top_leg_mean, top_leg_t, top_leg_trimmed10, top_leg_top5_share, verdict_basis,
-          top_leg_alpha, top_leg_alpha_t, top_leg_beta)
+          top_leg_alpha, top_leg_alpha_t, top_leg_beta,
+          dataset_key, test_unit, entry_basis, cost_round_trip, oos_years,
+          t_newey_west, t_block_boot, t_non_overlap, verdict_t, selection_turnover,
+          half1_sign, half2_sign, anti_t, mirror_t, placebo_max_t,
+          survivorship_exposed, truncated_exits)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-               $22,$23,$24,$25,$26,$27,$28,$29)`,
+               $22,$23,$24,$25,$26,$27,$28,$29,
+               $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46)`,
       [
         r.measuredAt, r.signalKey, r.rationale, r.horizonDays, r.periodKey, r.periodFrom,
         r.periodTo, r.universe, r.symbolsCount, r.daysCount, r.samples, r.spreadMean,
@@ -171,6 +281,13 @@ export async function recordSignalMeasurements(rows: SignalMeasurement[]): Promi
         r.topLegMean ?? null, r.topLegT ?? null, r.topLegTrimmed10 ?? null,
         r.topLegTop5Share ?? null, r.verdictBasis ?? null,
         r.topLegAlpha ?? null, r.topLegAlphaT ?? null, r.topLegBeta ?? null,
+        r.datasetKey ?? LEGACY_DATASET_KEY, r.testUnit ?? HARNESS_CELL_UNIT,
+        r.entryBasis ?? null, r.costRoundTrip ?? null, r.oosYears ?? null,
+        r.tNeweyWest ?? null, r.tBlockBoot ?? null, r.tNonOverlap ?? null,
+        r.verdictT ?? null, r.selectionTurnover ?? null,
+        r.half1Sign ?? null, r.half2Sign ?? null,
+        r.antiT ?? null, r.mirrorT ?? null, r.placeboMaxT ?? null,
+        r.survivorshipExposed ?? null, r.truncatedExits ?? null,
       ],
     );
   }
@@ -196,6 +313,10 @@ export async function recordSignalMeasurements(rows: SignalMeasurement[]): Promi
  * ★ 여기 **안 들어간 것**: 갭 측정(`measureOpeningGap`)과 NXT 프리갭
  * (`measureNxtPreGap`)의 랭킹 6건. 그 스크립트들은 아직 원장에 안 쓴다 —
  * 붙이면 이 상수에서 빼는 게 아니라 그쪽이 줄을 쌓게 한다.
+ *
+ * ★ **이 850은 `LEGACY_DATASET_KEY` + `HARNESS_CELL_UNIT`에만 얹힌다.** 전부 그
+ * 데이터·그 단위·그 진입 basis(종가)로 잰 것이라, 다른 데이터셋의 분모에 넣으면
+ * 문턱이 근거 없이 높아진다.
  */
 export const PRE_LEDGER_CELL_COUNT = 850;
 
@@ -205,19 +326,44 @@ export const PRE_LEDGER_CELL_COUNT = 850;
  * ★ **줄 수를 그대로 센다.** 같은 칸을 두 번 쟀으면 둘로 센다 — 두 번 봤으면
  * 우연히 유의할 기회도 두 번이다. `DISTINCT`로 줄이고 싶은 유혹이 있는데,
  * 그건 문턱을 낮추는 방향이라 정확히 잘못된 쪽이다.
+ *
+ * ── ★ 왜 데이터셋·단위로 가르나 (2026-08-12) ─────────────────────────────
+ *
+ * 옛 850+176칸은 (KIS 수급 2025H2~2026H1) 데이터를 (신호×축) 단위로, **살 수 없는
+ * 종가 진입**으로 잰 것이다. 21년 일봉을 walk-forward 절차로 재는 것은 재는
+ * 대상도 단위도 다르다 — 창 15개가 **한 검정**이다. 그 둘을 한 분모에 넣으면
+ * 문턱이 실제로 필요한 것보다 훨씬 높아진다.
+ *
+ * ★ **그래서 이 서명이 위험하다.** 키를 새로 만들면 문턱이 리셋된다. 새 키는
+ * "재는 단위가 실제로 달라졌을 때"만 만든다 — 같은 것을 다시 재면서 키만 바꾸면
+ * 이 원장은 스스로 거짓말을 한다. `PRE_LEDGER_CELL_COUNT`(850)는 **옛 키에만**
+ * 얹힌다.
+ *
+ * ★ 반증 요구(거울·위약·안티셀렉션)는 여기 안 들어간다. 떨어뜨릴 수만 있고
+ * 찾아낼 수는 없어서 다중검정 부담이 아니다.
  */
-export async function cumulativeCellCount(): Promise<number> {
+export async function cumulativeCellCount(
+  datasetKey: string = LEGACY_DATASET_KEY,
+  testUnit: string = HARNESS_CELL_UNIT,
+): Promise<number> {
   await ensureSignalMeasurementSchema();
   const { rows } = await pool.query<{ n: string }>(
-    `SELECT COUNT(*)::text AS n FROM trading_signal_measurements`,
+    `SELECT COUNT(*)::text AS n FROM trading_signal_measurements
+      WHERE dataset_key = $1 AND test_unit = $2`,
+    [datasetKey, testUnit],
   );
-  return PRE_LEDGER_CELL_COUNT + Number(rows[0]?.n ?? 0);
+  const prior = datasetKey === LEGACY_DATASET_KEY && testUnit === HARNESS_CELL_UNIT
+    ? PRE_LEDGER_CELL_COUNT
+    : 0;
+  return prior + Number(rows[0]?.n ?? 0);
 }
 
 /** 이미 재 본 것을 되짚는다. 같은 신호를 모르고 또 재는 일을 막는다. */
 export async function findMeasurements(filter: {
   signalKey?: string;
   periodKey?: string;
+  datasetKey?: string;
+  testUnit?: string;
   survivedOnly?: boolean;
   limit?: number;
 }): Promise<SignalMeasurement[]> {
@@ -231,6 +377,14 @@ export async function findMeasurements(filter: {
   if (filter.periodKey) {
     values.push(filter.periodKey);
     where.push(`period_key = $${values.length}`);
+  }
+  if (filter.datasetKey) {
+    values.push(filter.datasetKey);
+    where.push(`dataset_key = $${values.length}`);
+  }
+  if (filter.testUnit) {
+    values.push(filter.testUnit);
+    where.push(`test_unit = $${values.length}`);
   }
   if (filter.survivedOnly) where.push('survived = TRUE');
   values.push(Math.min(500, Math.max(1, filter.limit ?? 200)));
@@ -272,5 +426,23 @@ export async function findMeasurements(filter: {
     topLegAlpha: row.top_leg_alpha === null ? undefined : Number(row.top_leg_alpha),
     topLegAlphaT: row.top_leg_alpha_t === null ? undefined : Number(row.top_leg_alpha_t),
     topLegBeta: row.top_leg_beta === null ? undefined : Number(row.top_leg_beta),
+    datasetKey: row.dataset_key === null ? undefined : String(row.dataset_key),
+    testUnit: row.test_unit === null ? undefined : String(row.test_unit),
+    entryBasis: row.entry_basis === null ? undefined : String(row.entry_basis),
+    costRoundTrip: row.cost_round_trip === null ? undefined : Number(row.cost_round_trip),
+    oosYears: row.oos_years === null ? undefined : Number(row.oos_years),
+    tNeweyWest: row.t_newey_west === null ? undefined : Number(row.t_newey_west),
+    tBlockBoot: row.t_block_boot === null ? undefined : Number(row.t_block_boot),
+    tNonOverlap: row.t_non_overlap === null ? undefined : Number(row.t_non_overlap),
+    verdictT: row.verdict_t === null ? undefined : Number(row.verdict_t),
+    selectionTurnover: row.selection_turnover === null ? undefined : Number(row.selection_turnover),
+    half1Sign: row.half1_sign === null ? undefined : Number(row.half1_sign),
+    half2Sign: row.half2_sign === null ? undefined : Number(row.half2_sign),
+    antiT: row.anti_t === null ? undefined : Number(row.anti_t),
+    mirrorT: row.mirror_t === null ? undefined : Number(row.mirror_t),
+    placeboMaxT: row.placebo_max_t === null ? undefined : Number(row.placebo_max_t),
+    survivorshipExposed:
+      row.survivorship_exposed === null ? undefined : Boolean(row.survivorship_exposed),
+    truncatedExits: row.truncated_exits === null ? undefined : Number(row.truncated_exits),
   }));
 }
