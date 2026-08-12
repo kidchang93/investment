@@ -70,7 +70,24 @@ const HORIZONS = [1, 3, 5, 10, 20];
  * ★ **학습과 검증에 같은 값이 들어간다.** 학습만 싸게 잡으면 비용을 못 넘는 칸이
  * 순위에 올라온다.
  */
-const ROUND_TRIP_PCT = 0.54;
+const DEFAULT_ROUND_TRIP_PCT = 0.54;
+
+/*
+ * ★ 비용은 판정을 좌우하므로 CLI로 열어 둔다 — 상수로 박아 두면 민감도를 못 잰다.
+ *
+ * 근거의 폭을 알고 써라. `docs/USER_FINDINGS.md:1500-1512`의 Roll 추정(분봉 자기공분산)이
+ * 스프레드 0.311~0.315%를 냈고 왕복 0.541~0.545%가 거기서 나왔다. 그런데 같은 문서
+ * 1561행이 **"실제가 1틱에 가까우면 왕복 0.302%"**라고 유보를 달아 뒀고,
+ * 2026-08-11 ETF 호가 실측은 스프레드가 0.018~0.121%였다 — Roll 추정보다 훨씬 좁다.
+ * 즉 참값은 0.30~0.55% 어딘가이고, 그 폭이 결론을 바꾸는지는 재 봐야 안다.
+ */
+const ROUND_TRIP_PCT = (() => {
+  const i = process.argv.indexOf('--cost');
+  if (i < 0) return DEFAULT_ROUND_TRIP_PCT;
+  const v = Number(process.argv[i + 1]);
+  if (!Number.isFinite(v) || v < 0) throw new Error('--cost는 0 이상의 숫자여야 합니다(단위 %)');
+  return v;
+})();
 
 /** 검증 창이 시작하는 날. 2011부터 해마다 하나씩 열다섯 개. */
 const VALIDATION_STARTS = Array.from({ length: 15 }, (_, i) => `${2011 + i}0101`);
@@ -144,6 +161,10 @@ function parseOptions(argv: string[]): Options {
         break;
       case '--show-training':
         options.showTraining = true;
+        break;
+      case '--cost':
+        // ★ 위 ROUND_TRIP_PCT가 읽는다. 여기서는 인자를 소비만 한다(모르는 인자 검사 통과용).
+        next();
         break;
       case '--dry-run':
         // 원장에 안 쓴다. 실행 시간을 재거나 표만 보고 싶을 때.
