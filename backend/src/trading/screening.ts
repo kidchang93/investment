@@ -16,6 +16,7 @@
 import { getCategoryInstruments } from '../db/instruments.js';
 import { getInstrumentQuotes, MULTI_QUOTE_MAX_CODES } from '../kis/rest.js';
 import {
+  ETF_ROUND_TRIP_COST_RATE,
   knownRangeRate,
   MAX_COST_SHARE_OF_RANGE,
   MIN_DAILY_TURNOVER,
@@ -118,8 +119,10 @@ export async function runScreening(cash: number, lookups: number): Promise<Scree
        * 사유의 순서는 `verdictFor` 한 곳에서 정한다. 예전에는 여기서 가격 검사를
        * 따로 앞에 두고 있어 `loadAutoTraderCandidates`와 같은 규칙을 두 곳이
        * 들고 있었다 — 한쪽만 고치면 화면과 실행 기록이 조용히 갈라진다.
+       *
+       * 종목을 함께 넘겨야 비용 문턱이 ETF의 거래세 면제를 본다.
        */
-      verdict: verdictFor(quote, elapsed, cash),
+      verdict: verdictFor(quote, elapsed, cash, instrument),
     });
   }
 
@@ -139,6 +142,11 @@ export async function runScreening(cash: number, lookups: number): Promise<Scree
     thresholds: {
       minDailyTurnover: MIN_DAILY_TURNOVER,
       roundTripCostRate: ROUND_TRIP_COST_RATE,
+      /*
+       * ETF는 매도 거래세가 면제라 왕복 비용이 더 싸다. 한 값만 적어 두면
+       * 화면이 "왕복 비용 0.43%로 걸렀다"고 말하는데 절반은 그 값으로 안 걸렀다.
+       */
+      etfRoundTripCostRate: ETF_ROUND_TRIP_COST_RATE,
       maxCostShareOfRange: MAX_COST_SHARE_OF_RANGE,
     },
   };

@@ -12,11 +12,13 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import type { Quote } from '@invest/shared';
-import { hasEmptyOrderBook } from '@invest/shared';
+import { hasEmptyOrderBook, KR_SELL_TAX_RATE } from '@invest/shared';
 
 import {
+  ETF_ROUND_TRIP_COST_RATE,
   knownRangeRate,
   MIN_DAILY_TURNOVER,
+  ROUND_TRIP_COST_RATE,
   screenQuote,
   sessionElapsedRatio,
   verdictFor,
@@ -323,6 +325,49 @@ describe('후보 거르기 — 왕복 비용', () => {
   it('유동성이 먼저 걸리면 그 사유로 돌려준다', () => {
     // 둘 다 걸리는 종목. 순서가 정해져 있어야 기록이 흔들리지 않는다.
     assert.equal(screenQuote(quote({ accVolume: 100, high: 10_025, low: 9_975 }), 1), 'illiquid');
+  });
+});
+
+/*
+ * ── 왕복 비용은 종목마다 다르다 (2026-08-12) ─────────────────────────────
+ *
+ * 국내 상장 ETF는 매도 거래세가 면제라 왕복 0.43%가 아니라 0.23%다. 요구
+ * 변동폭도 0.860%가 아니라 0.460%다. 종목을 안 보고 걸렀을 때는 그 사이에 있는
+ * ETF가 전부 `costHeavy`로 빠졌다 — 이 계좌의 보유가 전부 ETF인데도 그랬다.
+ */
+describe('후보 거르기 — ETF는 매도 거래세가 면제다', () => {
+  const stock = { assetType: 'stock' } as const;
+  const etf = { assetType: 'etf' } as const;
+  /** 변동폭 0.6% — 주식 문턱(0.860%) 아래, ETF 문턱(0.460%) 위. */
+  const between = quote({ price: 10_000, high: 10_030, low: 9_970 });
+
+  it('같은 시세가 주식이면 걸리고 ETF면 통과한다', () => {
+    assert.equal(screenQuote(between, 1, stock), 'costHeavy');
+    assert.equal(screenQuote(between, 1, etf), null);
+  });
+
+  it('종목을 안 넘기면 예전대로 주식 기준이다 — 모르는 쪽은 비용이 큰 쪽에 둔다', () => {
+    assert.equal(screenQuote(between, 1), 'costHeavy');
+  });
+
+  it('ETF라고 비용 문턱이 사라지지는 않는다', () => {
+    // 변동폭 0.4%는 ETF 문턱(0.460%)에도 못 미친다. 면제는 감면이지 면책이 아니다.
+    const tooFlat = quote({ price: 10_000, high: 10_020, low: 9_980 });
+    assert.equal(screenQuote(tooFlat, 1, etf), 'costHeavy');
+    assert.equal(screenQuote(quote({ price: 10_000, high: 10_000, low: 10_000 }), 1, etf), 'costHeavy');
+  });
+
+  it('비용 말고 다른 문은 종류로 갈리지 않는다', () => {
+    // 유동성·호가는 ETF에도 그대로 걸린다. 세금과 상관없는 사실이다.
+    assert.equal(screenQuote(quote({ accVolume: 100 }), 1, etf), 'illiquid');
+    assert.equal(verdictFor(between, 1, 100, etf), 'tooExpensive');
+  });
+
+  it('ETF 왕복 비용이 주식보다 거래세만큼 싸다', () => {
+    assert.ok(
+      Math.abs(ROUND_TRIP_COST_RATE - ETF_ROUND_TRIP_COST_RATE - KR_SELL_TAX_RATE) < 1e-12,
+      `${ROUND_TRIP_COST_RATE} vs ${ETF_ROUND_TRIP_COST_RATE}`,
+    );
   });
 });
 

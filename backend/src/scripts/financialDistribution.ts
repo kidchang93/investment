@@ -67,7 +67,8 @@ async function main(): Promise<void> {
   for (const instrument of pool.slice(0, lookups)) {
     try {
       const quote = await getInstrumentQuote(instrument);
-      if (quote.price > 0 && quote.price <= cash && screenQuote(quote, elapsed) === null) {
+      // 종목을 함께 넘긴다 — ETF는 매도 거래세가 면제라 비용 문턱이 다르다.
+      if (quote.price > 0 && quote.price <= cash && screenQuote(quote, elapsed, instrument) === null) {
         passed.push(instrument);
       }
     } catch {

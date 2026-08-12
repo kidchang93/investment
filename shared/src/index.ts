@@ -830,7 +830,13 @@ export interface ScreeningResult {
   rows: ScreeningRow[];
   thresholds: {
     minDailyTurnover: number;
+    /** 왕복 비용 — **일반 주식 기준**. 이 비율이 하루 변동폭의 일정 비중을 넘으면 제외 */
     roundTripCostRate: number;
+    /**
+     * 왕복 비용 — ETF 기준. 국내 상장 ETF는 매도 거래세가 면제라 주식보다 싸다.
+     * 한 값만 적으면 화면이 "0.43%로 걸렀다"고 말하는데 ETF는 그 값으로 안 걸렀다.
+     */
+    etfRoundTripCostRate: number;
     maxCostShareOfRange: number;
   };
 }
@@ -1199,10 +1205,57 @@ export interface BrokerAccountSnapshot {
   stockEvaluation?: number;
   purchaseAmount?: number;
   unrealizedPnl?: number;
+  /**
+   * 평가손익률(%). **매입금액 대비 평가손익**이고 서버가 계산한다
+   * (`unrealizedPnl / purchaseAmount × 100`).
+   *
+   * ── 예전에는 다른 값이 이 이름에 들어 있었다 (2026-08-12 실측) ─────────
+   *
+   * KIS 주식잔고조회 output2의 `asst_icdc_erng_rt`(자산증감수익률)를 그대로
+   * 담고 있었다. 그건 **전일 총자산 대비 오늘 자산이 얼마나 변했나**여서
+   * 평가손익률이 아니다 — 09:03 실측에서
+   *   자산증감수익률 0.17474202 = (96,154,944 − 95,987,214) / 95,987,214
+   *   실제 평가손익률 +0.1769% = 84,570 / 47,797,070
+   * 로 소수점까지 갈렸다. 그날은 둘 다 ~0.17%라 안 들켰을 뿐이다.
+   *
+   * **개장 전에는 자산이 안 움직여 `asst_icdc_erng_rt`가 0으로 온다.** 실제
+   * 평가손익률이 −0.174%인 동안 화면이 `0%`라고 적게 된다. 자산증감수익률이
+   * 필요하면 `assetChangeRate`를 쓴다.
+   *
+   * 매입금액이 없거나 0이면 `undefined`다 — 0으로 채우지 않는다.
+   */
   unrealizedPnlRate?: number;
+  /**
+   * 전일 총자산 대비 오늘 자산 증감률(%). KIS `asst_icdc_erng_rt`를 그대로 옮긴 값.
+   *
+   * 평가손익률이 아니다. 입출금·당일 매매·수수료까지 섞인 **계좌 전체의 하루
+   * 변동**이라 개장 전에는 0이다. 이름을 사실대로 붙여 둔다.
+   */
+  assetChangeRate?: number;
   positions: BrokerPosition[];
   updatedAt?: number;
   message?: string;
+}
+
+/**
+ * 평가손익률(%)을 매입금액 대비로 계산한다.
+ *
+ * KIS 주식잔고조회 output2에는 "매입 대비 평가손익률" 칸이 없다 — 있는 것은
+ * 자산증감수익률(`asst_icdc_erng_rt`)뿐이라 우리가 계산해야 한다.
+ *
+ * **분모가 없거나 0이면 `undefined`다.** 0으로 채우면 "본전이었다"로 읽히는데
+ * 실제로는 잴 것이 없는 것이다 — `settledRealized`와 같은 규칙이다.
+ * 여기(shared)에 두는 이유도 같다: 계좌가 비었거나 개장 전이라 값이 있는 쪽을
+ * 화면으로 태울 수 없을 때가 많아, 경계를 시험으로 못 박는다.
+ */
+export function unrealizedPnlRateOf(
+  unrealizedPnl: number | undefined,
+  purchaseAmount: number | undefined,
+): number | undefined {
+  if (unrealizedPnl === undefined || purchaseAmount === undefined) return undefined;
+  if (!Number.isFinite(unrealizedPnl) || !Number.isFinite(purchaseAmount)) return undefined;
+  if (purchaseAmount === 0) return undefined;
+  return (unrealizedPnl / purchaseAmount) * 100;
 }
 
 /**
@@ -1899,3 +1952,47 @@ export const KR_SELL_TAX_RATE = 0.002;
  * 코넥스는 다르다. 2026년 인상에서 **제외돼 0.10%가 유지**됐다(같은 출처들).
  */
 export const KR_KONEX_SELL_TAX_RATE = 0.001;
+
+/**
+ * 이 종목을 팔 때 증권거래세가 면제되는가.
+ *
+ * **국내 상장 ETF는 매도 시 증권거래세가 면제다. 종류와 무관하다.**
+ * 2026-08-11에 두 출처를 교차 확인했다 — 한국투자증권 공식 안내("거래수수료는
+ * 주식거래수수료와 동일하나, 매도시 세금은 면제"), 한국금융투자자교육협의회
+ * ("해외주식형 ETF도 매도할 때 증권거래세를 면제받는 것은 동일합니다").
+ * 두 출처가 적은 세율 숫자(0.3%/0.25%)는 낡았으므로 **면제라는 사실만 취하고
+ * 숫자는 `KR_SELL_TAX_RATE`를 쓴다.**
+ *
+ * ── `assetType === 'etf'`에서 멈추는 이유 ────────────────────────────────
+ *
+ * 종류별로 갈리는 것은 **거래세가 아니라 다른 세금**이다. 국내주식형은
+ * 매매차익이 비과세지만 해외지수·채권·원자재·파생형(커버드콜)·레버리지/인버스는
+ * 매매차익에 배당소득세 15.4%가 붙는다. 그건 **보유기간 과세**라
+ * `Min(매매차익, 과표증분)` 구조인데 **과표증분을 우리가 모른다** — 지금 넣으면
+ * 틀린 값이 들어가므로 넣지 않는다. 그래서 그 종류들에 대해 이 앱의 비용은
+ * **과소계상**이다(거래세는 정확히 0이 맞고, 빠진 것은 차익과세다).
+ *
+ * "국내주식형인가"를 판별하려 들지도 않는다 — `Instrument`에 그 정보가 없다.
+ *
+ * ETN은 여기 넣지 않았다. 면제라는 확인된 출처를 이 레포가 아직 갖고 있지
+ * 않아서다. `KR_SELL_TAX_RATE` 주석이 적어 둔 대로, 출처 없이 고르면 반은 틀린다.
+ */
+export function isKrSellTaxExempt(instrument: Pick<Instrument, 'assetType'>): boolean {
+  return instrument.assetType === 'etf';
+}
+
+/**
+ * 이 종목을 팔 때 실제로 붙는 매도 세율.
+ *
+ * 주문 티켓·백테스트·후보 거르기가 같은 판단을 쓰도록 한 곳에 둔다.
+ * 종목을 모르면(`undefined`) 면제를 가정하지 않고 일반 주식 세율로 둔다 —
+ * 모르는 쪽은 비용이 큰 쪽에 둔다.
+ */
+export function krSellTaxRate(
+  instrument: Pick<Instrument, 'assetType' | 'market'> | null | undefined,
+): number {
+  if (!instrument) return KR_SELL_TAX_RATE;
+  if (isKrSellTaxExempt(instrument)) return 0;
+  if (instrument.market === 'KONEX') return KR_KONEX_SELL_TAX_RATE;
+  return KR_SELL_TAX_RATE;
+}

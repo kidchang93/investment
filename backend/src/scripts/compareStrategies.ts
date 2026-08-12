@@ -109,6 +109,8 @@ async function main(): Promise<void> {
 
   console.log(`원금 ${startCash.toLocaleString()}원 · 비용 가정 수수료 ${pct(DEFAULT_COSTS.commissionRate)} /`
     + ` 거래세 ${pct(DEFAULT_COSTS.sellTaxRate)} / 슬리피지 ${pct(DEFAULT_COSTS.slippageRate)}`);
+  // 거래세는 주식 기준이다. 국내 상장 ETF는 매도 거래세가 면제라 백테스트도 0으로 문다.
+  console.log('거래세는 일반 주식 기준 — 국내 상장 ETF는 매도 거래세 면제라 0%로 잰다');
 
   /*
    * 종목별 결과만 늘어놓으면 판정이 안 된다. 이동평균 교차는 한 종목에서

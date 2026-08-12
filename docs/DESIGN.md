@@ -49,6 +49,9 @@
 | 거래정지 판정을 **호가 잔량**으로 하고 단건의 `iscd_stat_cls_code`를 쓰지 않음 | 그 플래그가 가장 정확하지만 **종목당 1회**가 더 나간다 — 120종목 스크리닝이 4회에서 124회가 된다. 잔량은 이미 오는 값이다 — 「호가가 없는 종목」 절 |
 | 사유 이름을 `halted`가 아니라 **`noOrderBook`**으로 | 정규장에서 잰 대응이라 장전(08:30 이전)·휴장일에도 같은지는 재지 않았다. 잰 사실은 "지금 호가가 없다"까지다 |
 | 판정 순서에서 `noOrderBook`이 `tooExpensive`보다 **앞** | 예수금은 계좌마다 다른 사정이고 호가가 없다는 것은 누구에게나 같은 사실이다. 거래정지 종목에 `1주가 예수금보다 비쌈`이라 적으면 "돈을 넣으면 산다"로 읽히는데 거짓이다 (`000880 한화` 83,800원이 실제로 그렇게 걸렸다) |
+| 매도 세율을 종목이 정하게 (`krSellTaxRate`를 `shared`에 하나만) | **국내 상장 ETF는 매도 거래세가 면제다(종류 무관).** 백테스트는 조건 없이 0.20%를 물렸고 주문 티켓은 `market`(코넥스인가)만 봤다 — 세율을 정하는 자리가 넷(백테스트·주문 티켓·후보 거르기·신호 채점)이라 한 곳만 고치면 화면과 측정이 갈라진다. 왕복 비용도 **주식 0.43% / ETF 0.23%**로 갈린다 |
+| ETF의 매매차익 15.4%(해외·파생형)를 **안 넣음** | 보유기간 과세라 `Min(매매차익, 과표증분)` 구조인데 과표증분을 우리가 모른다. 넣으면 틀린 값이 들어간다 — 그 종류에 대해 **과소계상**이라는 사실을 코드·문서·화면에 적어 둔다. "국내주식형인가"도 판별하지 않는다: `Instrument`에 그 정보가 없다 |
+| 계좌 전체 `평가손익률`을 KIS 값이 아니라 **서버가 계산** (`unrealizedPnl / purchaseAmount`) | 주식잔고조회 output2에 그 칸이 없다. 예전에는 `asst_icdc_erng_rt`(전일 총자산 대비 **자산증감**수익률)를 그 이름에 담고 있었는데 다른 값이다 — **개장 전에는 0으로 와서** 손익률이 −0.17%인 아침에 화면이 `0%`(본전)라고 적는다. 자산증감수익률은 이름을 사실대로 붙여 `assetChangeRate`로 따로 낸다. 종목별 손익률(`evlu_pfls_rt`)은 KIS 값 그대로다 |
 
 ## 도메인 모델 (shared 타입)
 
@@ -61,7 +64,7 @@
 | `Quote` | 현재가 스냅샷 + **받은 시각(`fetchedAt`)**. 1종목은 `inquire-price`, 여러 종목은 멀티시세 정규화 | `rest.ts` / `multiQuote.ts` |
 | `ServerMessage` | WS 스트림 판별 유니언 `trade \| status` | `server.ts` broadcast |
 | `ConnectionStatus` | KIS 연결 상태 | `realtime.ts` |
-| `BrokerAccountSnapshot` | KIS 실계좌 잔고·평가 스냅샷 (계좌명은 마스킹) | `rest.ts` |
+| `BrokerAccountSnapshot` | KIS 실계좌 잔고·평가 스냅샷 (계좌명은 마스킹). 계좌 합계 정규화는 `accountTotalsFrom` | `rest.ts` |
 | `BrokerOrderability` | 종목·단가 기준 매수가능 조회 결과 | `rest.ts` |
 | `BrokerExecutionSnapshot` | KIS 실계좌 주문·체결 감사 기록 | `rest.ts` |
 | `InstrumentSector` | 지수업종 한 단계 `{code, name}`. `Instrument.sectorLarge`/`sectorMid` | `db/instruments.ts` |

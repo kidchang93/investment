@@ -5,9 +5,11 @@
  * 뒤 가격과 견줘 봐야 안다. 주문이 나갔는지와는 별개다 — 모의 실행 신호도
  * 채점한다. 그래야 게이트를 열기 전에 성적을 쌓을 수 있다.
  *
- * **비용을 뺀 값을 함께 낸다.** 왕복 0.43%(수수료 2회 + 거래세 + 슬리피지 2회)를
+ * **비용을 뺀 값을 함께 낸다.** 왕복 비용(수수료 2회 + 매도세 + 슬리피지 2회)을
  * 빼지 않으면 이겼다고 착각한다. 2026-07-29 백테스트에서 변동성 돌파가 승률
  * 34.5%에 원금의 2.60%를 비용으로 썼다 — 세 구간 중앙값이 모두 마이너스였다.
+ *
+ * **비용은 종목마다 다르다.** 주식 0.43%, 국내 상장 ETF 0.23%(매도 거래세 면제).
  */
 
 import { getInstrument } from '../db/instruments.js';
@@ -18,7 +20,7 @@ import {
   type PendingSignal,
 } from '../db/signalScores.js';
 import { getDailyCandleHistory, getInstrumentCandles } from '../kis/rest.js';
-import { DEFAULT_COSTS } from './backtest.js';
+import { roundTripCostRate } from './backtest.js';
 
 /**
  * 채점 기간(거래일).
@@ -28,9 +30,13 @@ import { DEFAULT_COSTS } from './backtest.js';
  */
 export const SCORE_HORIZONS = [1, 5, 20] as const;
 
-/** 사고팔 때 드는 비용을 합친 비율. 백테스트·후보 거르기와 같은 값을 쓴다. */
-const ROUND_TRIP_COST_RATE =
-  DEFAULT_COSTS.commissionRate * 2 + DEFAULT_COSTS.sellTaxRate + DEFAULT_COSTS.slippageRate * 2;
+/**
+ * 종목을 못 찾았을 때 쓰는 왕복 비용 — 일반 주식 기준이다.
+ *
+ * 종목을 알면 `roundTripCostRate(instrument)`가 ETF의 매도 거래세 면제까지 본다.
+ * 모르는 쪽은 비용이 큰 쪽에 둔다.
+ */
+const FALLBACK_ROUND_TRIP_COST_RATE = roundTripCostRate();
 
 export interface ScoreRunResult {
   scanned: number;
@@ -63,32 +69,37 @@ export async function scoreAccountSignals(accountId: string): Promise<ScoreRunRe
   const scored = await getScoredKeys(accountId);
   const result: ScoreRunResult = { scanned: signals.length, scored: 0, tooEarly: 0, unresolved: 0 };
 
-  // 같은 종목이 여러 번 신호를 냈으면 일봉은 한 번만 받는다.
-  const candlesByInstrument = new Map<string, Array<{ time: number; close: number }>>();
+  /*
+   * 같은 종목이 여러 번 신호를 냈으면 일봉은 한 번만 받는다.
+   * **왕복 비용도 종목마다 다르므로** 함께 담는다 — 국내 상장 ETF는 매도 거래세가
+   * 면제라 0.43%가 아니라 0.23%다. 예전에는 상수 하나를 모두에게 물려서 ETF 신호는
+   * 없는 세금 0.20%를 매번 뺀 채로 채점됐다.
+   */
+  const loadedByInstrument = new Map<string, LoadedSeries>();
 
   for (const signal of signals) {
     const pending = SCORE_HORIZONS.filter((h) => !scored.has(`${signal.runId}:${h}`));
     if (pending.length === 0) continue;
 
-    let candles = candlesByInstrument.get(signal.instrumentId);
-    if (!candles) {
-      candles = await loadCandles(signal);
-      candlesByInstrument.set(signal.instrumentId, candles);
+    let loaded = loadedByInstrument.get(signal.instrumentId);
+    if (!loaded) {
+      loaded = await loadCandles(signal);
+      loadedByInstrument.set(signal.instrumentId, loaded);
     }
-    if (candles.length === 0) {
+    if (loaded.candles.length === 0) {
       result.unresolved += pending.length;
       continue;
     }
 
     const signalSeconds = Math.floor(signal.signalAt.getTime() / 1000);
     for (const horizon of pending) {
-      const exitPrice = exitCloseAfter(candles, signalSeconds, horizon);
+      const exitPrice = exitCloseAfter(loaded.candles, signalSeconds, horizon);
       if (exitPrice === undefined) {
         result.tooEarly += 1;
         continue;
       }
       const grossReturn = ((exitPrice - signal.signalPrice) / signal.signalPrice) * 100;
-      const netReturn = grossReturn - ROUND_TRIP_COST_RATE * 100;
+      const netReturn = grossReturn - loaded.roundTripCostRate * 100;
       const ok = await recordSignalScore({
         runId: signal.runId,
         accountId: signal.accountId,
@@ -107,10 +118,17 @@ export async function scoreAccountSignals(accountId: string): Promise<ScoreRunRe
   return result;
 }
 
-async function loadCandles(signal: PendingSignal): Promise<Array<{ time: number; close: number }>> {
+/** 한 종목에 대해 받아 둔 것. 봉과 **그 종목의** 왕복 비용이 함께 다닌다. */
+interface LoadedSeries {
+  candles: Array<{ time: number; close: number }>;
+  roundTripCostRate: number;
+}
+
+async function loadCandles(signal: PendingSignal): Promise<LoadedSeries> {
+  const empty: LoadedSeries = { candles: [], roundTripCostRate: FALLBACK_ROUND_TRIP_COST_RATE };
   try {
     const instrument = await getInstrument(signal.instrumentId);
-    if (!instrument) return [];
+    if (!instrument) return empty;
     /*
      * 국내 종목은 페이징으로 길게 받는다. 20거래일 뒤를 보려면 신호 이후
      * 봉이 그만큼 있어야 하는데, 한 번 호출은 100건이 상한이라 오래된 신호는
@@ -122,8 +140,11 @@ async function loadCandles(signal: PendingSignal): Promise<Array<{ time: number;
     const response = paged
       ? await getDailyCandleHistory(instrument.providerSymbol, 120)
       : await getInstrumentCandles(instrument);
-    return response.candles.map((candle) => ({ time: candle.time, close: candle.close }));
+    return {
+      candles: response.candles.map((candle) => ({ time: candle.time, close: candle.close })),
+      roundTripCostRate: roundTripCostRate(instrument),
+    };
   } catch {
-    return [];
+    return empty;
   }
 }

@@ -50,6 +50,7 @@ import { useStream } from './useStream';
 import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } from './Chart';
 import {
   CANDLE_AXIS_LABELS,
+  krSellTaxRate,
   KR_KONEX_SELL_TAX_RATE,
   KR_SELL_TAX_RATE,
 } from '@invest/shared';
@@ -145,7 +146,7 @@ type NewsFilter = 'all' | 'macro' | 'stocks' | 'commodities' | 'crypto' | 'polic
 type MacroFilter = 'all' | 'energy' | 'metals' | 'agriculture' | 'rates' | 'fx' | 'indices' | 'crypto';
 type CalendarRegionFilter = 'all' | 'domestic' | 'global';
 type CalendarImpactFilter = 'all' | '최고' | '높음' | '보통';
-type FeeMarket = 'kospi' | 'kosdaq' | 'konex' | 'us_stock' | 'kospi200_future' | 'kospi200_option';
+type FeeMarket = 'kospi' | 'kosdaq' | 'kr_etf' | 'konex' | 'us_stock' | 'kospi200_future' | 'kospi200_option';
 type ChatPanelMode = 'compact' | 'wide';
 
 interface PriceSnapshot {
@@ -653,10 +654,16 @@ const CALENDAR_IMPACT_OPTIONS: Array<{ key: CalendarImpactFilter; label: string 
 /*
  * 세율은 @invest/shared에서 가져온다. 예전엔 여기 0.002, 백테스트에 0.0018이 따로
  * 박혀 있어 같은 세금을 앱이 두 값으로 들고 있었다. 둘 다 출처가 없었다.
+ *
+ * ETF 칸이 따로 있는 이유: **국내 상장 ETF는 매도 거래세가 면제다(종류 무관).**
+ * 예전에는 ETF를 사고팔면서 `코스피`로 계산해 없는 0.20%를 물고 있었다.
+ * 종류별로 갈리는 것은 거래세가 아니라 매매차익 과세인데, 그건 보유기간 과세라
+ * 과표증분을 우리가 모른다 — 그래서 넣지 않았다(아래 가정 줄에 적어 둔다).
  */
 const FEE_MARKET_OPTIONS: Array<{ key: FeeMarket; label: string; taxRate: number; unit: string }> = [
   { key: 'kospi', label: '코스피', taxRate: KR_SELL_TAX_RATE, unit: 'KRW' },
   { key: 'kosdaq', label: '코스닥', taxRate: KR_SELL_TAX_RATE, unit: 'KRW' },
+  { key: 'kr_etf', label: '국내 ETF', taxRate: 0, unit: 'KRW' },
   { key: 'konex', label: '코넥스', taxRate: KR_KONEX_SELL_TAX_RATE, unit: 'KRW' },
   { key: 'us_stock', label: '미국주식', taxRate: 0, unit: 'USD' },
   { key: 'kospi200_future', label: 'KOSPI200 선물', taxRate: 0, unit: 'KRW' },
@@ -1519,18 +1526,22 @@ interface OrderCostEstimate {
   taxRate: number;
 }
 
+/*
+ * 세율은 종목이 정한다. 예전에는 `market`(코넥스인가)만 보고 있어서 **ETF에도
+ * 0.20%를 물렸다** — 국내 상장 ETF는 매도 거래세가 면제라(종류 무관) 0이 맞다.
+ * 판단은 `shared`의 `krSellTaxRate` 한 곳에 있고 백테스트·후보 거르기가 같은 것을 쓴다.
+ *
+ * ★ 해외지수·채권·원자재·파생형 ETF의 매매차익 15.4%는 여기 없다. 보유기간 과세라
+ *   `Min(매매차익, 과표증분)` 구조인데 과표증분을 우리가 모른다 — 넣으면 틀린 값이
+ *   된다. 그 종류에 대해서는 이 어림이 **과소계상**이다.
+ */
 function estimateOrderCost(
   notional: number,
   side: OrderSide,
-  market: string | undefined,
+  instrument: Instrument | null,
 ): OrderCostEstimate | null {
   if (!Number.isFinite(notional) || notional <= 0) return null;
-  const taxRate =
-    side === 'sell'
-      ? market === 'KONEX'
-        ? KR_KONEX_SELL_TAX_RATE
-        : KR_SELL_TAX_RATE
-      : 0;
+  const taxRate = side === 'sell' ? krSellTaxRate(instrument) : 0;
   const commission = notional * KIS_COMMISSION_RATE_ASSUMPTION;
   const institutionFee = notional * KR_INSTITUTION_FEE_RATE_ASSUMPTION;
   const tax = notional * taxRate;
@@ -1543,6 +1554,20 @@ function estimateOrderCost(
     settlement: side === 'buy' ? notional + total : notional - total,
     taxRate,
   };
+}
+
+/**
+ * 비용 상자의 거래세 줄.
+ *
+ * **0원일 때 왜 0인지 함께 적는다.** `+ 거래세 0`만 두면 아직 안 계산한 것처럼
+ * 보인다 — 국내 상장 ETF는 매도 거래세가 면제라 정말로 0이다.
+ * 이 함수가 도는 자리는 국내 주문 가능 종목뿐이라(`isOrderableDomesticInstrument`)
+ * 매도인데 세율이 0인 경우는 ETF 하나다.
+ */
+function orderTaxNote(side: OrderSide, cost: OrderCostEstimate): string {
+  if (side === 'buy') return ' · 매수에는 거래세가 없습니다';
+  if (cost.taxRate === 0) return ' · ETF는 매도 거래세가 면제입니다';
+  return ` + 거래세 ${formatNumber(Math.round(cost.tax))}`;
 }
 
 /** 국내 현금 주문이 성립하는 종목인지. 지수·선물·야간 프록시는 매수가능 조회 대상이 아니다. */
@@ -4626,7 +4651,7 @@ export function App(): JSX.Element {
   const orderCost = useMemo(
     () =>
       selectedInstrument && isOrderableDomesticInstrument(selectedInstrument)
-        ? estimateOrderCost(orderEstimatedNotional ?? 0, orderSide, selectedInstrument.market)
+        ? estimateOrderCost(orderEstimatedNotional ?? 0, orderSide, selectedInstrument)
         : null,
     [orderEstimatedNotional, orderSide, selectedInstrument],
   );
@@ -6526,7 +6551,14 @@ export function App(): JSX.Element {
                         <small>
                           거래대금 문턱 {formatOkeanAmount(screening.thresholds.minDailyTurnover)}
                           {screening.elapsed < 1 && `×${screening.elapsed.toFixed(2)}`}
-                          {' · '}왕복 비용 {(screening.thresholds.roundTripCostRate * 100).toFixed(2)}%가
+                          {/*
+                            왕복 비용을 한 값으로 적으면 안 된다. 국내 상장 ETF는 매도 거래세가
+                            면제라 더 싼 문턱으로 걸렀는데, 화면만 주식 값을 말하면 "왜 이건
+                            통과했지"가 설명되지 않는다.
+                          */}
+                          {' · '}왕복 비용 주식 {(screening.thresholds.roundTripCostRate * 100).toFixed(2)}%
+                          {' / '}ETF {(screening.thresholds.etfRoundTripCostRate * 100).toFixed(2)}%
+                          (매도 거래세 면제)가
                           하루 변동폭의 {Math.round(screening.thresholds.maxCostShareOfRange * 100)}%를 넘으면 제외
                         </small>
                       </p>
@@ -6600,7 +6632,7 @@ export function App(): JSX.Element {
                 <section className="terminal-page terminal-page--fees" aria-label="수수료 계산기">
                   <div className="terminal-page__header">
                     <div>
-                      <span>국내주식 왕복 거래 기준 · {feeMarketOption.label} · {feeMarketOption.unit}</span>
+                      <span>왕복 거래 기준 · {feeMarketOption.label} · {feeMarketOption.unit}</span>
                       <strong>수수료 비교 계산기</strong>
                     </div>
                     <SampleBadge note="증권사 요율도 세율도 확인된 값이 아닙니다. 상품·이벤트·개설 경로에 따라 다르고 세율은 법으로 바뀌니, 실제 값은 본인 계좌와 최신 세법에서 확인하세요." />
@@ -6611,6 +6643,14 @@ export function App(): JSX.Element {
                     · 유관기관 수수료 {(FEE_BROKERS[0].institutionRate * 100).toFixed(3)}%
                     {feeMarket === 'us_stock' && ' · 해외주식은 국내 요율의 10배로 잡음(근사)'}
                     {feeMarket === 'kospi200_option' && ' · 옵션은 국내 요율의 1.4배로 잡음(근사)'}
+                    {/*
+                      면제라는 사실만 넣고 차익과세는 넣지 않았다. 안 넣은 것을 화면에도 밝힌다 —
+                      해외·파생형 ETF는 이 계산이 실제보다 싸게 나온다.
+                    */}
+                    {feeMarket === 'kr_etf'
+                      && ' · 국내 상장 ETF는 매도 거래세가 면제입니다(종류 무관)'
+                        + ' · 해외지수·채권·원자재·파생형 ETF의 매매차익 15.4%는 넣지 않았습니다'
+                        + ' (과세표준 증분을 알 수 없어 이 계산은 그만큼 싸게 나옵니다)'}
                   </p>
                   <div className="terminal-filterbar" role="tablist" aria-label="수수료 시장 선택">
                     {FEE_MARKET_OPTIONS.map((option) => (
@@ -7376,6 +7416,14 @@ export function App(): JSX.Element {
                         <span><Term>평가 손익</Term></span>
                         <strong data-tone={kisAccountPnlTone}>
                           {formatMoney(kisAccountSnapshot.unrealizedPnl, kisAccountSnapshot.baseCurrency)}
+                          {/*
+                            매입금액 대비 손익률. 서버가 계산한 값이다 — KIS가 주는
+                            자산증감수익률(전일 총자산 대비)은 다른 것을 재는 값이라
+                            개장 전에는 0으로 온다. 매입금액을 모르면 아예 안 적는다.
+                          */}
+                          {kisAccountSnapshot.unrealizedPnlRate !== undefined && (
+                            <small>{formatRate(kisAccountSnapshot.unrealizedPnlRate)}</small>
+                          )}
                         </strong>
                       </div>
                       <div>
@@ -8647,9 +8695,7 @@ export function App(): JSX.Element {
                     <small>
                       수수료 {formatNumber(Math.round(orderCost.commission))}
                       {' + 유관기관 '}{formatNumber(Math.round(orderCost.institutionFee))}
-                      {orderSide === 'sell'
-                        ? ` + 거래세 ${formatNumber(Math.round(orderCost.tax))}`
-                        : ' · 매수에는 거래세가 없습니다'}
+                      {orderTaxNote(orderSide, orderCost)}
                     </small>
                     <small>
                       {orderSide === 'buy' ? '내야 할 돈 약 ' : '받을 돈 약 '}
@@ -8658,7 +8704,9 @@ export function App(): JSX.Element {
                     <em>
                       확인된 요율이 아닙니다 — 수수료 {(KIS_COMMISSION_RATE_ASSUMPTION * 100).toFixed(3)}%
                       {' · 유관기관 '}{(KR_INSTITUTION_FEE_RATE_ASSUMPTION * 100).toFixed(3)}%
-                      {orderSide === 'sell' && ` · 거래세 ${(orderCost.taxRate * 100).toFixed(3)}%`}
+                      {orderSide === 'sell'
+                        && ` · 거래세 ${(orderCost.taxRate * 100).toFixed(3)}%`
+                          + (orderCost.taxRate === 0 ? '(ETF는 면제)' : '')}
                       로 잡은 값이라 실제 청구액과 다를 수 있습니다.
                     </em>
                   </div>

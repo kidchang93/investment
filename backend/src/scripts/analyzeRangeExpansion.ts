@@ -29,7 +29,12 @@ interface Sample {
   liquid: boolean;
 }
 
-/** 왕복 비용을 이기려면 필요한 변동폭. 0.43% ÷ 0.5 = 0.860% */
+/**
+ * 왕복 비용을 이기려면 필요한 변동폭. 0.43% ÷ 0.5 = 0.860%
+ *
+ * **주식 기준이다.** 표본 파일에 종목 종류가 없어 ETF(매도 거래세 면제, 0.46%면
+ * 충분)를 갈라 볼 수 없다 — `measureRangeExpansion.ts`가 그 사정을 적어 뒀다.
+ */
 const REQUIRED_RANGE_RATE = ROUND_TRIP_COST_RATE / MAX_COST_SHARE_OF_RANGE;
 
 type Rule = (row: Sample) => boolean;

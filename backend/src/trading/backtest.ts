@@ -16,14 +16,19 @@
  * 그래도 백테스트는 과거일 뿐이다. 여기서 좋았다고 앞으로도 된다는 뜻이 아니다.
  */
 
-import { KR_SELL_TAX_RATE, type Candle, type Instrument } from '@invest/shared';
+import { isKrSellTaxExempt, KR_SELL_TAX_RATE, type Candle, type Instrument } from '@invest/shared';
 
 import { getStrategy, type StrategyContext } from './strategy.js';
 
 export interface BacktestCosts {
   /** 매수·매도 각각에 붙는 위탁수수료 비율 (0.00015 = 0.015%) */
   commissionRate: number;
-  /** 매도에만 붙는 증권거래세 비율 */
+  /**
+   * 매도에만 붙는 증권거래세 비율. **일반 주식 기준값이다.**
+   *
+   * 종목에 실제로 붙는 세율은 `sellTaxRateFor(costs, instrument)`가 정한다 —
+   * 국내 상장 ETF는 매도 거래세가 면제라 종류와 무관하게 0이다.
+   */
   sellTaxRate: number;
   /**
    * 체결이 원하는 값보다 불리하게 되는 정도(슬리피지) 비율.
@@ -42,6 +47,45 @@ export const DEFAULT_COSTS: BacktestCosts = {
   sellTaxRate: KR_SELL_TAX_RATE,
   slippageRate: 0.001,
 };
+
+/**
+ * 이 종목을 팔 때 실제로 빠지는 세율.
+ *
+ * **국내 상장 ETF는 매도 거래세가 면제다(종류 무관).** 그걸 안 보고 조건 없이
+ * `costs.sellTaxRate`를 물리면 ETF 매매마다 없는 0.20%가 나간다 — 왕복 비용이
+ * 0.23%인 종목을 0.43%로 재는 셈이라 측정이 통째로 보수적으로 기울고, 승률·
+ * 손익비·후보 문턱이 전부 그만큼 어긋난다. 면제 근거와 "왜 여기서 멈추는가"는
+ * `shared`의 `isKrSellTaxExempt` 주석에 있다.
+ *
+ * ★ **해외지수·채권·원자재·파생형 ETF의 매매차익 15.4%는 여기 없다.** 그건
+ * 보유기간 과세라 `Min(매매차익, 과표증분)` 구조인데 과표증분을 우리가 모른다.
+ * 지금 넣으면 틀린 값이 들어가므로 넣지 않았고, **그 종류에 대해서는 이 백테스트가
+ * 비용을 과소계상한다.** 아는 채로 두는 것과 모르는 채로 두는 것은 다르다.
+ *
+ * `costs.sellTaxRate`를 존중한다 — 비용을 끄고 재는 시험(`NO_COSTS`)에서는
+ * 주식이든 ETF든 0이어야 한다.
+ */
+export function sellTaxRateFor(
+  costs: BacktestCosts,
+  instrument: Pick<Instrument, 'assetType'>,
+): number {
+  return isKrSellTaxExempt(instrument) ? 0 : costs.sellTaxRate;
+}
+
+/**
+ * 사고팔 때 한 번씩 드는 비용을 합친 비율 (수수료 2회 + 매도세 + 슬리피지 2회).
+ *
+ * 종목을 넘기면 그 종목의 매도세로 잰다. 안 넘기면 일반 주식 기준이다 —
+ * 세 곳(`universe`·`scoring`·측정 스크립트)이 같은 식을 따로 쓰다 ETF 분기를
+ * 각자 빠뜨리지 않게 여기 하나로 모은다.
+ */
+export function roundTripCostRate(
+  instrument?: Pick<Instrument, 'assetType'> | null,
+  costs: BacktestCosts = DEFAULT_COSTS,
+): number {
+  const sellTax = instrument ? sellTaxRateFor(costs, instrument) : costs.sellTaxRate;
+  return costs.commissionRate * 2 + sellTax + costs.slippageRate * 2;
+}
 
 export interface BacktestTrade {
   entryTime: number;
@@ -122,6 +166,9 @@ export function backtest(
   const strategy = getStrategy(strategyKey);
   if (!strategy) throw new Error(`알 수 없는 전략입니다: ${strategyKey}`);
 
+  // 종목이 정해져 있으므로 매도세는 한 번만 정한다. ETF는 매도 거래세가 면제다.
+  const sellTaxRate = sellTaxRateFor(costs, instrument);
+
   let cash = startCash;
   let quantity = 0;
   let entryPrice = 0;
@@ -177,7 +224,7 @@ export function backtest(
       } else if (signal.side === 'sell' && quantity > 0) {
         const sellPrice = fill * (1 - costs.slippageRate);
         const gross = quantity * sellPrice;
-        const fee = gross * costs.commissionRate + gross * costs.sellTaxRate;
+        const fee = gross * costs.commissionRate + gross * sellTaxRate;
         cash += gross - fee;
         totalCost += fee;
         const netPnl = gross - fee - entryFee - quantity * entryPrice;

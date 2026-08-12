@@ -33,6 +33,7 @@ import {
   toNumber,
   toNumberOrNaN,
 } from './normalize.js';
+import { unrealizedPnlRateOf } from '@invest/shared';
 import type {
   BrokerAccountSnapshot,
   BrokerExecution,
@@ -1890,6 +1891,49 @@ export async function getKisDomesticAccountSnapshot(
     accountId: account.id,
     accountLabel: `${account.label} · ${maskKisAccount(account.cano, account.productCode)}`,
     baseCurrency: 'KRW',
+    ...accountTotalsFrom(summary),
+    positions,
+    updatedAt: Date.now(),
+  };
+}
+
+/** 주식잔고조회 output2(계좌 합계 한 줄)에서 뽑는 값들. */
+type AccountTotals = Pick<
+  BrokerAccountSnapshot,
+  | 'cashBalance'
+  | 'settlementCash'
+  | 'totalEvaluation'
+  | 'stockEvaluation'
+  | 'purchaseAmount'
+  | 'unrealizedPnl'
+  | 'unrealizedPnlRate'
+  | 'assetChangeRate'
+>;
+
+/**
+ * 주식잔고조회 output2(계좌 합계)를 정규화한다.
+ *
+ * ── 평가손익률은 **여기서 계산한다** (2026-08-12) ──────────────────────────
+ *
+ * output2에는 "매입 대비 평가손익률" 칸이 없다. 예전에는 그 자리에
+ * `asst_icdc_erng_rt`(자산증감수익률)를 담고 `unrealizedPnlRate`라고 불렀는데,
+ * 그건 **전일 총자산 대비 오늘 자산이 얼마나 변했나**라 다른 값이다.
+ *
+ *   자산증감수익률 0.17474202 = (96,154,944 − 95,987,214) / 95,987,214
+ *   실제 평가손익률 +0.1769%  = 84,570 / 47,797,070
+ *
+ * 그날은 둘 다 ~0.17%라 안 들켰다. **개장 전에는 자산이 안 움직여 0으로 오므로**
+ * 그대로 쓰면 평가손익률이 −0.174%인 동안 화면이 `0%`라고 적는다.
+ *
+ * 자산증감수익률도 버리지 않는다 — 이름을 사실대로 붙여 `assetChangeRate`로 낸다.
+ *
+ * 순수 함수로 떼어 둔 이유는 시험이다. 실계좌 상태(개장 전·보유 없음)를 화면으로
+ * 만들어 낼 수 없어서, KIS가 실제로 준 행을 넣고 경계를 못 박는다.
+ */
+export function accountTotalsFrom(summary: Record<string, string>): AccountTotals {
+  const purchaseAmount = firstNumber(summary, ['pchs_amt_smtl_amt']);
+  const unrealizedPnl = firstNumber(summary, ['evlu_pfls_smtl_amt']);
+  return {
     cashBalance: firstNumber(summary, ['dnca_tot_amt', 'nxdy_excc_amt']) ?? 0,
     /*
      * 결제 기준 현금. D+2(`prvs_rcdl_excc_amt`)가 오늘 낸 주문까지 반영한 값이고,
@@ -1900,11 +1944,10 @@ export async function getKisDomesticAccountSnapshot(
     settlementCash: firstNumber(summary, ['prvs_rcdl_excc_amt', 'nxdy_excc_amt']),
     totalEvaluation: firstNumber(summary, ['tot_evlu_amt']),
     stockEvaluation: firstNumber(summary, ['scts_evlu_amt']),
-    purchaseAmount: firstNumber(summary, ['pchs_amt_smtl_amt']),
-    unrealizedPnl: firstNumber(summary, ['evlu_pfls_smtl_amt']),
-    unrealizedPnlRate: firstNumber(summary, ['asst_icdc_erng_rt', 'evlu_erng_rt']),
-    positions,
-    updatedAt: Date.now(),
+    purchaseAmount,
+    unrealizedPnl,
+    unrealizedPnlRate: unrealizedPnlRateOf(unrealizedPnl, purchaseAmount),
+    assetChangeRate: firstNumber(summary, ['asst_icdc_erng_rt']),
   };
 }
 

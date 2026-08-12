@@ -24,7 +24,7 @@ import {
   getInstrumentQuotes,
   MULTI_QUOTE_MAX_CODES,
 } from '../kis/rest.js';
-import { DEFAULT_COSTS } from './backtest.js';
+import { roundTripCostRate } from './backtest.js';
 
 /*
  * 후보를 뽑아올 카테고리. 국내 주문 가능한 것만 둔다.
@@ -67,15 +67,25 @@ export const MIN_DAILY_TURNOVER = 50_000_000;
  * 움직이든 똑같이 나간다. 하루 0.3% 움직이는 종목에서 왕복 0.43%가 나가면
  * 방향을 맞혀도 진다. 하루 변동폭의 절반을 넘게 비용으로 쓰는 종목은 뺀다.
  *
+ * **왕복 비용은 종목마다 다르다.** 주식 0.43%, ETF 0.23%(매도 거래세 면제)라
+ * 요구 변동폭도 0.86% / 0.46%로 갈린다. 이 비중 상한만 공통이다.
+ *
  * 2026-07-29 재측정에서 변동성 돌파가 백테스트 1회당 매매 13.4회에 비용이
  * 원금의 2.60%였다 — 다른 두 전략(0.58% / 0.60%)의 네 배가 넘는다.
  * 소액 계좌에서 비용은 전략을 고르는 문제가 아니라 후보를 고르는 문제다.
  */
 export const MAX_COST_SHARE_OF_RANGE = 0.5;
 
-/** 사고팔 때 한 번씩 드는 비용을 합친 비율. 백테스트가 쓰는 값과 같은 것을 쓴다. */
-export const ROUND_TRIP_COST_RATE =
-  DEFAULT_COSTS.commissionRate * 2 + DEFAULT_COSTS.sellTaxRate + DEFAULT_COSTS.slippageRate * 2;
+/**
+ * 사고팔 때 한 번씩 드는 비용을 합친 비율. 백테스트가 쓰는 값과 같은 것을 쓴다.
+ *
+ * **일반 주식 기준이다.** 국내 상장 ETF는 매도 거래세가 면제라 왕복 비용이
+ * `ETF_ROUND_TRIP_COST_RATE`로 내려간다 — 종목을 아는 자리에서는 그쪽을 쓴다.
+ */
+export const ROUND_TRIP_COST_RATE = roundTripCostRate();
+
+/** ETF 기준 왕복 비용. 매도 거래세가 빠져 주식보다 `KR_SELL_TAX_RATE`만큼 싸다. */
+export const ETF_ROUND_TRIP_COST_RATE = roundTripCostRate({ assetType: 'etf' });
 
 /*
  * 정규장 09:00-15:30. 장 초반에는 거래대금이 아직 안 쌓인다.
@@ -182,8 +192,18 @@ export function knownRangeRate(quote: Quote): number | undefined {
  *
  * 두 조건 모두 "백테스트에서는 되는데 실제로는 안 되는" 것을 잡는다.
  * 백테스트는 원하는 값에 원하는 만큼 체결된다고 보지만 실제 시장은 아니다.
+ *
+ * `instrument`는 **비용 문턱에만** 쓴다. 국내 상장 ETF는 매도 거래세가 면제라
+ * 왕복 비용이 0.23%인데, 안 넘기면 주식 기준 0.43%로 재서 요구 변동폭이 두 배가
+ * 된다 — 값이 얌전한 ETF가 통째로 `costHeavy`로 걸린다. 종목을 모르는 호출
+ * (측정 스크립트 일부)은 지금까지처럼 주식 기준으로 남는다: 모르는 쪽은 비용이
+ * 큰 쪽에 둔다.
  */
-export function screenQuote(quote: Quote, elapsed: number): keyof UniverseRejections | null {
+export function screenQuote(
+  quote: Quote,
+  elapsed: number,
+  instrument?: Pick<Instrument, 'assetType'> | null,
+): keyof UniverseRejections | null {
   /*
    * ── 호가가 아예 없는 종목이 먼저다 ────────────────────────────────────────
    *
@@ -248,7 +268,8 @@ export function screenQuote(quote: Quote, elapsed: number): keyof UniverseReject
    * 바꾸는 일이다. 무엇을 더 재야 정할 수 있는지는 `docs/USER_FINDINGS.md`에 적었다.
    */
   const rangeRate = knownRangeRate(quote);
-  if (rangeRate !== undefined && ROUND_TRIP_COST_RATE > rangeRate * MAX_COST_SHARE_OF_RANGE) {
+  const costRate = roundTripCostRate(instrument);
+  if (rangeRate !== undefined && costRate > rangeRate * MAX_COST_SHARE_OF_RANGE) {
     return 'costHeavy';
   }
   return null;
@@ -273,8 +294,13 @@ export function screenQuote(quote: Quote, elapsed: number): keyof UniverseReject
  * 가격이 유동성·비용보다 앞인 것은 예전 결정 그대로다. 살 수도 없는 종목을
  * 문턱으로 거르면 사유가 뒤바뀐다.
  */
-export function verdictFor(quote: Quote, elapsed: number, cash: number): ScreeningVerdict {
-  const screened = screenQuote(quote, elapsed);
+export function verdictFor(
+  quote: Quote,
+  elapsed: number,
+  cash: number,
+  instrument?: Pick<Instrument, 'assetType'> | null,
+): ScreeningVerdict {
+  const screened = screenQuote(quote, elapsed, instrument);
   if (screened === 'noOrderBook') return 'noOrderBook';
   if (quote.price > cash) return 'tooExpensive';
   return screened ?? 'pass';
@@ -580,7 +606,7 @@ export async function loadAutoTraderCandidates(accountId: string, cash: number):
      * 있어야 그 값에 체결되고, 하루 변동폭이 왕복 비용보다 넉넉해야 방향을
      * 맞혔을 때 남는다. 순서와 사유는 `verdictFor` 한 곳에 있다.
      */
-    const verdict = verdictFor(quote, elapsed, cash);
+    const verdict = verdictFor(quote, elapsed, cash, instrument);
     if (verdict !== 'pass') {
       rejections[verdict] += 1;
       continue;

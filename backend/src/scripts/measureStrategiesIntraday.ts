@@ -40,7 +40,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 import { CANDLE_AXIS_LABELS, type Candle, type Instrument } from '@invest/shared';
 
-import { DEFAULT_COSTS, backtest } from '../trading/backtest.js';
+import { DEFAULT_COSTS, backtest, roundTripCostRate } from '../trading/backtest.js';
 import {
   countExcluded,
   countMeasured,
@@ -143,9 +143,10 @@ async function main(): Promise<void> {
   const { runnerAxis, strategies } = listStrategies();
   const axisLabel = CANDLE_AXIS_LABELS[RUNNER_CANDLE_AXIS];
 
-  console.log(`축 ${axisLabel} · 원금 ${START_CASH.toLocaleString('ko-KR')}원 · 왕복 비용 ${pct(
-    (DEFAULT_COSTS.commissionRate * 2 + DEFAULT_COSTS.sellTaxRate + DEFAULT_COSTS.slippageRate * 2) * 100,
-  )}`);
+  // 왕복 비용은 한 값이 아니다 — ETF는 매도 거래세가 면제라 주식보다 싸다.
+  console.log(`축 ${axisLabel} · 원금 ${START_CASH.toLocaleString('ko-KR')}원`
+    + ` · 왕복 비용 주식 ${pct(roundTripCostRate(null, DEFAULT_COSTS) * 100)}`
+    + ` / ETF ${pct(roundTripCostRate({ assetType: 'etf' }, DEFAULT_COSTS) * 100)}`);
   console.log(
     `표본 ${series.length}종목 · 종목·날 ${days.length}건 · 봉 ${days.reduce((n, d) => n + d.candles.length, 0)}개`
     + (summary ? ` (받은 날 ${summary.dates[0]}~${summary.dates[summary.dates.length - 1]})` : ''),
@@ -212,10 +213,9 @@ async function main(): Promise<void> {
         holdMinutes.push((trade.exitTime - trade.entryTime) / 60);
         if (kstDateOf(trade.entryTime) !== kstDateOf(trade.exitTime)) overnightTrades += 1;
         // 매수→매도 값 변화가 왕복 비용에도 못 미친 매매. 방향이 아니라 산수 문제다.
+        // 비용은 종목마다 다르다 — ETF는 매도 거래세가 면제라 문턱이 더 낮다.
         const move = Math.abs(trade.exitPrice - trade.entryPrice) / trade.entryPrice;
-        const roundTrip =
-          DEFAULT_COSTS.commissionRate * 2 + DEFAULT_COSTS.sellTaxRate + DEFAULT_COSTS.slippageRate * 2;
-        if (move < roundTrip) belowCostTrades += 1;
+        if (move < roundTripCostRate(item.instrument, DEFAULT_COSTS)) belowCostTrades += 1;
       }
     }
 

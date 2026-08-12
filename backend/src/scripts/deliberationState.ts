@@ -96,7 +96,18 @@ const won = (n: number | null | undefined): string =>
   n === null || n === undefined ? '—' : `${Math.round(n).toLocaleString('ko-KR')}원`;
 console.log(`총평가 ${won(snapshot.totalEvaluation)} · 주식 ${won(snapshot.stockEvaluation)}`
   + ` · 예수금 ${won(snapshot.cashBalance)}`);
-console.log(`평가손익 ${won(snapshot.unrealizedPnl)} (${(snapshot.unrealizedPnlRate ?? 0).toFixed(2)}%)`);
+/*
+ * 없는 값을 0%로 적지 않는다 — `평가손익률 0.00%`는 "본전이었다"로 읽힌다.
+ *
+ * 이 자리는 한때 KIS의 자산증감수익률(`asst_icdc_erng_rt`)을 평가손익률이라고
+ * 적고 있었다. 개장 전에는 자산이 안 움직여 0으로 오므로, 실제 손익률이
+ * −0.17%인 아침에 판단자가 `0.00%`를 읽었다(2026-08-12 실측).
+ */
+const rate = (value: number | undefined): string =>
+  value === undefined ? '—' : `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
+console.log(`평가손익 ${won(snapshot.unrealizedPnl)} (${rate(snapshot.unrealizedPnlRate)})`);
+// 자산증감수익률은 다른 것을 재는 값이라 이름을 갈라 적는다 (전일 총자산 대비).
+console.log(`전일 대비 자산증감 ${rate(snapshot.assetChangeRate)}`);
 
 console.log('\n## 보유');
 if (snapshot.positions.length === 0) {
@@ -119,7 +130,7 @@ if (snapshot.positions.length === 0) {
     console.log(
       `- ${p.symbol} ${p.name} · ${p.quantity}주 (팔 수 있는 수량 ${sellable})`
       + ` · 평단 ${won(p.averagePrice)} · 현재 ${won(p.currentPrice)}`
-      + ` · 손익 ${won(p.unrealizedPnl)} (${(p.unrealizedPnlRate ?? 0).toFixed(2)}%)`,
+      + ` · 손익 ${won(p.unrealizedPnl)} (${rate(p.unrealizedPnlRate)})`,
     );
   }
 }

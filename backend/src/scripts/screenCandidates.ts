@@ -50,7 +50,15 @@ async function main(): Promise<void> {
 
   console.log(`후보 풀 ${pool.length}종목 · 현금 ${cash.toLocaleString('ko-KR')}원 · ${lookups}종목 시세 조회\n`);
 
-  const rows: Array<{ name: string; symbol: string; price: number; rate: number; volume: number; quote: Quote }> = [];
+  const rows: Array<{
+    name: string;
+    symbol: string;
+    price: number;
+    rate: number;
+    volume: number;
+    quote: Quote;
+    instrument: Instrument;
+  }> = [];
   for (const instrument of pool.slice(0, lookups)) {
     try {
       const quote = await getInstrumentQuote(instrument);
@@ -62,6 +70,7 @@ async function main(): Promise<void> {
           rate: quote.changeRate,
           volume: quote.accVolume,
           quote,
+          instrument,
         });
       }
     } catch {
@@ -79,7 +88,11 @@ async function main(): Promise<void> {
    * 변동폭이 왕복 비용보다 넉넉해야 방향을 맞혔을 때 남는다.
    */
   const elapsed = sessionElapsedRatio();
-  const verdicts = affordable.map((row) => ({ row, rejected: screenQuote(row.quote, elapsed) }));
+  // 종목을 함께 넘긴다 — ETF는 매도 거래세가 면제라 비용 문턱이 다르다.
+  const verdicts = affordable.map((row) => ({
+    row,
+    rejected: screenQuote(row.quote, elapsed, row.instrument),
+  }));
   const passed = verdicts.filter((v) => v.rejected === null);
   /*
    * 사유마다 따로 센다. 여기서 사유 하나를 빠뜨리면 합이 안 맞는데 화면에는

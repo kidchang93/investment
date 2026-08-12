@@ -210,7 +210,8 @@ async function pickUniverse(cash: number, sampleSize: number): Promise<Universe>
   for (const instrument of targets) {
     const quote = batch.quotes.get(instrument.id);
     if (!quote || !Number.isFinite(quote.price) || quote.price <= 0) continue;
-    const verdict = verdictFor(quote, elapsed, cash);
+    // 종목을 함께 넘긴다 — ETF는 매도 거래세가 면제라 왕복 비용 문턱이 다르다.
+    const verdict = verdictFor(quote, elapsed, cash, instrument);
     if (verdict !== 'pass') {
       rejections[verdict] += 1;
       continue;

@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import type { Candle, Instrument } from '@invest/shared';
+import { KR_SELL_TAX_RATE, type Candle, type Instrument } from '@invest/shared';
 
 import {
   DEFAULT_COSTS,
@@ -17,6 +17,8 @@ import {
   backtestSplit,
   backtestWindowSlices,
   backtestWindows,
+  roundTripCostRate,
+  sellTaxRateFor,
   type BacktestCosts,
 } from './backtest.js';
 
@@ -32,6 +34,15 @@ const instrument: Instrument = {
   providerSymbol: '000001',
   exchangeCode: 'KRX',
   timezone: 'Asia/Seoul',
+};
+
+/** 같은 값·같은 전략인데 종류만 ETF인 종목. 매도 거래세가 면제라 비용이 갈린다. */
+const etf: Instrument = {
+  ...instrument,
+  id: 'KR:KOSPI:069500',
+  symbol: '069500',
+  name: '테스트ETF',
+  assetType: 'etf',
 };
 
 /** 종가만 주면 시가·고가·저가를 같은 값으로 채운다. 체결가 검증이 단순해진다. */
@@ -170,6 +181,74 @@ describe('백테스트', () => {
 
   it('없는 전략은 거부한다', () => {
     assert.throws(() => backtest('없는전략', instrument, flatCandles([1, 2, 3]), 1000));
+  });
+});
+
+/*
+ * ── ETF 매도 거래세 (2026-08-12) ─────────────────────────────────────────
+ *
+ * 국내 상장 ETF는 매도 시 증권거래세가 면제인데(종류 무관) 백테스트가 조건 없이
+ * `costs.sellTaxRate`를 물리고 있었다. 21년치 측정이 이 비용으로 도는 자리라,
+ * 여기서 **금액으로** 못 박는다 — "적게 나온다"가 아니라 정확히 얼마 적은지.
+ *
+ * 시험은 **비용을 켜고** 돈다. `NO_COSTS`로 재면 주식도 ETF도 0이라 아무것도
+ * 못 잡는다 — 이 레포가 승률 시험에서 실제로 그렇게 놓친 적이 있다.
+ */
+describe('ETF 매도 거래세 면제', () => {
+  it('세율 판정: ETF는 0, 주식은 설정값 그대로', () => {
+    assert.equal(sellTaxRateFor(DEFAULT_COSTS, instrument), KR_SELL_TAX_RATE);
+    assert.equal(sellTaxRateFor(DEFAULT_COSTS, etf), 0);
+  });
+
+  it('비용을 끈 시험에서는 둘 다 0이다 — 설정값을 덮어쓰지 않는다', () => {
+    assert.equal(sellTaxRateFor(NO_COSTS, instrument), 0);
+    assert.equal(sellTaxRateFor(NO_COSTS, etf), 0);
+  });
+
+  it('같은 값·같은 전략이면 ETF의 매도비용이 주식보다 정확히 거래세만큼 싸다', () => {
+    const candles = flatCandles(ROUND_TRIP);
+    const stockRun = backtest('ma_cross', instrument, candles, 50_000, DEFAULT_COSTS);
+    const etfRun = backtest('ma_cross', etf, candles, 50_000, DEFAULT_COSTS);
+
+    assert.ok(stockRun.tradeCount > 0, '매매가 있어야 잴 수 있다');
+    assert.equal(stockRun.tradeCount, etfRun.tradeCount, '신호는 같아야 한다 — 세금은 신호를 바꾸지 않는다');
+
+    // 매도 총액. 세금은 여기에만 붙는다.
+    const grossSold = stockRun.trades.reduce((total, trade) => total + trade.quantity * trade.exitPrice, 0);
+    assert.ok(grossSold > 0);
+
+    const expected = grossSold * KR_SELL_TAX_RATE;
+    assert.ok(
+      Math.abs(stockRun.totalCost - etfRun.totalCost - expected) < 1e-6,
+      `비용 차이 ${stockRun.totalCost - etfRun.totalCost} 가 거래세 ${expected} 와 다르다`,
+    );
+    assert.ok(etfRun.endEquity > stockRun.endEquity, 'ETF 쪽이 세금만큼 더 남아야 한다');
+  });
+
+  it('ETF에도 위탁수수료·슬리피지는 그대로 붙는다 — 면제된 것은 거래세뿐이다', () => {
+    const etfRun = backtest('ma_cross', etf, flatCandles(ROUND_TRIP), 50_000, DEFAULT_COSTS);
+    assert.ok(etfRun.totalCost > 0, '거래세만 빠지고 수수료는 남는다');
+
+    const free = backtest('ma_cross', etf, flatCandles(ROUND_TRIP), 50_000, NO_COSTS);
+    assert.ok(etfRun.endEquity < free.endEquity, '비용을 켠 쪽이 더 적어야 한다');
+  });
+
+  it('왕복 비용도 갈린다 — 차이는 거래세 한 번뿐이다', () => {
+    assert.ok(
+      Math.abs(roundTripCostRate() - roundTripCostRate(etf) - KR_SELL_TAX_RATE) < 1e-12,
+      `${roundTripCostRate()} vs ${roundTripCostRate(etf)}`,
+    );
+    // 종목을 모르면 면제를 가정하지 않는다. 모르는 쪽은 비용이 큰 쪽에 둔다.
+    assert.equal(roundTripCostRate(), roundTripCostRate(instrument));
+    assert.equal(roundTripCostRate(null), roundTripCostRate(instrument));
+  });
+
+  it('거래별 손익 합이 ETF에서도 실제 현금 변화와 맞는다', () => {
+    // 세율만 바꿔 놓고 `netPnl` 계산이 어긋나면 승률이 조용히 틀린다.
+    const result = backtest('ma_cross', etf, flatCandles(ROUND_TRIP), 50_000, DEFAULT_COSTS);
+    assert.equal(result.openQuantity, 0);
+    const summed = result.trades.reduce((total, trade) => total + trade.netPnl, 0);
+    assert.ok(Math.abs(summed - (result.endEquity - result.startCash)) < 1e-6);
   });
 });
 

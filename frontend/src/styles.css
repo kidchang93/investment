@@ -3655,6 +3655,17 @@ span.sample-badge {
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * 금액 옆에 붙는 비율. 성질이 다른 값이라 한 단계 죽여 둔다 —
+ * 보유 줄의 `portfolio-table__pnl small`과 같은 모양이다.
+ */
+.portfolio-page__metrics strong small {
+  margin-left: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .portfolio-page__grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
