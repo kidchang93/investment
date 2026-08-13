@@ -29,6 +29,29 @@ export function toNumberOrNaN(value: string | undefined): number {
   return toNumber(text);
 }
 
+/**
+ * 값이 없으면 `null`. **"값 없음"과 "0"을 가르는 것이 이 함수의 일이다.**
+ *
+ * ── 왜 `toNumber`로 짜면 안 되나 (2026-08-13) ──────────────────────────────
+ *
+ * 예전에는 `rest.ts` 안에서 `toNumber`로 짜여 있었다. 그런데 `Number('')`은 0이라
+ * **빈 문자열이 `null`이 아니라 0으로 나왔다** — 이름이 `optionalNumber`인데 정작
+ * 없는 값을 걸러내지 못했다. KIS는 값이 없는 자리에 빈 문자열을 주므로 그대로 두면
+ * "값 없음"이 "0원"이 된다. `toNumberOrNaN`이 그래서 있고, 여기가 그것을 쓴다.
+ *
+ * 갈라지는 자리:
+ * - `''` · `'   '` · `undefined` → `null` (값이 없다)
+ * - `'0'` · `'0.00'` → `0` (**진짜 0이다. 그대로 0으로 남는다**)
+ * - `'-'` · `'abc'` → `null` (숫자가 아니다)
+ *
+ * 부르는 쪽에서 `?? 0`으로 받으면 이 구분은 다시 사라진다. 필드가 `number | undefined`인
+ * 자리는 `?? undefined`로 받아 없는 것을 없다고 말한다.
+ */
+export function optionalNumber(value: string | undefined): number | null {
+  const n = toNumberOrNaN(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 export function isPositiveFinite(value: number): boolean {
   return Number.isFinite(value) && value > 0;
 }

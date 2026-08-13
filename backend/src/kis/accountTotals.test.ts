@@ -101,21 +101,46 @@ describe('계좌 합계 — 평가손익률', () => {
     assert.equal(totals.assetChangeRate, undefined);
   });
 
-  it('빈 문자열은 이 경로에서 0으로 읽힌다 — 손익률까지 번지지는 않는다', () => {
+  it('빈 문자열은 0이 아니라 없는 값이다', () => {
     /*
-     * ★ **이건 고친 게 아니라 잰 것이다.** KIS는 값이 없는 자리에 빈 문자열을
-     * 주는데 `optionalNumber`가 `Number('')`을 쓴다 — `Number('')`은 NaN이 아니라
-     * **0**이라 "값 없음"이 "0"이 된다(`kis/normalize.ts`의 `toNumberOrNaN`이
-     * 그래서 있다). 계좌 합계 전체가 이 경로다. 이번 작업의 범위가 아니라
-     * 건드리지 않았고, 지금 동작을 그대로 적어 둔다.
+     * ★ **2026-08-13에 뒤집힌 시험이다.** 그전에는 여기서 `purchaseAmount === 0`을
+     * 확인하고 있었다 — 고쳐서가 아니라 그때 `optionalNumber`가 `Number('')`을 썼기
+     * 때문이고(`Number('')`은 NaN이 아니라 **0**이다), 범위가 커서 지금 동작만
+     * 적어 둔 것이었다. 지금은 `optionalNumber`가 `toNumberOrNaN`을 거치므로
+     * 빈 칸이 `null` → `undefined`로 나온다.
      *
-     * 다만 **손익률까지 번지지는 않는다** — 분모가 0이면 `undefined`라 화면이
-     * `0%`(본전)라고 적지는 않는다. 거기가 이번에 지키려는 경계다.
+     * `'0'`(문자 영)은 그대로 0이어야 한다. 아래 `'0으로 온 칸'` 시험이 그것이다.
      */
     const blank: Record<string, string> = { pchs_amt_smtl_amt: '', evlu_pfls_smtl_amt: '' };
     const totals = accountTotalsFrom(blank);
-    assert.equal(totals.purchaseAmount, 0, '지금 동작 — 빈 문자열이 0으로 읽힌다');
-    assert.equal(totals.unrealizedPnlRate, undefined, '그래도 손익률은 없는 값이어야 한다');
+    assert.equal(totals.purchaseAmount, undefined);
+    assert.equal(totals.unrealizedPnl, undefined);
+    assert.equal(totals.unrealizedPnlRate, undefined);
+  });
+
+  it("0으로 온 칸은 0이다 — 빈 칸과 같이 취급하지 않는다", () => {
+    const zeroed: Record<string, string> = { pchs_amt_smtl_amt: '0', evlu_pfls_smtl_amt: '0' };
+    const totals = accountTotalsFrom(zeroed);
+    assert.equal(totals.purchaseAmount, 0);
+    assert.equal(totals.unrealizedPnl, 0);
+    // 분모가 0이라 손익률은 여전히 없는 값이다.
+    assert.equal(totals.unrealizedPnlRate, undefined);
+  });
+
+  it('첫 후보가 빈 칸이면 다음 후보로 넘어간다 — D+2가 비면 D+1', () => {
+    /*
+     * `settlementCash`는 D+2(`prvs_rcdl_excc_amt`) → D+1(`nxdy_excc_amt`) 순으로
+     * 고르게 돼 있는데, 빈 문자열이 0으로 읽히던 동안에는 **첫 후보가 비어도
+     * 거기서 멈춰 0원**이 나왔다. 대체 경로가 있는데 한 번도 안 쓰였다.
+     *
+     * 0원이면 `spendableCash`가 "쓸 돈이 없다"로 읽어 러너가 아무것도 못 산다.
+     */
+    const missingD2: Record<string, string> = {
+      ...MEASURED,
+      prvs_rcdl_excc_amt: '',
+      nxdy_excc_amt: '48273304',
+    };
+    assert.equal(accountTotalsFrom(missingD2).settlementCash, 48_273_304);
   });
 
   it('나머지 합계는 예전 계약 그대로다', () => {

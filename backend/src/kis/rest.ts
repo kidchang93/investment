@@ -29,6 +29,7 @@ import {
 import {
   isNonNegativeFinite,
   isPositiveFinite,
+  optionalNumber,
   parseSign,
   toNumber,
   toNumberOrNaN,
@@ -367,11 +368,6 @@ function requireNumber(value: string | undefined, field: string): number {
     throw new Error(`현재가 응답 숫자 필드가 올바르지 않습니다: ${field}`);
   }
   return n;
-}
-
-function optionalNumber(value: string | undefined): number | null {
-  const n = toNumber(value);
-  return Number.isFinite(n) ? n : null;
 }
 
 function maskKisAccount(cano: string, productCode: string): string {
@@ -2827,6 +2823,13 @@ export async function getInstrumentNews(instrument: Instrument): Promise<NewsIte
   return getOverseasNews(instrument);
 }
 
+/**
+ * 이름 후보를 앞에서부터 훑어 **값이 있는 첫 칸**을 쓴다. 하나도 없으면 `undefined`.
+ *
+ * 빈 문자열은 값이 아니라 빈 칸이므로 다음 후보로 넘어간다 — `optionalNumber`가
+ * 빈 문자열을 0으로 읽던 동안에는 **첫 후보가 비어 있어도 거기서 멈춰 0을 돌려줬다.**
+ * `settlementCash`의 D+2 → D+1 대체가 그 때문에 동작하지 않았다.
+ */
 function firstNumber(row: Record<string, string>, keys: string[]): number | undefined {
   for (const key of keys) {
     const value = optionalNumber(row[key]);
