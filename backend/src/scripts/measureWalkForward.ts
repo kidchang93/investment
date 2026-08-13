@@ -10,23 +10,47 @@
  *
  * ★ `measureSignalHarness.ts`는 **그대로 둔다.** 옛 `dataset_key`의 기록이다.
  *
+ * ── ★ 2026-08-13에 두 블록으로 갈랐다 ───────────────────────────────────
+ *
+ * 그 전에는 한 실행이 "정보가 있나"와 "돈이 되나"를 **동시에** 물었고, 그래서
+ * 판정 t −1.38이 **표본의 절반 위에서** 나왔다:
+ *
+ *   - 기권(`abstainIfNegative`) + 비용 0.54% → 15창 중 12창이 현금.
+ *     진입 743건이 **전부 2011~2013**이고 2019년 이후 표본이 0이었다.
+ *   - 위약 20종이 전부 진입 0건 → 경험적 귀무분포가 아예 작동하지 않았다.
+ *   - 축이 자유라 `netIR`의 `√(252/h)`가 비용 상수에 곱해져 **h=1을 못 박았다.**
+ *     안티셀렉션 −46.01의 연알파 −159.28% 중 −136.08%가 비용이었다.
+ *
+ * | 블록 | 묻는 것 | 어떻게 | 원장 |
+ * |------|------|------|------|
+ * | A | **정보가 있나** | 비용 0 · 기권 없음 · **축 고정** · 위약 귀무분포 | 쓴다(축 1개 = 1칸) |
+ * | B | **비용을 넘나** | 기권 없음 · 비용 여럿 · **t를 쓰지 않는다** | ★ **안 쓴다**(추정이지 검정이 아니다) |
+ *
  * ── 이 스크립트가 지키는 것 ──────────────────────────────────────────────
  *
  * - **DB만 본다. KIS를 부르지 않는다.** 수집이 도는 중에도 안전하다.
  * - **주문을 내지 않는다.** 조회·계산뿐이다.
  * - ★ **`--show-training` 없이는 학습 순위를 아예 안 찍는다.** 찍히면 사람이
  *   그것을 결론으로 읽는다 — 학습 1위는 "표본 안에서 제일 좋아 보인 것"일 뿐이다.
+ * - ★ **생존편향의 크기를 맨 위에 찍는다.** 불리언 하나로는 아무도 크기를 모른다.
  *
  *   npx tsx --max-old-space-size=4096 src/scripts/measureWalkForward.ts \
  *     --dataset dailybars-20260812 --procedure expanding|rolling \
- *     [--placebo 20] [--anti] [--mirror] [--family2] [--show-training] [--dry-run]
+ *     [--axes 1,3,5,10,20] [--eval-costs 0.30,0.43,0.54] [--block-b] \
+ *     [--placebo-families 50] [--placebo-axis 5] [--anti] [--mirror] \
+ *     [--abstain-score] [--cost 0.54] [--show-training] [--dry-run] \
+ *     [--annotate-legacy]
  */
 
 import { closeDb, pool } from '../db/client.js';
 import { getDailyBars, type DailyBar as StoredBar } from '../db/dailyBars.js';
 import {
   HARNESS_CELL_UNIT,
+  WALKFORWARD_BLOCK_A_UNIT,
+  WALKFORWARD_RUN_UNIT,
+  annotateWalkforwardDependencyNote,
   cumulativeCellCount,
+  cumulativeMeasuredCells,
   recordSignalMeasurements,
 } from '../db/signalMeasurements.js';
 import { bonferroniThreshold } from '../trading/signalHarness.js';
@@ -41,15 +65,30 @@ import {
   excludeUnusableSignals,
   meanOf,
   runAntiSelection,
-  runMirror,
+  runBlockA,
+  runBottomLegProcedure,
+  runEvalLegMirror,
   runWalkForward,
+  type BlockASpec,
   type CellSeries,
   type WalkForwardResult,
   type WalkForwardSpec,
 } from '../trading/walkForward.js';
-
-/** 재는 단위. 창 15개가 **한 검정**이다 — 칸 하나가 아니다. */
-const WALKFORWARD_UNIT = 'walkforward-run';
+import {
+  KIND_DELISTING_GAP,
+  anyAxisBeatsCost,
+  buildBreakEvenTable,
+  describeAbstainSkill,
+  describeBreakEvenTable,
+  describeHorizonMix,
+  describeSelectedSignals,
+  describeSurvivorship,
+  describeVerdict,
+  pct,
+  scanSurvivorship,
+  signed,
+  summarizePlacebo,
+} from '../trading/walkForwardReport.js';
 
 /**
  * 잴 보유 기간(거래일).
@@ -64,36 +103,34 @@ const HORIZONS = [1, 3, 5, 10, 20];
  * 왕복 비용(%).
  *
  * 레포의 `ROUND_TRIP_COST_RATE`는 0.43%(수수료 0.03 + 거래세 0.20 + 슬리피지 0.20)다.
- * 여기서는 **0.54%**를 쓴다 — 진입·청산이 둘 다 **시가**라 개장 스프레드가 장중보다
- * 넓고, 실주문 슬리피지 실측(0.33%)이 가정(0.1%)의 세 배였기 때문이다.
+ * 여기서는 **0.54%**를 기본으로 쓴다 — 진입·청산이 둘 다 **시가**라 개장 스프레드가
+ * 장중보다 넓고, 실주문 슬리피지 실측(0.33%)이 가정(0.1%)의 세 배였기 때문이다.
  *
- * ★ **학습과 검증에 같은 값이 들어간다.** 학습만 싸게 잡으면 비용을 못 넘는 칸이
- * 순위에 올라온다.
+ * ★ **블록 A는 이 값을 안 쓴다.** 비용 0이 블록 A의 정의다.
  */
 const DEFAULT_ROUND_TRIP_PCT = 0.54;
 
-/*
- * ★ 비용은 판정을 좌우하므로 CLI로 열어 둔다 — 상수로 박아 두면 민감도를 못 잰다.
+/**
+ * 손익분기표·블록 B가 견줄 비용들.
  *
- * 근거의 폭을 알고 써라. `docs/USER_FINDINGS.md:1500-1512`의 Roll 추정(분봉 자기공분산)이
- * 스프레드 0.311~0.315%를 냈고 왕복 0.541~0.545%가 거기서 나왔다. 그런데 같은 문서
- * 1561행이 **"실제가 1틱에 가까우면 왕복 0.302%"**라고 유보를 달아 뒀고,
- * 2026-08-11 ETF 호가 실측은 스프레드가 0.018~0.121%였다 — Roll 추정보다 훨씬 좁다.
- * 즉 참값은 0.30~0.55% 어딘가이고, 그 폭이 결론을 바꾸는지는 재 봐야 안다.
+ * 참값을 모른다. `docs/USER_FINDINGS.md:1500-1512`의 Roll 추정(분봉 자기공분산)이
+ * 왕복 0.541~0.545%를 냈는데, 같은 문서 1561행이 **"실제가 1틱에 가까우면 왕복
+ * 0.302%"**라고 유보를 달았고 2026-08-11 ETF 호가 실측은 스프레드 0.018~0.121%였다.
+ * 그래서 폭 전체를 세로로 늘어놓고 **어디서 부호가 바뀌는지**를 본다.
  */
-const ROUND_TRIP_PCT = (() => {
-  const i = process.argv.indexOf('--cost');
-  if (i < 0) return DEFAULT_ROUND_TRIP_PCT;
-  const v = Number(process.argv[i + 1]);
-  if (!Number.isFinite(v) || v < 0) throw new Error('--cost는 0 이상의 숫자여야 합니다(단위 %)');
-  return v;
-})();
+const DEFAULT_EVAL_COSTS = [0.3, 0.43, 0.54];
 
 /** 검증 창이 시작하는 날. 2011부터 해마다 하나씩 열다섯 개. */
 const VALIDATION_STARTS = Array.from({ length: 15 }, (_, i) => `${2011 + i}0101`);
 
 /** 학습과 검증 사이에 비우는 거래일. ★ 전 축 고정 */
 const EMBARGO_DAYS = 60;
+
+/**
+ * 생존편향을 재는 기준일. 이 날 이전에 계열이 끝난 종목이 **상장폐지의 대리**다.
+ * 하나도 없으면 이 패널에 폐지가 안 들어 있다는 뜻이다.
+ */
+const SURVIVORSHIP_CUTOFF = '20250101';
 
 /** 유니버스 문턱. 전부 as-of-date다 (종목 자격만 오늘 마스터다) */
 const UNIVERSE = {
@@ -111,25 +148,54 @@ const BUCKETS = 10;
 interface Options {
   dataset: string;
   procedure: 'expanding' | 'rolling';
-  placebo: number;
+  /** 블록 A가 돌 축들 */
+  axes: number[];
+  /** 손익분기표·블록 B가 견줄 비용들 */
+  evalCosts: number[];
+  /** 블록 B(비용을 넣고 실제로 다시 고르기)까지 돌린다 */
+  blockB: boolean;
+  /** 위약 가족 수. 한 가족이 실신호와 같은 크기다 */
+  placeboFamilies: number;
+  /** 위약도 축을 고정할까. `null`이면 축 자유 */
+  placeboAxis: number | null;
   anti: boolean;
   mirror: boolean;
+  abstainScore: boolean;
+  /** 기권 채점 실행에 쓸 왕복 비용(%) */
+  abstainCost: number;
   family2: boolean;
   showTraining: boolean;
   dryRun: boolean;
+  annotateLegacy: boolean;
   limitSymbols: number | null;
+}
+
+function parseNumberList(raw: string, label: string): number[] {
+  const values = raw.split(',').map((part) => Number(part.trim()));
+  if (values.length === 0 || values.some((v) => !Number.isFinite(v))) {
+    throw new Error(`${label}는 쉼표로 이은 숫자여야 합니다: ${raw}`);
+  }
+  return values;
 }
 
 function parseOptions(argv: string[]): Options {
   const options: Options = {
     dataset: 'dailybars-20260812',
     procedure: 'expanding',
-    placebo: 0,
+    axes: [...HORIZONS],
+    evalCosts: [...DEFAULT_EVAL_COSTS],
+    blockB: false,
+    // ★ 위약이 곧 블록 A의 판정 기준이다. 기본으로 돈다 — 끄려면 0을 준다.
+    placeboFamilies: 50,
+    placeboAxis: null,
     anti: false,
     mirror: false,
+    abstainScore: false,
+    abstainCost: DEFAULT_ROUND_TRIP_PCT,
     family2: false,
     showTraining: false,
     dryRun: false,
+    annotateLegacy: false,
     limitSymbols: null,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -147,28 +213,62 @@ function parseOptions(argv: string[]): Options {
         options.procedure = value;
         break;
       }
-      case '--placebo':
-        options.placebo = Number(next());
+      case '--axes': {
+        const axes = parseNumberList(next(), '--axes');
+        const unknown = axes.filter((h) => !HORIZONS.includes(h));
+        if (unknown.length > 0) {
+          throw new Error(`계열을 안 만든 축입니다: ${unknown.join(',')} (가능: ${HORIZONS.join(',')})`);
+        }
+        options.axes = axes;
         break;
+      }
+      case '--eval-costs':
+        options.evalCosts = parseNumberList(next(), '--eval-costs');
+        break;
+      case '--block-b':
+        options.blockB = true;
+        break;
+      case '--placebo-families':
+        options.placeboFamilies = Number(next());
+        break;
+      case '--placebo-axis': {
+        const value = Number(next());
+        if (!HORIZONS.includes(value)) {
+          throw new Error(`--placebo-axis는 ${HORIZONS.join(',')} 중 하나여야 합니다: ${value}`);
+        }
+        options.placeboAxis = value;
+        break;
+      }
       case '--anti':
         options.anti = true;
         break;
       case '--mirror':
         options.mirror = true;
         break;
+      case '--abstain-score':
+        options.abstainScore = true;
+        break;
+      case '--cost': {
+        const value = Number(next());
+        if (!Number.isFinite(value) || value < 0) {
+          throw new Error('--cost는 0 이상의 숫자여야 합니다(단위 %)');
+        }
+        options.abstainCost = value;
+        break;
+      }
       case '--family2':
         options.family2 = true;
         break;
       case '--show-training':
         options.showTraining = true;
         break;
-      case '--cost':
-        // ★ 위 ROUND_TRIP_PCT가 읽는다. 여기서는 인자를 소비만 한다(모르는 인자 검사 통과용).
-        next();
-        break;
       case '--dry-run':
         // 원장에 안 쓴다. 실행 시간을 재거나 표만 보고 싶을 때.
         options.dryRun = true;
+        break;
+      case '--annotate-legacy':
+        // ★ 옛 walk-forward 줄 2개의 note에 "독립 검정 아님"을 덧붙인다. 줄은 안 늘어난다.
+        options.annotateLegacy = true;
         break;
       case '--limit-symbols':
         // ★ 시간을 재려고 줄일 때만. 시장을 대표하지 않으므로 판정에 쓰지 않는다.
@@ -178,18 +278,11 @@ function parseOptions(argv: string[]): Options {
         throw new Error(`모르는 인자입니다: ${arg}`);
     }
   }
-  if (!Number.isInteger(options.placebo) || options.placebo < 0) {
-    throw new Error('--placebo는 0 이상의 정수여야 합니다');
+  if (!Number.isInteger(options.placeboFamilies) || options.placeboFamilies < 0) {
+    throw new Error('--placebo-families는 0 이상의 정수여야 합니다');
   }
+  if (options.axes.length === 0) throw new Error('--axes가 비었습니다');
   return options;
-}
-
-function pct(value: number): string {
-  return `${value >= 0 ? '+' : ''}${value.toFixed(3)}%`;
-}
-
-function signed(value: number): string {
-  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}`;
 }
 
 function heapMb(): number {
@@ -260,6 +353,7 @@ function buildCells(
   universe: UniverseMask,
   signals: SignalCandidate[],
   label: string,
+  verbose = true,
 ): CellSeries[] {
   const cells: CellSeries[] = [];
   const startedAt = Date.now();
@@ -269,7 +363,7 @@ function buildCells(
         panel, signals[i], HORIZONS, universe, 'nextOpen', BUCKETS, UNIVERSE.minNamesPerDay,
       ),
     );
-    if ((i + 1) % 5 === 0 || i === signals.length - 1) {
+    if (verbose && ((i + 1) % 5 === 0 || i === signals.length - 1)) {
       console.log(
         `  ${label} ${i + 1}/${signals.length}종 · 칸 ${cells.length}`
         + ` · ${elapsed(startedAt)} · 힙 ${heapMb()}MB`,
@@ -279,44 +373,32 @@ function buildCells(
   return cells;
 }
 
-function describeVerdict(result: WalkForwardResult): string[] {
-  const lines: string[] = [];
-  lines.push(
-    `  진입 ${result.oosEntryExcess.length.toLocaleString('ko-KR')}건`
-    + ` · 현금 창 ${result.cashWindows}/${result.windows.length}`
-    + ` · 강제청산 ${result.truncatedExits.toLocaleString('ko-KR')}건`,
-  );
-  if (result.oosEntryExcess.length === 0) {
-    lines.push('  → 표본 밖 진입이 0건이다. 잴 것이 없다.');
-    return lines;
+/**
+ * 위약 한 가족을 같은 절차로 돌린다.
+ *
+ * ★ **축 자유가 기본이다.** 절차가 축까지 고르는 것이 실제 절차이므로, 그 절차의
+ * 귀무분포를 만들려면 위약도 축을 고르게 둬야 한다. 대신 가족마다 **어느 축을
+ * 골랐는지**를 찍는다 — 위약이 전부 같은 축을 고르면 그 귀무분포는 그 축의
+ * 이야기라, 다른 축의 실신호와 견줄 때 그 사실을 알고 봐야 한다.
+ * `--placebo-axis`로 축을 맞춰 견줄 수도 있다.
+ */
+function runPlacebo(
+  base: Omit<BlockASpec, 'fixHorizon'>,
+  cells: CellSeries[],
+  axis: number | null,
+): WalkForwardResult {
+  if (axis !== null) {
+    return runBlockA({ ...base, cellSeries: cells, signalsByKey: undefined, fixHorizon: axis });
   }
-  lines.push(
-    `  진입별 순초과 평균 ${pct(meanOf(result.oosEntryExcess))}`
-    + ` · 연 알파 ${pct(result.alphaAnnual)} · 연 IR ${result.irAnnual.toFixed(2)}`,
-  );
-  lines.push(
-    `  t  순진 ${signed(result.tNaive)}`
-    + ` · NW ${signed(result.tNeweyWest)}`
-    + ` · 블록부트 ${signed(result.tBlockBootstrap)}`
-    + ` · 비겹침 ${signed(result.tNonOverlap)}`
-    + `  →  ★ 판정 t ${signed(result.verdictT)}`,
-  );
-  lines.push(
-    `  10%절사 ${pct(result.trimmed10)}/일`
-    + ` · 상위1% 날 몫 ${result.top1PctDayShare === undefined ? '—(합이 0 근처라 물을 수 없다)' : `${(result.top1PctDayShare * 100).toFixed(0)}%`}`
-    + ` · 시장 베타 ${result.marketBeta.toFixed(2)}`,
-  );
-  const half = (sign: number): string => (sign > 0 ? '+' : sign < 0 ? '−' : '0(표본 없음)');
-  lines.push(
-    `  앞 반쪽(2011~2018) ${half(result.halfSigns[0])}`
-    + ` · 뒤 반쪽(2019~) ${half(result.halfSigns[1])}`
-    + ` · 선택 교체율 ${(result.selectionTurnover * 100).toFixed(0)}%`,
-  );
-  lines.push(
-    `  한 종목 최대 자리 몫 ${result.topSymbolShare === undefined ? '—(안 쟀다)' : `${(result.topSymbolShare * 100).toFixed(1)}%`}`
-    + ` · 100만원으로 1주도 못 사는 자리 ${result.unbuyableAt1M === undefined ? '—(안 쟀다)' : `${(result.unbuyableAt1M * 100).toFixed(2)}%`}`,
-  );
-  return lines;
+  return runWalkForward({
+    ...base,
+    cellSeries: cells,
+    signalsByKey: undefined,
+    costRoundTripPct: 0,
+    selectionCostPct: 0,
+    evalCostPct: 0,
+    selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
+  });
 }
 
 async function main(): Promise<void> {
@@ -324,8 +406,22 @@ async function main(): Promise<void> {
   const startedAt = Date.now();
 
   console.log('walk-forward 측정 · DB만 본다 (KIS 호출 0회) · 주문을 내지 않는다');
-  console.log(`데이터셋 ${options.dataset} · 절차 ${options.procedure} · 재는 단위 ${WALKFORWARD_UNIT}`);
-  console.log(`진입 basis nextOpen(익일 시가) · 왕복 비용 ${ROUND_TRIP_PCT}% (학습·검증 같은 값)`);
+  console.log(
+    `데이터셋 ${options.dataset} · 절차 ${options.procedure}`
+    + ` · 블록 A 단위 ${WALKFORWARD_BLOCK_A_UNIT}`,
+  );
+  console.log(
+    `진입 basis nextOpen(익일 시가) · 블록 A 비용 0(학습·판정 모두)`
+    + ` · 손익분기 비용 ${options.evalCosts.map((c) => `${c.toFixed(2)}%`).join('/')}`,
+  );
+
+  if (options.annotateLegacy) {
+    const updated = await annotateWalkforwardDependencyNote();
+    console.log(
+      `\n★ 옛 ${WALKFORWARD_RUN_UNIT} 줄 ${updated}개의 note에`
+      + ' "확장·이동 선택 15/15 동일 → 독립 검정 아님"을 덧붙였다 (줄 수는 안 늘었다).',
+    );
+  }
 
   // ── 후보 고르기 ────────────────────────────────────────────────────────
   const family1 = SIGNAL_CANDIDATES.filter((s) => s.dataRequirement === 'price');
@@ -376,6 +472,20 @@ async function main(): Promise<void> {
   );
   console.log(`기간 ${panel.days[0]} ~ ${panel.days[panel.days.length - 1]}`);
 
+  /*
+   * ★ **생존편향의 크기를 여기서 찍는다.** 결과 아래 각주로 두면 다 읽은 뒤에
+   * "그런데 이 표본은…"을 만나게 된다. `survivorshipExposed: true` 불리언만으로는
+   * 아무도 크기를 모른다.
+   */
+  console.log(`\n${'━'.repeat(78)}`);
+  console.log('★ 이 표본이 무엇인가 — 생존편향의 크기');
+  console.log('━'.repeat(78));
+  const survivorship = describeSurvivorship(
+    scanSurvivorship(panel, SURVIVORSHIP_CUTOFF),
+    KIND_DELISTING_GAP,
+  );
+  for (const line of survivorship) console.log(line);
+
   // ── 유니버스 ───────────────────────────────────────────────────────────
   const maskStartedAt = Date.now();
   const universe = buildUniverseMask(panel, {
@@ -384,9 +494,7 @@ async function main(): Promise<void> {
     eligibleSymbols: new Set(targets),
   });
   const { adjustment } = universe;
-  console.log(
-    `\n유니버스 · ${elapsed(maskStartedAt)} · 힙 ${heapMb()}MB`,
-  );
+  console.log(`\n유니버스 · ${elapsed(maskStartedAt)} · 힙 ${heapMb()}MB`);
   console.log(
     `  수정주가 파탄 ${adjustment.breaks.length}건 · 걸린 종목 ${adjustment.brokenSymbols}개`
     + ` → 그 앞 ${adjustment.droppedBars.toLocaleString('ko-KR')}봉`
@@ -410,7 +518,8 @@ async function main(): Promise<void> {
   console.log('\n계열 만들기 (셀당 한 번 훑는다)');
   const cellSeries = buildCells(panel, universe, usable, '실신호');
 
-  const spec: WalkForwardSpec = {
+  /** 블록 A 공통 부분. 비용 셋(`costRoundTripPct`·학습·판정)은 `runBlockA`가 0으로 박는다 */
+  const blockABase: Omit<BlockASpec, 'fixHorizon'> = {
     panel,
     cellSeries,
     universe,
@@ -418,8 +527,7 @@ async function main(): Promise<void> {
     rollingYears: 10,
     validationStarts: VALIDATION_STARTS,
     embargoDays: EMBARGO_DAYS,
-    selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: true },
-    costRoundTripPct: ROUND_TRIP_PCT,
+    selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
     buckets: BUCKETS,
     minNamesPerDay: UNIVERSE.minNamesPerDay,
     signalsByKey: new Map(usable.map((s) => [s.key, s])),
@@ -427,180 +535,343 @@ async function main(): Promise<void> {
     cashPerPosition: 1_000_000,
   };
 
-  const runStartedAt = Date.now();
-  const main = runWalkForward(spec);
-  console.log(`\n본 절차 (${main.procedure}) · ${elapsed(runStartedAt)}`);
+  // ── 블록 A ─────────────────────────────────────────────────────────────
+  console.log(`\n${'━'.repeat(78)}`);
+  console.log('블록 A — **정보가 있나** (비용 0 · 기권 없음 · 축 고정)');
+  console.log('━'.repeat(78));
+  const blockAStartedAt = Date.now();
+  const blockA = options.axes.map((horizon) => runBlockA({ ...blockABase, fixHorizon: horizon }));
+  console.log(`축 ${options.axes.length}개 · ${elapsed(blockAStartedAt)} · 힙 ${heapMb()}MB`);
 
-  // ── 창 ─────────────────────────────────────────────────────────────────
-  console.log(`\n창 ${main.windows.length}개 · embargo ${EMBARGO_DAYS}거래일 (전 축 고정)`);
-  console.log('  학습                     검증                     고른 것          진입');
-  for (const window of main.windows) {
-    const chosen = window.selected === 'cash'
-      ? '현금(학습이 음수)'
-      : `${window.selected.signalKey} ${window.selected.horizon}일`;
-    console.log(
-      `  ${window.trainFrom}~${window.trainTo}  ${window.validFrom}~${window.validTo}`
-      + `  ${chosen.padEnd(22)}${String(window.oosEntries).padStart(6)}`,
-    );
+  console.log(`\n창 ${blockA[0]?.windows.length ?? 0}개 · embargo ${EMBARGO_DAYS}거래일 (전 축 고정)`);
+  for (const result of blockA) {
+    console.log(`\n  축 ${result.fixHorizon}일 — 고른 것`);
+    console.log('    학습                     검증                     고른 것          진입');
+    for (const window of result.windows) {
+      const chosen = window.selected === 'cash'
+        ? '현금(고를 칸이 없다)'
+        : `${window.selected.signalKey} ${window.selected.horizon}일`;
+      console.log(
+        `    ${window.trainFrom}~${window.trainTo}  ${window.validFrom}~${window.validTo}`
+        + `  ${chosen.padEnd(22)}${String(window.oosEntries).padStart(6)}`,
+      );
+    }
   }
+
   if (options.showTraining) {
     console.log('\n★ 학습 순위 — **이것은 결론이 아니다.** 표본 안에서 제일 좋아 보인 것일 뿐이다.');
-    for (const window of main.windows) {
-      const top = window.ranked.slice(0, 5)
-        .map((r) => `${r.signalKey}${r.horizon} ${r.trainNetIR.toFixed(2)}`)
-        .join(' · ');
-      console.log(`  ${window.validFrom}  ${top}`);
+    for (const result of blockA) {
+      console.log(`  축 ${result.fixHorizon}일`);
+      for (const window of result.windows) {
+        const top = window.ranked.slice(0, 5)
+          .map((r) => `${r.signalKey}${r.horizon} ${r.trainNetIR.toFixed(2)}`)
+          .join(' · ');
+        console.log(`    ${window.validFrom}  ${top}`);
+      }
     }
   } else {
     console.log('\n(학습 순위는 안 찍는다 — 찍히면 결론으로 읽힌다. 보려면 --show-training)');
   }
 
-  // ── 판정 ───────────────────────────────────────────────────────────────
+  // ── 손익분기표와 판정문 ────────────────────────────────────────────────
+  const breakEven = buildBreakEvenTable(blockA, options.evalCosts);
+  const beatsSomething = anyAxisBeatsCost(breakEven);
+
+  const verdictLines: string[] = [];
+  for (const result of blockA) {
+    verdictLines.push('');
+    verdictLines.push(`── 축 ${result.fixHorizon}일 ${'─'.repeat(60)}`);
+    verdictLines.push(...describeVerdict(result));
+  }
+
+  /*
+   * ★ **비용을 넘는 축이 하나도 없으면 표를 먼저 찍는다.** t는 "정보가 있나"의
+   * 답이고 이 표가 "돈이 되나"의 답이다. 순서를 바꾸면 유의한 t를 먼저 읽고
+   * "그러니까 된다"로 넘어간다.
+   */
   console.log(`\n${'━'.repeat(78)}`);
-  console.log('표본 밖 결과');
-  console.log('━'.repeat(78));
-  for (const line of describeVerdict(main)) console.log(line);
+  if (!beatsSomething) {
+    for (const line of describeBreakEvenTable(breakEven)) console.log(line);
+    console.log('\n아래 t는 **"정보가 있나"의 답일 뿐이다.** 위 표가 이미 "돈은 안 된다"고 말했다.');
+    for (const line of verdictLines) console.log(line);
+  } else {
+    console.log('표본 밖 결과 (블록 A · 비용 0)');
+    for (const line of verdictLines) console.log(line);
+    console.log('');
+    for (const line of describeBreakEvenTable(breakEven)) console.log(line);
+  }
 
   // ── 반증 ───────────────────────────────────────────────────────────────
-  let anti: WalkForwardResult | null = null;
-  let mirror: WalkForwardResult | null = null;
+  const antiByAxis: WalkForwardResult[] = [];
+  const mirrorByAxis: WalkForwardResult[] = [];
+  const bottomLegByAxis: WalkForwardResult[] = [];
   const placeboTs: number[] = [];
 
   if (options.anti) {
-    anti = runAntiSelection(spec);
-    console.log('\n★ 안티셀렉션 — 학습 **최하위**를 고른다 (반증 전용, 검정 수에 안 센다)');
-    for (const line of describeVerdict(anti)) console.log(line);
-    console.log('  → 학습 순위에 정보가 있으면 이 값은 **크기가 비슷한 음수**여야 한다.');
+    console.log(`\n${'━'.repeat(78)}`);
+    console.log('★ 안티셀렉션 — 학습 **최하위**를 고른다 (반증 전용, 검정 수에 안 센다)');
+    console.log('  ★ 축 고정 + 비용 0에서 돈다. 비용을 넣으면 학습 순위가 아니라 비용 상수를 잰다.');
+    for (const horizon of options.axes) {
+      const result = runAntiSelection({
+        ...blockABase,
+        fixHorizon: horizon,
+        costRoundTripPct: 0,
+        selectionCostPct: 0,
+        evalCostPct: 0,
+        // 반증에는 쏠림을 안 잰다 — 점수판을 다시 세우는 값이고, 여기서 묻는 것이 아니다.
+        signalsByKey: undefined,
+        selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
+      });
+      antiByAxis.push(result);
+      console.log(`\n  ── 축 ${horizon}일`);
+      for (const line of describeVerdict(result)) console.log(`  ${line}`);
+    }
+    console.log('\n  → 학습 순위에 정보가 있으면 이 값은 **크기가 비슷한 음수**여야 한다.');
     console.log('    0 근처면 학습 순위가 표본 밖으로 아무것도 안 넘긴다는 뜻이다.');
+    console.log('    ★ 축 구성을 반드시 함께 읽어라 — 한 축에 몰려 있으면 그것은 그 축의 이야기다.');
   }
 
   if (options.mirror) {
-    mirror = runMirror(spec);
-    console.log('\n★ 거울 — 하위분위를 산다 (반증 전용, 검정 수에 안 센다)');
-    for (const line of describeVerdict(mirror)) console.log(line);
-    console.log('  → 진짜 우위면 부호가 갈린다. 둘이 같은 부호면 표본이 통째로 가진 성질이다.');
+    console.log(`\n${'━'.repeat(78)}`);
+    console.log('★ 거울 — **선택은 본절차와 같고 평가 다리만 뒤집는다** (반증 전용)');
+    for (const horizon of options.axes) {
+      const spec: WalkForwardSpec = {
+        ...blockABase,
+        fixHorizon: horizon,
+        costRoundTripPct: 0,
+        selectionCostPct: 0,
+        evalCostPct: 0,
+        signalsByKey: undefined,
+        selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
+      };
+      const mirror = runEvalLegMirror(spec);
+      mirrorByAxis.push(mirror);
+      console.log(`\n  ── 축 ${horizon}일 · 거울(평가 다리만 뒤집음)`);
+      for (const line of describeVerdict(mirror)) console.log(`  ${line}`);
+
+      const bottom = runBottomLegProcedure(spec);
+      bottomLegByAxis.push(bottom);
+      console.log(`  ── 축 ${horizon}일 · **하위분위 전략** (거울이 아니다 — 다른 칸을 고른다)`);
+      console.log(
+        `     고른 칸의 축 ${describeHorizonMix(bottom)}`
+        + ` · 신호 ${describeSelectedSignals(bottom)}`,
+      );
+      console.log(`     (본절차·거울이 고른 신호 ${describeSelectedSignals(mirror)})`);
+      console.log(
+        `     진입 ${bottom.oosEntryExcess.length.toLocaleString('ko-KR')}건`
+        + ` · 연 알파 ${pct(bottom.alphaAnnual)} · 판정 t ${signed(bottom.verdictT)}`,
+      );
+      const sameCell = mirror.windows.every((w, i) => {
+        const other = bottom.windows[i]?.selected;
+        if (w.selected === 'cash' || other === 'cash' || other === undefined) {
+          return w.selected === other;
+        }
+        return w.selected.signalKey === other.signalKey && w.selected.horizon === other.horizon;
+      });
+      console.log(
+        `     두 절차가 같은 칸을 골랐나: ${sameCell ? '그렇다' : '**아니다**'}`
+        + ' — 다르면 이것은 거울이 아니라 다른 전략이다.',
+      );
+    }
+    console.log('\n  → 거울은 부호가 갈려야 한다. 같은 부호면 표본이 통째로 가진 성질이다.');
+    console.log('    하위분위 전략은 **다른 질문의 답**이라 부호 비교에 쓰지 않는다.');
   }
 
-  if (options.placebo > 0) {
-    const familySize = usable.length;
-    const families = Math.floor(options.placebo / familySize);
+  if (options.placeboFamilies > 0) {
+    console.log(`\n${'━'.repeat(78)}`);
+    console.log('★ 위약 — 우위가 **없는 것이 확실한** 신호로 같은 절차를 돌린다 (반증 전용)');
     console.log(
-      `\n★ 위약 — 우위가 **없는 것이 확실한** 신호로 같은 절차를 돌린다 (반증 전용)`,
+      `  가족 ${options.placeboFamilies}개 × ${usable.length}종`
+      + ` · 축 ${options.placeboAxis === null ? '자유(칸이 고른다)' : `고정 ${options.placeboAxis}일`}`,
     );
-    if (families === 0) {
+    const placeboStartedAt = Date.now();
+    for (let f = 0; f < options.placeboFamilies; f += 1) {
+      const signals = makePlaceboSignals(f * usable.length + 1, (f + 1) * usable.length);
+      const cells = buildCells(panel, universe, signals, `위약 가족 ${f + 1}`, false);
+      const result = runPlacebo(blockABase, cells, options.placeboAxis);
+      placeboTs.push(result.verdictT);
       console.log(
-        `  위약 ${options.placebo}종은 한 가족(${familySize}종)에 못 미친다.`
-        + ' 실신호와 같은 크기로 맞춰야 견줄 수 있다 — 건너뛴다.',
+        `  가족 ${String(f + 1).padStart(2)} · 판정 t ${signed(result.verdictT)}`
+        + ` · 연 알파 ${pct(result.alphaAnnual)}`
+        + ` · 진입 ${result.oosEntryExcess.length.toLocaleString('ko-KR')}건`
+        + ` · 축 ${describeHorizonMix(result)}`,
       );
-    } else {
-      const used = families * familySize;
-      if (used < options.placebo) {
-        console.log(`  ${options.placebo}종 중 ${used}종만 쓴다 — 가족 크기(${familySize})의 배수로 맞춘다.`);
-      }
-      for (let f = 0; f < families; f += 1) {
-        const signals = makePlaceboSignals(f * familySize + 1, (f + 1) * familySize);
-        const cells = buildCells(panel, universe, signals, `위약 가족 ${f + 1}`);
-        const result = runWalkForward({ ...spec, cellSeries: cells, signalsByKey: undefined });
-        placeboTs.push(result.verdictT);
+    }
+    const summary = summarizePlacebo(placeboTs);
+    console.log(
+      `\n  → 위약 ${summary.families}가족 · |판정 t| 95분위 ${summary.absT95.toFixed(2)}`
+      + ` · 최대 ${summary.absTMax.toFixed(2)} · ${elapsed(placeboStartedAt)}`,
+    );
+    console.log('    실신호의 판정 t가 이보다 크지 않으면, 나온 값은 절차가 만든 것이다.');
+  } else {
+    console.log('\n(위약을 안 돌렸다 — 경험적 귀무분포가 없으면 블록 A 판정은 보류다)');
+  }
+
+  // ── 블록 B ─────────────────────────────────────────────────────────────
+  if (options.blockB) {
+    console.log(`\n${'━'.repeat(78)}`);
+    console.log('블록 B — **비용을 넘나** (기권 없음 · 비용을 학습·판정 양쪽에)');
+    console.log('  ★ 여기에 t를 안 찍는다. 이건 추정이지 검정이 아니다 — **원장에도 안 쓴다.**');
+    console.log('   비용    축    진입      현금창   왕복당 순우위       연 알파   고른 칸의 축');
+    for (const cost of options.evalCosts) {
+      for (const horizon of options.axes) {
+        const result = runWalkForward({
+          ...blockABase,
+          fixHorizon: horizon,
+          costRoundTripPct: cost,
+          signalsByKey: undefined,
+          selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
+        });
+        const perEntry = result.oosEntryExcess.length === 0 ? 0 : meanOf(result.oosEntryExcess);
         console.log(
-          `  가족 ${f + 1} (시드 ${f * familySize + 1}~${(f + 1) * familySize})`
-          + ` · 판정 t ${signed(result.verdictT)}`
-          + ` · 연 알파 ${pct(result.alphaAnnual)}`
-          + ` · 진입 ${result.oosEntryExcess.length.toLocaleString('ko-KR')}건`
-          + ` · 현금 창 ${result.cashWindows}/${result.windows.length}`,
+          `  ${cost.toFixed(2)}%`
+          + `${String(horizon).padStart(6)}일`
+          + `${result.oosEntryExcess.length.toLocaleString('ko-KR').padStart(9)}`
+          + `${`${result.cashWindows}/${result.windows.length}`.padStart(9)}`
+          + `${pct(perEntry).padStart(16)}`
+          + `${pct(result.alphaAnnual, 2).padStart(14)}`
+          + `   ${describeHorizonMix(result)}`,
         );
       }
-      const worst = placeboTs.reduce((a, t) => (Math.abs(t) > Math.abs(a) ? t : a), 0);
-      console.log(`  → 위약이 낸 가장 큰 |판정 t| ${Math.abs(worst).toFixed(2)}`);
-      console.log('    실신호의 판정 t가 이보다 크지 않으면, 나온 값은 절차가 만든 것이다.');
     }
   }
 
+  // ── 기권 채점 ──────────────────────────────────────────────────────────
+  let abstainScored: WalkForwardResult | null = null;
+  if (options.abstainScore) {
+    console.log(`\n${'━'.repeat(78)}`);
+    console.log(
+      `★ 기권 채점 — 기권을 켠 절차(축 자유 · 비용 ${options.abstainCost.toFixed(2)}%)를 돌리고`
+      + ' **쉰 창의 반사실**까지 잰다',
+    );
+    abstainScored = runWalkForward({
+      ...blockABase,
+      fixHorizon: undefined,
+      costRoundTripPct: options.abstainCost,
+      collectAbstained: true,
+      signalsByKey: undefined,
+      selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: true },
+    });
+    for (const line of describeAbstainSkill(abstainScored)) console.log(line);
+  }
+
   // ── 원장 ───────────────────────────────────────────────────────────────
-  const priorRuns = await cumulativeCellCount(options.dataset, WALKFORWARD_UNIT);
-  const threshold = bonferroniThreshold(priorRuns + 1);
+  /*
+   * ★ **반증 요구는 세지 않는다 — 떨어뜨릴 수만 있다.**
+   *
+   * 거울(`runEvalLegMirror`)·안티셀렉션(`runAntiSelection`)·위약·하위분위 전략은
+   * 후보를 **떨어뜨릴 수만 있고** 무언가를 찾아낼 수 없다. 다중검정 부담은
+   * "우연히 좋아 보일 기회를 몇 번 줬나"인데 반증은 그 기회를 주지 않는다.
+   * 그래서 `runCellCount`에 **0으로 들어간다.** 값만 줄에 남긴다.
+   *
+   * ★ **블록 B도 안 쓴다.** 비용을 넣고 다시 고른 것은 추정이지 검정이 아니다.
+   */
+  const cellsThisRun = options.axes.length;
+  const priorCells = await cumulativeMeasuredCells(options.dataset, WALKFORWARD_BLOCK_A_UNIT);
+  const threshold = bonferroniThreshold(priorCells + cellsThisRun);
   const legacyCells = await cumulativeCellCount();
+  const legacyRuns = await cumulativeCellCount(options.dataset, WALKFORWARD_RUN_UNIT);
   console.log(`\n${'━'.repeat(78)}`);
   console.log(
-    `이 데이터셋·단위로 지금까지 ${priorRuns}번 쟀다 → 이번을 더해 ${priorRuns + 1}번`
+    `이 데이터셋·단위(${WALKFORWARD_BLOCK_A_UNIT})로 지금까지 ${priorCells}칸`
+    + ` → 이번 ${cellsThisRun}칸(축 고정)을 더해 ${priorCells + cellsThisRun}칸`
     + ` · 본페로니 문턱 |t| > ${threshold.toFixed(2)}`,
   );
   console.log(
-    `(옛 데이터셋 ${HARNESS_CELL_UNIT} 누적 ${legacyCells}칸은 여기 분모에 넣지 않는다 —`
-    + ' 데이터도 단위도 진입 basis도 다르다)',
+    `(같은 데이터셋의 옛 단위 ${WALKFORWARD_RUN_UNIT} ${legacyRuns}줄과`
+    + ` 옛 데이터셋 ${HARNESS_CELL_UNIT} 누적 ${legacyCells}칸은 여기 분모에 넣지 않는다 —`
+    + ' 재는 단위가 다르다. 그 2줄은 확장·이동이 15/15창 같은 칸을 골라 독립 검정도 아니었다)',
   );
-  const passes = Math.abs(main.verdictT) > threshold && main.alphaAnnual > 0;
-  console.log(
-    `\n판정: ${passes ? '★ 문턱을 넘었다' : '넘지 못했다'}`
-    + ` (판정 t ${signed(main.verdictT)} vs 문턱 ${threshold.toFixed(2)})`,
-  );
-  if (!passes) {
-    console.log('→ 이 절차가 이 21년에서 비용을 넘는 우위를 못 찾았다. 그것도 답이다.');
+
+  const placeboBar = placeboTs.length > 0 ? summarizePlacebo(placeboTs).absT95 : undefined;
+  console.log('\n판정 (블록 A · 축마다 하나씩)');
+  const passesByAxis = blockA.map((result) => {
+    const overBonferroni = Math.abs(result.verdictT) > threshold;
+    const overPlacebo = placeboBar === undefined ? false : Math.abs(result.verdictT) > placeboBar;
+    const positive = result.alphaAnnual > 0;
+    const passes = overBonferroni && overPlacebo && positive;
+    console.log(
+      `  축 ${String(result.fixHorizon).padStart(2)}일`
+      + ` · 판정 t ${signed(result.verdictT)}`
+      + ` · 본페로니 ${threshold.toFixed(2)} ${overBonferroni ? '넘음' : '못 넘음'}`
+      + ` · 위약 95분위 ${placeboBar === undefined ? '—(안 돌렸다 → 보류)' : `${placeboBar.toFixed(2)} ${overPlacebo ? '넘음' : '못 넘음'}`}`
+      + ` · 연 알파 ${pct(result.alphaAnnual)}`
+      + `  →  ${passes ? '★ 넘었다' : '넘지 못했다'}`,
+    );
+    return passes;
+  });
+  if (!passesByAxis.some(Boolean)) {
+    console.log('→ 이 절차가 이 21년에서 **비용 전에도** 문턱을 넘는 정보를 못 찾았다. 그것도 답이다.');
   } else {
-    console.log('★ 넘었다고 확정이 아니다. 반증 셋(안티셀렉션·거울·위약)을 함께 읽어라.');
-    console.log('  그리고 표본은 **오늘 살아 있는 종목만**이다 — 생존편향이 남아 있다.');
+    console.log('★ 넘었다고 확정이 아니다. 반증 셋과 손익분기표를 함께 읽어라.');
+    console.log('  비용을 넘는지는 **위 손익분기표**가 답한다 — 판정 t는 그 질문에 답하지 않는다.');
   }
+  console.log('★ 그리고 표본은 **오늘 살아 있는 종목만**이다 — 맨 위 생존편향 크기를 다시 봐라.');
 
   if (options.dryRun) {
     console.log('\n--dry-run이라 원장에 안 남긴다.');
   } else {
-    const oosYears = (VALIDATION_STARTS.length * 252) / 252;
-    await recordSignalMeasurements([
-      {
-        measuredAt: Date.now(),
-        signalKey: `walkforward:${options.procedure}`,
-        rationale:
-          '후보 7종(가설 고정 2026-08-12)을 학습 구간에서 순위 매겨 1위 하나만 검증 구간에 태운다.'
-          + ' 찾는 곳과 재는 곳을 시간으로 가르면, 표본 안에서 좋아 보이는 것이 표본 밖으로'
-          + ' 넘어가는지를 절차 자체로 물을 수 있다.',
-        horizonDays: 0,
-        periodKey: `walkforward:${options.procedure}`,
-        periodFrom: panel.days[0],
-        periodTo: panel.days[panel.days.length - 1],
-        universe:
-          `krx-stock-nonpreferred-${panel.symbols.length}`
-          + `/bars>=120/active55of60/turnover>=1e8&top80%/scoregate${usable.length}/names>=200`,
-        symbolsCount: panel.symbols.length,
-        daysCount: main.oosEntryExcess.length,
-        samples: main.oosEntryExcess.length,
-        spreadMean: meanOf(main.oosEntryExcess),
-        spreadMedian: meanOf(main.oosDaily),
-        tStat: main.tNaive,
-        alpha: main.alphaAnnual,
-        alphaT: main.verdictT,
-        beta: main.marketBeta,
-        runCellCount: 1,
-        bonferroniT: threshold,
-        survived: passes,
-        note:
-          `창 ${main.windows.length} · 현금 창 ${main.cashWindows} · 축 ${HORIZONS.join('/')}`
-          + ` · 후보 ${usable.length}종 · 계열 ${cellSeries.length}칸`
-          + ` · 유니버스 날 ${universe.usableDays}`
-          + ` · 수정주가 파탄으로 버린 봉 ${adjustment.droppedBars}`,
-        verdictBasis: 'walkforward-oos',
-        datasetKey: options.dataset,
-        testUnit: WALKFORWARD_UNIT,
-        entryBasis: 'nextOpen',
-        costRoundTrip: ROUND_TRIP_PCT,
-        oosYears,
-        tNeweyWest: main.tNeweyWest,
-        tBlockBoot: main.tBlockBootstrap,
-        tNonOverlap: main.tNonOverlap,
-        verdictT: main.verdictT,
-        selectionTurnover: main.selectionTurnover,
-        half1Sign: main.halfSigns[0],
-        half2Sign: main.halfSigns[1],
-        antiT: anti?.verdictT,
-        mirrorT: mirror?.verdictT,
-        placeboMaxT: placeboTs.length > 0
-          ? placeboTs.reduce((a, t) => Math.max(a, Math.abs(t)), 0)
-          : undefined,
-        survivorshipExposed: true,
-        truncatedExits: main.truncatedExits,
-      },
-    ]);
-    console.log('\n원장에 1줄 남겼다 — 이 데이터셋·단위의 다음 실행은 문턱이 그만큼 오른다.');
-    console.log('★ 반증(안티셀렉션·거울·위약)은 값으로만 남고 검정 수에는 안 센다.');
+    const oosYears = VALIDATION_STARTS.length;
+    await recordSignalMeasurements(blockA.map((result, index) => ({
+      measuredAt: Date.now(),
+      signalKey: `walkforward-blockA:${options.procedure}:h${result.fixHorizon}`,
+      rationale:
+        '축을 고정하고 비용 0으로 "학습 순위가 표본 밖으로 무언가를 넘기나"만 묻는다.'
+        + ' 비용을 넣은 채 축을 자유롭게 두면 netIR의 √(252/h)가 h와 무관한 비용 상수에'
+        + ' 곱해져 짧은 축을 못 박고, 기권을 켜면 표본의 절반이 비어 버린다.'
+        + ' 돈이 되는지는 이 줄이 아니라 손익분기표가 답한다.',
+      horizonDays: result.fixHorizon ?? 0,
+      periodKey: `walkforward-blockA:${options.procedure}:h${result.fixHorizon}`,
+      periodFrom: panel.days[0],
+      periodTo: panel.days[panel.days.length - 1],
+      universe:
+        `krx-stock-nonpreferred-${panel.symbols.length}`
+        + `/bars>=120/active55of60/turnover>=1e8&top80%/scoregate${usable.length}/names>=200`,
+      symbolsCount: panel.symbols.length,
+      daysCount: result.oosEntryExcess.length,
+      samples: result.oosEntryExcess.length,
+      spreadMean: result.oosEntryExcess.length === 0 ? 0 : meanOf(result.oosEntryExcess),
+      spreadMedian: result.oosDaily.length === 0 ? 0 : meanOf(result.oosDaily),
+      tStat: result.tNaive,
+      alpha: result.alphaAnnual,
+      alphaT: result.verdictT,
+      beta: result.marketBeta,
+      // ★ 축 하나가 한 칸이다. 반증(안티·거울·위약)은 여기 안 들어간다.
+      runCellCount: 1,
+      bonferroniT: threshold,
+      survived: passesByAxis[index],
+      note:
+        `블록A · 축 고정 ${result.fixHorizon}일 · 비용 0(학습·판정) · 기권 없음`
+        + ` · 창 ${result.windows.length} · 현금 창 ${result.cashWindows}`
+        + ` · 고른 칸 ${describeHorizonMix(result)}`
+        + ` · 후보 ${usable.length}종 · 계열 ${cellSeries.length}칸`
+        + ` · 유니버스 날 ${universe.usableDays}`
+        + ` · 위약 ${placeboTs.length}가족`
+        + (placeboBar === undefined ? '(안 돌림)' : ` |t|95% ${placeboBar.toFixed(2)}`),
+      verdictBasis: 'walkforward-blockA',
+      datasetKey: options.dataset,
+      testUnit: WALKFORWARD_BLOCK_A_UNIT,
+      entryBasis: 'nextOpen',
+      costRoundTrip: 0,
+      oosYears,
+      tNeweyWest: result.tNeweyWest,
+      tBlockBoot: result.tBlockBootstrap,
+      tNonOverlap: result.tNonOverlap,
+      verdictT: result.verdictT,
+      selectionTurnover: result.selectionTurnover,
+      half1Sign: result.halfSigns[0],
+      half2Sign: result.halfSigns[1],
+      antiT: antiByAxis[index]?.verdictT,
+      mirrorT: mirrorByAxis[index]?.verdictT,
+      placeboMaxT: placeboTs.length > 0
+        ? placeboTs.reduce((a, t) => Math.max(a, Math.abs(t)), 0)
+        : undefined,
+      survivorshipExposed: true,
+      truncatedExits: result.truncatedExits,
+      abstainSkillT: abstainScored?.abstainSkillT,
+    })));
+    console.log(`\n원장에 ${blockA.length}줄(축 ${blockA.length}칸) 남겼다 — 다음 실행은 문턱이 그만큼 오른다.`);
+    console.log('★ 반증(안티셀렉션·거울·위약)과 블록 B는 값으로만 남고 검정 수에는 안 센다.');
   }
 
   console.log(`\n전체 ${elapsed(startedAt)} · 최대 힙 ${heapMb()}MB`);

@@ -32,8 +32,9 @@
  *
  * ── ★ 반증 요구는 세지 않는다 (2026-08-12) ───────────────────────────────
  *
- * **거울(`runMirror`) · 위약(`makePlaceboSignals`) · 안티셀렉션(`runAntiSelection`) ·
- * 부호일치(`halfSigns`)는 검정 수에 들어가지 않는다.** 그것들은 후보를
+ * **거울(`runEvalLegMirror`) · 위약(`makePlaceboSignals`) ·
+ * 안티셀렉션(`runAntiSelection`) · 부호일치(`halfSigns`)는 검정 수에 들어가지
+ * 않는다.** 그것들은 후보를
  * **떨어뜨릴 수만 있고** 무언가를 "찾아낼" 수는 없기 때문이다. 다중검정 부담은
  * "우연히 좋아 보일 기회를 몇 번 줬나"인데, 반증은 그 기회를 주지 않는다.
  *
@@ -122,13 +123,17 @@ export interface SignalMeasurement {
   /**
    * **무엇 하나를 한 검정으로 세나.**
    *
-   *   `harness-cell`      신호 × 축 한 칸
-   *   `walkforward-run`   walk-forward 절차 한 번 (창 15개가 한 검정이다)
+   *   `harness-cell`        신호 × 축 한 칸
+   *   `walkforward-run`     walk-forward 절차 한 번 (창 15개가 한 검정이다)
+   *   `walkforward-blockA`  **축 하나가 한 검정** (한 실행에 5칸이 나간다)
    */
   testUnit?: string;
   /** 무엇으로 사고팔았나. `nextOpen`(익일 시가) / `sameClose`(옛 기준, 실행 불가) */
   entryBasis?: string;
-  /** 그 실행에 쓴 왕복 비용(%). 학습·검증에 같은 값이어야 한다 */
+  /**
+   * 그 실행에 쓴 왕복 비용(%). 학습·검증에 같은 값이어야 한다.
+   * ★ 블록 A는 **0**이다 — 비용을 넘는지는 손익분기표가 답하지 이 줄이 답하지 않는다.
+   */
   costRoundTrip?: number;
   /** 표본 밖 구간의 길이(년) */
   oosYears?: number;
@@ -136,7 +141,13 @@ export interface SignalMeasurement {
   tNeweyWest?: number;
   tBlockBoot?: number;
   tNonOverlap?: number;
-  /** ★ 넷 중 |t| 최소. **판정은 이것으로 한다** */
+  /**
+   * ★ **여섯 중 |t| 최소. 판정은 이것으로 한다.**
+   *
+   * 2026-08-12까지는 넷(순진·NW·블록부트·비겹침)이었다. 달·해 군집이 2026-08-13에
+   * 붙었고, 실측 h=1·비용 0에서 순진 10.09 · 해군집 **5.60**이었다 — 넷만 쓰면
+   * 판정 t가 1.8배 부푼다. 옛 줄의 이 값은 넷 기준이라 **섞어 읽으면 안 된다.**
+   */
   verdictT?: number;
   /** 창이 바뀔 때 고른 칸이 얼마나 자주 바뀌었나(0~1) */
   selectionTurnover?: number;
@@ -151,6 +162,14 @@ export interface SignalMeasurement {
   survivorshipExposed?: boolean;
   /** 청산봉이 없어 마지막 봉으로 나간 건수 */
   truncatedExits?: number;
+  /**
+   * ★ **기권을 채점한 t (2026-08-13 추가).**
+   *
+   * 기권한 창은 관측을 안 만들어서 원장에 흔적이 없다. 반사실(골랐더라면)과 견준
+   * t를 남겨야 "쉬어서 좋았다"가 실력인지 우연인지 나중에 되짚을 수 있다.
+   * 실측 첫 값은 0.12였다 — 3,093건을 버려 +0.58%p를 피했지만 우연과 구별되지 않았다.
+   */
+  abstainSkillT?: number;
 }
 
 /**
@@ -164,6 +183,26 @@ export const LEGACY_DATASET_KEY = 'kis-flow-2025h2-2026h1';
 
 /** 옛 줄이 실제로 쓰던 재는 단위. 신호 × 축 한 칸이 한 검정이었다. */
 export const HARNESS_CELL_UNIT = 'harness-cell';
+
+/**
+ * walk-forward 절차 한 번(창 15개)이 한 검정이던 단위.
+ *
+ * ★ 이 단위의 줄 2개(확장·이동)는 **독립 검정이 아니었다** — 두 절차가 15/15창
+ * 같은 칸을 골랐다. 같은 계산을 두 번 돌린 것이라 "두 절차가 같은 답"은 확증이
+ * 아니다. `annotateWalkforwardDependencyNote()`가 그 사실을 줄에 적는다.
+ */
+export const WALKFORWARD_RUN_UNIT = 'walkforward-run';
+
+/**
+ * ★ **블록 A 단위 (2026-08-13).** 축을 고정하고 비용 0으로 "정보가 있나"만 묻는다.
+ *
+ * `walkforward-run`과 갈라 두는 이유는 **재는 단위가 실제로 달라져서**다 —
+ * 저쪽은 절차 한 번이 한 검정이고(축은 절차가 골랐다), 이쪽은 **축 하나가 한
+ * 검정**이라 한 실행에 5칸이 나간다. 데이터는 같으므로 `dataset_key`는 그대로다.
+ *
+ * ★ 키를 새로 만들면 문턱이 그만큼 리셋된다. 이 키는 이 이유로만 만들었다.
+ */
+export const WALKFORWARD_BLOCK_A_UNIT = 'walkforward-blockA';
 
 export async function ensureSignalMeasurementSchema(): Promise<void> {
   await pool.query(`
@@ -223,7 +262,8 @@ export async function ensureSignalMeasurementSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS mirror_t           DOUBLE PRECISION,
       ADD COLUMN IF NOT EXISTS placebo_max_t      DOUBLE PRECISION,
       ADD COLUMN IF NOT EXISTS survivorship_exposed BOOLEAN,
-      ADD COLUMN IF NOT EXISTS truncated_exits    INTEGER
+      ADD COLUMN IF NOT EXISTS truncated_exits    INTEGER,
+      ADD COLUMN IF NOT EXISTS abstain_skill_t    DOUBLE PRECISION
   `);
   /*
    * ★ **옛 줄에 데이터셋·단위·진입 basis를 적어 넣는다.**
@@ -269,10 +309,10 @@ export async function recordSignalMeasurements(rows: SignalMeasurement[]): Promi
           dataset_key, test_unit, entry_basis, cost_round_trip, oos_years,
           t_newey_west, t_block_boot, t_non_overlap, verdict_t, selection_turnover,
           half1_sign, half2_sign, anti_t, mirror_t, placebo_max_t,
-          survivorship_exposed, truncated_exits)
+          survivorship_exposed, truncated_exits, abstain_skill_t)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
                $22,$23,$24,$25,$26,$27,$28,$29,
-               $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46)`,
+               $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47)`,
       [
         r.measuredAt, r.signalKey, r.rationale, r.horizonDays, r.periodKey, r.periodFrom,
         r.periodTo, r.universe, r.symbolsCount, r.daysCount, r.samples, r.spreadMean,
@@ -287,7 +327,7 @@ export async function recordSignalMeasurements(rows: SignalMeasurement[]): Promi
         r.verdictT ?? null, r.selectionTurnover ?? null,
         r.half1Sign ?? null, r.half2Sign ?? null,
         r.antiT ?? null, r.mirrorT ?? null, r.placeboMaxT ?? null,
-        r.survivorshipExposed ?? null, r.truncatedExits ?? null,
+        r.survivorshipExposed ?? null, r.truncatedExits ?? null, r.abstainSkillT ?? null,
       ],
     );
   }
@@ -444,5 +484,55 @@ export async function findMeasurements(filter: {
     survivorshipExposed:
       row.survivorship_exposed === null ? undefined : Boolean(row.survivorship_exposed),
     truncatedExits: row.truncated_exits === null ? undefined : Number(row.truncated_exits),
+    abstainSkillT: row.abstain_skill_t === null ? undefined : Number(row.abstain_skill_t),
   }));
+}
+
+/**
+ * **지금까지 이 데이터셋·단위로 몇 칸을 쟀나.** `run_cell_count`의 합이다.
+ *
+ * ★ `cumulativeCellCount`는 **줄 수**를 센다. 한 줄이 한 칸이던 단위
+ * (`harness-cell`·`walkforward-run`)에서는 둘이 같지만, 블록 A는 한 실행이
+ * **축 5칸**이라 줄 수로 세면 문턱이 1/5로 낮아진다. 본페로니의 분모는 "우연히
+ * 좋아 보일 기회를 몇 번 줬나"이므로 칸으로 세야 한다.
+ */
+export async function cumulativeMeasuredCells(
+  datasetKey: string,
+  testUnit: string,
+): Promise<number> {
+  await ensureSignalMeasurementSchema();
+  const { rows } = await pool.query<{ n: string }>(
+    `SELECT COALESCE(SUM(run_cell_count), 0)::text AS n FROM trading_signal_measurements
+      WHERE dataset_key = $1 AND test_unit = $2`,
+    [datasetKey, testUnit],
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * ★ **옛 walk-forward 판정 줄 2개에 "독립 검정이 아니다"를 적는다.**
+ *
+ * 확장(`expanding`)과 이동(`rolling`)을 따로 돌려 "두 절차가 같은 답을 냈다"로
+ * 읽고 있었는데, 두 절차가 **15/15창 같은 칸**을 골랐다. 같은 계산을 두 번 돌린
+ * 것이라 확증이 아니다. 줄은 **지우지 않고 그대로 둔다** — 그때 그렇게 쟀다는 것도
+ * 기록이다. 사실 하나를 `note`에 덧붙일 뿐이다.
+ *
+ * ★ **줄 수를 늘리지 않는다.** 본페로니 분모는 그대로다.
+ *
+ * 여러 번 불러도 안전하다(이미 적힌 줄은 건드리지 않는다). 부른 쪽이 명시적으로
+ * 원할 때만 돌아야 하므로 스키마 보장 경로에는 넣지 않았다 — 원장 쓰기는
+ * 언제나 사람이 시켜서 일어난다.
+ */
+export const WALKFORWARD_DEPENDENCE_NOTE =
+  '확장·이동 선택 15/15 동일 → 독립 검정 아님';
+
+export async function annotateWalkforwardDependencyNote(): Promise<number> {
+  await ensureSignalMeasurementSchema();
+  const { rowCount } = await pool.query(
+    `UPDATE trading_signal_measurements
+        SET note = note || ' · ' || $1
+      WHERE test_unit = $2 AND position($1 in note) = 0`,
+    [WALKFORWARD_DEPENDENCE_NOTE, WALKFORWARD_RUN_UNIT],
+  );
+  return rowCount ?? 0;
 }
