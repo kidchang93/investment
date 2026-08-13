@@ -82,7 +82,11 @@ function limitCaseSql(column: string): string {
 
 async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
-  let fatal = 0;
+  /*
+   * 멈추는 사유를 **한 줄씩 담는다.** 개수만 세면 끝에서 "무엇 때문에 멈췄는지"를
+   * 다시 위로 올라가 찾아야 한다 — 검사가 둘 이상 걸리면 특히 그렇다.
+   */
+  const fatals: string[] = [];
 
   const summary = await pool.query<{
     symbols: string; bars: string; oldest: string | null; newest: string | null;
@@ -157,7 +161,7 @@ async function main(): Promise<void> {
   if (vintages.rowCount === 0) {
     console.log('없다 — 한 종목은 한 세션에서 통째로 받혔다.');
   } else {
-    fatal += 1;
+    fatals.push(`vintage가 섞인 종목 ${number(vintages.rowCount ?? 0)}개 — 그 종목을 통째로 다시 받아야 한다`);
     console.log(`★ ${number(vintages.rowCount ?? 0)}종목이 섞였다. **여기서 멈춘다.**`);
     for (const row of vintages.rows.slice(0, 40)) console.log(`  ${row.symbol}  ${row.vintages}`);
     console.log('  → 값으로는 알아볼 수 없는 종류의 오류다. 그 종목을 다시 받아야 한다.');
@@ -332,14 +336,169 @@ async function main(): Promise<void> {
   const short = buckets.rows.find((r) => r.bucket.startsWith('1)'));
   console.log(`\n  → 120봉 미만 ${number(Number(short?.symbols ?? 0))}종목은 유니버스에서 자동으로 빠진다.`);
 
+  // ── 9. 상장폐지 표본 ─────────────────────────────────────────────────────
+  heading(9, '상장폐지 표본 — 생존편향의 분모');
+  console.log('★ 계열이 끝난 종목이 0이면 이 저장소는 **살아남은 것만 모아 놓은 것**이다.');
+  console.log('  되돌아오지 못한 종목만 골라 지운 표본에서 반전을 재면 우위가 지어진다.');
+
+  const delistingTable = await pool.query<{ present: boolean }>(
+    `SELECT to_regclass('public.instrument_delistings') IS NOT NULL AS present`,
+  );
+  const hasDelistingTable = delistingTable.rows[0]?.present ?? false;
+
+  if (!hasDelistingTable) {
+    fatals.push('폐지 기록 표가 없다 — collectDelistings.ts를 한 번도 안 돌렸다');
+    console.log('\n★ 폐지 기록 표(instrument_delistings)가 없다. 목록을 아직 한 번도 안 받았다.');
+    console.log('  → npx tsx src/scripts/collectDelistings.ts');
+  } else {
+    const delistings = await pool.query<{ records: string; symbols: string; oldest: string; newest: string }>(
+      `SELECT count(*)::text AS records, count(DISTINCT symbol)::text AS symbols,
+              min(delisted_on) AS oldest, max(delisted_on) AS newest
+       FROM instrument_delistings`,
+    );
+    const list = delistings.rows[0];
+    console.log(
+      `\n폐지 목록: ${number(Number(list.records))}건 · 코드 ${number(Number(list.symbols))}개`
+      + ` · ${day(list.oldest)} ~ ${day(list.newest)}`,
+    );
+    if (Number(list.records) === 0) {
+      fatals.push('폐지 기록이 0건이다 — 목록을 받아야 한다');
+      console.log('★ 목록이 비어 있다. → npx tsx src/scripts/collectDelistings.ts');
+    }
+
+    const covered = await pool.query<{ withBars: string; targets: string }>(
+      `SELECT count(*) FILTER (WHERE b.symbol IS NOT NULL)::text AS "withBars",
+              count(*)::text                                     AS targets
+       FROM (
+         SELECT DISTINCT d.symbol
+         FROM instrument_delistings d
+         JOIN instruments i ON i.symbol = d.symbol AND i.country = 'KR'
+         WHERE i.is_active = false AND i.market <> 'KONEX' AND i.asset_type IN ('stock', 'etf')
+       ) t
+       LEFT JOIN (SELECT DISTINCT symbol FROM trading_daily_bars) b ON b.symbol = t.symbol`,
+    );
+    const withBars = Number(covered.rows[0]?.withBars ?? 0);
+    const targets = Number(covered.rows[0]?.targets ?? 0);
+    console.log(
+      `폐지 종목(비활성·KONEX 제외·주식/ETF) ${number(targets)}개 중 봉이 들어온 것 ${number(withBars)}개`
+      + ` (${targets > 0 ? pct(withBars / targets) : '-'})`,
+    );
+    if (withBars < targets) {
+      console.log('  → 남은 것: npx tsx src/scripts/collectDelistedBars.ts (중간에 죽어도 이어받는다)');
+    }
+  }
+
+  /*
+   * 계열이 끝난 종목을 센다. **폐지 기록과 무관하게 봉만 보는 잣대**라, 목록을
+   * 못 받았어도 이 숫자는 나온다. 기준은 저장소의 마지막 해 **직전 해 1월 1일**이다 —
+   * 최근에 끝난 것은 거래정지일 수도 있어 가리지 못한다.
+   */
+  const endedCutoff = store.newest ? `${Number(store.newest.slice(0, 4)) - 1}0101` : null;
+  if (!endedCutoff) {
+    console.log('\n봉이 한 건도 없어 계열 종료를 셀 수 없다.');
+  } else {
+    const ended = await pool.query<{ symbols: string }>(
+      `SELECT count(*)::text AS symbols FROM (
+         SELECT symbol FROM trading_daily_bars GROUP BY symbol HAVING max(trading_day) < $1
+       ) t`,
+      [endedCutoff],
+    );
+    const endedSymbols = Number(ended.rows[0]?.symbols ?? 0);
+    console.log(`\n마지막 봉이 ${day(endedCutoff)}보다 이른 종목 ${number(endedSymbols)}개 — 계열이 끝난 표본`);
+
+    const byYear = await pool.query<{ y: string; symbols: string }>(
+      `WITH last_bar AS (SELECT symbol, max(trading_day) AS last_day FROM trading_daily_bars GROUP BY symbol)
+       SELECT substring(last_day, 1, 4) AS y, count(*)::text AS symbols
+       FROM last_bar WHERE last_day < $1 GROUP BY 1 ORDER BY 1`,
+      [endedCutoff],
+    );
+    if (byYear.rowCount === 0) {
+      console.log('  없다.');
+    } else {
+      console.log('  연도   계열이 끝난 종목');
+      for (const row of byYear.rows) {
+        console.log(`  ${row.y}  ${number(Number(row.symbols)).padStart(10)}`);
+      }
+    }
+
+    if (endedSymbols === 0) {
+      fatals.push('계열이 끝난 종목이 0개다 — 상장폐지가 표본에 하나도 없다(생존편향)');
+      console.log('\n★ 0개다. **이 저장소로 잰 값은 전부 생존편향 위에 있다.**');
+      console.log('  → npx tsx src/scripts/collectDelistings.ts && npx tsx src/scripts/collectDelistedBars.ts');
+    } else {
+      /*
+       * ★ 받아 두는 것과 **재는 데 쓰이는 것**은 다르다. 정리매매에는 가격제한폭이
+       * 없어서(117930은 거래정지 780원 뒤 첫날 310원, -60%) 폐지 직전 구간이
+       * `scanAdjustmentBreaks`에 파탄으로 잡힌다. 그 함수는 마지막 파탄 **이전을
+       * 통째로 버리므로**, 폐지 종목이 표본에 들어와도 그 이력이 함께 사라진다.
+       */
+      const swallowed = await pool.query<{ symbols: string; dropped: string; bars: string }>(
+        `WITH ended AS (
+           SELECT symbol, count(*) AS bars
+           FROM trading_daily_bars GROUP BY symbol HAVING max(trading_day) < $1
+         ),
+         numbered AS (
+           SELECT b.symbol, b.trading_day, b.close,
+                  row_number() OVER (PARTITION BY b.symbol ORDER BY b.trading_day) AS i,
+                  lag(b.close) OVER (PARTITION BY b.symbol ORDER BY b.trading_day) AS prev_close
+           FROM trading_daily_bars b JOIN ended e ON e.symbol = b.symbol
+         ),
+         broken AS (
+           SELECT symbol, max(i) AS last_break
+           FROM numbered
+           WHERE prev_close > 0 AND close > 0
+             AND abs(close / prev_close - 1) > ${limitCaseSql('trading_day')}
+           GROUP BY symbol
+         )
+         SELECT count(*)::text AS symbols, coalesce(sum(broken.last_break), 0)::text AS dropped,
+                coalesce(sum(ended.bars), 0)::text AS bars
+         FROM broken JOIN ended ON ended.symbol = broken.symbol`,
+        [endedCutoff],
+      );
+      const row = swallowed.rows[0];
+      const brokenSymbols = Number(row?.symbols ?? 0);
+      console.log(
+        `\n★ 그중 가격제한폭 파탄이 있는 종목 ${number(brokenSymbols)}개`
+        + ` · 그 앞을 버리면 ${number(Number(row?.dropped ?? 0))}봉이 빠진다`
+        + ` (그 종목들의 봉 ${number(Number(row?.bars ?? 0))} 중)`,
+      );
+      console.log('  정리매매에는 가격제한폭이 없다 — 117930은 거래정지 780원 뒤 첫날 310원(-60%)이었다.');
+      console.log('  `scanAdjustmentBreaks`는 마지막 파탄 이전을 통째로 버리므로, 폐지 종목을 받아 놔도');
+      console.log('  **그 이력이 측정에서 함께 사라진다.** 받는 것과 쓰는 것은 다른 문제다.');
+
+      /*
+       * 두 번째 문. `measureWalkForward.loadEligibleSymbols`가 `is_active = true`로
+       * 거르므로, 저장소에 봉이 있어도 **패널에 들어가지 못하는 종목**이 있다.
+       * 여기서 고치지 않는다(이 스크립트는 아무것도 고치지 않는다) — 몇 개인지만 센다.
+       */
+      const blocked = await pool.query<{ blocked: string }>(
+        `SELECT count(*)::text AS blocked FROM (
+           SELECT symbol FROM trading_daily_bars GROUP BY symbol HAVING max(trading_day) < $1
+         ) ended
+         LEFT JOIN instruments i
+           ON i.symbol = ended.symbol AND i.country = 'KR' AND i.is_active = true
+          AND i.asset_type = 'stock' AND i.market IN ('KOSPI', 'KOSDAQ')
+         WHERE i.symbol IS NULL`,
+        [endedCutoff],
+      );
+      console.log(
+        `\n★ 그리고 계열이 끝난 ${number(endedSymbols)}종목 중 ${number(Number(blocked.rows[0]?.blocked ?? 0))}개는`
+        + ' 지금 측정 유니버스에 못 들어간다.',
+      );
+      console.log('  `measureWalkForward.loadEligibleSymbols`가 `is_active = true`로 거르는데, 폐지 종목은');
+      console.log('  그 표에서 비활성이다. **봉을 받아 두는 것만으로는 생존편향이 안 걷힌다.**');
+    }
+  }
+
   // ── 판정 ────────────────────────────────────────────────────────────────
   console.log(`\n${'━'.repeat(78)}`);
-  if (fatal > 0) {
-    console.log('★ 멈춤 — vintage가 섞인 종목이 있다. 재기 전에 그 종목을 다시 받아야 한다.');
+  if (fatals.length > 0) {
+    console.log(`★ 멈춤 — ${fatals.length}건`);
+    for (const reason of fatals) console.log(`  · ${reason}`);
     process.exitCode = 1;
     return;
   }
-  console.log('vintage 혼입 없음 — 재도 되는 상태다.');
+  console.log('vintage 혼입 없음 · 폐지 계열 있음 — 재도 되는 상태다.');
   console.log('★ 파탄 봉과 뒤처진 종목은 **막는 사유가 아니라 재는 조건**이다. 측정이 그것을');
   console.log('  어떻게 다루는지가 결과에 남는다(파탄 앞 구간 버림 · 생존편향 표시).');
 }

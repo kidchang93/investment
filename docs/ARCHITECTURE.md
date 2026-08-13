@@ -36,6 +36,8 @@ backend/src/
 ├── quoteCache.ts      # 현재가 캐시(45초). ★시각을 다시 찍지 않는다 — 나이는 Quote.fetchedAt 하나뿐
 ├── themes/
 │   └── pulse.ts       # 테마 등락률: DB 명단 + 멀티시세 → 집계 (순수 함수 + 호출 예산)
+├── krx/               # 거래소 공개 자료 (KIS가 아니다. 토큰·서버 분기와 무관)
+│   └── kindDelistings.ts # KIND 상장폐지 목록: EUC-KR HTML <table> 파싱 + 시장 붙이기
 └── kis/               # KIS 연동 레이어 (원본 스펙을 여기서만 다룬다)
     ├── auth.ts        # access_token(REST, 파일캐시) / approval_key(WS, 메모리)
     ├── errorCodes.ts  # KIS 오류 코드에 이름 붙이기 (★짝 문제 vs 기능 없음을 가른다)
@@ -388,6 +390,64 @@ db/dailyBars.ts               trading_daily_bars · trading_daily_bar_cursor
 소켓 절단·5xx는 재시도하고, `EGW02006`처럼 그 서버에 없는 기능은 500으로 와도
 재시도하지 않는다. 한도(`EGW00201`)는 성질이 달라 `rest.ts`의 `isRateLimitedError`다.
 
+### 상장폐지 종목 — 저장소의 분모를 채우는 두 번째 길
+
+```
+scripts/collectDelistings.ts   KIND 목록 받아 넣기 (KIS 호출 0회)
+  │  krx/kindDelistings.ts     EUC-KR HTML <table> 파싱 + 시장 붙이기
+  ▼
+db/delistings.ts               instrument_delistings  (+ 없는 코드는 instruments에 비활성으로)
+  │
+  ▼
+scripts/collectDelistedBars.ts 폐지 종목 일봉 받기 (재개 가능)
+  │  kis/rest.ts  getDailyMarketBars(code, from, to)   ← 한 번 = 100거래일
+  ▼
+db/dailyBars.ts                trading_daily_bars (활성 종목과 같은 표·같은 계약)
+```
+
+**왜 두 번째 길이 필요한가.** `getDomesticHistoryUniverse`가 `is_active = true`로
+거르는데 `instruments`는 **오늘자 마스터 스냅샷**이다. 그래서 21년 패널 3,923종목에
+상장폐지가 사실상 0건이었다 — KIND 목록과 대조한 연도별 누락률이 2005년 **35.2%** ·
+2010년 26.4% · 2018년 8.8% · 전체 **23.2%**다. walk-forward가 15창 전부 고른
+`reversal5`(최근 5일 낙폭 상위)는 **폐지로 간 회사가 마지막 몇 달을 보내는 자리**라,
+그 표본에서 잰 우위는 상한이다.
+
+**★ TR이 갈린다**(2026-08-13 실측). 폐지 종목에 `FHKST03010100`(기간별시세)을 물으면
+**전부 0행**이고, `FHPST04830000`(일별 시세·공매도)은 **2005년까지 전부 준다.**
+그래서 수집기가 둘이다. 두 TR은 겹치는 구간에서 **같은 값**을 준다(005930의 2018-05-04
+액면분할 구간 열흘이 정확히 일치 — 둘 다 수정주가다).
+
+| | `collectDailyBars.ts` | `collectDelistedBars.ts` |
+|------|------|------|
+| 유니버스 | `is_active = true` | `instrument_delistings` ⋈ `is_active = false` |
+| TR | `FHKST03010100` | `FHPST04830000` |
+| 한 번에 | 130달력일(≒89거래일) | **100거래일** (넘겨 물으면 최근 쪽 100일을 준다) |
+| 구간 | 오늘 → 과거 60쪽 | **폐지일** → 과거 (`--from` 기본 2005-01-01) |
+| 증분 갱신 | 있다(`--refresh`) | 없다 — 계열이 끝났으므로 다시 받을 것이 없다 |
+
+**목록이 말하는 것과 봉이 말하는 것을 섞지 않는다.** KIND의 "폐지일자"는 거래가 끝난
+날이 아니다 — 1,258개 코드 중 **111개가 지금 마스터에 살아 있고**, 사유는 대부분
+`코스닥시장 이전상장`·`유가증권시장 상장`(시장 이동)이거나 스팩 합병이다.
+012210(삼미금속)은 2025-12-29 폐지로 적혀 있는데 봉이 오늘까지 온다. 그래서
+`planDelistedCollection`은 **살아 있는 코드를 건드리지 않고**(그 계열의 주인은
+`collectDailyBars`다), **두 번 이상 폐지된 코드도 뺀다**(같은 코드에 다른 회사가
+얹혀 있어 가를 근거가 없다. 실제로 9개).
+
+**꼬리를 끊는 자리가 있다.** 폐지일 언저리에는 거래 없이 값만 바뀐 줄이 붙는다 —
+005600의 마지막 줄은 **거래량 0에 +200%**였다. `trimTrailingZeroVolumeBars`가 끝에
+붙은 거래량 0 봉만 뗀다(중간의 거래정지 구간은 계열의 일부라 남긴다).
+
+**★ 받아 두는 것과 재는 데 쓰이는 것은 다르다.** 정리매매에는 가격제한폭이 없어서
+(117930은 거래정지 780원 뒤 첫날 310원, **−60%**) 폐지 직전 구간이
+`scanAdjustmentBreaks`에 **수정주가 파탄으로 잡힌다.** 그 함수는 마지막 파탄 *이전*을
+통째로 버리므로, 폐지 종목을 받아 놔도 그 이력이 측정에서 함께 사라진다. 9종목 표본에서
+**6종목·9,033/9,044봉**이 그랬다(`verifyDailyBars.ts` 9번 항목이 이 수를 찍는다).
+이걸 어떻게 다룰지는 아직 정하지 않았다 — 받는 것은 됐고, 쓰는 것은 남은 문제다.
+
+`krx/`는 KIS가 아닌 **거래소 공개 자료**의 자리다. KIND는 로그인도 앱키도 없이 열려
+있어 토큰·서버 분기와 무관하다. `kis/` 규칙(원본 필드는 그 안에서만)과 같은 이유로
+HTML 파싱은 이 모듈 안에서 끝내고, 밖으로는 `DelistingRecord`만 나간다.
+
 ### Walk-forward 측정 — 찾는 곳과 재는 곳을 시간으로 가른다
 
 ```
@@ -572,7 +632,8 @@ KisRealtime open/close → 'status' 이벤트 → broadcast({type:'status'})
 |------|------|------|
 | access_token 발급 | REST POST | `/oauth2/tokenP` |
 | approval_key 발급 | REST POST | `/oauth2/Approval` |
-| 일봉 시세 | REST GET | `inquire-daily-itemchartprice` / `FHKST03010100` |
+| 일봉 시세 | REST GET | `inquire-daily-itemchartprice` / `FHKST03010100` (★상장폐지 종목은 0행) |
+| 일별 시세·공매도 | REST GET | `daily-short-sale` / `FHPST04830000` (한 번에 100거래일 · ★폐지 종목도 준다) |
 | 현재가 (1종목) | REST GET | `inquire-price` / `FHKST01010100` |
 | 현재가 (최대 30종목) | REST GET | `intstock-multprice` / `FHKST11300006` |
 | 실시간 체결 | WebSocket | `H0STCNT0` |

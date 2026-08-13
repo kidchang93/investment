@@ -335,6 +335,12 @@ export async function searchInstruments(query: string, limit = 30): Promise<Inst
  *
  * 순서는 종목코드 오름차순이다. 밤새 도는 수집이 죽었다 살아나도 같은 순서라야
  * "어디까지 왔나"가 말이 된다.
+ *
+ * ★ **`is_active = true`가 상장폐지 종목을 통째로 뺀다.** 이 표는 오늘자 마스터
+ * 스냅샷이라 폐지된 회사는 애초에 들어올 자리가 없고, 그래서 21년 패널에 폐지가
+ * 사실상 0건이었다(연도별 누락률 2005년 35.2% · 전체 23.2%). 폐지 종목을 받는
+ * 길은 `db/delistings.ts`의 `getDelistedCandidates`다 — 여기 조건을 풀지 않는다.
+ * 살아 있는 종목과 폐지 종목은 **받는 TR도 구간도 다르다**.
  */
 export async function getDomesticHistoryUniverse(
   assetTypes: Array<'stock' | 'etf'> = ['stock', 'etf'],
@@ -353,6 +359,83 @@ export async function getDomesticHistoryUniverse(
     [assetTypes],
   );
   return result.rows.map(rowToInstrument);
+}
+
+/** 마스터에 없는 폐지 종목 한 건. 이름과 시장은 KIND 목록이 준 것이다. */
+export interface InactiveInstrumentSeed {
+  symbol: string;
+  name: string;
+  /** `KOSPI` · `KOSDAQ` · `KONEX`. **`null`이면 넣지 않는다** — id를 지어낼 수 없다 */
+  market: string | null;
+}
+
+/**
+ * 폐지 종목을 마스터에 **비활성으로** 넣는다. 이미 있는 코드는 건드리지 않는다.
+ *
+ * ── 왜 여기에 넣나 ───────────────────────────────────────────────────────
+ *
+ * 일봉 수집도 측정도 `Instrument`를 단위로 돈다. 폐지 종목만 다른 모양으로 들고
+ * 다니면 두 갈래가 생기고, 한쪽에만 고쳐진다. `is_active = false`면 화면·검색·
+ * 관심종목은 전부 그대로 못 본다(모든 조회가 `is_active = true`로 거른다).
+ *
+ * ★ `scripts/syncInstruments.ts`는 매번 전체를 `is_active = false`로 밀고 오늘
+ * 마스터에 있는 것만 다시 켠다. 그래서 여기 넣은 줄은 그 뒤에도 **비활성으로
+ * 남는다** — 폐지 종목이 어느 날 갑자기 활성으로 되살아나지 않는다.
+ *
+ * ★ 시장을 모르는 코드는 넣지 않는다. id가 `KR:<시장>:<코드>` 형식이라 시장을
+ * 지어내야 하는데, 없는 시장 이름을 만들면 화면 라벨 표(`MARKET_LABELS`)와
+ * 어긋난다. 몇 개를 못 넣었는지는 부른 쪽이 적는다.
+ */
+export async function insertInactiveInstruments(
+  seeds: InactiveInstrumentSeed[],
+): Promise<{ inserted: number; skippedNoMarket: number; alreadyPresent: number }> {
+  let inserted = 0;
+  let skippedNoMarket = 0;
+  let alreadyPresent = 0;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const seed of seeds) {
+      if (!seed.market) {
+        skippedNoMarket += 1;
+        continue;
+      }
+      const existing = await client.query<{ id: string }>(
+        `SELECT id FROM instruments WHERE country = 'KR' AND symbol = $1 LIMIT 1`,
+        [seed.symbol],
+      );
+      if (existing.rows.length > 0) {
+        alreadyPresent += 1;
+        continue;
+      }
+      const result = await client.query(
+        `INSERT INTO instruments (
+           id, symbol, name, english_name, market, country, currency, asset_type,
+           provider, provider_symbol, exchange_code, timezone, is_active, search_text
+         )
+         VALUES ($1, $2, $3, NULL, $4, 'KR', 'KRW', $5, 'kis', $2, 'J', 'Asia/Seoul', false, $6)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          `KR:${seed.market}:${seed.symbol}`,
+          seed.symbol,
+          seed.name,
+          seed.market,
+          inferDomesticAssetType(seed.name),
+          [seed.symbol, seed.name, seed.market, 'KR', 'KRW', '상장폐지'].join(' '),
+        ],
+      );
+      inserted += result.rowCount ?? 0;
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return { inserted, skippedNoMarket, alreadyPresent };
 }
 
 export async function getInstrument(id: string): Promise<Instrument | null> {
