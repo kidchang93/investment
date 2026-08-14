@@ -827,10 +827,35 @@ export async function getQuote(code: string, exchange: KisExchange = DEFAULT_EXC
    * 거래되지 않았다"는 사실이 지어진다.
    */
   const turnover = toNumberOrNaN(o.acml_tr_pbmn);
+  /*
+   * ★ **가격 0은 시세가 아니다** (2026-08-14 실측).
+   *
+   * KIS는 없는 종목·상장폐지 종목에도 **오류가 아니라 전 필드 `'0'`으로 정상
+   * 응답한다.** `rt_cd=0` · `msg1='정상처리 되었습니다'`이고 `requireNumber`도
+   * 통과한다 — `'0'`은 빈 칸이 아니기 때문이다. 그대로 두면 화면이 `0원`이라고
+   * 적고, 그 값이 `estimatedPrice`로 주문 경로까지 흘러간다.
+   *
+   *   000060(2023 폐지)  실전·모의 둘 다  output 72필드 중 42개가 '0'
+   *   005930(정상)                        output 80필드 · '0'은 1개
+   *
+   * 필드 수(80 vs 72)로도 갈리지만 그건 KIS 스펙에 기대는 것이라, **값이 말하는
+   * 것**으로 가른다 — 0원에 거래되는 주식은 없다. 이름은 잰 사실(`가격 0`)로
+   * 하고 원인(폐지·거래정지)은 추론이라 괄호에 둔다.
+   *
+   * ★ 멀티시세는 이 길로 오지 않는다(`multiQuote.ts`). 거기서 한 종목이 비면
+   * 그 종목만 빠져야지 묶음 전체가 던지면 안 된다.
+   */
+  const price = requireNumber(o.stck_prpr, 'stck_prpr');
+  if (price === 0) {
+    throw new Error(
+      `현재가가 0원으로 왔습니다: ${code}`
+      + ' (상장폐지·거래정지 종목이 이렇게 옵니다. KIS는 오류 대신 전 필드 0을 줍니다)',
+    );
+  }
   return {
     code,
     fetchedAt,
-    price: requireNumber(o.stck_prpr, 'stck_prpr'),
+    price,
     change: requireNumber(o.prdy_vrss, 'prdy_vrss'),
     changeRate: requireNumber(o.prdy_ctrt, 'prdy_ctrt'),
     sign: parseSign(o.prdy_vrss_sign),
