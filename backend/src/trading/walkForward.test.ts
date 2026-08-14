@@ -42,6 +42,7 @@ import {
   runBottomLegProcedure,
   runEvalLegMirror,
   runWalkForward,
+  selectionSignature,
   topShare,
   trimmedMean,
   welchT,
@@ -794,5 +795,76 @@ describe('쓸 수 없는 신호는 사유와 함께 뺀다', () => {
     assert.deepEqual(usable.map((s) => s.key), ['fixed']);
     assert.equal(excluded.length, 2);
     for (const item of excluded) assert.ok(item.reason.length > 10, item.signal.key);
+  });
+});
+
+describe('★ 선택 서명 — 검정을 세는 자', () => {
+  /** 창 하나. 학습 구간과 선택만 바꿔 가며 쓴다. */
+  function windowOf(
+    trainFrom: string, validFrom: string, validTo: string,
+    selected: { signalKey: string; horizon: number } | 'cash',
+  ) {
+    return {
+      trainFrom, trainTo: '20101231', validFrom, validTo,
+      trainFromIndex: 0, trainToIndex: 1, validFromIndex: 2, validToIndex: 3,
+      ranked: [], selected, entries: 0,
+    };
+  }
+
+  /**
+   * ★ 이것이 이 함수를 만든 이유다. 확장창과 이동창은 학습이 다른데도 축
+   * 1·3·5일에서 15/15창 모두 같은 것을 골라 결과가 소수점 5자리까지 같았다.
+   * 학습을 서명에 넣었으면 둘이 다른 검정으로 세어져 문턱만 올랐을 것이다.
+   */
+  it('학습 구간이 달라도 고른 것과 검증 구간이 같으면 같은 서명이다', () => {
+    const pick = { signalKey: 'reversal5', horizon: 1 };
+    const expanding = {
+      fixHorizon: 1,
+      windows: [windowOf('20050103', '20110103', '20111229', pick)],
+    } as never;
+    const rolling = {
+      fixHorizon: 1,
+      windows: [windowOf('20060804', '20110103', '20111229', pick)],
+    } as never;
+    assert.equal(selectionSignature(expanding), selectionSignature(rolling));
+  });
+
+  it('고른 신호가 다르면 다른 서명이다', () => {
+    const a = {
+      fixHorizon: 1,
+      windows: [windowOf('20050103', '20110103', '20111229', { signalKey: 'reversal5', horizon: 1 })],
+    } as never;
+    const b = {
+      fixHorizon: 1,
+      windows: [windowOf('20050103', '20110103', '20111229', { signalKey: 'momentum20', horizon: 1 })],
+    } as never;
+    assert.notEqual(selectionSignature(a), selectionSignature(b));
+  });
+
+  it('축이 다르면 다른 서명이다 — 축 하나가 한 칸이다', () => {
+    const pick = { signalKey: 'reversal5', horizon: 1 };
+    const h1 = { fixHorizon: 1, windows: [windowOf('20050103', '20110103', '20111229', pick)] } as never;
+    const h3 = { fixHorizon: 3, windows: [windowOf('20050103', '20110103', '20111229', pick)] } as never;
+    assert.notEqual(selectionSignature(h1), selectionSignature(h3));
+  });
+
+  it('검증 구간이 다르면 다른 서명이다 — 다른 표본에서 잰 것이다', () => {
+    const pick = { signalKey: 'reversal5', horizon: 1 };
+    const a = { fixHorizon: 1, windows: [windowOf('20050103', '20110103', '20111229', pick)] } as never;
+    const b = { fixHorizon: 1, windows: [windowOf('20050103', '20120102', '20121228', pick)] } as never;
+    assert.notEqual(selectionSignature(a), selectionSignature(b));
+  });
+
+  it('현금 창도 선택으로 적는다 — 기권한 창이 흔적 없이 사라지지 않는다', () => {
+    const held = {
+      fixHorizon: 1,
+      windows: [windowOf('20050103', '20110103', '20111229', { signalKey: 'reversal5', horizon: 1 })],
+    } as never;
+    const cash = {
+      fixHorizon: 1,
+      windows: [windowOf('20050103', '20110103', '20111229', 'cash')],
+    } as never;
+    assert.ok(selectionSignature(cash).includes('cash'));
+    assert.notEqual(selectionSignature(held), selectionSignature(cash));
   });
 });

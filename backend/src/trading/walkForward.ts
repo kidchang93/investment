@@ -1364,3 +1364,30 @@ export function excludeUnusableSignals(
   }
   return { usable, excluded };
 }
+
+/**
+ * **이 칸이 무엇을 골랐나 — 검정을 세는 자.**
+ *
+ * 같은 서명이면 같은 계산이라 본페로니 분모에 한 번만 들어간다
+ * (`db/signalMeasurements.ts`의 `cumulativeMeasuredCells`).
+ *
+ * ── ★ 학습 구간은 일부러 안 넣는다 (2026-08-14) ──────────────────────────
+ *
+ * 확장창과 이동창을 따로 돌렸더니 학습 구간이 다른데도 축 1·3·5일에서
+ * **15/15창 모두 `reversal5 1일`을 골라** 검증 결과가 소수점 5자리까지 같았다
+ * (연 알파 33.46302 · 16.13066 · 8.26294). 그런데 원장은 10칸으로 세어
+ * 본페로니 문턱을 2.58 → **2.81**로 올렸고, 축 5일(t +2.71)이 넘었다에서
+ * 못 넘었다로 뒤집혔다 — **값은 하나도 안 바뀌었는데 판정만 바뀐 것이다.**
+ *
+ * 학습을 서명에 넣으면 그 둘이 다시 다른 검정으로 세어진다. 결과를 정하는 것은
+ * **무엇을 골라 어느 구간에서 쟀는가**이지 어디서 배웠는가가 아니다.
+ */
+export function selectionSignature(result: WalkForwardResult): string {
+  const picks = result.windows.map((w) => {
+    const pick = w.selected === 'cash'
+      ? 'cash'
+      : `${w.selected.signalKey}:${w.selected.horizon}`;
+    return `${w.validFrom}-${w.validTo}=${pick}`;
+  });
+  return `h${result.fixHorizon ?? 0}|${picks.join(',')}`;
+}

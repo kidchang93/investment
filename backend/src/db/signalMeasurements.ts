@@ -170,6 +170,21 @@ export interface SignalMeasurement {
    * 실측 첫 값은 0.12였다 — 3,093건을 버려 +0.58%p를 피했지만 우연과 구별되지 않았다.
    */
   abstainSkillT?: number;
+  /**
+   * ★ **이 칸이 무엇을 골랐나 — 검정을 세는 자.** (2026-08-14 추가)
+   *
+   * 창마다 고른 (신호·축)을 이어 붙인 문자열이다. 절차가 달라도 **같은 것을
+   * 고르면 같은 계산**이라, 그것을 두 검정으로 세면 다음 사람 문턱만 올라간다.
+   *
+   * 실제로 당했다: 확장창과 이동창을 따로 돌렸더니 축 1·3·5일에서 15/15창 모두
+   * `reversal5 1일`을 골라 **알파가 소수점 5자리까지 같았는데**, 원장은 10칸으로
+   * 세어 본페로니 문턱을 2.58 → 2.81로 올렸다. 그 바람에 축 5일(t +2.71)이
+   * 넘었다에서 못 넘었다로 뒤집혔다 — **값은 하나도 안 바뀌었는데.**
+   *
+   * `cumulativeCellCount`가 이 값으로 중복을 접는다. 줄은 그대로 남는다 —
+   * 지우면 무엇을 두 번 돌렸는지가 사라진다.
+   */
+  selectionSignature?: string;
 }
 
 /**
@@ -263,7 +278,8 @@ export async function ensureSignalMeasurementSchema(): Promise<void> {
       ADD COLUMN IF NOT EXISTS placebo_max_t      DOUBLE PRECISION,
       ADD COLUMN IF NOT EXISTS survivorship_exposed BOOLEAN,
       ADD COLUMN IF NOT EXISTS truncated_exits    INTEGER,
-      ADD COLUMN IF NOT EXISTS abstain_skill_t    DOUBLE PRECISION
+      ADD COLUMN IF NOT EXISTS abstain_skill_t    DOUBLE PRECISION,
+      ADD COLUMN IF NOT EXISTS selection_signature TEXT
   `);
   /*
    * ★ **옛 줄에 데이터셋·단위·진입 basis를 적어 넣는다.**
@@ -309,10 +325,10 @@ export async function recordSignalMeasurements(rows: SignalMeasurement[]): Promi
           dataset_key, test_unit, entry_basis, cost_round_trip, oos_years,
           t_newey_west, t_block_boot, t_non_overlap, verdict_t, selection_turnover,
           half1_sign, half2_sign, anti_t, mirror_t, placebo_max_t,
-          survivorship_exposed, truncated_exits, abstain_skill_t)
+          survivorship_exposed, truncated_exits, abstain_skill_t, selection_signature)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
                $22,$23,$24,$25,$26,$27,$28,$29,
-               $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47)`,
+               $30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48)`,
       [
         r.measuredAt, r.signalKey, r.rationale, r.horizonDays, r.periodKey, r.periodFrom,
         r.periodTo, r.universe, r.symbolsCount, r.daysCount, r.samples, r.spreadMean,
@@ -328,6 +344,7 @@ export async function recordSignalMeasurements(rows: SignalMeasurement[]): Promi
         r.half1Sign ?? null, r.half2Sign ?? null,
         r.antiT ?? null, r.mirrorT ?? null, r.placeboMaxT ?? null,
         r.survivorshipExposed ?? null, r.truncatedExits ?? null, r.abstainSkillT ?? null,
+        r.selectionSignature ?? null,
       ],
     );
   }
@@ -387,8 +404,14 @@ export async function cumulativeCellCount(
   testUnit: string = HARNESS_CELL_UNIT,
 ): Promise<number> {
   await ensureSignalMeasurementSchema();
+  /*
+   * ★ **같은 것을 고른 칸은 한 번만 센다**(`selection_signature`). 절차가 달라도
+   * 창마다 같은 신호·축을 골랐으면 계산이 하나다. 서명이 없는 옛 줄은 `id`로
+   * 세어 각자 하나로 남는다 — 지난 기록의 뜻을 나중에 바꾸지 않는다.
+   */
   const { rows } = await pool.query<{ n: string }>(
-    `SELECT COUNT(*)::text AS n FROM trading_signal_measurements
+    `SELECT COUNT(DISTINCT coalesce(selection_signature, id::text))::text AS n
+       FROM trading_signal_measurements
       WHERE dataset_key = $1 AND test_unit = $2`,
     [datasetKey, testUnit],
   );
@@ -396,6 +419,31 @@ export async function cumulativeCellCount(
     ? PRE_LEDGER_CELL_COUNT
     : 0;
   return prior + Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * 이번에 낸 서명 중 **원장에 이미 있는 것**이 몇 개인가.
+ *
+ * ★ 문턱은 원장에 **남기기 전에** 계산되므로, 이것을 빼지 않으면 같은 계산을
+ * 새 칸으로 세어 그 실행의 판정이 스스로 엄격해진다. 2026-08-14에 실제로
+ * 그랬다 — 이동창 실행이 확장창과 같은 칸을 3개 골랐는데 문턱은 10칸 기준
+ * 2.81을 썼고, 축 5일(t +2.71)이 그 3칸 때문에 넘지 못한 것으로 적혔다.
+ * 기록 뒤 세면 7칸(문턱 2.72)이라 같은 값이 넘는다.
+ */
+export async function countKnownSignatures(
+  datasetKey: string,
+  testUnit: string,
+  signatures: string[],
+): Promise<number> {
+  if (signatures.length === 0) return 0;
+  await ensureSignalMeasurementSchema();
+  const { rows } = await pool.query<{ n: string }>(
+    `SELECT COUNT(DISTINCT selection_signature)::text AS n
+       FROM trading_signal_measurements
+      WHERE dataset_key = $1 AND test_unit = $2 AND selection_signature = ANY($3)`,
+    [datasetKey, testUnit, signatures],
+  );
+  return Number(rows[0]?.n ?? 0);
 }
 
 /** 이미 재 본 것을 되짚는다. 같은 신호를 모르고 또 재는 일을 막는다. */
@@ -501,9 +549,22 @@ export async function cumulativeMeasuredCells(
   testUnit: string,
 ): Promise<number> {
   await ensureSignalMeasurementSchema();
+  /*
+   * ★ **본페로니 분모가 여기서 나온다.** 그래서 `selection_signature`가 같은
+   * 줄들은 한 칸으로 접는다 — 절차가 달라도 창마다 같은 신호·축을 골랐으면
+   * 계산이 하나다. 접지 않으면 같은 값을 두 번 세어 **스스로 문턱을 올린다**
+   * (2026-08-14에 실제로 그랬다: 10칸으로 세어 2.58 → 2.81, 축 5일이 t +2.71로
+   * 그대로인데 판정만 뒤집혔다).
+   *
+   * 서명이 없는 옛 줄은 `id`로 갈려 각자 한 칸으로 남는다.
+   */
   const { rows } = await pool.query<{ n: string }>(
-    `SELECT COALESCE(SUM(run_cell_count), 0)::text AS n FROM trading_signal_measurements
-      WHERE dataset_key = $1 AND test_unit = $2`,
+    `SELECT COALESCE(SUM(cells), 0)::text AS n FROM (
+       SELECT MAX(run_cell_count) AS cells
+         FROM trading_signal_measurements
+        WHERE dataset_key = $1 AND test_unit = $2
+        GROUP BY COALESCE(selection_signature, id::text)
+     ) t`,
     [datasetKey, testUnit],
   );
   return Number(rows[0]?.n ?? 0);

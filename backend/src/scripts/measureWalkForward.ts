@@ -50,6 +50,7 @@ import {
   WALKFORWARD_BLOCK_A_UNIT,
   WALKFORWARD_RUN_UNIT,
   annotateWalkforwardDependencyNote,
+  countKnownSignatures,
   cumulativeCellCount,
   cumulativeMeasuredCells,
   recordSignalMeasurements,
@@ -74,6 +75,7 @@ import {
   runAntiSelection,
   runBlockA,
   runBottomLegProcedure,
+  selectionSignature,
   runEvalLegMirror,
   runWalkForward,
   type BlockASpec,
@@ -294,6 +296,7 @@ function parseOptions(argv: string[]): Options {
 function heapMb(): number {
   return Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
 }
+
 
 function elapsed(from: number): string {
   return `${((Date.now() - from) / 1000).toFixed(1)}초`;
@@ -829,15 +832,33 @@ async function main(): Promise<void> {
    */
   const cellsThisRun = options.axes.length;
   const priorCells = await cumulativeMeasuredCells(options.dataset, WALKFORWARD_BLOCK_A_UNIT);
-  const threshold = bonferroniThreshold(priorCells + cellsThisRun);
+  /*
+   * ★ **이미 원장에 있는 칸을 다시 세지 않는다.** 문턱은 남기기 전에 계산되므로,
+   * 여기서 빼지 않으면 같은 계산을 새 검정으로 세어 **그 실행의 판정이 스스로
+   * 엄격해진다.** 2026-08-14에 당했다 — 이동창이 확장창과 같은 칸을 3개 골랐는데
+   * 문턱은 10칸 기준 2.81이었고, 축 5일(t +2.71)이 그 3칸 때문에 못 넘은 것으로
+   * 적혔다. 값은 하나도 안 바뀌었는데.
+   */
+  const signaturesThisRun = blockA.map(selectionSignature);
+  const alreadyCounted = await countKnownSignatures(
+    options.dataset, WALKFORWARD_BLOCK_A_UNIT, signaturesThisRun,
+  );
+  const newCells = cellsThisRun - alreadyCounted;
+  const threshold = bonferroniThreshold(priorCells + newCells);
   const legacyCells = await cumulativeCellCount();
   const legacyRuns = await cumulativeCellCount(options.dataset, WALKFORWARD_RUN_UNIT);
   console.log(`\n${'━'.repeat(78)}`);
   console.log(
     `이 데이터셋·단위(${WALKFORWARD_BLOCK_A_UNIT})로 지금까지 ${priorCells}칸`
-    + ` → 이번 ${cellsThisRun}칸(축 고정)을 더해 ${priorCells + cellsThisRun}칸`
+    + ` → 이번 ${cellsThisRun}칸(축 고정) 중 새것 ${newCells}칸을 더해 ${priorCells + newCells}칸`
     + ` · 본페로니 문턱 |t| > ${threshold.toFixed(2)}`,
   );
+  if (alreadyCounted > 0) {
+    console.log(
+      `  ★ 나머지 ${alreadyCounted}칸은 **원장에 이미 있는 칸과 같은 것을 골랐다** —`
+      + ' 절차가 달라도 창마다 같은 신호·축을 고르면 계산이 하나다. 분모에 다시 넣지 않는다.',
+    );
+  }
   console.log(
     `(같은 데이터셋의 옛 단위 ${WALKFORWARD_RUN_UNIT} ${legacyRuns}줄과`
     + ` 옛 데이터셋 ${HARNESS_CELL_UNIT} 누적 ${legacyCells}칸은 여기 분모에 넣지 않는다 —`
@@ -944,10 +965,24 @@ async function main(): Promise<void> {
         ? placeboTs.reduce((a, t) => Math.max(a, Math.abs(t)), 0)
         : undefined,
       survivorshipExposed: gap.missingSymbols > 0,
+      selectionSignature: selectionSignature(result),
       truncatedExits: result.truncatedExits,
       abstainSkillT: abstainScored?.abstainSkillT,
     })));
-    console.log(`\n원장에 ${blockA.length}줄(축 ${blockA.length}칸) 남겼다 — 다음 실행은 문턱이 그만큼 오른다.`);
+    /*
+     * ★ **몇 줄 남겼나와 몇 칸으로 세어지나는 다르다.** 절차가 달라도 창마다 같은
+     * 것을 고르면 계산이 하나라, `cumulativeCellCount`가 서명으로 접는다.
+     * 줄 수만 적으면 "그만큼 문턱이 오른다"가 거짓말이 된다.
+     */
+    const countedNow = await cumulativeMeasuredCells(options.dataset, WALKFORWARD_BLOCK_A_UNIT);
+    const folded = priorCells + blockA.length - countedNow;
+    console.log(`\n원장에 ${blockA.length}줄 남겼다 · 이 데이터셋의 검정 수 ${countedNow}칸.`);
+    if (folded > 0) {
+      console.log(
+        `★ 그중 ${folded}줄은 **이미 있던 칸과 같은 것을 골랐다** — 절차가 달라도 창마다`
+        + ' 같은 신호·축을 고르면 계산이 하나라 문턱에 한 번만 센다. 줄은 그대로 남는다.',
+      );
+    }
     console.log('★ 반증(안티셀렉션·거울·위약)과 블록 B는 값으로만 남고 검정 수에는 안 센다.');
   }
 
