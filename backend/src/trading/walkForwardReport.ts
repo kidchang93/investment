@@ -203,6 +203,10 @@ export function describeSurvivorship(scan: SurvivorshipScan, gap?: DelistingGap)
   );
   if (scan.endedBefore === 0 && scan.monotone) {
     lines.push('★ 이 패널에는 상장폐지가 없다 — reversal 계열의 우위는 상한이다');
+  } else if (gap) {
+    // 얼마나 빠졌는지는 아래 `describeDelistingGap`이 잰 값으로 말한다.
+    // 여기서 "여전히 빠져 있다"를 덧붙이면 크기를 모르는 채로 겁만 준다.
+    lines.push(`★ 계열이 끝난 종목이 ${count(scan.endedBefore)}개 있다 — 상장폐지가 들어와 있다`);
   } else {
     lines.push(
       `★ 계열이 끝난 종목이 ${count(scan.endedBefore)}개 있다 —`
@@ -239,14 +243,19 @@ export function describeDelistingGap(gap: DelistingGap): string[] {
     `    연도별 누락률 ${shown.map((y) => `${y.year} ${share(y.share)}`).join(' · ')}`
     + (shown.length < years.length ? ` (${years.length}년 중 ${shown.length}년만 적었다)` : '')
     + ` · 전체 ${share(gap.overallMissingShare)}`,
-    '    ★ 폐지일은 **효력일**이고 마지막 봉은 그 직전 거래일이다(5건 실측) —'
-    + ' 빠진 종목에는 **정리매매 구간(가격이 무너지는 자리)이 통째로** 들어 있었다.',
-    '      reversal 계열의 상위분위가 정확히 그 자리를 산다.',
   );
   if (gap.missingSymbols > 0) {
     lines.push(
+      '    ★ 폐지일은 **효력일**이고 마지막 봉은 그 직전 거래일이다(5건 실측) —'
+      + ' 빠진 종목에는 **정리매매 구간(가격이 무너지는 자리)이 통째로** 들어 있다.',
+      '      reversal 계열의 상위분위가 정확히 그 자리를 산다.',
       `    ★ 아직 ${share(gap.overallMissingShare)}가 빠져 있다 — 여기서 나온 reversal 계열의 우위는`
       + ' 여전히 **상한**이다. npx tsx src/scripts/collectDelistedBars.ts',
+    );
+  } else {
+    lines.push(
+      '    알려진 퇴장은 전부 들어왔다. ★ 그래도 **KIND 목록 밖은 크기조차 모른다** —'
+      + ' ETF·우선주 폐지는 이 목록에 없다.',
     );
   }
   return lines;

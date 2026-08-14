@@ -155,23 +155,65 @@ async function main(): Promise<void> {
     );
   }
 
-  // ── 2. vintage 혼입 ──────────────────────────────────────────────────────
-  heading(2, 'vintage가 둘 이상인 종목 — 수정주가 기준 혼입');
-  const vintages = await pool.query<{ symbol: string; vintages: string; kinds: string }>(
-    `SELECT symbol, string_agg(DISTINCT vintage, ', ' ORDER BY vintage) AS vintages,
-            count(DISTINCT vintage)::text AS kinds
-     FROM trading_daily_bars
-     GROUP BY symbol
-     HAVING count(DISTINCT vintage) > 1
-     ORDER BY symbol`,
+  /*
+   * ── 2. vintage 경계 ──────────────────────────────────────────────────────
+   *
+   * ★ 2026-08-14에 판정을 바꿨다. 그 전에는 **vintage가 섞이면 무조건 멈췄는데**,
+   * 그것이 `collectDailyBars --refresh`의 설계와 어긋나 있었다.
+   *
+   * 증분 갱신은 최근 130일을 **다시 받아 저장분과 대조하고**(`compareDailyBars`),
+   * 한 칸이라도 어긋나면 그 종목을 통째로 다시 받는다. 어긋나지 않으면 새 봉만
+   * 덧붙이므로 **vintage가 섞이는 것이 정상 동작이다.** 하루치를 덧붙일 때마다
+   * 3,868종목이 fatal로 잡혀서는 이 검사를 아무도 못 쓴다.
+   *
+   * 그래서 혼입은 **세기만 하고**, 멈추는 것은 경계에서 **기준이 갈린 흔적**이
+   * 보일 때다 — 수정주가 기준이 바뀌면 그 자리에서 가격이 배수로 튄다.
+   *
+   * ★ **이 검사가 못 잡는 것**: 작은 비율의 수정(무상증자 5% 등)은 가격제한폭
+   * 안이라 여기서 안 걸린다. 그쪽은 `--refresh`의 겹침 대조가 잡는 몫이고,
+   * 이 검사는 **대조 없이 섞인 경우의 마지막 그물**이다.
+   */
+  heading(2, 'vintage 경계 — 수정주가 기준이 갈렸나');
+  const vintages = await pool.query<{ symbols: string }>(
+    `SELECT count(*)::text AS symbols FROM (
+       SELECT symbol FROM trading_daily_bars GROUP BY symbol HAVING count(DISTINCT vintage) > 1
+     ) t`,
   );
-  if (vintages.rowCount === 0) {
-    console.log('없다 — 한 종목은 한 세션에서 통째로 받혔다.');
+  const mixedSymbols = Number(vintages.rows[0]?.symbols ?? 0);
+  const boundary = await pool.query<{
+    symbol: string; trading_day: string; prev_close: string; close: string; change_rate: string;
+  }>(
+    `WITH seq AS (
+       SELECT symbol, trading_day, close, vintage,
+              lag(close)   OVER (PARTITION BY symbol ORDER BY trading_day) AS prev_close,
+              lag(vintage) OVER (PARTITION BY symbol ORDER BY trading_day) AS prev_vintage
+       FROM trading_daily_bars
+     )
+     SELECT symbol, trading_day, prev_close::text, close::text,
+            (close / prev_close - 1)::text AS change_rate
+     FROM seq
+     WHERE prev_vintage IS NOT NULL AND prev_vintage <> vintage
+       AND prev_close > 0 AND close > 0
+       AND abs(close / prev_close - 1) > ${limitCaseSql('trading_day')}
+     ORDER BY abs(close / prev_close - 1) DESC`,
+  );
+  console.log(`vintage가 섞인 종목 ${number(mixedSymbols)}개 — 증분 갱신을 하면 늘어난다(정상).`);
+  if (boundary.rowCount === 0) {
+    console.log('★ 그 경계에서 가격제한폭을 넘는 자리는 없다 — 기준이 갈린 흔적이 없다.');
   } else {
-    fatals.push(`vintage가 섞인 종목 ${number(vintages.rowCount ?? 0)}개 — 그 종목을 통째로 다시 받아야 한다`);
-    console.log(`★ ${number(vintages.rowCount ?? 0)}종목이 섞였다. **여기서 멈춘다.**`);
-    for (const row of vintages.rows.slice(0, 40)) console.log(`  ${row.symbol}  ${row.vintages}`);
-    console.log('  → 값으로는 알아볼 수 없는 종류의 오류다. 그 종목을 다시 받아야 한다.');
+    fatals.push(
+      `vintage 경계에서 가격제한폭을 넘는 자리 ${number(boundary.rowCount ?? 0)}건`
+      + ' — 수정주가 기준이 갈렸다. 그 종목을 통째로 다시 받아야 한다',
+    );
+    console.log(`★ 경계에서 한계를 넘는 자리 ${number(boundary.rowCount ?? 0)}건. **여기서 멈춘다.**`);
+    for (const row of boundary.rows.slice(0, options.breaks)) {
+      console.log(
+        `  ${row.symbol}  ${day(row.trading_day)}`
+        + ` ${number(Number(row.prev_close))} → ${number(Number(row.close))}`
+        + `  ${(Number(row.change_rate) >= 0 ? '+' : '') + pct(Number(row.change_rate))}`,
+      );
+    }
+    console.log('  → npx tsx src/scripts/collectDailyBars.ts --refresh 가 겹침 대조로 다시 받게 한다.');
   }
 
   // ── 3. 마지막 봉이 뒤처진 종목 ───────────────────────────────────────────
@@ -519,7 +561,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  console.log('vintage 혼입 없음 · 폐지 계열 있음 — 재도 되는 상태다.');
+  console.log('vintage 경계 깨끗함 · 폐지 계열 있음 — 재도 되는 상태다.');
   console.log('★ 파탄 봉과 뒤처진 종목은 **막는 사유가 아니라 재는 조건**이다. 측정이 그것을');
   console.log('  어떻게 다루는지가 결과에 남는다(파탄 앞 구간 버림 · 생존편향 표시).');
 }
