@@ -91,8 +91,36 @@ for try in 1 2 3; do
   [[ -n "$cash" ]] && break
   /bin/sleep 1.5
 done
+#
+#  (9) 계좌 줄이 `positions` JSON을 `head -c 200`으로 잘라 그대로 뱉고 있었다.
+#      보유가 5종목이면 첫 종목 중간에서 잘려 **무엇을 들고 있는지도, 얼마를
+#      벌고 있는지도 화면에 없었다.** `grep -o '"positions":\[[^]]*\]'`은
+#      중첩 객체를 못 자르기도 한다. close.sh처럼 파싱해서 사람 말로 적는다.
 if [[ -n "$cash" ]]; then
-  echo "계좌 현금 $cash · $(echo "$acct" | grep -o '"positions":\[[^]]*\]' | head -c 200)"
+  echo "$acct" | python3 -c "
+import json, sys, unicodedata
+# 한글·전각은 터미널에서 2칸을 먹는다. len()으로 채우면 표가 어긋난다.
+def pad(s, n):
+    w = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in s)
+    return s + ' ' * max(1, n - w)
+d = json.load(sys.stdin)
+pos = d.get('positions') or []
+cash = d.get('cashBalance') or 0
+stock = d.get('stockEvaluation') or 0
+te = d.get('totalEvaluation') or 0
+pnl = sum((p.get('unrealizedPnl') or 0) for p in pos)
+print(f\"계좌 총평가 {te:,}원 · 예수금 {cash:,}원 · 보유 {len(pos)}종목 · 평가손익 {pnl:+,}원\")
+# ★ 2026-08-12 실측: 모의 서버가 전일 매수대금을 D+2에서 한 번 더 뺀다.
+#   어긋나면 조용히 넘기지 말고 적는다 — close.sh와 같은 규칙이다.
+real = cash + stock
+if abs(real - te) > 1000:
+    print(f\"  ★ 예수금+주식평가 = {real:,}원 — 총평가와 {real-te:+,}원 어긋난다 (모의 D+2 이중차감)\")
+for p in sorted(pos, key=lambda x: -(x.get('unrealizedPnl') or 0)):
+    rate = p.get('unrealizedPnlRate')
+    print(f\"  {pad(str(p.get('name','?')), 22)}{p.get('quantity',0):>7}주\"
+          f\"{(p.get('unrealizedPnl') or 0):>12,}원\"
+          f\"{(f'{rate:+.2f}%' if isinstance(rate, (int, float)) else '?'):>9}\")
+" 2>&1 || echo "계좌 응답을 읽지 못했다 (형식이 바뀌었는지 확인하라)"
 else
   echo "계좌 조회실패(3회)"
 fi
