@@ -24,6 +24,7 @@ import type { DailyBar } from './dailyBars.js';
 import {
   ensureDelistingSchema,
   getDelistings,
+  isMarketTransfer,
   planDelistedCollection,
   summarizeDelistings,
   trimTrailingZeroVolumeBars,
@@ -47,8 +48,24 @@ function instrument(symbol: string, name = '시험종목'): Instrument {
   };
 }
 
-function candidate(symbol: string, isActive: boolean, delistedDays: string[]): DelistedCandidateRow {
-  return { instrument: instrument(symbol), isActive, delistedDays };
+/**
+ * 사유를 안 주면 **진짜 폐지**로 본다 — 옛 시험들이 기대하던 동작이다.
+ * 시장 이동을 재는 시험만 사유를 직접 준다.
+ */
+function candidate(
+  symbol: string,
+  isActive: boolean,
+  delistedDays: string[],
+  reasons: string[] = [],
+): DelistedCandidateRow {
+  return {
+    instrument: instrument(symbol),
+    isActive,
+    delistedEpisodes: delistedDays.map((day, i) => ({
+      day,
+      reason: reasons[i] ?? '기업의 계속성 및 경영의 투명성 등을 종합적으로 고려하여 상장폐지',
+    })),
+  };
 }
 
 function bar(tradingDay: string, close: number, volume: number | null): DailyBar {
@@ -83,6 +100,47 @@ describe('무엇을 받나 — planDelistedCollection', () => {
     assert.deepEqual(plan.targets, []);
     assert.equal(plan.skipped[0].reason, 'relisted');
     assert.match(plan.skipped[0].detail, /2건/);
+  });
+
+  /*
+   * ★ 2026-08-14: `relisted`로 빠진 8종목이 **하나도 재상장이 아니었다.**
+   * 전부 `시장 이동 → 나중에 진짜 폐지`라, 기록이 둘이라는 이유만으로 진짜 폐지
+   * 8종목이 표본에서 사라지고 있었다.
+   */
+  it('★ 앞 기록이 시장 이동이면 마지막 폐지일까지 받는다 — 시장을 옮긴 것은 퇴장이 아니다', () => {
+    const plan = planDelistedCollection(
+      [candidate('197210', false, ['20151120', '20200514'], ['코스닥시장 이전상장'])],
+      '20050101',
+    );
+
+    assert.deepEqual(plan.targets, [{ symbol: '197210', from: '20050101', to: '20200514' }]);
+    assert.deepEqual(plan.skipped, []);
+  });
+
+  it('시장 이동의 세 표현을 다 잡는다 — 실측에 있는 것만', () => {
+    for (const reason of ['코스닥시장 이전상장', '유가증권시장 상장', '코스닥시장 상장']) {
+      assert.equal(isMarketTransfer(reason), true, reason);
+    }
+  });
+
+  it('★ `상장폐지`가 든 사유는 시장 이동이 아니다 — 느슨하게 잡으면 진짜 폐지가 섞인다', () => {
+    for (const reason of [
+      '기업의 계속성 및 경영의 투명성 등을 종합적으로 고려하여 상장폐지기준에 해당한다고 결정',
+      '신청에 의한 상장폐지',
+      '상장예비심사 청구서 미제출로 관리종목 지정 후 1개월 이내 동 사유 미해소',
+    ]) {
+      assert.equal(isMarketTransfer(reason), false, reason);
+    }
+  });
+
+  it('앞 기록이 진짜 폐지면 여전히 받지 않는다 — 코드 재사용은 가릴 근거가 없다', () => {
+    const plan = planDelistedCollection(
+      [candidate('013890', false, ['20050518', '20240101'], ['자본전액잠식', '감사의견 거절'])],
+      '20050101',
+    );
+
+    assert.deepEqual(plan.targets, []);
+    assert.equal(plan.skipped[0].reason, 'relisted');
   });
 
   it('폐지일이 없으면 받지 않는다 — 끝을 모르는 채로 받으면 어디까지가 그 회사인지 알 수 없다', () => {

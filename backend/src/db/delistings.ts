@@ -213,8 +213,29 @@ export interface DelistedCandidateRow {
   instrument: Instrument;
   /** 지금 마스터에 살아 있나. **폐지 목록에 있어도 `true`일 수 있다** */
   isActive: boolean;
-  /** 이 코드의 폐지일 전부, 오름차순. 둘 이상이면 재상장한 것이다 */
-  delistedDays: string[];
+  /**
+   * 이 코드의 폐지 기록 전부, 날짜 오름차순.
+   *
+   * ★ **사유를 날짜와 함께 든다.** 둘 이상이라고 다 재상장이 아니다 —
+   * 시장을 옮긴 것(`코스닥시장 이전상장`)이 폐지로 기록되고 그 회사가 나중에
+   * 진짜 폐지되면 기록이 둘이 된다. 그때 첫 기록의 **사유**가 그것을 가른다.
+   */
+  delistedEpisodes: Array<{ day: string; reason: string }>;
+}
+
+/**
+ * ★ **시장을 옮긴 것은 퇴장이 아니다.**
+ *
+ * 코스닥→코스피 이전상장이 KIND에 상장폐지로 기록된다. 그 회사는 같은
+ * 종목코드로 계속 거래되므로 봉도 하나의 연속된 계열이다.
+ *
+ * 정확히 이 세 표현만 잡는다(2026-08-14 실측: `코스닥시장 이전상장` 70건 ·
+ * `유가증권시장 상장` 33건 · `코스닥시장 상장`). 느슨하게 하면 `상장폐지`가 든
+ * 사유가 섞이므로 **문장 전체를 못 박는다.** 못 잡으면 지금처럼 빠질 뿐이라
+ * 안전한 쪽으로 틀린다.
+ */
+export function isMarketTransfer(reason: string): boolean {
+  return /^(코스닥|유가증권|코넥스)시장 (이전)?상장$/.test(reason.trim());
 }
 
 export async function getDelistedCandidates(): Promise<DelistedCandidateRow[]> {
@@ -222,11 +243,16 @@ export async function getDelistedCandidates(): Promise<DelistedCandidateRow[]> {
    * 같은 코드가 두 시장에 있으면(드물다) 한 줄만 쓴다 — 두 줄이면 같은 종목을
    * 두 번 받고 뒤엣것이 앞엣것을 갈아 끼운다. 고르는 순서는 관심종목 seed와 같다.
    */
-  const { rows } = await pool.query<InstrumentRow & { is_active: boolean; delisted_days: string[] }>(
-    `SELECT DISTINCT ON (i.symbol) ${instrumentColumns('i.')}, i.is_active, d.delisted_days
+  const { rows } = await pool.query<
+    InstrumentRow & { is_active: boolean; delisted_days: string[]; delisted_reasons: string[] }
+  >(
+    `SELECT DISTINCT ON (i.symbol) ${instrumentColumns('i.')}, i.is_active,
+            d.delisted_days, d.delisted_reasons
      FROM instruments i
      JOIN (
-       SELECT symbol, array_agg(delisted_on ORDER BY delisted_on) AS delisted_days
+       SELECT symbol,
+              array_agg(delisted_on ORDER BY delisted_on) AS delisted_days,
+              array_agg(reason ORDER BY delisted_on)      AS delisted_reasons
        FROM instrument_delistings
        GROUP BY symbol
      ) d ON d.symbol = i.symbol
@@ -239,7 +265,11 @@ export async function getDelistedCandidates(): Promise<DelistedCandidateRow[]> {
   return rows.map((row) => ({
     instrument: rowToInstrument(row),
     isActive: row.is_active,
-    delistedDays: row.delisted_days,
+    // 두 배열은 같은 `ORDER BY`에서 나오므로 자리가 맞는다.
+    delistedEpisodes: row.delisted_days.map((day, i) => ({
+      day,
+      reason: row.delisted_reasons[i] ?? '',
+    })),
   }));
 }
 
@@ -347,10 +377,18 @@ export async function measureDelistingGap(
   const meta = await pool.query<{ total: string; fetched: string | null }>(
     `SELECT count(*)::text AS total, max(vintage) AS fetched FROM instrument_delistings`,
   );
+  /*
+   * ★ **위 분류와 같은 종목만 센다.** 시장 필터가 빠져 있어서 KONEX 등 분류에
+   * 들어가지도 않은 코드까지 세고 있었다 — `missing`이 7인데 사유는 "피흡수합병
+   * 36"이라고 적혀 숫자끼리 어긋났다(2026-08-14). 한 문단 안의 수는 같은 것을
+   * 세야 한다.
+   */
   const reasons = await pool.query<{ label: string; count: string }>(
     `SELECT left(d.reason, 28) AS label, count(*)::text AS count
      FROM instrument_delistings d
-     WHERE NOT EXISTS (SELECT 1 FROM trading_daily_bars b WHERE b.symbol = d.symbol)
+     LEFT JOIN instruments i ON i.symbol = d.symbol
+     WHERE (d.market IN ('KOSPI', 'KOSDAQ') OR i.market IN ('KOSPI', 'KOSDAQ'))
+       AND NOT EXISTS (SELECT 1 FROM trading_daily_bars b WHERE b.symbol = d.symbol)
      GROUP BY 1 ORDER BY count(*) DESC LIMIT 4`,
   );
 
@@ -408,6 +446,23 @@ export interface DelistedCollectionPlan {
  * 다음부터 받으면 될 것 같지만, 폐지 뒤에도 KIS가 **직전 줄을 복사한 가짜 행**을
  * 주는 것을 실측했다(012460 우영: 폐지일 2008-03-13 뒤 3-14·3-17이 3-12의 복사).
  * 그 가짜가 어디까지인지 모르는 채로 붙이면 두 회사의 값이 한 계열에 섞인다.
+ *
+ * ── ★ 그런데 ②가 반대로 동작하고 있었다 (2026-08-14) ────────────────────
+ *
+ * `relisted`로 빠진 8종목을 열어 보니 **하나도 재상장이 아니었다.** 전부
+ * `시장 이동 → 나중에 진짜 폐지` 였다:
+ *
+ *   197210 리드       20151120(코스닥시장 이전상장) → 20200514(기업의 계속성…)
+ *   030790 비케이탑스 20101102(유가증권시장 상장)   → 20240513(감사의견 의견거절)
+ *
+ * 시장을 옮긴 것은 퇴장이 아니고 봉도 끊기지 않는다. 그러니 **마지막 폐지일까지
+ * 받는 것이 맞다.** 그런데 기록이 둘이라는 이유로 통째로 빠져, 진짜 폐지 8종목이
+ * 표본에서 사라졌다. 반대로 주석이 경고하던 013890(지누스)은 **폐지 기록이 1건**
+ * 이라 이 조건에 애초에 걸리지 않았다 — **막으려던 것은 안 막고, 받아야 할 것만
+ * 막고 있었다.**
+ *
+ * 그래서 첫 기록이 시장 이동이면(`isMarketTransfer`) 마지막 폐지일로 받는다.
+ * 그 밖의 다중 기록은 지금처럼 뺀다 — 그건 여전히 가릴 근거가 없다.
  */
 export function planDelistedCollection(
   candidates: DelistedCandidateRow[],
@@ -418,8 +473,11 @@ export function planDelistedCollection(
 
   for (const candidate of candidates) {
     const symbol = candidate.instrument.symbol;
-    const days = [...candidate.delistedDays].filter((day) => /^\d{8}$/.test(day)).sort();
-    if (days.length === 0) {
+    const episodes = [...candidate.delistedEpisodes]
+      .filter((e) => /^\d{8}$/.test(e.day))
+      .sort((a, b) => a.day.localeCompare(b.day));
+    const days = episodes.map((e) => e.day);
+    if (episodes.length === 0) {
       skipped.push({ symbol, reason: 'noDelistingDay', detail: '폐지일이 없습니다' });
       continue;
     }
@@ -431,11 +489,16 @@ export function planDelistedCollection(
       });
       continue;
     }
-    if (days.length > 1) {
+    /*
+     * 기록이 여럿이어도 **앞엣것이 전부 시장 이동이면** 한 회사의 계열이다.
+     * 마지막 것만 진짜 퇴장이므로 그 날짜까지 받는다.
+     */
+    const priorAllTransfers = episodes.slice(0, -1).every((e) => isMarketTransfer(e.reason));
+    if (episodes.length > 1 && !priorAllTransfers) {
       skipped.push({ symbol, reason: 'relisted', detail: `폐지 기록이 ${days.length}건입니다 (${days.join(', ')})` });
       continue;
     }
-    targets.push({ symbol, from: defaultFrom, to: days[0] });
+    targets.push({ symbol, from: defaultFrom, to: days[days.length - 1] });
   }
 
   return { targets, skipped };
