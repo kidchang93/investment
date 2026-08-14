@@ -37,8 +37,12 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 LOG_DIR=".cron-logs"
-PID_FILE="$LOG_DIR/daemon.pid"
 mkdir -p "$LOG_DIR"
+
+# ★ **PID 파일을 쓰지 않는다.** 2026-08-14에 파일이 프로세스와 어긋나 살아 있는
+#   데몬을 "멈췄다"고 말했다(먼저 죽은 데몬의 trap이 남의 파일을 지웠고, trap을
+#   고친 뒤에도 어긋났다). 프로세스를 직접 찾는 쪽이 거짓말을 안 한다.
+daemon_pid() { pgrep -f "daemon.sh __loop" | head -1; }
 
 log() { print -r -- "[$(date '+%m-%d %H:%M:%S')] $*" >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log"; }
 
@@ -105,8 +109,8 @@ run_loop() {
 
 case "${1:-status}" in
   start)
-    if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-      print -r -- "이미 돌고 있다 (pid $(cat "$PID_FILE"))"
+    if [[ -n "$(daemon_pid)" ]]; then
+      print -r -- "이미 돌고 있다 (pid $(daemon_pid))"
       exit 0
     fi
     # nohup + disown이 없으면 터미널을 닫을 때 함께 죽는다 — 2026-08-10에 겪었다.
@@ -115,21 +119,20 @@ case "${1:-status}" in
     print -r -- "데몬을 띄웠다. 상태: zsh scripts/daemon.sh status"
     ;;
   __loop)
-    print -r -- $$ > "$PID_FILE"
-    trap 'rm -f "$PID_FILE"; log "데몬 종료"; exit 0' TERM INT
     run_loop
     ;;
   stop)
-    if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-      kill "$(cat "$PID_FILE")" && print -r -- "멈췄다"
+    local_pid="$(daemon_pid)"
+    if [[ -n "$local_pid" ]]; then
+      pkill -f "daemon.sh __loop" && print -r -- "멈췄다 (pid $local_pid)"
+      log "데몬 종료 요청"
     else
       print -r -- "돌고 있지 않다"
     fi
-    rm -f "$PID_FILE"
     ;;
   status)
-    if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-      print -r -- "● 돌고 있다 (pid $(cat "$PID_FILE"))"
+    if [[ -n "$(daemon_pid)" ]]; then
+      print -r -- "● 돌고 있다 (pid $(daemon_pid))"
     else
       print -r -- "○ 멈춰 있다 — zsh scripts/daemon.sh start"
     fi
