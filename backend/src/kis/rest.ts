@@ -31,6 +31,7 @@ import {
   isPositiveFinite,
   optionalNumber,
   parseSign,
+  requireNumber,
   toNumber,
   toNumberOrNaN,
 } from './normalize.js';
@@ -360,14 +361,6 @@ function signFromChange(change: number): PriceSign {
   if (change > 0) return '2';
   if (change < 0) return '5';
   return '3';
-}
-
-function requireNumber(value: string | undefined, field: string): number {
-  const n = toNumber(value);
-  if (!Number.isFinite(n)) {
-    throw new Error(`현재가 응답 숫자 필드가 올바르지 않습니다: ${field}`);
-  }
-  return n;
 }
 
 function maskKisAccount(cano: string, productCode: string): string {

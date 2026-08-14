@@ -70,3 +70,35 @@ export function parseSign(value: string | undefined): PriceSign {
   }
   return '3';
 }
+
+/**
+ * 필수 숫자 필드. **없으면 던진다.**
+ *
+ * ── 왜 `toNumber`로 짜면 안 되나 (2026-08-14) ────────────────────────────
+ *
+ * `rest.ts` 안에 `toNumber`로 짜여 있었다. **`Number('')`은 `NaN`이 아니라 0**이고
+ * `Number.isFinite(0)`은 참이라 **빈 칸이 조용히 0으로 통과했다** — 이름이
+ * `require`인데 아무것도 요구하지 않았다. `optionalNumber`가 똑같은 결함이었고
+ * 41군데가 빈 칸을 0으로 읽고 있었다(2026-08-13에 고침). **같은 실수가 두 번째다.**
+ *
+ * ★ **고치기 전에 빈 칸이 정상인 경로가 있는지 쟀다**(`scripts/dumpQuoteRaw.ts`,
+ * 2026-08-14 장중 실측). 현재가 `FHKST01010100`은 **숫자 자리에 빈 문자열을 주지
+ * 않는다** — 값이 없으면 `'0'`을 준다(폐지 종목 000060·000030에서 72필드 중 42개가
+ * `'0'`이고 빈 칸은 문자열 자리 둘뿐: `bstp_kor_isnm`·`grmn_rate_cls_code`).
+ * 그래서 이 경로는 고쳐도 새로 던지지 않는다.
+ *
+ * ★ **안 잰 경로**: 선물(`futs_*`)·해외(`last_price`)도 이 함수를 쓴다. 그쪽에서
+ * 빈 칸이 오면 이제 던진다. **그게 맞는 쪽이다** — 0원을 시세라고 적는 것보다
+ * 사유가 있는 오류가 낫다(`docs/CODE_STYLE.md`, "모르는 것을 기본값으로 말하지 않는다").
+ *
+ * ★ **이 함수가 못 막는 것**: KIS는 **없는 종목·폐지 종목에도 오류가 아니라 전 필드
+ * `'0'`으로 정상 응답한다.** `'0'`은 빈 칸이 아니므로 여기를 그냥 지나간다. 그건
+ * "값이 왔는데 0"이라 다른 자리에서 가려야 한다 — 아직 안 했다.
+ */
+export function requireNumber(value: string | undefined, field: string): number {
+  const n = toNumberOrNaN(value);
+  if (!Number.isFinite(n)) {
+    throw new Error(`현재가 응답 숫자 필드가 올바르지 않습니다: ${field}`);
+  }
+  return n;
+}

@@ -18,7 +18,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { optionalNumber, toNumber, toNumberOrNaN } from './normalize.js';
+import { optionalNumber, requireNumber, toNumber, toNumberOrNaN } from './normalize.js';
 
 describe('toNumber — 왜 그냥 쓰면 안 되나', () => {
   it('빈 문자열과 공백을 0으로 읽는다 — 이것이 함정이다', () => {
@@ -86,5 +86,31 @@ describe('optionalNumber — 값 없음과 0을 가른다', () => {
     for (const raw of ['0', '12', '1,000']) {
       assert.equal(optionalNumber(raw), toNumberOrNaN(raw));
     }
+  });
+});
+
+describe('requireNumber — 이름이 요구하는 것을 실제로 요구한다', () => {
+  /*
+   * ★ 이 함수는 `rest.ts` 안에서 `toNumber`로 짜여 있었다. `Number('')`은 0이고
+   * `Number.isFinite(0)`은 참이라 **빈 칸이 조용히 0으로 통과했다.**
+   * `optionalNumber`가 똑같이 당했던 자리라(2026-08-13) 같은 실수가 두 번째다.
+   */
+  it('빈 문자열은 0이 아니라 오류다 — 0원을 시세라고 적지 않는다', () => {
+    assert.throws(() => requireNumber('', 'stck_prpr'), /stck_prpr/);
+    assert.throws(() => requireNumber('   ', 'stck_prpr'), /stck_prpr/);
+    assert.throws(() => requireNumber(undefined, 'stck_prpr'), /stck_prpr/);
+  });
+
+  it("'0'은 통과한다 — KIS가 0이라고 말한 것은 값이다", () => {
+    assert.equal(requireNumber('0', 'acml_vol'), 0);
+  });
+
+  it('쉼표와 음수·소수를 그대로 읽는다', () => {
+    assert.equal(requireNumber('1,234,500', 'stck_prpr'), 1_234_500);
+    assert.equal(requireNumber('-2.35', 'prdy_ctrt'), -2.35);
+  });
+
+  it('숫자가 아닌 글자는 오류다 — 어느 필드인지 메시지에 남긴다', () => {
+    assert.throws(() => requireNumber('N/A', 'stck_oprc'), /stck_oprc/);
   });
 });
