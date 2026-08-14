@@ -20,7 +20,10 @@
  */
 
 import { closeDb, pool } from '../db/client.js';
-import { PRICE_LIMIT_ERAS } from '../trading/panel.js';
+import { DEFAULT_ADJUSTMENT_SCAN, PRICE_LIMIT_ERAS } from '../trading/panel.js';
+
+/** 정리매매 면제 폭. 측정과 같은 값을 봐야 이 검사가 측정을 설명한다 */
+const FINAL_RUN_EXEMPT_BARS = DEFAULT_ADJUSTMENT_SCAN.finalRunExemptBars;
 
 interface Options {
   /** 파탄 봉을 몇 줄까지 찍을까 */
@@ -146,6 +149,10 @@ async function main(): Promise<void> {
     }
     console.log('\n  → 측정은 이 봉 **이전** 구간을 종목째 버린다(`scanAdjustmentBreaks`).');
     console.log('    봉 하나만 빼면 앞뒤가 다른 자로 잰 값이 이어 붙는다.');
+    console.log(
+      `    ★ 예외: 계열이 끝난 종목의 마지막 ${FINAL_RUN_EXEMPT_BARS}봉은 정리매매로 보고 면제한다`
+      + ' — 아래 8번에서 크기를 센다.',
+    );
   }
 
   // ── 2. vintage 혼입 ──────────────────────────────────────────────────────
@@ -429,64 +436,78 @@ async function main(): Promise<void> {
       /*
        * ★ 받아 두는 것과 **재는 데 쓰이는 것**은 다르다. 정리매매에는 가격제한폭이
        * 없어서(117930은 거래정지 780원 뒤 첫날 310원, -60%) 폐지 직전 구간이
-       * `scanAdjustmentBreaks`에 파탄으로 잡힌다. 그 함수는 마지막 파탄 **이전을
-       * 통째로 버리므로**, 폐지 종목이 표본에 들어와도 그 이력이 함께 사라진다.
+       * 파탄으로 잡히면 그 앞이 통째로 버려진다.
+       *
+       * 2026-08-14에 `scanAdjustmentBreaks`가 **계열이 끝난 종목의 마지막
+       * `FINAL_RUN_EXEMPT_BARS`봉을 면제**하도록 고쳤다. 여기서는 그 면제가
+       * 실제로 무엇을 덮는지를 센다 — 면제 안과 밖을 갈라 적어야, 이 손잡이가
+       * 넓어졌을 때 진짜 수정주가 파탄까지 삼키는 것을 볼 수 있다.
        */
-      const swallowed = await pool.query<{ symbols: string; dropped: string; bars: string }>(
+      const positioned = await pool.query<{ zone: string; breaks: string; symbols: string }>(
         `WITH ended AS (
-           SELECT symbol, count(*) AS bars
-           FROM trading_daily_bars GROUP BY symbol HAVING max(trading_day) < $1
+           SELECT symbol FROM trading_daily_bars GROUP BY symbol HAVING max(trading_day) < $1
          ),
          numbered AS (
            SELECT b.symbol, b.trading_day, b.close,
-                  row_number() OVER (PARTITION BY b.symbol ORDER BY b.trading_day) AS i,
+                  row_number() OVER (PARTITION BY b.symbol ORDER BY b.trading_day DESC) AS from_end,
                   lag(b.close) OVER (PARTITION BY b.symbol ORDER BY b.trading_day) AS prev_close
            FROM trading_daily_bars b JOIN ended e ON e.symbol = b.symbol
-         ),
-         broken AS (
-           SELECT symbol, max(i) AS last_break
-           FROM numbered
-           WHERE prev_close > 0 AND close > 0
-             AND abs(close / prev_close - 1) > ${limitCaseSql('trading_day')}
-           GROUP BY symbol
          )
-         SELECT count(*)::text AS symbols, coalesce(sum(broken.last_break), 0)::text AS dropped,
-                coalesce(sum(ended.bars), 0)::text AS bars
-         FROM broken JOIN ended ON ended.symbol = broken.symbol`,
+         SELECT CASE WHEN from_end <= ${FINAL_RUN_EXEMPT_BARS} THEN 'exempt' ELSE 'kept' END AS zone,
+                count(*)::text AS breaks, count(DISTINCT symbol)::text AS symbols
+         FROM numbered
+         WHERE prev_close > 0 AND close > 0
+           AND abs(close / prev_close - 1) > ${limitCaseSql('trading_day')}
+         GROUP BY 1`,
         [endedCutoff],
       );
-      const row = swallowed.rows[0];
-      const brokenSymbols = Number(row?.symbols ?? 0);
+      const zone = (key: string): { breaks: number; symbols: number } => {
+        const found = positioned.rows.find((r) => r.zone === key);
+        return { breaks: Number(found?.breaks ?? 0), symbols: Number(found?.symbols ?? 0) };
+      };
+      const exempt = zone('exempt');
+      const kept = zone('kept');
       console.log(
-        `\n★ 그중 가격제한폭 파탄이 있는 종목 ${number(brokenSymbols)}개`
-        + ` · 그 앞을 버리면 ${number(Number(row?.dropped ?? 0))}봉이 빠진다`
-        + ` (그 종목들의 봉 ${number(Number(row?.bars ?? 0))} 중)`,
+        `\n★ 계열이 끝난 종목의 가격제한폭 초과 — 마지막 ${FINAL_RUN_EXEMPT_BARS}봉 안`
+        + ` ${number(exempt.breaks)}건(${number(exempt.symbols)}종목, 정리매매로 면제)`
+        + ` · 그 밖 ${number(kept.breaks)}건(${number(kept.symbols)}종목, 파탄으로 앞을 버림)`,
       );
       console.log('  정리매매에는 가격제한폭이 없다 — 117930은 거래정지 780원 뒤 첫날 310원(-60%)이었다.');
-      console.log('  `scanAdjustmentBreaks`는 마지막 파탄 이전을 통째로 버리므로, 폐지 종목을 받아 놔도');
-      console.log('  **그 이력이 측정에서 함께 사라진다.** 받는 것과 쓰는 것은 다른 문제다.');
+      console.log(`  면제하지 않으면 이 ${number(exempt.symbols)}종목의 이력이 측정에서 통째로 사라진다.`);
+      if (kept.breaks > 0 && exempt.breaks > 0 && kept.breaks > exempt.breaks) {
+        console.log('  ★ 면제 밖이 안보다 많다 — 폐지와 무관한 파탄이 이 표본에 섞여 있다는 뜻이다.');
+      }
 
       /*
        * 두 번째 문. `measureWalkForward.loadEligibleSymbols`가 `is_active = true`로
-       * 거르므로, 저장소에 봉이 있어도 **패널에 들어가지 못하는 종목**이 있다.
-       * 여기서 고치지 않는다(이 스크립트는 아무것도 고치지 않는다) — 몇 개인지만 센다.
+       * 걸러 폐지 종목이 패널에 못 들어가던 자리다. 2026-08-14에 그 조건을 뺐다.
+       * 여기서 고치지 않는다(이 스크립트는 아무것도 고치지 않는다) — 지금 자격 조건으로
+       * 몇 개가 들어오고 몇 개가 남는지만 센다.
        */
-      const blocked = await pool.query<{ blocked: string }>(
-        `SELECT count(*)::text AS blocked FROM (
+      const blocked = await pool.query<{ blocked: string; admitted: string }>(
+        `SELECT
+           count(*) FILTER (WHERE i.symbol IS NULL)::text AS blocked,
+           count(*) FILTER (WHERE i.symbol IS NOT NULL)::text AS admitted
+         FROM (
            SELECT symbol FROM trading_daily_bars GROUP BY symbol HAVING max(trading_day) < $1
          ) ended
          LEFT JOIN instruments i
-           ON i.symbol = ended.symbol AND i.country = 'KR' AND i.is_active = true
-          AND i.asset_type = 'stock' AND i.market IN ('KOSPI', 'KOSDAQ')
-         WHERE i.symbol IS NULL`,
+           ON i.symbol = ended.symbol AND i.country = 'KR'
+          AND i.asset_type = 'stock' AND i.market IN ('KOSPI', 'KOSDAQ')`,
         [endedCutoff],
       );
+      const admitted = Number(blocked.rows[0]?.admitted ?? 0);
+      const stillBlocked = Number(blocked.rows[0]?.blocked ?? 0);
       console.log(
-        `\n★ 그리고 계열이 끝난 ${number(endedSymbols)}종목 중 ${number(Number(blocked.rows[0]?.blocked ?? 0))}개는`
-        + ' 지금 측정 유니버스에 못 들어간다.',
+        `\n★ 계열이 끝난 ${number(endedSymbols)}종목 중 ${number(admitted)}개가 측정 유니버스 자격에 든다`
+        + ` (${number(stillBlocked)}개는 국내 주식·KOSPI/KOSDAQ이 아니라 빠진다).`,
       );
-      console.log('  `measureWalkForward.loadEligibleSymbols`가 `is_active = true`로 거르는데, 폐지 종목은');
-      console.log('  그 표에서 비활성이다. **봉을 받아 두는 것만으로는 생존편향이 안 걷힌다.**');
+      if (admitted === 0) {
+        fatals.push('폐지 종목이 측정 유니버스에 하나도 못 들어간다 — 봉만 받아 놓은 상태다');
+      }
+      console.log('  `loadEligibleSymbols`에서 `is_active = true`를 뺀 결과다(2026-08-14).');
+      console.log('  ★ `is_active`는 폐지 여부의 답이 아니다 — 이전상장이 KIND에 폐지로 기록되고');
+      console.log('    그 종목들은 오늘도 거래된다. 계열이 끊겼는지는 봉이 말한다.');
     }
   }
 

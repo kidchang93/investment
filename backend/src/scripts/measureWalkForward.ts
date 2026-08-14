@@ -54,7 +54,13 @@ import {
   recordSignalMeasurements,
 } from '../db/signalMeasurements.js';
 import { bonferroniThreshold } from '../trading/signalHarness.js';
-import { buildPanel, buildUniverseMask, type Panel, type UniverseMask } from '../trading/panel.js';
+import {
+  DEFAULT_ADJUSTMENT_SCAN,
+  buildPanel,
+  buildUniverseMask,
+  type Panel,
+  type UniverseMask,
+} from '../trading/panel.js';
 import {
   SIGNAL_CANDIDATES,
   makePlaceboSignals,
@@ -299,17 +305,41 @@ function elapsed(from: number): string {
  * 우선주는 **두 방식 중 하나라도 우선주라고 하면 뺀다** — 코드 끝자리와 이름이
  * 갈리는 종목이 실제로 있다(`verifyDailyBars` 7항목). 어느 쪽이 맞는지 모르는 채로
  * 한쪽만 믿으면 보통주 표본에 우선주가 섞인다.
+ *
+ * ── ★ `is_active`로 거르지 않는다 (2026-08-14) ───────────────────────────
+ *
+ * 여기 `AND is_active = true`가 있었다. 그러면 **폐지 종목이 통째로 빠진다** —
+ * 봉을 애써 받아 놔도 유니버스에 못 들어오므로 생존편향이 그대로 남는다.
+ * 조건을 뺐을 때 실제로 무엇이 들어오는지 세어 보고 지웠다(2026-08-14 실측,
+ * 국내 주식 KOSPI/KOSDAQ 중 봉이 있는 종목):
+ *
+ *   is_active=false · 최근 봉 없음   803종목  ← 폐지. 이것이 들어와야 한다
+ *   is_active=true  · 최근 봉 없음     3종목  ← 마스터가 안 지워진 것
+ *   is_active=false · 최근 봉 있음     0종목  ← 없다. 그래서 문을 열어도 안 번진다
+ *
+ * ★ **`is_active`는 폐지 여부의 답이 아니다.** 코스닥→코스피 이전상장이 KIND에
+ * 폐지로 기록되는데 그 종목들은 오늘도 거래된다(신세계푸드·LG유플러스·엘앤에프…).
+ * 폐지 목록 1,287건 중 131건이 마스터에 살아 있고, 사유 글로도 갈리지 않는다
+ * (그중 66건은 사유가 이전상장이 아니다). **계열이 실제로 끊겼는지는 봉이 말한다** —
+ * 그래서 여기서는 자격만 보고, 끊긴 자리 판정은 `scanAdjustmentBreaks`가 한다.
  */
-async function loadEligibleSymbols(): Promise<{ symbols: Set<string>; preferred: number }> {
-  const { rows } = await pool.query<{ symbol: string; preferred: boolean }>(
-    `SELECT symbol, (right(symbol, 1) <> '0' OR name ~ '우[A-Z]?$') AS preferred
+async function loadEligibleSymbols(): Promise<{
+  symbols: Set<string>;
+  preferred: number;
+  inactive: number;
+}> {
+  const { rows } = await pool.query<{ symbol: string; preferred: boolean; is_active: boolean }>(
+    `SELECT symbol, (right(symbol, 1) <> '0' OR name ~ '우[A-Z]?$') AS preferred, is_active
      FROM instruments
      WHERE country = 'KR' AND asset_type = 'stock' AND market IN ('KOSPI', 'KOSDAQ')
-       AND is_active = true
      ORDER BY symbol`,
   );
-  const symbols = new Set(rows.filter((r) => !r.preferred).map((r) => r.symbol));
-  return { symbols, preferred: rows.length - symbols.size };
+  const usable = rows.filter((r) => !r.preferred);
+  return {
+    symbols: new Set(usable.map((r) => r.symbol)),
+    preferred: rows.length - usable.length,
+    inactive: usable.filter((r) => !r.is_active).length,
+  };
 }
 
 /** 저장소에 실제로 봉이 있는 종목. 수집이 도는 중이면 이 수가 계속 는다. */
@@ -462,6 +492,8 @@ async function main(): Promise<void> {
     `\n저장소 ${stored.length}종목 → 자격(국내 주식·KOSPI/KOSDAQ·우선주 제외) ${targets.length}종목`
     + ` (우선주 ${eligible.preferred}종 제외)`,
   );
+  // ★ 이 수가 0이면 폐지 종목이 유니버스에 없다는 뜻이다 — 그때 나온 값은 생존편향 위에 있다.
+  console.log(`  그중 마스터에 비활성인 종목 ${eligible.inactive}종 — 폐지 계열이 유니버스에 들어와 있다.`);
 
   const panelStartedAt = Date.now();
   const loaded = await loadPanel(targets);
@@ -499,6 +531,16 @@ async function main(): Promise<void> {
     `  수정주가 파탄 ${adjustment.breaks.length}건 · 걸린 종목 ${adjustment.brokenSymbols}개`
     + ` → 그 앞 ${adjustment.droppedBars.toLocaleString('ko-KR')}봉`
     + ` (전체의 ${(adjustment.droppedShare * 100).toFixed(2)}%) 버림`,
+  );
+  /*
+   * ★ 면제는 **판정을 바꾸는 손잡이**라 크기를 함께 적는다. 이 수가 크면
+   * 그만큼 "파탄이 아니라 폐지 손실"이라고 부른 것이고, 잘못 넓히면 진짜
+   * 수정주가 파탄이 계열에 섞여 들어온다.
+   */
+  console.log(
+    `  ★ 그중 정리매매로 보고 면제한 것 ${adjustment.exemptedBreaks.length}건`
+    + ` · 종목 ${adjustment.exemptedSymbols}개 — 계열이 끝난 종목의 마지막`
+    + ` ${DEFAULT_ADJUSTMENT_SCAN.finalRunExemptBars}봉이다. 그 봉은 버리지 않는다(폐지 손실).`,
   );
   console.log(
     `  쓸 수 있는 날 ${universe.usableDays.toLocaleString('ko-KR')}`

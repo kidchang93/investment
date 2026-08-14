@@ -101,6 +101,7 @@ function fakeSpec(
       ineligibleSymbols: 0,
       adjustment: {
         firstUsableLocal: new Int32Array(0), breaks: [], brokenSymbols: 0, droppedBars: 0, droppedShare: 0,
+        exemptedBreaks: [], exemptedSymbols: 0,
       },
       namesMedian: 300,
       namesMin: 300,

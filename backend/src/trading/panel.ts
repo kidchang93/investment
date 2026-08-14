@@ -281,26 +281,94 @@ export interface AdjustmentBreakScan {
   droppedBars: number;
   /** 전체 봉 대비 버린 비율 */
   droppedShare: number;
+  /**
+   * **정리매매로 보고 파탄에서 뺀 것들.** 값을 버리지 않고 들고 나온다 —
+   * 이 면제가 넓어지면 진짜 수정주가 파탄을 놓치므로, 몇 건을 면제했는지가
+   * 판정문에 남아야 한다.
+   */
+  exemptedBreaks: PriceLimitBreak[];
+  /** 면제가 한 건이라도 있었던 종목 수 */
+  exemptedSymbols: number;
 }
+
+/**
+ * 파탄 판정의 조건. **정리매매를 파탄과 가르는 자다.**
+ *
+ * ── 왜 필요한가 (2026-08-14) ─────────────────────────────────────────────
+ *
+ * 정리매매에는 **가격제한폭이 없다.** 117930 한진해운은 거래정지 780원 뒤
+ * 첫날 310원(−60%)이었다. 그 봉이 파탄으로 잡히면 `scanAdjustmentBreaks`가
+ * 마지막 파탄 **이전을 통째로 버리므로**, 폐지 종목을 애써 받아 놔도
+ * **그 21년이 측정에서 함께 사라진다.** 생존편향을 걷으려고 받은 표본이
+ * 걷는 그 자리에서 다시 빠지는 것이다.
+ *
+ * ── 7이라는 값의 근거 (2026-08-14 실측) ──────────────────────────────────
+ *
+ * 계열이 끝난 종목의 한계 초과가 **마지막 봉으로부터 몇 봉 앞**에 있는지 셌다:
+ *
+ *   끝에서 1~7봉   2,180건 · 526종목 · 하락 82.7%   ← 정리매매
+ *   8~15봉             2건 ·   2종목
+ *   16~30봉           12건 ·   8종목
+ *   31~120봉          33건 ·  27종목
+ *   120봉 초과       301건 · 125종목 · 하락 42.2%   ← 액면분할·병합 쪽
+ *
+ * **7과 8 사이에 절벽이 있다.** 정리매매 기간이 7거래일이라는 규정과 실측이
+ * 같은 곳을 가리킨다. 넓히면 진짜 파탄을 놓치고, 좁히면 폐지 이력이 사라진다.
+ */
+export interface AdjustmentScanOptions {
+  /** 계열이 끝난 종목의 **마지막 이만큼 봉**에서 난 한계 초과는 파탄으로 치지 않는다 */
+  finalRunExemptBars: number;
+  /**
+   * 마지막 봉이 패널 마지막 날에서 이만큼 이상 떨어져야 **계열이 끝났다**고 본다.
+   *
+   * 0으로 두면 오늘 하루 거래정지된 종목까지 "끝났다"가 되어 면제가 번진다.
+   */
+  seriesEndGapDays: number;
+}
+
+export const DEFAULT_ADJUSTMENT_SCAN: AdjustmentScanOptions = {
+  finalRunExemptBars: 7,
+  seriesEndGapDays: 5,
+};
 
 /**
  * 종목마다 가격제한폭을 넘는 봉을 찾고, **마지막 파탄 이후만 쓴다.**
  *
  * 파탄이 여럿이면 가장 뒤엣것 기준이다 — 그 앞은 어느 자로 쟀는지 모른다.
+ *
+ * ★ **계열이 끝난 종목의 마지막 구간은 예외다**(`AdjustmentScanOptions` 참고).
+ * 면제된 봉은 계열에서 빼지 않는다 — 그 −60%가 곧 폐지 손실이고, 그것을
+ * 재려고 폐지 종목을 받았다.
  */
-export function scanAdjustmentBreaks(panel: Panel): AdjustmentBreakScan {
+export function scanAdjustmentBreaks(
+  panel: Panel,
+  options: AdjustmentScanOptions = DEFAULT_ADJUSTMENT_SCAN,
+): AdjustmentBreakScan {
   const firstUsableLocal = new Int32Array(panel.symbols.length);
   const breaks: PriceLimitBreak[] = [];
+  const exemptedBreaks: PriceLimitBreak[] = [];
   let brokenSymbols = 0;
+  let exemptedSymbols = 0;
   let droppedBars = 0;
   let totalBars = 0;
+
+  const lastDayIndex = panel.days.length - 1;
 
   for (let s = 0; s < panel.symbols.length; s += 1) {
     const n = panel.barCount[s];
     totalBars += n;
     const close = panel.close[s];
     const dayOfBar = panel.dayIndexOfBar[s];
+
+    /*
+     * 계열이 끝났나. 끝났다면 면제가 시작되는 자리를 잡는다.
+     * `n`을 넘겨 두면(끝나지 않은 종목) 어떤 `i`도 면제되지 않는다.
+     */
+    const seriesEnded = n > 0 && dayOfBar[n - 1] <= lastDayIndex - options.seriesEndGapDays;
+    const exemptFrom = seriesEnded ? Math.max(1, n - options.finalRunExemptBars) : n;
+
     let lastBreak = 0;
+    let exemptedHere = 0;
     for (let i = 1; i < n; i += 1) {
       const previous = close[i - 1];
       const current = close[i];
@@ -309,14 +377,20 @@ export function scanAdjustmentBreaks(panel: Panel): AdjustmentBreakScan {
       const limit = priceLimitFor(day);
       const change = current / previous - 1;
       if (Math.abs(change) <= limit) continue;
-      breaks.push({
+      const found: PriceLimitBreak = {
         symbol: panel.symbols[s],
         tradingDay: day,
         previousClose: previous,
         close: current,
         changeRate: change,
         limit,
-      });
+      };
+      if (i >= exemptFrom) {
+        exemptedBreaks.push(found);
+        exemptedHere += 1;
+        continue;
+      }
+      breaks.push(found);
       lastBreak = i;
     }
     firstUsableLocal[s] = lastBreak;
@@ -324,6 +398,7 @@ export function scanAdjustmentBreaks(panel: Panel): AdjustmentBreakScan {
       brokenSymbols += 1;
       droppedBars += lastBreak;
     }
+    if (exemptedHere > 0) exemptedSymbols += 1;
   }
 
   return {
@@ -332,6 +407,8 @@ export function scanAdjustmentBreaks(panel: Panel): AdjustmentBreakScan {
     brokenSymbols,
     droppedBars,
     droppedShare: totalBars > 0 ? droppedBars / totalBars : 0,
+    exemptedBreaks,
+    exemptedSymbols,
   };
 }
 
@@ -366,6 +443,8 @@ export interface UniverseSpec {
   scoreGateSignals: SignalCandidate[];
   /** 종목 자격. 여기 없는 종목은 통째로 뺀다 (오늘 마스터 기준) */
   eligibleSymbols: Set<string>;
+  /** 파탄 판정의 조건. 생략하면 `DEFAULT_ADJUSTMENT_SCAN` */
+  adjustmentScan?: AdjustmentScanOptions;
 }
 
 export interface UniverseMask {
@@ -426,7 +505,7 @@ export function buildUniverseMask(panel: Panel, spec: UniverseSpec): UniverseMas
   const symbolCount = panel.symbols.length;
   const cells = dayCount * symbolCount;
 
-  const adjustment = scanAdjustmentBreaks(panel);
+  const adjustment = scanAdjustmentBreaks(panel, spec.adjustmentScan ?? DEFAULT_ADJUSTMENT_SCAN);
 
   // ① 공통 점수 게이트 — 몇 개 신호가 그 자리에서 유한했나
   const finiteCount = new Uint8Array(cells);

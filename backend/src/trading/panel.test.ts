@@ -183,6 +183,65 @@ describe('수정주가 파탄 — 그 봉 이전을 통째로 버린다', () => 
     assert.equal(scan.firstUsableLocal[0], 0);
     assert.equal(scan.droppedBars, 0);
   });
+
+  /**
+   * ★ 정리매매에는 가격제한폭이 없다. 그 −60%를 파탄으로 잡으면 폐지 종목의
+   * 이력이 통째로 사라져 **생존편향을 걷으려고 받은 표본이 그 자리에서 빠진다.**
+   */
+  it('계열이 끝난 종목의 마지막 구간 파탄은 정리매매로 보고 면제한다', () => {
+    // `A`는 20200110에 끝난다. `B`가 20200131까지 있어 패널 마지막 날을 만든다.
+    const dying = [
+      bar('20200102', 1_000),
+      bar('20200103', 1_000),
+      bar('20200106', 1_000),
+      bar('20200107', 1_000),
+      bar('20200108', 400), // −60%. 정리매매 첫날 — 끝에서 3봉째다
+      bar('20200109', 200),
+      bar('20200110', 100),
+    ];
+    const alive: PanelBar[] = [];
+    for (let d = 2; d <= 31; d += 1) alive.push(bar(`202001${String(d).padStart(2, '0')}`, 5_000));
+
+    const panel = buildPanel(new Map([['A', dying], ['B', alive]]));
+    const scan = scanAdjustmentBreaks(panel);
+
+    assert.equal(scan.breaks.length, 0, '파탄으로 세지 않는다');
+    assert.equal(scan.exemptedBreaks.length, 3, '−60%·−50%·−50% 세 봉이 면제된다');
+    assert.equal(scan.exemptedSymbols, 1);
+    // ★ 면제는 봉을 버리지 않는다. 그 낙폭이 곧 폐지 손실이다.
+    assert.equal(scan.firstUsableLocal[0], 0);
+    assert.equal(scan.droppedBars, 0);
+  });
+
+  it('계열이 끝나지 않은 종목은 면제하지 않는다', () => {
+    // 같은 −60%지만 그 뒤로도 계속 거래된다 — 정리매매가 아니라 수정주가 파탄이다.
+    const bars: PanelBar[] = [
+      bar('20200102', 1_000),
+      bar('20200103', 400),
+    ];
+    for (let d = 6; d <= 31; d += 1) bars.push(bar(`202001${String(d).padStart(2, '0')}`, 400));
+
+    const panel = buildPanel(new Map([['A', bars]]));
+    const scan = scanAdjustmentBreaks(panel);
+
+    assert.equal(scan.breaks.length, 1);
+    assert.equal(scan.exemptedBreaks.length, 0);
+    assert.equal(scan.firstUsableLocal[0], 1, '파탄 앞을 버린다');
+  });
+
+  it('계열이 끝났어도 면제 구간보다 앞선 파탄은 그대로 잡는다', () => {
+    const bars: PanelBar[] = [bar('20200102', 1_000), bar('20200103', 3_000)]; // +200%
+    for (let d = 6; d <= 17; d += 1) bars.push(bar(`202001${String(d).padStart(2, '0')}`, 3_000));
+    const alive: PanelBar[] = [];
+    for (let d = 2; d <= 31; d += 1) alive.push(bar(`202001${String(d).padStart(2, '0')}`, 5_000));
+
+    const panel = buildPanel(new Map([['A', bars], ['B', alive]]));
+    const scan = scanAdjustmentBreaks(panel);
+
+    assert.equal(scan.breaks.length, 1, '끝에서 13봉 앞이라 면제 밖이다');
+    assert.equal(scan.exemptedBreaks.length, 0);
+    assert.equal(scan.firstUsableLocal[0], 1);
+  });
 });
 
 describe('quickSelect', () => {

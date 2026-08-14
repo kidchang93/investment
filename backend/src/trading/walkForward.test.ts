@@ -155,6 +155,7 @@ describe('진입 basis — 종가로 점수를 내고 그 종가에 살 수 없�
       ineligibleSymbols: 0,
       adjustment: {
         firstUsableLocal: new Int32Array(2), breaks: [], brokenSymbols: 0, droppedBars: 0, droppedShare: 0,
+        exemptedBreaks: [], exemptedSymbols: 0,
       },
       namesMedian: 2,
       namesMin: 2,
@@ -372,6 +373,7 @@ function fakeSpec(
       ineligibleSymbols: 0,
       adjustment: {
         firstUsableLocal: new Int32Array(0), breaks: [], brokenSymbols: 0, droppedBars: 0, droppedShare: 0,
+        exemptedBreaks: [], exemptedSymbols: 0,
       },
       namesMedian: 300,
       namesMin: 300,
