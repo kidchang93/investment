@@ -24,7 +24,7 @@ import {
   type WalkForwardSpec,
 } from './walkForward.js';
 import {
-  KIND_DELISTING_GAP,
+  type DelistingGap,
   anyAxisBeatsCost,
   buildBreakEvenTable,
   describeAbstainSkill,
@@ -41,6 +41,28 @@ import {
 } from './walkForwardReport.js';
 
 /* ── 재료 ────────────────────────────────────────────────────────────── */
+
+/**
+ * 폐지 누락 크기 한 벌. **상수를 모듈에 두지 않는 이유가 여기 있다** —
+ * 이 값은 봉이 들어올 때마다 바뀌므로 실행 시점에 DB에서 잰다
+ * (`db/delistings.ts`의 `measureDelistingGap`). 시험은 말로 옮기는 것만 본다.
+ */
+function gapOf(overrides: Partial<DelistingGap> = {}): DelistingGap {
+  return {
+    source: 'KIND 상장폐지 목록',
+    fetchedOn: '2026-08-13',
+    measuredOn: '2026-08-14',
+    totalRows: 1_267,
+    realExits: 880,
+    coveredSymbols: 40,
+    missingSymbols: 840,
+    continuingSymbols: 0,
+    reasons: [{ label: '자본전액잠식', count: 55 }],
+    missingShareByYear: [{ year: 2005, share: 0.352 }, { year: 2026, share: 0.009 }],
+    overallMissingShare: 0.232,
+    ...overrides,
+  };
+}
 
 function syntheticDay(index: number): string {
   const year = 2010 + Math.floor(index / 252);
@@ -172,18 +194,24 @@ describe('★ 생존편향은 불리언이 아니라 크기다', () => {
       { symbol: 'A', from: 0, to: 3_000 },
       { symbol: 'B', from: 252, to: 3_000 },
     ]);
-    const lines = describeSurvivorship(scanSurvivorship(panel, '20200101'), KIND_DELISTING_GAP);
+    const lines = describeSurvivorship(scanSurvivorship(panel, '20200101'), gapOf());
     const joined = lines.join('\n');
     // 크기 — 없는 종목은 패널 안에서 세어지지 않으므로 밖에서 와야 한다.
+    assert.ok(joined.includes('40종목'), joined);
     assert.ok(joined.includes('840종목'), joined);
-    assert.ok(joined.includes('847건'), joined);
-    assert.ok(joined.includes('2005 35.2%'), joined);
-    assert.ok(joined.includes('전체 23.2%'), joined);
-    // 출처와 잰 날 — 없으면 조용히 낡는다.
+    // 출처와 **잰 날**. 목록을 받은 날과 다르다 — 봉이 들어오면 답이 바뀐다.
     assert.ok(joined.includes('KIND 상장폐지 목록(2026-08-13 받음, 1,267건)'), joined);
-    // ★ 아직 안 받았다는 사실. "곧 들어온다"고 적으면 안 된다.
-    assert.ok(joined.includes('아직 안 받았다'), joined);
-    assert.ok(!/곧|예정|들어올/.test(joined), joined);
+    assert.ok(joined.includes('2026-08-14에 쟀다'), joined);
+    // ★ 아직 빠진 것이 있으면 그 사실과 받는 방법이 함께 나온다.
+    assert.ok(joined.includes('상한'), joined);
+    assert.ok(joined.includes('collectDelistedBars'), joined);
+  });
+
+  it('★ 폐지 목록에 있어도 봉이 이어지면 퇴장이 아니라고 적는다', () => {
+    // 이전상장·스팩소멸합병이 KIND에 폐지로 기록된다. 그 종목들은 오늘도 거래된다.
+    const joined = describeDelistingGap(gapOf({ continuingSymbols: 131 })).join('\n');
+    assert.ok(joined.includes('131개는 퇴장이 아니다'), joined);
+    assert.ok(joined.includes('이전상장'), joined);
   });
 
   it('밖의 크기를 안 주면 그 문단이 아예 안 나온다 — 없는 근거를 지어내지 않는다', () => {
@@ -193,11 +221,20 @@ describe('★ 생존편향은 불리언이 아니라 크기다', () => {
     assert.ok(joined.includes('이 패널에는 상장폐지가 없다'), joined);
   });
 
-  it('빠진 종목의 봉을 받았는지가 값으로 갈린다', () => {
-    const collected = describeDelistingGap({ ...KIND_DELISTING_GAP, barsCollected: true });
-    assert.ok(collected.some((line) => line.includes('받아 뒀다')));
-    assert.ok(!collected.some((line) => line.includes('아직 안 받았다')));
-    assert.equal(KIND_DELISTING_GAP.barsCollected, false, '아직 안 받았는데 받았다고 적혀 있다');
+  it('빠진 것이 없으면 "상한이다"를 적지 않는다 — 남은 편향이 없을 때 하는 말이 아니다', () => {
+    const joined = describeDelistingGap(gapOf({
+      missingSymbols: 0, coveredSymbols: 880, overallMissingShare: 0,
+    })).join('\n');
+    assert.ok(joined.includes('880종목이 표본에 들어왔고'), joined);
+    assert.ok(!joined.includes('collectDelistedBars'), joined);
+  });
+
+  it('연도가 많으면 균등하게 고르고 잘랐다고 밝힌다', () => {
+    const many = Array.from({ length: 21 }, (_, i) => ({ year: 2005 + i, share: 0.1 }));
+    const joined = describeDelistingGap(gapOf({ missingShareByYear: many })).join('\n');
+    assert.ok(joined.includes('21년 중'), joined);
+    // 앞쪽만 자르면 좋아진 뒤가 안 보인다 — 마지막 해가 들어 있어야 한다.
+    assert.ok(joined.includes('2025'), joined);
   });
 
   it('중간에 끝난 종목이 있으면 몇 개인지 세어 적는다 — 0으로 뭉개지 않는다', () => {

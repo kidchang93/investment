@@ -620,8 +620,12 @@ export interface WalkForwardSpec {
   /** 1주도 못 사는지 보는 기준 금액(원). 기본 1,000,000 */
   cashPerPosition?: number;
   /**
-   * 표본이 **오늘 살아 있는 종목만**인가. 오늘 마스터로 종목을 고르면 참이다.
+   * **생존편향이 남아 있나.** 참이면 이 표본에서 빠진 퇴장 종목이 있다는 뜻이다.
    * 감추면 판정문이 거짓말을 한다.
+   *
+   * ★ 2026-08-14 전에는 "표본이 오늘 살아 있는 종목만인가"였고 늘 `true`였다.
+   * 폐지 종목 봉이 들어오면서 **부분 노출**이 생겨 뜻을 좁혔다 — 크기는 불리언이
+   * 아니라 `describeDelistingGap`이 적는다(covered/missing/continuing).
    */
   survivorshipExposed: boolean;
 }

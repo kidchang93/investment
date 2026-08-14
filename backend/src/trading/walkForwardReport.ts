@@ -128,55 +128,52 @@ export function scanSurvivorship(panel: Panel, cutoff: string): SurvivorshipScan
 export interface DelistingGap {
   /** 어디서 받았나 */
   source: string;
-  /** 언제 받았나 `YYYY-MM-DD` */
+  /** 목록을 언제 받았나 `YYYY-MM-DD` */
   fetchedOn: string;
+  /**
+   * **이 크기를 언제 쟀나** `YYYY-MM-DD`. 목록을 받은 날과 다르다 —
+   * 봉이 들어오면 같은 목록에서도 답이 바뀐다.
+   */
+  measuredOn: string;
   /** 명단 전체 줄 수 */
   totalRows: number;
-  /** 그중 KOSPI/KOSDAQ의 **실제 기업 퇴장** */
+  /** KOSPI/KOSDAQ 폐지 기록 중 **계열이 실제로 끊긴** 코드 수 (`covered + missing`) */
   realExits: number;
-  /** 그중 우리 봉 테이블에 **종목코드조차 없는** 종목 수 */
+  /** 그중 우리 봉 테이블에 **종목코드조차 없는** 종목 수 — 아직 빠진 편향 */
   missingSymbols: number;
-  /** 사유 구성. 기업행위(합병 존속·이전상장 등)는 "망한 것"이 아니다 */
+  /** 그중 봉이 들어왔고 계열도 끝난 종목 수 — **표본에 실제로 반영된 퇴장** */
+  coveredSymbols: number;
+  /**
+   * 폐지 기록에 있으나 **봉이 이어지는** 코드 수. 퇴장이 아니다 —
+   * 코스닥→코스피 이전상장·스팩소멸합병이 KIND에 폐지로 기록되는데
+   * 그 종목들은 오늘도 거래된다.
+   */
+  continuingSymbols: number;
+  /** **아직 빠진** 종목의 사유 상위. KIND 원문 그대로다 */
   reasons: Array<{ label: string; count: number }>;
   /** 연도별 누락률(0~1). 옛날일수록 크다 */
   missingShareByYear: Array<{ year: number; share: number }>;
   /** 기간 전체 누락률(0~1) */
   overallMissingShare: number;
-  /** 빠진 종목의 봉을 실제로 받아 뒀나 */
-  barsCollected: boolean;
 }
 
-/**
- * KIND 상장폐지 목록으로 잰 크기 (2026-08-13).
+/*
+ * ── 왜 상수가 아닌가 (2026-08-14) ────────────────────────────────────────
+ *
+ * 여기 `KIND_DELISTING_GAP`이 손으로 박혀 있었다(2026-08-13에 잰 값,
+ * `missingSymbols: 840` · `barsCollected: false`). 그날 밤 폐지 종목 봉 803개가
+ * 들어왔는데 **판정문 맨 위는 계속 "840종목이 종목코드조차 없다"고 적었다.**
+ * 맨 위에 찍는 문장이라 읽는 사람이 "편향이 그대로 남았다"고 믿게 된다.
+ *
+ * 크기는 **잴 때마다 달라진다.** 그래서 상수를 지우고 DB에서 잰다 —
+ * `db/delistings.ts`의 `measureDelistingGap()`이 그 자리다. 이 모듈은 순수
+ * 계산만 하므로(DB도 KIS도 안 본다) 부른 쪽이 값을 넣어 준다.
  *
  * ★ **폐지일자는 효력일이고 마지막 봉은 그 직전 거래일이다**(5건 실측). 즉 빠진
- * 종목에는 **정리매매 구간이 통째로 들어 있었다** — 가격이 무너지는 자리다.
+ * 종목에는 **정리매매 구간이 통째로 들어 있다** — 가격이 무너지는 자리다.
  * `reversal1`·`reversal5`의 상위분위(많이 떨어진 것을 사는 자리)가 정확히 거기라,
- * 이 패널에서 나온 reversal 계열의 우위는 **상한**으로 읽어야 한다.
- *
- * ★ **아직 그 종목들의 봉은 안 받았다. 목록만 있다.** `barsCollected: false`가
- * 그 사실이고, 받기 전에는 "곧 들어온다"고 적지 않는다.
+ * 누락이 남아 있는 동안 reversal 계열의 우위는 **상한**으로 읽어야 한다.
  */
-export const KIND_DELISTING_GAP: DelistingGap = {
-  source: 'KIND 상장폐지 목록',
-  fetchedOn: '2026-08-13',
-  totalRows: 1_267,
-  realExits: 847,
-  missingSymbols: 840,
-  reasons: [
-    { label: '부실(관리종목·감사의견 등)', count: 585 },
-    { label: '해산 사유 발생(합병·파산 혼재)', count: 79 },
-    { label: '기업행위(안 망함)', count: 180 },
-  ],
-  missingShareByYear: [
-    { year: 2005, share: 0.352 },
-    { year: 2010, share: 0.264 },
-    { year: 2018, share: 0.088 },
-    { year: 2026, share: 0.009 },
-  ],
-  overallMissingShare: 0.232,
-  barsCollected: false,
-};
 
 /**
  * ★ **매 실행 첫 줄에 찍는다.** 판정문 맨 아래 각주가 아니라 맨 위여야 한다 —
@@ -220,20 +217,39 @@ export function describeSurvivorship(scan: SurvivorshipScan, gap?: DelistingGap)
 /** 빠진 크기를 말로 옮긴다. **숫자에 출처와 잰 날을 붙인다.** */
 export function describeDelistingGap(gap: DelistingGap): string[] {
   const share = (value: number): string => `${(value * 100).toFixed(1)}%`;
-  return [
-    `  ${gap.source}(${gap.fetchedOn} 받음, ${count(gap.totalRows)}건) 기준:`
-    + ` KOSPI/KOSDAQ 실제 기업 퇴장 ${count(gap.realExits)}건 중`
-    + ` **${count(gap.missingSymbols)}종목이 이 봉 테이블에 종목코드조차 없다**`,
-    `    사유 ${gap.reasons.map((r) => `${r.label} ${count(r.count)}`).join(' · ')}`,
-    `    연도별 누락률 ${gap.missingShareByYear.map((y) => `${y.year} ${share(y.share)}`).join(' · ')}`
+  const lines = [
+    `  ${gap.source}(${gap.fetchedOn} 받음, ${count(gap.totalRows)}건) · 이 크기는 ${gap.measuredOn}에 쟀다:`
+    + ` KOSPI/KOSDAQ에서 계열이 끊긴 ${count(gap.realExits)}종목 중`
+    + ` **${count(gap.coveredSymbols)}종목이 표본에 들어왔고 ${count(gap.missingSymbols)}종목은`
+    + ' 아직 봉 테이블에 종목코드조차 없다**',
+    `    ★ 폐지 기록에 있으나 봉이 이어지는 코드 ${count(gap.continuingSymbols)}개는 퇴장이 아니다`
+    + ' — 이전상장·스팩소멸합병이 KIND에 폐지로 기록되고 그 종목들은 오늘도 거래된다.',
+  ];
+  if (gap.reasons.length > 0) {
+    lines.push(`    아직 빠진 것의 사유 ${gap.reasons.map((r) => `${r.label} ${count(r.count)}`).join(' · ')}`);
+  }
+  /*
+   * 연도가 20개를 넘으면 한 줄이 안 읽힌다. **자른 것을 밝히고** 균등하게 고른다 —
+   * 앞쪽만 자르면 누락률이 큰 옛날만 보이고 좋아진 뒤가 안 보인다.
+   */
+  const years = gap.missingShareByYear;
+  const step = Math.max(1, Math.ceil(years.length / 6));
+  const shown = years.filter((_, i) => i % step === 0 || i === years.length - 1);
+  lines.push(
+    `    연도별 누락률 ${shown.map((y) => `${y.year} ${share(y.share)}`).join(' · ')}`
+    + (shown.length < years.length ? ` (${years.length}년 중 ${shown.length}년만 적었다)` : '')
     + ` · 전체 ${share(gap.overallMissingShare)}`,
     '    ★ 폐지일은 **효력일**이고 마지막 봉은 그 직전 거래일이다(5건 실측) —'
     + ' 빠진 종목에는 **정리매매 구간(가격이 무너지는 자리)이 통째로** 들어 있었다.',
     '      reversal 계열의 상위분위가 정확히 그 자리를 산다.',
-    gap.barsCollected
-      ? '    빠진 종목의 봉은 받아 뒀다.'
-      : '    ★ 그 종목들의 봉은 **아직 안 받았다. 목록만 있다.**',
-  ];
+  );
+  if (gap.missingSymbols > 0) {
+    lines.push(
+      `    ★ 아직 ${share(gap.overallMissingShare)}가 빠져 있다 — 여기서 나온 reversal 계열의 우위는`
+      + ' 여전히 **상한**이다. npx tsx src/scripts/collectDelistedBars.ts',
+    );
+  }
+  return lines;
 }
 
 /* ── 손익분기표 — "돈이 되나" ────────────────────────────────────────── */

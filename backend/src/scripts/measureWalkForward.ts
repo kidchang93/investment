@@ -44,6 +44,7 @@
 
 import { closeDb, pool } from '../db/client.js';
 import { getDailyBars, type DailyBar as StoredBar } from '../db/dailyBars.js';
+import { measureDelistingGap } from '../db/delistings.js';
 import {
   HARNESS_CELL_UNIT,
   WALKFORWARD_BLOCK_A_UNIT,
@@ -81,7 +82,6 @@ import {
   type WalkForwardSpec,
 } from '../trading/walkForward.js';
 import {
-  KIND_DELISTING_GAP,
   anyAxisBeatsCost,
   buildBreakEvenTable,
   describeAbstainSkill,
@@ -512,10 +512,28 @@ async function main(): Promise<void> {
   console.log(`\n${'━'.repeat(78)}`);
   console.log('★ 이 표본이 무엇인가 — 생존편향의 크기');
   console.log('━'.repeat(78));
-  const survivorship = describeSurvivorship(
-    scanSurvivorship(panel, SURVIVORSHIP_CUTOFF),
-    KIND_DELISTING_GAP,
+  /*
+   * ★ 크기를 **지금 잰다.** 여기 상수가 박혀 있었는데(2026-08-13에 잰
+   * `missingSymbols: 840`) 그날 밤 803종목이 들어와 하루 만에 거짓이 됐다.
+   * 판정문 맨 위에 찍히는 문장이라 읽는 사람이 "편향이 그대로"라고 믿게 된다.
+   */
+  const gap = await measureDelistingGap(
+    new Date().toISOString().slice(0, 10),
+    DEFAULT_ADJUSTMENT_SCAN.seriesEndGapDays,
   );
+  const survivorship = describeSurvivorship(scanSurvivorship(panel, SURVIVORSHIP_CUTOFF), {
+    source: 'KIND 상장폐지 목록',
+    fetchedOn: gap.fetchedOn?.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3') ?? '(모름)',
+    measuredOn: gap.measuredOn,
+    totalRows: gap.totalRows,
+    realExits: gap.coveredSymbols + gap.missingSymbols,
+    missingSymbols: gap.missingSymbols,
+    coveredSymbols: gap.coveredSymbols,
+    continuingSymbols: gap.continuingSymbols,
+    reasons: gap.reasons,
+    missingShareByYear: gap.missingShareByYear,
+    overallMissingShare: gap.overallMissingShare,
+  });
   for (const line of survivorship) console.log(line);
 
   // ── 유니버스 ───────────────────────────────────────────────────────────
@@ -573,7 +591,8 @@ async function main(): Promise<void> {
     buckets: BUCKETS,
     minNamesPerDay: UNIVERSE.minNamesPerDay,
     signalsByKey: new Map(usable.map((s) => [s.key, s])),
-    survivorshipExposed: true,
+    // 폐지 종목이 들어왔어도 **아직 빠진 것이 있으면** 편향은 남아 있다.
+    survivorshipExposed: gap.missingSymbols > 0,
     cashPerPosition: 1_000_000,
   };
 
@@ -848,7 +867,23 @@ async function main(): Promise<void> {
     console.log('★ 넘었다고 확정이 아니다. 반증 셋과 손익분기표를 함께 읽어라.');
     console.log('  비용을 넘는지는 **위 손익분기표**가 답한다 — 판정 t는 그 질문에 답하지 않는다.');
   }
-  console.log('★ 그리고 표본은 **오늘 살아 있는 종목만**이다 — 맨 위 생존편향 크기를 다시 봐라.');
+  /*
+   * ★ 여기 "표본은 **오늘 살아 있는 종목만**이다"가 박혀 있었다. 폐지 종목이
+   * 들어온 뒤로는 거짓이다. 맨 위 진단과 같은 값에서 말을 만든다 — 두 자리가
+   * 각자 적으면 한쪽이 조용히 낡는다.
+   */
+  if (gap.missingSymbols > 0) {
+    console.log(
+      `★ 표본에 퇴장 ${gap.coveredSymbols.toLocaleString('ko-KR')}종목이 들어와 있지만`
+      + ` ${gap.missingSymbols.toLocaleString('ko-KR')}종목은 아직 빠져 있다`
+      + ` (누락 ${(gap.overallMissingShare * 100).toFixed(1)}%) — 맨 위 생존편향 크기를 다시 봐라.`,
+    );
+  } else {
+    console.log(
+      `★ 알려진 퇴장 ${gap.coveredSymbols.toLocaleString('ko-KR')}종목이 전부 표본에 들어와 있다`
+      + ' — 그래도 KIND 목록 밖(ETF·우선주)은 크기조차 모른다.',
+    );
+  }
 
   if (options.dryRun) {
     console.log('\n--dry-run이라 원장에 안 남긴다.');
@@ -908,7 +943,7 @@ async function main(): Promise<void> {
       placeboMaxT: placeboTs.length > 0
         ? placeboTs.reduce((a, t) => Math.max(a, Math.abs(t)), 0)
         : undefined,
-      survivorshipExposed: true,
+      survivorshipExposed: gap.missingSymbols > 0,
       truncatedExits: result.truncatedExits,
       abstainSkillT: abstainScored?.abstainSkillT,
     })));

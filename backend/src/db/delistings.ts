@@ -243,6 +243,138 @@ export async function getDelistedCandidates(): Promise<DelistedCandidateRow[]> {
   }));
 }
 
+/**
+ * **생존편향의 크기를 지금 잰다.** 상수로 박아 두지 않는 이유가 여기 있다 —
+ * 봉이 들어오면 같은 KIND 목록에서도 답이 바뀐다. 2026-08-13에 손으로 박은
+ * `missingSymbols: 840`이 하룻밤 만에 거짓이 됐다(803종목이 들어왔다).
+ *
+ * ── ★ 셋으로 가른다. `is_active`나 사유 글로 가르지 않는다 ────────────────
+ *
+ * 폐지 목록에는 **퇴장이 아닌 것이 섞여 있다.** 코스닥→코스피 이전상장과
+ * 스팩소멸합병이 KIND에 상장폐지로 기록되는데, 그 종목들은 오늘도 같은
+ * 종목코드로 거래된다(신세계푸드·LG유플러스·엘앤에프·포스코DX…).
+ *
+ * 사유 글로는 안 갈린다 — 2026-08-14 실측에서 폐지 기록 1,287건 중 131건이
+ * 마스터에 살아 있는데 **그중 66건은 사유가 이전상장이 아니었다.**
+ * `is_active`로도 안 갈린다 — 최근 폐지는 마스터가 아직 안 지워졌고, 메리츠화재
+ * 같은 완전자회사화 종목은 계열이 끊겼는데도 활성으로 남아 있다.
+ *
+ * **계열이 끊겼는지는 봉이 말한다.** 그래서 마지막 봉의 위치로 가른다:
+ *
+ *   covered      봉이 있고 계열이 끝났다      → 표본에 실제로 반영된 퇴장
+ *   missing      봉이 아예 없다               → 아직 남은 편향
+ *   continuing   봉이 있고 계열이 이어진다    → 퇴장이 아니었다
+ */
+export interface DelistingGapMeasurement {
+  fetchedOn: string | null;
+  measuredOn: string;
+  totalRows: number;
+  coveredSymbols: number;
+  missingSymbols: number;
+  continuingSymbols: number;
+  /** 아직 빠진 것의 사유 상위. KIND 원문 그대로 자르지 않고 앞부분만 쓴다 */
+  reasons: Array<{ label: string; count: number }>;
+  missingShareByYear: Array<{ year: number; share: number }>;
+  overallMissingShare: number;
+}
+
+/**
+ * `measuredOn`은 부른 쪽이 준다 — 이 모듈이 `Date`를 읽으면 시험이 날짜에 매인다.
+ *
+ * `seriesEndGapDays`는 `scanAdjustmentBreaks`와 **같은 뜻**이어야 한다. 한쪽이
+ * "끝났다"고 보고 다른 쪽이 아니라고 보면 두 판정문이 서로 다른 표본을 말한다.
+ */
+export async function measureDelistingGap(
+  measuredOn: string,
+  seriesEndGapDays = 5,
+): Promise<DelistingGapMeasurement> {
+  /*
+   * 코드 하나가 여러 번 폐지될 수 있다(재상장). 마지막 폐지일로 대표한다 —
+   * 지금 계열이 끊겼는지를 묻는 것이므로 가장 최근 사건이 답이다.
+   */
+  const { rows } = await pool.query<{
+    zone: string; year: string; symbols: string;
+  }>(
+    `WITH last_day AS (
+       SELECT max(trading_day) AS day FROM trading_daily_bars
+     ),
+     cutoff AS (
+       SELECT trading_day AS day FROM (
+         SELECT DISTINCT trading_day FROM trading_daily_bars ORDER BY trading_day DESC LIMIT $1
+       ) t ORDER BY trading_day ASC LIMIT 1
+     ),
+     episodes AS (
+       SELECT d.symbol, max(d.delisted_on) AS delisted_on
+       FROM instrument_delistings d
+       LEFT JOIN instruments i ON i.symbol = d.symbol
+       WHERE d.market IN ('KOSPI', 'KOSDAQ') OR i.market IN ('KOSPI', 'KOSDAQ')
+       GROUP BY d.symbol
+     ),
+     placed AS (
+       SELECT e.symbol, e.delisted_on,
+              (SELECT max(b.trading_day) FROM trading_daily_bars b WHERE b.symbol = e.symbol) AS last_bar
+       FROM episodes e
+     )
+     SELECT CASE
+              WHEN last_bar IS NULL THEN 'missing'
+              WHEN last_bar < (SELECT day FROM cutoff) THEN 'covered'
+              ELSE 'continuing'
+            END AS zone,
+            substring(delisted_on, 1, 4) AS year,
+            count(*)::text AS symbols
+     FROM placed
+     GROUP BY 1, 2`,
+    [Math.max(1, seriesEndGapDays)],
+  );
+
+  const totals = { covered: 0, missing: 0, continuing: 0 };
+  const byYear = new Map<number, { covered: number; missing: number }>();
+  for (const row of rows) {
+    const symbols = Number(row.symbols);
+    if (row.zone === 'covered') totals.covered += symbols;
+    else if (row.zone === 'missing') totals.missing += symbols;
+    else totals.continuing += symbols;
+    // 누락률의 분모는 **퇴장한 것**이다. 이어지는 코드는 애초에 빠질 대상이 아니다.
+    if (row.zone === 'continuing') continue;
+    const year = Number(row.year);
+    if (!Number.isFinite(year)) continue;
+    const bucket = byYear.get(year) ?? { covered: 0, missing: 0 };
+    if (row.zone === 'covered') bucket.covered += symbols;
+    else bucket.missing += symbols;
+    byYear.set(year, bucket);
+  }
+
+  const meta = await pool.query<{ total: string; fetched: string | null }>(
+    `SELECT count(*)::text AS total, max(vintage) AS fetched FROM instrument_delistings`,
+  );
+  const reasons = await pool.query<{ label: string; count: string }>(
+    `SELECT left(d.reason, 28) AS label, count(*)::text AS count
+     FROM instrument_delistings d
+     WHERE NOT EXISTS (SELECT 1 FROM trading_daily_bars b WHERE b.symbol = d.symbol)
+     GROUP BY 1 ORDER BY count(*) DESC LIMIT 4`,
+  );
+
+  const exits = totals.covered + totals.missing;
+  return {
+    fetchedOn: meta.rows[0]?.fetched ?? null,
+    measuredOn,
+    totalRows: Number(meta.rows[0]?.total ?? 0),
+    coveredSymbols: totals.covered,
+    missingSymbols: totals.missing,
+    continuingSymbols: totals.continuing,
+    reasons: reasons.rows.map((r) => ({ label: r.label, count: Number(r.count) })),
+    missingShareByYear: [...byYear.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([year, bucket]) => ({
+        year,
+        share: bucket.covered + bucket.missing > 0
+          ? bucket.missing / (bucket.covered + bucket.missing)
+          : 0,
+      })),
+    overallMissingShare: exits > 0 ? totals.missing / exits : 0,
+  };
+}
+
 /** 왜 이 코드를 안 받나. 사유마다 고쳐야 할 곳이 다르므로 뭉뚱그리지 않는다. */
 export type DelistedSkipReason = 'stillActive' | 'relisted' | 'noDelistingDay';
 
