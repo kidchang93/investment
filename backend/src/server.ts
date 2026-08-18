@@ -39,6 +39,7 @@ import { ensureDailySelectionSchema } from './db/dailySelection.js';
 import { getLastBuySubmittedAt } from './db/brokerOrders.js';
 import { checkPositionGuard } from './trading/positionGuard.js';
 import { getLayerPositions, getLayerTradeStats, getRealizedByLayer } from './db/layers.js';
+import { pool } from './db/client.js';
 import { LAYER_LABELS, LAYER_TARGETS, reconcile, summarizeLayers } from './trading/layers.js';
 import { ensureMarketSnapshotSchema } from './db/marketSnapshot.js';
 import { startDailySnapshot } from './trading/dailySnapshot.js';
@@ -137,6 +138,8 @@ import type {
   BrokerPosition,
   PortfolioLayerSummary,
   PortfolioLayersSnapshot,
+  TradingAlert,
+  TradingHealthSnapshot,
   ClientMessage,
   ClientSubscribeInstrument,
   CreateOrderRequest,
@@ -405,6 +408,98 @@ async function main(): Promise<void> {
     } catch (err) {
       req.log.warn({ err, accountId }, '3층 성과 조회 실패');
       return reply.code(502).send({ message: '3층 성과를 조회할 수 없습니다.' });
+    }
+  });
+
+  /**
+   * 자동화가 살아 있나 · 지금 사람이 할 일이 있나.
+   *
+   * ★ **감지한 것을 아무도 안 보면 없는 것과 같다.** 2026-08-07부터 8일간
+   * 자동화가 조용히 죽어 있었는데 로그에만 쌓이고 화면에는 없었다.
+   */
+  app.get<{ Querystring: { accountId?: string } }>('/api/trading/health', async (req, reply) => {
+    const account = resolveAccount(req.query.accountId);
+    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+    const accountId = account?.id ?? '';
+    try {
+      const beats = await pool.query<{ name: string; ran_at: string; note: string }>(
+        `SELECT name, extract(epoch from ran_at) * 1000 AS ran_at, note
+           FROM trading_heartbeats
+          WHERE (ran_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date
+          ORDER BY ran_at DESC LIMIT 20`,
+      ).catch(() => ({ rows: [] as Array<{ name: string; ran_at: string; note: string }> }));
+
+      const started = await pool.query<{ first: string | null }>(
+        `SELECT extract(epoch from min(traded_at)) * 1000 AS first
+           FROM trading_layer_trades WHERE account_id = $1`,
+        [accountId],
+      ).catch(() => ({ rows: [{ first: null }] }));
+
+      const snapshot = await getKisDomesticAccountSnapshot(account);
+      const rules = await getRiskRules(accountId);
+
+      /*
+       * ★ 자산은 **세 계산 중 가장 작은 값**으로 본다. D+0은 오늘 산 것이 안 빠져
+       * 부풀고(실측 +2,850만), 총평가는 모의 서버 정산 타이밍에 절반으로 나온 적이
+       * 있다. 중단선은 늦게 잡는 쪽이 더 위험하므로 작은 값을 쓴다.
+       */
+      const stock = snapshot.stockEvaluation ?? 0;
+      const candidates = [
+        (snapshot.cashBalance ?? 0) + stock,
+        (snapshot.settlementCash ?? 0) + stock,
+        snapshot.totalEvaluation ?? 0,
+      ].filter((v) => v > 0);
+      const equity = candidates.length > 0 ? Math.min(...candidates) : 0;
+
+      const alerts: TradingAlert[] = [];
+      if (rules.stopEquity > 0 && equity > 0 && equity < rules.stopEquity) {
+        alerts.push({
+          level: 'danger',
+          message: `중단선에 닿았습니다 — 자산이 ${Math.round(equity).toLocaleString('ko-KR')}원입니다`,
+          action: '새 매수를 멈추고 무엇이 빠졌는지 확인하세요. 자동 집행은 이 상태에서 거부됩니다.',
+        });
+      }
+
+      const positions = await getLayerPositions(accountId);
+      const brokerQty = new Map(snapshot.positions.map((p) => [p.symbol, p.quantity]));
+      const mismatches = reconcile(positions, brokerQty);
+      if (mismatches.length > 0) {
+        alerts.push({
+          level: 'danger',
+          message: `장부와 증권사 잔고가 ${mismatches.length}종목 어긋납니다`,
+          action: '빠진 체결을 장부에 넣기 전까지 층별 손익을 믿을 수 없습니다.',
+        });
+      }
+
+      // 평일 개장 뒤인데 오늘 기록이 없으면 자동화가 멈춰 있었다는 뜻이다.
+      const seoul = new Date(Date.now() + 9 * 3600 * 1000);
+      const dow = seoul.getUTCDay();
+      const hhmm = seoul.getUTCHours() * 100 + seoul.getUTCMinutes();
+      if (dow >= 1 && dow <= 5 && hhmm > 900 && beats.rows.length === 0) {
+        alerts.push({
+          level: 'warn',
+          message: '평일 개장 뒤인데 오늘 자동 실행 기록이 없습니다',
+          action: '터미널에서 zsh scripts/daemon.sh status 로 확인하세요.',
+        });
+      }
+
+      const firstRaw = started.rows[0]?.first;
+      return {
+        heartbeats: beats.rows.map((r: { name: string; ran_at: string; note: string }) => ({
+          name: r.name,
+          ranAt: Number(r.ran_at),
+          note: r.note,
+        })),
+        alerts,
+        stopEquity: rules.stopEquity,
+        equity,
+        // 값이 없으면 `null`이다 — 0으로 채우면 1970년에 시작한 것이 된다.
+        startedAt: firstRaw === null || firstRaw === undefined ? null : Number(firstRaw),
+        fetchedAt: Date.now(),
+      } satisfies TradingHealthSnapshot;
+    } catch (err) {
+      req.log.warn({ err, accountId }, '자동화 상태 조회 실패');
+      return reply.code(502).send({ message: '자동화 상태를 조회할 수 없습니다.' });
     }
   });
 

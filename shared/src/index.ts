@@ -2063,3 +2063,36 @@ export interface PortfolioLayersSnapshot {
   /** 못 읽었으면 왜 */
   message?: string;
 }
+
+/** 자동화가 언제 무엇을 했나. 안 돌았으면 그 사실이 값으로 보여야 한다 */
+export interface AutomationHeartbeat {
+  name: string;
+  /** epoch ms */
+  ranAt: number;
+  note: string;
+}
+
+/** 지금 사람이 해야 할 일 하나. **없으면 없다고 적는다** */
+export interface TradingAlert {
+  /** `danger`는 돈이 걸린 것, `warn`은 확인이 필요한 것 */
+  level: 'danger' | 'warn';
+  message: string;
+  /** 무엇을 하면 되나 */
+  action: string;
+}
+
+export interface TradingHealthSnapshot {
+  /** 오늘 자동으로 돈 것들 (KST 기준 오늘) */
+  heartbeats: AutomationHeartbeat[];
+  alerts: TradingAlert[];
+  /** 중단선(원). 0이면 안 걸어 둔 것 */
+  stopEquity: number;
+  /**
+   * 중단선과 견줄 자산(원). **세 계산 중 가장 작은 값** —
+   * D+0은 오늘 산 것이 안 빠져 부풀고, 총평가는 정산 타이밍에 쪼그라든 적이 있다.
+   */
+  equity: number;
+  /** 처음 매수한 날 (epoch ms). 없으면 아직 아무것도 안 샀다 */
+  startedAt: number | null;
+  fetchedAt: number;
+}

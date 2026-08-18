@@ -7170,3 +7170,161 @@ span.sample-badge {
   color: var(--faint, #8b93a7);
   line-height: 1.5;
 }
+
+/* ── 목표 화면 (2026-08-18) ─────────────────────────────────────────────
+   이 앱이 무엇을 하려는지 한 화면에 적는다. 셋만 둔다 —
+   ①목표까지 어디쯤 ②지금 할 일 ③자동화가 살아 있나. */
+.dash {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.dash__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.dash__head h2 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+.dash__head p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--faint, #8b93a7);
+}
+.dash__refresh {
+  border: 1px solid var(--border, #2a2f3a);
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.dash__refresh:disabled { opacity: 0.5; cursor: default; }
+
+/* ── ② 지금 할 일 ─────────────────────────────────────────────────── */
+.dash__todo { display: flex; flex-direction: column; gap: 8px; }
+.dash__ok {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--faint, #8b93a7);
+}
+.dash__alert {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* 색은 판정에만 — danger는 돈이 걸린 것, warn은 확인이 필요한 것 */
+.dash__alert[data-level='danger'] {
+  border: 1px solid #7a2a2a;
+  background: rgba(180, 40, 40, 0.12);
+}
+.dash__alert[data-level='warn'] {
+  border: 1px solid #7a5a2a;
+  background: rgba(180, 130, 40, 0.1);
+}
+.dash__alert span { color: var(--faint, #8b93a7); font-size: 12px; }
+
+/* ── ① 목표까지 어디쯤 ────────────────────────────────────────────── */
+.dash__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.dash__stats > div {
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dash__stats span { font-size: 11px; color: var(--faint, #8b93a7); }
+.dash__stats strong { font-size: 24px; font-variant-numeric: tabular-nums; }
+.dash__stats small { font-size: 11px; color: var(--faint, #8b93a7); }
+.dash__stats [data-pnl='up'] { color: var(--up, #e2574c); }
+.dash__stats [data-pnl='down'] { color: var(--down, #3b82f6); }
+
+.dash__layers { width: 100%; border-collapse: collapse; }
+.dash__layers caption {
+  text-align: left;
+  font-size: 11px;
+  color: var(--faint, #8b93a7);
+  padding-bottom: 8px;
+}
+.dash__layers th[scope='row'] { text-align: left; font-size: 13px; width: 72px; padding: 10px 0; }
+.dash__layers td { padding: 10px 0 10px 12px; vertical-align: middle; }
+/* 비어 있는 층도 줄로 남긴다 — 지우면 없는 층처럼 읽힌다 */
+.dash__layers tr[data-empty] { opacity: 0.5; }
+.dash__bar { width: 45%; }
+.dash__track {
+  position: relative;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--border, #2a2f3a);
+  overflow: visible;
+}
+.dash__fill { height: 100%; border-radius: 5px; background: var(--accent, #d7a13b); }
+/* 목표는 눈금으로만 둔다. 채운 막대와 색이 겹치면 어느 쪽이 목표인지 모른다 */
+.dash__target {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 16px;
+  background: var(--fg, #e6e9ef);
+}
+.dash__num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dash__num b { display: block; font-size: 14px; }
+.dash__num small { display: block; font-size: 10px; color: var(--faint, #8b93a7); }
+.dash__num small em { font-style: normal; }
+.dash__num small em[data-gap='over'] { color: var(--up, #e2574c); }
+.dash__num small em[data-gap='under'] { color: var(--down, #3b82f6); }
+.dash__num[data-pnl='up'] { color: var(--up, #e2574c); }
+.dash__num[data-pnl='down'] { color: var(--down, #3b82f6); }
+
+.dash__note { margin: 0; font-size: 11px; color: var(--faint, #8b93a7); line-height: 1.6; }
+
+/* ── ③ 자동화 ─────────────────────────────────────────────────────── */
+.dash__auto {
+  border-top: 1px solid var(--border, #2a2f3a);
+  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dash__auto h3 { margin: 0; font-size: 13px; }
+.dash__auto ul { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 8px; }
+.dash__auto li {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+.dash__auto time { color: var(--faint, #8b93a7); font-variant-numeric: tabular-nums; }
+
+/* 목표 화면에서는 종목 검색이 필요 없다 — 자리만 차지한다. */
+.symbol-search[data-hidden] { display: none; }
+.dash__account {
+  max-width: 1080px;
+  margin: 16px auto 0;
+  padding: 0 20px;
+  display: flex;
+  justify-content: flex-end;
+}

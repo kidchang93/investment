@@ -47,6 +47,7 @@ import {
   type FinancialsResult,
 } from './api';
 import { useStream } from './useStream';
+import { Dashboard } from './Dashboard';
 import { PortfolioLayers } from './PortfolioLayers';
 import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } from './Chart';
 import {
@@ -127,7 +128,19 @@ type LayoutPreset = 'balanced' | 'chart' | 'reading';
  * 영영 갈 수 없었다. 새로고침하면 저장값 검증에서 걸러져 터미널로 돌아가기도
  * 했다. 주문은 종목 화면(오른쪽 패널)으로 들어왔다.
  */
-type AppPage = 'terminal' | 'market' | 'portfolio';
+type AppPage = 'goal' | 'terminal' | 'market' | 'portfolio';
+
+/**
+ * ★ **자동매매 패널을 화면에서 내린다 (2026-08-18).**
+ *
+ * 러너는 2026-08-05에 영구 정지했고 판단은 에이전트·스크립트가 한다. 화면에
+ * 시작 버튼이 남아 있으면 실수로 켜지고, 켜지면 **검증 안 된 규칙으로 실제
+ * 주문이 나간다** — 21년 데이터로 비용을 넘는 신호가 0건이었다.
+ *
+ * 지우지 않고 플래그로 막는 이유: 서버 코드(`trading/autoTrader.ts`)와 API는
+ * 그대로 살아 있어서, 규칙이 검증되면 이 값만 되돌리면 된다.
+ */
+const SHOW_AUTO_TRADER_PANEL = false;
 type SidePanelTab = 'order' | 'watch' | 'discover';
 type TerminalTab =
   | 'overview'
@@ -417,6 +430,8 @@ const TOOL_OPTIONS: Array<{ key: ChartTool; label: string; title: string }> = [
  * 주문은 다른 곳에 있어 실제 쓰임과 어긋났다.
  */
 const APP_PAGE_OPTIONS: Array<{ key: AppPage; label: string; title: string }> = [
+  // ★ 목표가 첫 화면이다. 무엇을 하려는 앱인지 열자마자 보여야 한다.
+  { key: 'goal', label: '목표', title: '연 15~20%까지 어디쯤인가 · 지금 할 일' },
   { key: 'market', label: '종목', title: '차트와 주문을 한 화면에서' },
   { key: 'portfolio', label: '내 계좌', title: '잔고·주문내역·손익·리스크 룰' },
   { key: 'terminal', label: '발견', title: '뉴스·매크로·캘린더·랭킹' },
@@ -2707,7 +2722,7 @@ export function App(): JSX.Element {
     readStoredValue('bottomDockMode', 'normal', BOTTOM_DOCK_MODE_OPTIONS.map((option) => option.key)),
   );
   const [activePage, setActivePage] = useState<AppPage>(() =>
-    readStoredValue('activePage', 'terminal', APP_PAGE_OPTIONS.map((option) => option.key)),
+    readStoredValue('activePage', 'goal', APP_PAGE_OPTIONS.map((option) => option.key)),
   );
   const terminalTabsRef = useRef<HTMLElement | null>(null);
   const [terminalTab, setTerminalTab] = useState<TerminalTab>(() =>
@@ -5367,7 +5382,7 @@ export function App(): JSX.Element {
                 </div>
               )}
             </div>
-            <div className="symbol-search">
+            <div className="symbol-search" data-hidden={activePage === 'goal' ? '' : undefined}>
               <input
                 aria-activedescendant={activeSymbolResultId}
                 aria-autocomplete="list"
@@ -5610,7 +5625,7 @@ export function App(): JSX.Element {
             비교를 켜면 같은 종목이 두 줄에 중복으로 보였다. 한 줄로 합치고
             비교 버튼은 "관심종목도 이어 붙이기"로 쓴다.
           */}
-          {activePage !== 'portfolio' && chipInstruments.length > 0 && (
+          {activePage !== 'portfolio' && activePage !== 'goal' && chipInstruments.length > 0 && (
             <div className="recent-symbols" role="tablist" aria-label="종목 바로가기">
               <span className="recent-symbols__label">종목</span>
               {chipInstruments.map((instrument) => {
@@ -6915,7 +6930,7 @@ export function App(): JSX.Element {
             </section>
           )}
 
-          {activePage !== 'portfolio' && <section className="quote-header">
+          {activePage !== 'portfolio' && activePage !== 'goal' && <section className="quote-header">
             <div className="quote-header__identity">
               <div className="quote-header__symbol-row">
                 <span className="quote-header__code">
@@ -6990,7 +7005,7 @@ export function App(): JSX.Element {
             </div>
           </section>}
 
-          {activePage !== 'portfolio' && <section className="market-strip" aria-label="종목 상세 정보">
+          {activePage !== 'portfolio' && activePage !== 'goal' && <section className="market-strip" aria-label="종목 상세 정보">
             <div className="market-strip__status" data-tone={marketSession.tone}>
               <span>장 상태</span>
               <strong>{marketSession.label}</strong>
@@ -7367,6 +7382,20 @@ export function App(): JSX.Element {
             </span>
           </div>}
 
+          {/*
+            ★ 목표 화면. 이 앱이 무엇을 하려는지가 첫 화면이어야 한다 —
+            잔고·체결·랭킹이 먼저 보이면 "지금 목표까지 어디쯤인가"를 알 수 없다.
+          */}
+          {activePage === 'goal' && (
+            <>
+              {/* 계좌 선택기가 내 계좌 화면에만 있어서 "위에서 고르세요"가 갈 곳이 없었다. */}
+              <div className="dash__account">
+                <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
+              </div>
+              <Dashboard accountId={kisAccountId} />
+            </>
+          )}
+
           {activePage === 'portfolio' && (
             <section className="portfolio-page" aria-label="포트폴리오">
               {/*
@@ -7695,6 +7724,7 @@ export function App(): JSX.Element {
                 )}
               </section>
 
+              {SHOW_AUTO_TRADER_PANEL && (
               <section className="portfolio-card portfolio-card--wide" aria-label="자동매매">
                 <div className="portfolio-card__header">
                   <div>
@@ -8116,6 +8146,7 @@ export function App(): JSX.Element {
                   )}
                 </div>
               </section>
+              )}
 
               <section className="portfolio-card portfolio-card--wide" aria-label="실주문 리스크 룰">
                 <div className="portfolio-card__header">
