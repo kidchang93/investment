@@ -154,7 +154,38 @@ const UNIVERSE = {
   minNamesPerDay: 200,
 };
 
+/**
+ * ETF 패널의 유니버스. **주식 값을 그대로 쓰면 표본이 2년밖에 안 남는다.**
+ *
+ * ── 왜 갈랐나 (2026-08-18 실측) ────────────────────────────────────────
+ *
+ * 주식 설정(거래대금 1억↑ · 하루 200종목↑)으로 ETF를 돌렸더니 **15개 검증 창
+ * 중 14개가 현금**이었다. 표본이 있는 해가 2025~2026 둘뿐이라 해 군집 t가
+ * 0으로 나왔고, 그 위에서 "연 알파 +27.8%"가 찍혔다. 진입은 390건이다
+ * (주식은 3,836건).
+ *
+ * 이유는 한국 ETF 시장이 **최근에야 커졌기** 때문이다. 거래대금 1억 이상 ETF는
+ * 2015년 83개 · 2018년 208개 · 2026년 965개다. 하루 200종목을 요구하면
+ * 2024년 이후만 남는다.
+ *
+ * ★ 그래서 셋을 **함께** 낮춘다 — 하나씩 바꿔가며 다시 재면 그게 곧
+ * "찾을 때까지 뒤지기"다. 값의 근거:
+ *
+ *   minTurnover 10억    실제로 살 수 있는 ETF만. 슬리피지 실측 0.09%는
+ *                       유동성 좋은 종목의 값이고, 얇은 ETF에는 안 맞는다
+ *   minNamesPerDay 40   2015년에 10억↑ ETF가 40개였다. 그 아래로 내리면
+ *                       표본이 아니라 종목 몇 개의 이야기가 된다
+ *   buckets 5           40종목을 십분위로 자르면 분위당 4개다. 오분위면 8개
+ */
+const ETF_UNIVERSE = {
+  ...UNIVERSE,
+  minTurnover: 1_000_000_000,
+  minNamesPerDay: 40,
+};
+
 const BUCKETS = 10;
+/** ETF는 종목이 적어 십분위로 자르면 분위당 4~8개다. 오분위로 본다 */
+const ETF_BUCKETS = 5;
 
 interface Options {
   dataset: string;
@@ -418,6 +449,10 @@ function buildCells(
   universe: UniverseMask,
   signals: SignalCandidate[],
   label: string,
+  /** 몇 분위로 자를지. ETF는 종목이 적어 오분위다 */
+  buckets: number,
+  /** 그날 줄을 세우려면 최소 몇 종목이 있어야 하나 */
+  minNamesPerDay: number,
   verbose = true,
 ): CellSeries[] {
   const cells: CellSeries[] = [];
@@ -425,7 +460,7 @@ function buildCells(
   for (let i = 0; i < signals.length; i += 1) {
     cells.push(
       ...buildCellSeriesSet(
-        panel, signals[i], HORIZONS, universe, 'nextOpen', BUCKETS, UNIVERSE.minNamesPerDay,
+        panel, signals[i], HORIZONS, universe, 'nextOpen', buckets, minNamesPerDay,
       ),
     );
     if (verbose && ((i + 1) % 5 === 0 || i === signals.length - 1)) {
@@ -588,8 +623,10 @@ async function main(): Promise<void> {
 
   // ── 유니버스 ───────────────────────────────────────────────────────────
   const maskStartedAt = Date.now();
+  const universeConfig = options.asset === 'etf' ? ETF_UNIVERSE : UNIVERSE;
+  const buckets = options.asset === 'etf' ? ETF_BUCKETS : BUCKETS;
   const universe = buildUniverseMask(panel, {
-    ...UNIVERSE,
+    ...universeConfig,
     scoreGateSignals: usable,
     eligibleSymbols: new Set(targets),
   });
@@ -615,9 +652,19 @@ async function main(): Promise<void> {
     + ` · 종목이 모자라 버린 날 ${universe.thinDays.toLocaleString('ko-KR')}`
     + ` · 날짜별 종목 수 중앙 ${universe.namesMedian} · 최소 ${universe.namesMin}`,
   );
+  /*
+   * ★ **문턱을 글로 쓰지 말고 값에서 찍는다.** 여기 "≥ 1억"이 박혀 있었는데
+   * ETF 패널이 10억으로 도는 동안에도 그대로 1억이라고 적었다(2026-08-18).
+   * 판정문을 읽는 사람이 유니버스를 잘못 알면 결과도 잘못 읽는다.
+   */
+  const eok = (won: number): string => `${(won / 100_000_000).toLocaleString('ko-KR')}억`;
   console.log(
-    '  걸린 문턱: 봉 ≥ 120 · 최근 60일 중 거래일 ≥ 55 · 20일 평균 거래대금 ≥ 1억이고 하위 20% 밖'
-    + ` · 후보 ${usable.length}종이 전부 유한한 점수를 내는 종목만 · 그날 ≥ ${UNIVERSE.minNamesPerDay}종목`,
+    `  걸린 문턱: 봉 ≥ ${universeConfig.minBars}`
+    + ` · 최근 ${universeConfig.activityWindow}일 중 거래일 ≥ ${universeConfig.minActiveDays}`
+    + ` · ${universeConfig.turnoverWindow}일 평균 거래대금 ≥ ${eok(universeConfig.minTurnover)}`
+    + `이고 하위 ${Math.round(universeConfig.turnoverBottomFraction * 100)}% 밖`
+    + ` · 후보 ${usable.length}종이 전부 유한한 점수를 내는 종목만`
+    + ` · 그날 ≥ ${universeConfig.minNamesPerDay}종목 · ${buckets}분위`,
   );
   if (universe.usableDays === 0) {
     console.log('\n쓸 수 있는 날이 없다. 문턱이 데이터보다 빡빡하다 — 여기서 멈춘다.');
@@ -626,7 +673,7 @@ async function main(): Promise<void> {
 
   // ── 계열 ───────────────────────────────────────────────────────────────
   console.log('\n계열 만들기 (셀당 한 번 훑는다)');
-  const cellSeries = buildCells(panel, universe, usable, '실신호');
+  const cellSeries = buildCells(panel, universe, usable, '실신호', buckets, universeConfig.minNamesPerDay);
 
   /** 블록 A 공통 부분. 비용 셋(`costRoundTripPct`·학습·판정)은 `runBlockA`가 0으로 박는다 */
   const blockABase: Omit<BlockASpec, 'fixHorizon'> = {
@@ -638,8 +685,8 @@ async function main(): Promise<void> {
     validationStarts: VALIDATION_STARTS,
     embargoDays: EMBARGO_DAYS,
     selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
-    buckets: BUCKETS,
-    minNamesPerDay: UNIVERSE.minNamesPerDay,
+    buckets,
+    minNamesPerDay: universeConfig.minNamesPerDay,
     signalsByKey: new Map(usable.map((s) => [s.key, s])),
     /*
      * 폐지 종목이 들어왔어도 **아직 빠진 것이 있으면** 편향은 남아 있다.
@@ -803,7 +850,10 @@ async function main(): Promise<void> {
     const placeboStartedAt = Date.now();
     for (let f = 0; f < options.placeboFamilies; f += 1) {
       const signals = makePlaceboSignals(f * usable.length + 1, (f + 1) * usable.length);
-      const cells = buildCells(panel, universe, signals, `위약 가족 ${f + 1}`, false);
+      const cells = buildCells(
+        panel, universe, signals, `위약 가족 ${f + 1}`,
+        buckets, universeConfig.minNamesPerDay, false,
+      );
       const result = runPlacebo(blockABase, cells, options.placeboAxis);
       placeboTs.push(result.verdictT);
       console.log(
