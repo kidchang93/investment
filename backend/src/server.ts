@@ -756,9 +756,19 @@ async function main(): Promise<void> {
   app.post<{ Body: Partial<PlaceLiveOrderRequest> }>('/api/broker/kis/orders', async (req, reply) => {
     const { accountId, instrumentId, side, orderType, quantity, limitPrice, stopPrice, clientOrderId } =
       req.body;
+    /*
+     * ★ 3층 중 어느 층의 주문인가. **증권사 잔고는 층을 모른다** — 주문 시점에
+     * 적어 두지 않으면 체결을 층에 되돌릴 수 없다(`layerSync`). 값이 없으면
+     * 비워 둔다 — 짐작해서 채우면 그 층의 손익이 거짓이 된다.
+     */
+    const layerRaw = (req.body as { layer?: unknown }).layer;
+    const layer = layerRaw === 'etf' || layerRaw === 'short' || layerRaw === 'bet'
+      ? layerRaw
+      : undefined;
     const auditBase = {
       accountId: accountId ?? '(미지정)',
       action: 'place' as const,
+      layer,
       requestedInstrumentId: instrumentId,
       side: side === 'buy' || side === 'sell' ? side : undefined,
       orderType: orderType === 'market' || orderType === 'limit' ? orderType : undefined,

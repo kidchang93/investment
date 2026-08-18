@@ -25,6 +25,22 @@ import { LAYER_LABELS, type Layer } from '../trading/layers.js';
 
 const won = (n: number): string => Math.round(n).toLocaleString('ko-KR');
 
+/**
+ * 주문번호 → 층. **주문 시점에 적어 둔 것을 읽는다.**
+ *
+ * 증권사 잔고는 층을 모르므로, 체결을 어느 층에 넣을지는 우리가 주문할 때
+ * 남긴 값이 유일한 근거다. 없는 주문(손으로 낸 것·옛 주문)은 여기 안 나오고,
+ * 그때는 `--layer`로 사람이 정해 준다.
+ */
+async function layerByOrderNo(accountId: string): Promise<Map<string, Layer>> {
+  const { rows } = await pool.query<{ order_no: string; layer: string }>(
+    `SELECT order_no, layer FROM trading_broker_orders
+      WHERE account_id = $1 AND coalesce(order_no,'') <> '' AND layer IS NOT NULL`,
+    [accountId],
+  );
+  return new Map(rows.map((r) => [r.order_no, r.layer as Layer]));
+}
+
 async function alreadyRecorded(accountId: string): Promise<Set<string>> {
   await ensureLayerSchema();
   const { rows } = await pool.query<{ note: string }>(
@@ -54,26 +70,32 @@ async function main(): Promise<void> {
     return;
   }
   const done = await alreadyRecorded(accountId);
+  const layerOf = await layerByOrderNo(accountId);
 
   // 체결 수량이 0인 것은 주문만 있고 체결이 없는 것이다 — 장부에 넣지 않는다.
   const filled = snapshot.executions.filter((e) => e.filledQuantity > 0);
   console.log(
     `체결 내역 ${snapshot.executions.length}건 중 체결 있는 것 ${filled.length}건`
-    + ` · 이미 장부에 든 것 ${done.size}건 · 넣을 층 ${LAYER_LABELS[layer]}`,
+    + ` · 이미 장부에 든 것 ${done.size}건`
+    + ` · 주문에 층이 적힌 것 ${layerOf.size}건 (없으면 ${LAYER_LABELS[layer]}로 넣는다)`,
   );
 
   let added = 0;
   for (const e of filled) {
     if (done.has(e.orderNo)) continue;
     const price = e.averageFilledPrice > 0 ? e.averageFilledPrice : e.orderPrice;
+    // 주문에 적힌 층이 있으면 그것이 맞다. 없으면 `--layer`(기본 etf)로 떨어진다.
+    const target = layerOf.get(e.orderNo) ?? layer;
     console.log(
       `  ${e.orderDate} ${e.side === 'buy' ? '매수' : '매도'} ${e.symbol} ${e.name}`
-      + ` ${e.filledQuantity}주 @ ${won(price)}원 (주문번호 ${e.orderNo})`,
+      + ` ${e.filledQuantity}주 @ ${won(price)}원 → ${LAYER_LABELS[target]}`
+      + `${layerOf.has(e.orderNo) ? '' : ' (주문에 층이 없어 기본값)'}`
+      + ` (주문번호 ${e.orderNo})`,
     );
     if (!apply) continue;
     const result = await recordLayerTrade(
       accountId,
-      { layer, symbol: e.symbol, side: e.side, quantity: e.filledQuantity, price, fee: 0 },
+      { layer: target, symbol: e.symbol, side: e.side, quantity: e.filledQuantity, price, fee: 0 },
       `orderNo:${e.orderNo} ${e.orderDate}`,
     );
     if (result.shortfall > 0) {

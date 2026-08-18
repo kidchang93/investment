@@ -122,6 +122,8 @@ async function placeLeg(leg: RebalanceLeg, options: Options): Promise<string> {
       quantity: leg.quantity,
       limitPrice: leg.limitPrice,
       clientOrderId,
+      // ★ 이 주문이 어느 층인지 남긴다 — 체결을 층에 되돌리는 근거다(`layerSync`).
+      layer: 'etf',
     }),
     // 서버가 느려도 우리가 먼저 끊지 않는다. 끊으면 결과를 모르는 주문이 생긴다.
     signal: AbortSignal.timeout(180_000),

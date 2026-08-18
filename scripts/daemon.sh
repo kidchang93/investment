@@ -96,6 +96,11 @@ run_loop() {
       if [[ "$hhmm" > "1539" && "$hhmm" < "1620" ]] && ! did_today close; then
         log "마감 정리 시작"
         zsh scripts/close.sh >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
+        # ★ 체결을 층 장부에 넣는다. **접수가 아니라 체결만** 들어간다.
+        #   손으로 치는 것을 잊으면 장부가 어긋나고 층별 성과가 통째로 거짓이 된다
+        #   (2026-08-18에 실제로 그랬다 — 4건을 접수했는데 층 표는 그대로였다).
+        (cd backend && npx tsx src/scripts/layerSync.ts --apply) \
+          >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
         (cd backend && npx tsx src/scripts/layerReport.ts) \
           >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
         mark close "$(date '+%H:%M')"

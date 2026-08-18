@@ -35,6 +35,12 @@ interface BrokerOrderRow {
 
 export interface BrokerOrderAttempt {
   accountId: string;
+  /**
+   * 어느 층의 주문인가(`etf`·`short`·`bet`). **증권사 잔고는 층을 모른다** —
+   * 같은 종목을 여러 층에서 사면 수량이 합쳐지므로, 체결을 층에 되돌리려면
+   * 주문 시점에 적어 둬야 한다. 없으면 `layerSync`가 층을 물어봐야 한다.
+   */
+  layer?: string;
   /** 멱등성 키. 전송한 주문에만 단다 */
   clientOrderId?: string;
   action: BrokerOrderRecord['action'];
@@ -116,6 +122,9 @@ export async function ensureBrokerOrderSchema(): Promise<void> {
      * 기록에서 구별되지 않는다. 손절이 걸려 있었는지는 나중에 반드시 물어보게 된다.
      */
     ALTER TABLE trading_broker_orders ADD COLUMN IF NOT EXISTS stop_price numeric(20, 6);
+    -- ★ 3층 중 어느 층의 주문인가. 증권사 잔고는 층을 모르므로 여기서 기억한다.
+    --   비어 있으면 옛 주문(층 개념이 생기기 전)이다 — 0으로 채우지 않는다.
+    ALTER TABLE trading_broker_orders ADD COLUMN IF NOT EXISTS layer text;
 
     /*
      * 멱등성 키. 같은 키로 다시 요청하면 새 주문을 내지 않고 앞선 결과를 돌려준다.
@@ -149,9 +158,9 @@ export async function recordBrokerOrderAttempt(attempt: BrokerOrderAttempt): Pro
         INSERT INTO trading_broker_orders (
           id, account_id, action, status, side, instrument_id, requested_instrument_id, symbol,
           order_type, quantity, limit_price, estimated_price, stop_price, order_no, order_branch_no,
-          original_order_no, message, blockers, client_order_id
+          original_order_no, message, blockers, client_order_id, layer
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19, $20)
       `,
       [
         randomUUID(),
@@ -173,6 +182,7 @@ export async function recordBrokerOrderAttempt(attempt: BrokerOrderAttempt): Pro
         attempt.message,
         JSON.stringify(attempt.blockers ?? []),
         attempt.clientOrderId ?? null,
+        attempt.layer ?? null,
       ],
     );
     return true;
