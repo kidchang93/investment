@@ -105,7 +105,7 @@ import {
  * 청산이 검증 첫날에 닿아 경계가 새어 나간다. 사용자가 정한 보유 지평도
  * **1~2주**라 20일이 위쪽 끝이다.
  */
-const HORIZONS = [1, 3, 5, 10, 20];
+const HORIZONS = [1, 3, 5, 10, 20, 40, 120];
 
 /** 무엇 위에서 재나. **비용이 다르므로 섞으면 안 된다** — ETF는 매도 거래세가 면제다 */
 type AssetKind = 'stock' | 'etf';
@@ -134,8 +134,19 @@ const DEFAULT_EVAL_COSTS = [0.3, 0.43, 0.54];
 /** 검증 창이 시작하는 날. 2011부터 해마다 하나씩 열다섯 개. */
 const VALIDATION_STARTS = Array.from({ length: 15 }, (_, i) => `${2011 + i}0101`);
 
-/** 학습과 검증 사이에 비우는 거래일. ★ 전 축 고정 */
-const EMBARGO_DAYS = 60;
+/**
+ * 학습과 검증 사이에 비우는 거래일. **한 실행 안에서는 전 축 고정**이다.
+ *
+ * ★ **축보다 짧으면 경계가 샌다.** 학습 마지막 날 진입의 청산은 `축`일 뒤인데,
+ * embargo가 그보다 짧으면 그 청산이 검증 구간 안에서 일어난다 — 학습이 검증을
+ * 미리 본 셈이 된다. 그래서 이 실행이 재는 축 중 **가장 긴 것**에 맞춘다.
+ *
+ * ★ 전 축을 같은 값으로 두는 이유는 축끼리 견줄 때 **표본 기간이 같아야**
+ * 하기 때문이다. 축마다 다르면 짧은 축이 학습을 더 많이 받아 유리해진다.
+ * 대신 embargo가 다른 실행끼리는 직접 비교하면 안 된다 — 판정문에 값이 찍힌다.
+ */
+const MIN_EMBARGO_DAYS = 60;
+const embargoFor = (axes: number[]): number => Math.max(MIN_EMBARGO_DAYS, ...axes);
 
 /**
  * 생존편향을 재는 기준일. 이 날 이전에 계열이 끝난 종목이 **상장폐지의 대리**다.
@@ -729,7 +740,7 @@ async function main(): Promise<void> {
     trainMode: options.procedure,
     rollingYears: 10,
     validationStarts: VALIDATION_STARTS,
-    embargoDays: EMBARGO_DAYS,
+    embargoDays: embargoFor(options.axes),
     selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
     buckets,
     minNamesPerDay: universeConfig.minNamesPerDay,
@@ -752,7 +763,10 @@ async function main(): Promise<void> {
   const blockA = options.axes.map((horizon) => runBlockA({ ...blockABase, fixHorizon: horizon }));
   console.log(`축 ${options.axes.length}개 · ${elapsed(blockAStartedAt)} · 힙 ${heapMb()}MB`);
 
-  console.log(`\n창 ${blockA[0]?.windows.length ?? 0}개 · embargo ${EMBARGO_DAYS}거래일 (전 축 고정)`);
+  console.log(
+    `\n창 ${blockA[0]?.windows.length ?? 0}개 · embargo ${embargoFor(options.axes)}거래일`
+    + ' (이 실행의 전 축 고정 · 가장 긴 축에 맞췄다)',
+  );
   for (const result of blockA) {
     console.log(`\n  축 ${result.fixHorizon}일 — 고른 것`);
     console.log('    학습                     검증                     고른 것          진입');
