@@ -111,6 +111,35 @@ run_loop() {
         mark close "$(date '+%H:%M')"
         log "마감 정리 끝"
       fi
+
+      # ── 15:45 일봉 수집 (백그라운드 · 3시간) ──────────────────────
+      #
+      # ★ **장중에는 절대 돌리지 않는다.** 2026-08-18에 13:50에 돌렸더니 5분
+      #   만에 화면과 경보 확인이 502를 받았다 — 수집이 1.2초마다 KIS를 두드려
+      #   잔고 조회와 유량을 다툰다. 스크립트에 가드가 있어 08:30~15:40에는
+      #   스스로 거부하지만, 여기서도 그 시간을 피해 부른다.
+      #
+      # ★ 데몬 루프를 막지 않으려고 백그라운드로 띄운다. 세 시간이 걸리는데
+      #   그동안 감시가 멈추면 안 된다.
+      #
+      # 시작과 완료를 따로 적는다 — 시작만 하고 죽은 것을 "했다"고 읽으면
+      # 며칠째 낡은 일봉으로 재고 있어도 모른다.
+      if [[ "$hhmm" > "1544" && "$hhmm" < "1700" ]] && ! did_today daily-bars-start; then
+        log "일봉 수집 시작 (백그라운드 · 3시간 예상)"
+        mark daily-bars-start "$(date '+%H:%M')"
+        (
+          cd backend && npx tsx src/scripts/collectDailyBars.ts --refresh \
+            >> "../$LOG_DIR/bars-$(date '+%Y%m%d').log" 2>&1
+          bars_code=$?
+          cd ..
+          if [[ $bars_code -eq 0 ]]; then
+            mark daily-bars "완료"
+            log "일봉 수집 끝"
+          else
+            log "일봉 수집 실패 (exit $bars_code) — .cron-logs/bars-*.log 를 본다"
+          fi
+        ) &
+      fi
     fi
 
     sleep 60

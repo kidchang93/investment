@@ -36,6 +36,7 @@
  *   npx tsx src/scripts/collectDailyBars.ts [--limit N] [--resume] [--refresh]
  *                                           [--stock] [--etf] [--symbols 005930,000660]
  *                                           [--gap-ms 1200] [--pages 60]
+ *                                           [--force]   ← 장중에도 돌린다(기본은 막힘)
  */
 
 import type { Candle, Instrument } from '@invest/shared';
@@ -56,6 +57,7 @@ import {
   type DailyBarCursor,
 } from '../db/dailyBars.js';
 import { getDomesticHistoryUniverse } from '../db/instruments.js';
+import { marketHoursBlock } from '../trading/session.js';
 import { closeDb } from '../db/client.js';
 import { config, kisServerLabel } from '../config.js';
 import { credentialServer, primaryCredentials } from '../kis/auth.js';
@@ -108,6 +110,8 @@ interface Options {
   symbols: string[];
   symbolGapMs: number;
   maxPages: number;
+  /** 장중에도 돌린다. **기본은 막는다** — 이유는 `assertOutsideMarketHours` */
+  force: boolean;
 }
 
 interface SymbolResult {
@@ -130,6 +134,7 @@ function parseOptions(argv: string[]): Options {
     symbols: [],
     symbolGapMs: DEFAULT_SYMBOL_GAP_MS,
     maxPages: DEFAULT_MAX_PAGES,
+    force: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -152,6 +157,9 @@ function parseOptions(argv: string[]): Options {
         break;
       case '--symbols':
         options.symbols = next().split(',').map((s) => s.trim()).filter(Boolean);
+        break;
+      case '--force':
+        options.force = true;
         break;
       case '--gap-ms':
         options.symbolGapMs = Number(next());
@@ -406,6 +414,19 @@ function formatDay(day: string | null): string {
 async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
   const today = kstToday();
+
+  const block = options.force ? null : marketHoursBlock(new Date());
+  if (block) {
+    console.error(
+      `${block}\n`
+      + '\n★ 지금 수집하면 KIS 유량을 잔고 조회와 나눠 쓰게 되어 화면과 **경보 확인이**\n'
+      + '  502를 받습니다(2026-08-18 실측). 자동화가 중단선을 못 보는 채로 몇 시간이\n'
+      + '  지납니다. 수집은 하루 늦어도 되지만 경보는 그날 안에 봐야 합니다.\n'
+      + '\n15:40 이후에 다시 돌리세요. 그래도 지금 해야 한다면 --force 를 붙입니다.',
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   process.on('SIGINT', () => {
     if (stopRequested) process.exit(130);
