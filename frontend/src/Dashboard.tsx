@@ -105,6 +105,17 @@ export function Dashboard({ accountId }: { accountId: string | null }): JSX.Elem
     .filter((g) => Math.abs(g.gap) >= 0.05)
     .sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap));
 
+  /*
+   * ★ **초과분을 옮길 데가 있나.** 비중을 되돌리라는 말은 "많은 층에서 빼서 적은
+   * 층으로 옮겨라"인데, 받을 층이 비어 있으면 **뺀 돈은 현금으로 남는다.** 그건
+   * 비중을 맞춘 것이 아니라 그만큼을 놀리는 것이다.
+   *
+   * 그래서 판단할 재료만 적고 무엇을 하라고는 적지 않는다 — 팔지 말지는 사람이
+   * 정한다.
+   */
+  const emptyLayers = rows.filter((l) => l.marketValue === 0 && l.targetWeight > 0);
+  const nowhereToMove = emptyLayers.length > 0;
+
   return (
     <section className="dash" aria-label="목표">
       <header className="dash__head">
@@ -145,7 +156,11 @@ export function Dashboard({ accountId }: { accountId: string | null }): JSX.Elem
         {/* 경보는 아니지만 손볼 것 — 비중이 크게 벌어졌을 때만 적는다 */}
         {ready &&
           gaps.map((g) => (
-            <p className="dash__alert" data-level={g.empty ? 'info' : 'warn'} key={g.label}>
+            <p
+              className="dash__alert"
+              data-level={g.empty || (g.gap > 0 && nowhereToMove) ? 'info' : 'warn'}
+              key={g.label}
+            >
               <b>
                 {g.label}가 목표에서 {g.gap > 0 ? '+' : ''}
                 {(g.gap * 100).toFixed(1)}%p 벗어나 있습니다
@@ -153,7 +168,11 @@ export function Dashboard({ accountId }: { accountId: string | null }): JSX.Elem
               <span>
                 {g.empty
                   ? '아직 무엇을 살지 정하지 않았습니다 — 규칙이 서기 전에는 채우지 않습니다.'
-                  : '터미널에서 npx tsx src/scripts/rebalance.ts 로 계획을 먼저 보세요.'}
+                  : g.gap > 0 && nowhereToMove
+                    ? `줄이면 그 돈은 현금으로 남습니다 — ${emptyLayers
+                        .map((l) => l.label)
+                        .join(' · ')}에 무엇을 살지 아직 정하지 않았습니다.`
+                    : '터미널에서 npx tsx src/scripts/rebalance.ts 로 계획을 먼저 보세요.'}
               </span>
             </p>
           ))}
