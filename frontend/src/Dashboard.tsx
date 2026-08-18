@@ -90,12 +90,20 @@ export function Dashboard({ accountId }: { accountId: string | null }): JSX.Elem
     ? Math.max(1, Math.round((Date.now() - health.startedAt) / 86_400_000))
     : null;
 
-  /* 목표에서 얼마나 벗어났나. 가장 큰 이탈 하나만 말한다 — 다 적으면 안 읽힌다. */
-  const worstGap = rows.reduce<{ label: string; gap: number } | null>((worst, l) => {
-    const gap = l.weight - l.targetWeight;
-    if (worst === null || Math.abs(gap) > Math.abs(worst.gap)) return { label: l.label, gap };
-    return worst;
-  }, null);
+  /*
+   * 목표에서 벗어난 층과 **그래서 무엇을 할 수 있나.**
+   *
+   * ★ 층마다 할 일이 다르다. 초과한 층은 도구로 줄일 수 있지만, **비어 있는
+   * 층은 도구로 채울 수 없다** — 무엇을 살지가 아직 안 정해져 있기 때문이다
+   * (21년 데이터로 비용을 넘는 단기 신호가 0건이었다). 둘을 같은 문장으로
+   * 적으면 `rebalance.ts`를 돌리고 "왜 단기가 안 채워지지?" 하게 된다.
+   *
+   * 벗어난 층을 다 적는다 — 셋뿐이고 각각 다른 일이다.
+   */
+  const gaps = rows
+    .map((l) => ({ label: l.label, gap: l.weight - l.targetWeight, empty: l.marketValue === 0 }))
+    .filter((g) => Math.abs(g.gap) >= 0.05)
+    .sort((a, b) => Math.abs(b.gap) - Math.abs(a.gap));
 
   return (
     <section className="dash" aria-label="목표">
@@ -119,7 +127,12 @@ export function Dashboard({ accountId }: { accountId: string | null }): JSX.Elem
 
       {/* ── ② 지금 할 일 — 맨 위에 둔다. 아래 숫자를 읽기 전에 알아야 한다 ── */}
       <div className="dash__todo">
-        {alerts.length === 0 ? (
+        {/*
+          * ★ **이탈이 있으면 "할 일 없음"을 적지 않는다.** 둘을 따로 판정했더니
+          * "지금 할 일이 없습니다" 바로 아래에 "단기가 -30%p 벗어나 있습니다"가
+          * 나란히 떴다 — 화면이 스스로 반대되는 말을 했다(2026-08-18).
+          */}
+        {alerts.length === 0 && gaps.length === 0 ? (
           <p className="dash__ok">지금 할 일이 없습니다. 자동화가 알아서 돌고 있습니다.</p>
         ) : (
           alerts.map((a) => (
@@ -130,15 +143,20 @@ export function Dashboard({ accountId }: { accountId: string | null }): JSX.Elem
           ))
         )}
         {/* 경보는 아니지만 손볼 것 — 비중이 크게 벌어졌을 때만 적는다 */}
-        {ready && worstGap !== null && Math.abs(worstGap.gap) >= 0.05 && (
-          <p className="dash__alert" data-level="warn">
-            <b>
-              {worstGap.label}가 목표에서 {worstGap.gap > 0 ? '+' : ''}
-              {(worstGap.gap * 100).toFixed(1)}%p 벗어나 있습니다
-            </b>
-            <span>터미널에서 npx tsx src/scripts/rebalance.ts 로 계획을 먼저 보세요.</span>
-          </p>
-        )}
+        {ready &&
+          gaps.map((g) => (
+            <p className="dash__alert" data-level={g.empty ? 'info' : 'warn'} key={g.label}>
+              <b>
+                {g.label}가 목표에서 {g.gap > 0 ? '+' : ''}
+                {(g.gap * 100).toFixed(1)}%p 벗어나 있습니다
+              </b>
+              <span>
+                {g.empty
+                  ? '아직 무엇을 살지 정하지 않았습니다 — 규칙이 서기 전에는 채우지 않습니다.'
+                  : '터미널에서 npx tsx src/scripts/rebalance.ts 로 계획을 먼저 보세요.'}
+              </span>
+            </p>
+          ))}
       </div>
 
       {/* ── ① 목표까지 어디쯤인가 ───────────────────────────────────────── */}

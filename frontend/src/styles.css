@@ -7238,6 +7238,15 @@ span.sample-badge {
   border: 1px solid #7a5a2a;
   background: rgba(180, 130, 40, 0.1);
 }
+/*
+ * ★ info는 **사람이 아직 안 정한 것**이다 — 시스템이 고장난 게 아니라서 경고색을
+ * 쓰지 않는다. 단기·유망주 층이 비어 있는 것이 여기 해당한다: 채울 규칙이
+ * 서기 전에 채우면 검증 안 된 것으로 돈을 넣는 일이 된다.
+ */
+.dash__alert[data-level='info'] {
+  border: 1px solid var(--border, #2a2f3a);
+  background: rgba(120, 130, 150, 0.07);
+}
 .dash__alert span { color: var(--faint, #8b93a7); font-size: 12px; }
 
 /* ── ① 목표까지 어디쯤 ────────────────────────────────────────────── */

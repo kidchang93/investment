@@ -59,6 +59,7 @@ import {
 } from './trading/autoTrader.js';
 import { listStrategies } from './trading/strategy.js';
 import { isTrUnavailableOnServer } from './kis/errorCodes.js';
+import { shareInflight } from './kis/inflight.js';
 import { pendingBuySymbols, pendingSellQuantities } from './trading/pendingBuys.js';
 
 /**
@@ -95,6 +96,21 @@ const AUTO_TRADER_DEPS: AutoTraderDeps = {
 };
 
 const TR_UNAVAILABLE_NOTE = '모의투자 서버에는 이 조회 기능이 없습니다 · 실전 계좌에서만 볼 수 있습니다';
+
+/**
+ * 화면이 부르는 잔고 조회. **겹치면 하나로 묶는다.**
+ *
+ * ★ 목표 화면을 한 번 여는 데 같은 계좌 잔고가 네 번 나갔고(계좌 카드 둘 ·
+ * 3층 · 자동화), 하나에 5~8초라 브라우저의 동시 연결 여섯 개를 다 먹어 뒤에
+ * 선 요청은 시작조차 못 했다 — 화면은 "갱신 중"에서 멈췄는데 같은 API를
+ * curl로 부르면 5초에 응답했다(2026-08-18 실측).
+ *
+ * ★ **주문 라우트는 이것을 쓰지 않는다.** 매수가능금액과 보유수량은 진행 중인
+ * 조회를 물려받으면 안 된다 — 그 조회가 시작된 뒤 체결이 있었다면 체결 전
+ * 잔고로 주문을 내게 되고, 이미 쓴 돈을 또 쓴다.
+ */
+const readAccountSnapshot = (account: KisAccountConfig | null): Promise<BrokerAccountSnapshot> =>
+  shareInflight(`account:${account?.id ?? ''}`, () => getKisDomesticAccountSnapshot(account));
 import { loadAutoTraderCandidates } from './trading/universe.js';
 import {
   DEFAULT_SCREENING_LOOKUPS,
@@ -136,6 +152,7 @@ import type {
   AutoTraderConfig,
   BrokerExecution,
   BrokerPosition,
+  BrokerAccountSnapshot,
   PortfolioLayerSummary,
   PortfolioLayersSnapshot,
   TradingAlert,
@@ -317,7 +334,7 @@ async function main(): Promise<void> {
     const account = resolveAccount(req.query.accountId);
     if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
     try {
-      return await getKisDomesticAccountSnapshot(account);
+      return await readAccountSnapshot(account);
     } catch (err) {
       req.log.warn({ err, accountId: req.query.accountId }, 'KIS 계좌 조회 실패');
       return reply.code(502).send({ message: 'KIS 계좌를 조회할 수 없습니다.' });
@@ -338,7 +355,7 @@ async function main(): Promise<void> {
     if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
     const accountId = account?.id ?? '';
     try {
-      const snapshot = await getKisDomesticAccountSnapshot(account);
+      const snapshot = await readAccountSnapshot(account);
       if (!snapshot.configured) {
         return {
           configured: false,
@@ -435,7 +452,7 @@ async function main(): Promise<void> {
         [accountId],
       ).catch(() => ({ rows: [{ first: null }] }));
 
-      const snapshot = await getKisDomesticAccountSnapshot(account);
+      const snapshot = await readAccountSnapshot(account);
       const rules = await getRiskRules(accountId);
 
       /*
