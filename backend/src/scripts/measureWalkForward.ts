@@ -197,6 +197,22 @@ interface Options {
    * 없는 우위가 생긴다(2026-08-18에 실제로 그럴 뻔했다).
    */
   asset: AssetKind;
+  /**
+   * 몇 분위로 자를지. 10이면 상위 10%, 20이면 상위 5%.
+   * 생략하면 자산 기본값(주식 10 · ETF 5).
+   *
+   * ★ 좁힐수록 신호는 진해지지만 **자리 수가 줄어 슬리피지가 커진다.**
+   * 그래서 손익분기표를 넓은 비용대로 함께 읽어야 한다.
+   */
+  buckets: number | null;
+  /**
+   * 이 시장만. `null`이면 전부.
+   *
+   * ★ 사용자가 "단타면 우량주보다 미래가치"라고 물어 그것을 재는 자리다.
+   * 재무 데이터는 21년치가 없어(KIS는 현재 스냅샷만) **KOSDAQ을 성장·중소형의
+   * 대리**로 쓴다. 대리이지 그 자체가 아니다 — 판정문에 그렇게 적힌다.
+   */
+  market: string | null;
   procedure: 'expanding' | 'rolling';
   /** 블록 A가 돌 축들 */
   axes: number[];
@@ -231,6 +247,8 @@ function parseNumberList(raw: string, label: string): number[] {
 function parseOptions(argv: string[]): Options {
   const options: Options = {
     asset: 'stock',
+    buckets: null,
+    market: null,
     dataset: 'dailybars-20260812',
     procedure: 'expanding',
     axes: [...HORIZONS],
@@ -253,6 +271,15 @@ function parseOptions(argv: string[]): Options {
     const arg = argv[index];
     const next = (): string => argv[(index += 1)] ?? '';
     switch (arg) {
+      case '--buckets':
+        options.buckets = Number(next());
+        break;
+      case '--market': {
+        const raw = next().toUpperCase();
+        if (raw !== 'KOSPI' && raw !== 'KOSDAQ') throw new Error(`--market 은 KOSPI|KOSDAQ: ${raw}`);
+        options.market = raw;
+        break;
+      }
       case '--asset': {
         const raw = next();
         if (raw !== 'stock' && raw !== 'etf') throw new Error(`--asset 은 stock|etf: ${raw}`);
@@ -375,7 +402,7 @@ function elapsed(from: number): string {
  * (그중 66건은 사유가 이전상장이 아니다). **계열이 실제로 끊겼는지는 봉이 말한다** —
  * 그래서 여기서는 자격만 보고, 끊긴 자리 판정은 `scanAdjustmentBreaks`가 한다.
  */
-async function loadEligibleSymbols(assetType: AssetKind): Promise<{
+async function loadEligibleSymbols(assetType: AssetKind, market: string | null): Promise<{
   symbols: Set<string>;
   preferred: number;
   inactive: number;
@@ -394,11 +421,14 @@ async function loadEligibleSymbols(assetType: AssetKind): Promise<{
       ? `SELECT symbol, false AS preferred, is_active
            FROM instruments
           WHERE country = 'KR' AND asset_type = 'etf' AND market <> 'KONEX'
+            AND ($1::text IS NULL OR market = $1)
           ORDER BY symbol`
       : `SELECT symbol, (right(symbol, 1) <> '0' OR name ~ '우[A-Z]?$') AS preferred, is_active
            FROM instruments
           WHERE country = 'KR' AND asset_type = 'stock' AND market IN ('KOSPI', 'KOSDAQ')
+            AND ($1::text IS NULL OR market = $1)
           ORDER BY symbol`,
+    [market],
   );
   const usable = rows.filter((r) => !r.preferred);
   return {
@@ -551,7 +581,7 @@ async function main(): Promise<void> {
   }
 
   // ── 패널 ───────────────────────────────────────────────────────────────
-  const eligible = await loadEligibleSymbols(options.asset);
+  const eligible = await loadEligibleSymbols(options.asset, options.market);
   const stored = await loadStoredSymbols();
   let targets = stored.filter((symbol) => eligible.symbols.has(symbol));
   if (options.limitSymbols !== null) {
@@ -624,7 +654,23 @@ async function main(): Promise<void> {
   // ── 유니버스 ───────────────────────────────────────────────────────────
   const maskStartedAt = Date.now();
   const universeConfig = options.asset === 'etf' ? ETF_UNIVERSE : UNIVERSE;
-  const buckets = options.asset === 'etf' ? ETF_BUCKETS : BUCKETS;
+  const buckets = options.buckets ?? (options.asset === 'etf' ? ETF_BUCKETS : BUCKETS);
+  /*
+   * ★ **원장에 남는 문자열은 값에서 만든다.** 여기 `turnover>=1e8` · `names>=200`이
+   * 하드코딩돼 있었는데, ETF 패널은 10억·40으로 돌면서도 그렇게 적었다. 원장은
+   * 나중에 "무엇 위에서 잰 것인가"를 답하는 유일한 기록이라 거짓이 남으면
+   * 그 뒤 판단이 통째로 어긋난다.
+   */
+  const universeLabel = [
+    `krx-${options.asset}-${options.market ?? 'all'}`,
+    `${options.asset === 'etf' ? 'all' : 'nonpreferred'}`,
+    `bars>=${universeConfig.minBars}`,
+    `active${universeConfig.minActiveDays}of${universeConfig.activityWindow}`,
+    `turnover>=${universeConfig.minTurnover.toExponential(0)}`
+      + `&top${Math.round((1 - universeConfig.turnoverBottomFraction) * 100)}%`,
+    `names>=${universeConfig.minNamesPerDay}`,
+    `q${buckets}`,
+  ].join('/');
   const universe = buildUniverseMask(panel, {
     ...universeConfig,
     scoreGateSignals: usable,
@@ -941,7 +987,20 @@ async function main(): Promise<void> {
    * 문턱은 10칸 기준 2.81이었고, 축 5일(t +2.71)이 그 3칸 때문에 못 넘은 것으로
    * 적혔다. 값은 하나도 안 바뀌었는데.
    */
-  const signaturesThisRun = blockA.map(selectionSignature);
+  /*
+   * ★ **서명에 유니버스와 분위를 함께 넣는다.**
+   *
+   * `selectionSignature`는 축과 창별 선택만 담는다. 그런데 KOSDAQ만으로 재도
+   * 15창이 전부 같은 신호를 고르면 **전체 유니버스에서 잰 것과 서명이 같아져**
+   * 새 검정으로 세어지지 않는다 — 다른 표본에서 다시 찾아본 것인데 문턱이 안
+   * 오른다(2026-08-18에 붙이기 전에 발견했다).
+   *
+   * ★ 접두사가 붙으면서 **옛 6칸(전체·10분위)과 형식이 달라졌다.** 앞으로
+   * 전체·10분위를 다시 재면 옛 줄과 안 겹쳐 새 칸으로 센다 — 과한 쪽이지만
+   * 문턱이 더 오르는 방향이라 안전하다.
+   */
+  const cellScope = `${universeLabel}|q${buckets}`;
+  const signaturesThisRun = blockA.map((r) => `${cellScope}|${selectionSignature(r)}`);
   const alreadyCounted = await countKnownSignatures(
     options.dataset, WALKFORWARD_BLOCK_A_UNIT, signaturesThisRun,
   );
@@ -1029,9 +1088,7 @@ async function main(): Promise<void> {
       periodKey: `walkforward-blockA:${options.procedure}:h${result.fixHorizon}`,
       periodFrom: panel.days[0],
       periodTo: panel.days[panel.days.length - 1],
-      universe:
-        `krx-${options.asset}-${options.asset === 'etf' ? 'all' : 'nonpreferred'}-${panel.symbols.length}`
-        + `/bars>=120/active55of60/turnover>=1e8&top80%/scoregate${usable.length}/names>=200`,
+      universe: universeLabel,
       symbolsCount: panel.symbols.length,
       daysCount: result.oosEntryExcess.length,
       samples: result.oosEntryExcess.length,
@@ -1072,7 +1129,7 @@ async function main(): Promise<void> {
         ? placeboTs.reduce((a, t) => Math.max(a, Math.abs(t)), 0)
         : undefined,
       survivorshipExposed: gap === null || gap.missingSymbols > 0,
-      selectionSignature: selectionSignature(result),
+      selectionSignature: `${cellScope}|${selectionSignature(result)}`,
       truncatedExits: result.truncatedExits,
       abstainSkillT: abstainScored?.abstainSkillT,
     })));
