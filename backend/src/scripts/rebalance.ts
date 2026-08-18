@@ -23,6 +23,16 @@
  *   npx tsx src/scripts/rebalance.ts --execute       # 실제로 낸다
  *   npx tsx src/scripts/rebalance.ts --account 21 --bucket 0.8
  *
+ * ── 적립 매수 (매달 넣는 돈) ─────────────────────────────────────────────
+ *
+ *   npx tsx src/scripts/rebalance.ts --budget 1000000 --min-leg 200000
+ *
+ * ★ **팔지 않는다.** 미달이 큰 종목부터 예산이 닿는 데까지 산다. 적립액을
+ * 다섯 종목에 쪼개면 종목당 20만원이라 문턱에 전부 걸리고, 판 뒤 다시 사면
+ * 수수료와 세금만 든다. **미달 쪽에 넣으면 파는 일 없이 비중이 맞춰진다.**
+ * 초기 몇 년은 수익률보다 납입이 자산을 좌우한다(자산 6천만~1억이 되기
+ * 전까지는 `연 납입액 > 연 수익`).
+ *
  * ★ **기본이 계획 보기다.** `--execute`를 적어야 나간다 — 실수로 돌려도 주문이
  * 나가지 않는 쪽이 기본이어야 한다.
  */
@@ -61,6 +71,12 @@ interface Options {
   accountId: string;
   execute: boolean;
   bucketWeight: number;
+  /** 적립 모드 — 팔지 않고 미달한 것만 산다 */
+  buyOnly: boolean;
+  /** 이번에 넣을 돈(원). 없으면 D+2 현금 전부를 쓸 수 있다고 본다 */
+  budget: number | null;
+  /** 다리 하나의 최소 금액(원). 적립액이 작으면 낮춰야 한다 */
+  minLeg: number;
   /** 멱등 키에 들어갈 날짜 `YYYYMMDD`. 하루에 한 번만 복원한다 */
   day: string;
 }
@@ -70,6 +86,9 @@ function parseArgs(argv: string[]): Options {
     accountId: 'VTS-ORDINARY',
     execute: false,
     bucketWeight: DEFAULT_BUCKET_WEIGHT,
+    buyOnly: false,
+    budget: null,
+    minLeg: MIN_LEG_AMOUNT,
     day: new Date().toISOString().slice(0, 10).replace(/-/g, ''),
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -84,6 +103,23 @@ function parseArgs(argv: string[]): Options {
         const value = Number(argv[++i]);
         if (!(value > 0 && value <= 1)) throw new Error('--bucket은 0보다 크고 1 이하여야 합니다');
         options.bucketWeight = value;
+        break;
+      }
+      case '--buy-only':
+        options.buyOnly = true;
+        break;
+      case '--budget': {
+        const value = Number(argv[++i]);
+        if (!(value > 0)) throw new Error('--budget은 0보다 커야 합니다');
+        options.budget = value;
+        // 적립은 파는 일이 아니다. 예산을 주면 매수만 하는 것이 자연스럽다.
+        options.buyOnly = true;
+        break;
+      }
+      case '--min-leg': {
+        const value = Number(argv[++i]);
+        if (!(value > 0)) throw new Error('--min-leg는 0보다 커야 합니다');
+        options.minLeg = value;
         break;
       }
       case '--day':
@@ -110,7 +146,8 @@ const padL = (t: string, n: number): string => ' '.repeat(Math.max(1, n - width(
  * 답한다. 2026-08-14에 없던 것이 정확히 이 성질이다.
  */
 async function placeLeg(leg: RebalanceLeg, options: Options): Promise<string> {
-  const clientOrderId = `rebalance-${options.day}-${leg.symbol}-${leg.side}`;
+  const kind = options.buyOnly ? 'deposit' : 'rebalance';
+  const clientOrderId = `${kind}-${options.day}-${leg.symbol}-${leg.side}`;
   const response = await fetch(`http://127.0.0.1:${config.port}/api/broker/kis/orders`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -139,7 +176,9 @@ async function main(): Promise<void> {
   if (!account) throw new Error(`등록되지 않은 계좌: ${options.accountId}`);
 
   console.log(
-    `비중 복원 · 계좌 ${options.accountId} · ETF 묶음 목표 ${pct(options.bucketWeight)}`
+    `${options.buyOnly ? '적립 매수' : '비중 복원'} · 계좌 ${options.accountId}`
+    + ` · ETF 묶음 목표 ${pct(options.bucketWeight)}`
+    + (options.budget === null ? '' : ` · 이번 예산 ${won(options.budget)}원`)
     + ` · ${options.execute ? '★ 실제로 낸다' : '계획만 본다(--execute로 집행)'}`,
   );
 
@@ -164,7 +203,9 @@ async function main(): Promise<void> {
     cash,
     bucketWeight: options.bucketWeight,
     slipRate: SLIP_RATE,
-    minLegAmount: MIN_LEG_AMOUNT,
+    minLegAmount: options.minLeg,
+    buyOnly: options.buyOnly,
+    ...(options.budget === null ? {} : { buyBudget: options.budget }),
   });
 
   console.log(

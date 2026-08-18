@@ -63,6 +63,19 @@ export interface RebalancePlanInput {
   slipRate: number;
   /** 이만큼 미만이면 건드리지 않는다(원). 잔돈 매매를 막는다 */
   minLegAmount: number;
+  /**
+   * **팔지 않는다.** 매달 넣는 돈으로 미달한 것만 사는 방식(적립식 리밸런싱).
+   *
+   * ★ 왜 따로 있나 — 적립액을 다섯 종목에 쪼개면 종목당 20만원이라 문턱에 전부
+   * 걸리고, 판 뒤 다시 사면 **수수료와 세금만 든다.** 미달이 큰 쪽에 넣으면
+   * 파는 일 없이 비중이 저절로 맞춰진다.
+   */
+  buyOnly?: boolean;
+  /**
+   * 매수에 쓸 수 있는 돈의 상한(원). 없으면 `cash` 전부를 쓸 수 있다고 본다.
+   * 적립할 때 "이번 달 넣는 100만원까지만"을 표현한다.
+   */
+  buyBudget?: number;
 }
 
 export interface RebalancePlan {
@@ -96,6 +109,8 @@ export function limitPriceFor(price: number, side: 'buy' | 'sell', slipRate: num
  */
 export function planRebalance(input: RebalancePlanInput): RebalancePlan {
   const { holdings, targets, cash, bucketWeight, slipRate, minLegAmount } = input;
+  const buyOnly = input.buyOnly === true;
+  const buyBudget = input.buyBudget ?? Number.POSITIVE_INFINITY;
   const skipped: Array<{ symbol: string; reason: string }> = [];
 
   const priced = holdings.filter((h) => {
@@ -125,6 +140,8 @@ export function planRebalance(input: RebalancePlanInput): RebalancePlan {
     const target = bucketTarget * weight;
     const gap = target - now;
     const side: 'buy' | 'sell' = gap >= 0 ? 'buy' : 'sell';
+    // 적립 모드에서는 초과한 것을 팔지 않고 그냥 둔다. 다음 달 적립이 메운다.
+    if (buyOnly && side === 'sell') continue;
     const limitPrice = limitPriceFor(price, side, slipRate);
     // 수량은 **현재가**로 낸다. 지정가로 내면 슬립만큼 목표를 넘거나 못 미친다.
     let quantity = Math.floor(Math.abs(gap) / price);
@@ -153,6 +170,45 @@ export function planRebalance(input: RebalancePlanInput): RebalancePlan {
 
   // 매도를 먼저 둔다 — 자리를 비우고 채우는 순서가 사람이 읽기에도 자연스럽다.
   legs.sort((a, b) => (a.side === b.side ? b.amount - a.amount : a.side === 'sell' ? -1 : 1));
+
+  /*
+   * ★ **예산이 있으면 미달이 큰 쪽부터 채우고 넘치면 자른다.** 적립액이 작을 때
+   * 다섯 종목에 고루 뿌리면 종목당 금액이 문턱 아래로 떨어져 아무것도 못 산다.
+   */
+  if (Number.isFinite(buyBudget)) {
+    let left = buyBudget;
+    const kept: RebalanceLeg[] = [];
+    for (const leg of legs) {
+      if (leg.side === 'sell') { kept.push(leg); continue; }
+      if (left < minLegAmount) {
+        // 조용히 버리지 않는다 — 왜 안 샀는지가 남아야 예산을 조정할 수 있다.
+        skipped.push({
+          symbol: leg.symbol,
+          reason: `남은 예산 ${Math.round(left).toLocaleString('ko-KR')}원이 문턱보다 작다`,
+        });
+        continue;
+      }
+      if (leg.amount <= left) {
+        kept.push(leg);
+        left -= leg.amount;
+        continue;
+      }
+      // 예산에 맞게 수량을 줄인다. 줄여서 문턱 아래가 되면 빼고 사유를 남긴다.
+      const quantity = Math.floor(left / leg.limitPrice);
+      const amount = quantity * leg.limitPrice;
+      if (quantity <= 0 || amount < minLegAmount) {
+        skipped.push({
+          symbol: leg.symbol,
+          reason: `남은 예산 ${Math.round(left).toLocaleString('ko-KR')}원으로는 문턱을 못 넘는다`,
+        });
+        continue;
+      }
+      kept.push({ ...leg, quantity, amount });
+      left -= amount;
+    }
+    legs.length = 0;
+    legs.push(...kept);
+  }
 
   const sellAmount = legs.filter((l) => l.side === 'sell').reduce((s, l) => s + l.amount, 0);
   const buyAmount = legs.filter((l) => l.side === 'buy').reduce((s, l) => s + l.amount, 0);

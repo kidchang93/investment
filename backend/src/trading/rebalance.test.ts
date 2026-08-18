@@ -145,3 +145,71 @@ describe('지정가 — 호가단위 5원', () => {
     assert.ok(limitPriceFor(5, 'sell', 0.9) >= 5);
   });
 });
+
+describe('적립 매수 — 팔지 않고 미달한 것만 산다', () => {
+  /*
+   * 매달 넣는 돈으로 비중을 맞추는 방식. 초기 몇 년은 수익률보다 납입이 자산을
+   * 좌우하므로(자산 6천만~1억이 되기 전까지 연 납입액 > 연 수익) 이 경로가
+   * 실제로 목표를 만든다.
+   */
+  const holdings = [
+    { symbol: '360750', name: 'S&P500', quantity: 100, price: 27_000 },   // 270만
+    { symbol: '069500', name: 'KODEX200', quantity: 10, price: 110_000 }, // 110만
+  ];
+  const targets = [
+    { symbol: '360750', weight: 0.5 },
+    { symbol: '069500', weight: 0.5 },
+  ];
+
+  it('★ 초과한 것을 팔지 않는다 — 판 뒤 다시 사면 수수료와 세금만 든다', () => {
+    const plan = planRebalance({
+      holdings, targets, cash: 1_000_000, bucketWeight: 1,
+      slipRate: 0.002, minLegAmount: 100_000, buyOnly: true,
+    });
+    assert.ok(plan.legs.every((l) => l.side === 'buy'), '적립인데 매도가 있다');
+    assert.ok(plan.legs.some((l) => l.symbol === '069500'), '미달한 쪽을 사야 한다');
+  });
+
+  it('예산을 넘겨 사지 않는다', () => {
+    const plan = planRebalance({
+      holdings, targets, cash: 10_000_000, bucketWeight: 1,
+      slipRate: 0.002, minLegAmount: 100_000, buyOnly: true, buyBudget: 500_000,
+    });
+    assert.ok(plan.buyAmount <= 500_000, `예산 50만인데 ${plan.buyAmount}원어치를 산다`);
+    assert.ok(plan.buyAmount > 0, '살 수 있는데 아무것도 안 샀다');
+  });
+
+  it('예산이 문턱보다 작으면 아무것도 사지 않고 사유를 남긴다', () => {
+    const plan = planRebalance({
+      holdings, targets, cash: 10_000_000, bucketWeight: 1,
+      slipRate: 0.002, minLegAmount: 500_000, buyOnly: true, buyBudget: 200_000,
+    });
+    assert.deepEqual(plan.legs, [], '잔돈으로 사면 수수료만 든다');
+    assert.ok(plan.skipped.some((s) => /예산/.test(s.reason)), plan.skipped.map((s) => s.reason).join(' / '));
+  });
+
+  it('미달이 큰 쪽부터 채운다 — 예산이 모자라면 뒤엣것은 안 산다', () => {
+    const three = [
+      { symbol: 'A', name: 'A', quantity: 100, price: 10_000 },  // 100만 (목표 33% → 초과)
+      { symbol: 'B', name: 'B', quantity: 10, price: 10_000 },   // 10만  (크게 미달)
+      { symbol: 'C', name: 'C', quantity: 50, price: 10_000 },   // 50만  (조금 미달)
+    ];
+    const plan = planRebalance({
+      holdings: three,
+      targets: [{ symbol: 'A', weight: 1 / 3 }, { symbol: 'B', weight: 1 / 3 }, { symbol: 'C', weight: 1 / 3 }],
+      cash: 5_000_000, bucketWeight: 1,
+      slipRate: 0.002, minLegAmount: 100_000, buyOnly: true, buyBudget: 600_000,
+    });
+    assert.ok(plan.legs.length > 0);
+    assert.equal(plan.legs[0].symbol, 'B', '가장 미달한 것을 먼저 채워야 한다');
+    assert.ok(plan.buyAmount <= 600_000);
+  });
+
+  it('적립 모드가 아니면 예전처럼 팔기도 한다 — 기본 동작을 안 바꾼다', () => {
+    const plan = planRebalance({
+      holdings, targets, cash: 0, bucketWeight: 1,
+      slipRate: 0.002, minLegAmount: 100_000,
+    });
+    assert.ok(plan.legs.some((l) => l.side === 'sell'), '복원 모드에서는 팔아야 한다');
+  });
+});
