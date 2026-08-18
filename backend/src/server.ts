@@ -8,6 +8,7 @@ import {
   getKisAccount,
   kisServerLabel,
   marketOpenDayHint,
+  readServerMismatch,
   type KisAccountConfig,
 } from './config.js';
 import {
@@ -111,6 +112,19 @@ const TR_UNAVAILABLE_NOTE = '모의투자 서버에는 이 조회 기능이 없�
  */
 const readAccountSnapshot = (account: KisAccountConfig | null): Promise<BrokerAccountSnapshot> =>
   shareInflight(`account:${account?.id ?? ''}`, () => getKisDomesticAccountSnapshot(account));
+
+/**
+ * 이 실행에서 그 계좌를 조회할 수 있나. 못 하면 **왜 못 하는지** 문장으로.
+ *
+ * ★ 실전 앱키는 `APP_ENV=vts`인 실행에서 조회조차 보내지 않는다(`config.ts`의
+ * `readServerMismatch` — 계좌 TR 이름이 APP_ENV로 갈리고, 보내면 그 서버의 토큰이
+ * 발급돼 캐시된다). 설계된 안전장치인데 화면에는 502와 "조회할 수 없습니다"로만
+ * 닿아서, 실계좌 탭을 누른 사람은 **고장인 줄 안다**(2026-08-18).
+ *
+ * 보내기 전에 갈라내면 오류가 아니라 사실로 전할 수 있다.
+ */
+const accountReadBlock = (account: KisAccountConfig | null): string | null =>
+  account ? readServerMismatch(account.server ?? config.env, config.env) : null;
 import { loadAutoTraderCandidates } from './trading/universe.js';
 import {
   DEFAULT_SCREENING_LOOKUPS,
@@ -354,6 +368,20 @@ async function main(): Promise<void> {
     const account = resolveAccount(req.query.accountId);
     if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
     const accountId = account?.id ?? '';
+    const readBlock = accountReadBlock(account);
+    if (readBlock) {
+      return {
+        configured: false,
+        accountId,
+        totalAssets: 0,
+        cash: 0,
+        layers: [],
+        mismatches: [],
+        unpriced: [],
+        fetchedAt: Date.now(),
+        message: readBlock,
+      } satisfies PortfolioLayersSnapshot;
+    }
     try {
       const snapshot = await readAccountSnapshot(account);
       if (!snapshot.configured) {
@@ -452,7 +480,13 @@ async function main(): Promise<void> {
         [accountId],
       ).catch(() => ({ rows: [{ first: null }] }));
 
-      const snapshot = await readAccountSnapshot(account);
+      /*
+       * ★ **볼 수 없는 계좌면 계좌 조회를 건너뛴다.** 하트비트는 계좌와 무관하므로
+       * "오늘 자동으로 한 일"은 그대로 보여 줄 수 있다 — 자산만 못 잰다. 여기서
+       * 통째로 502를 내면 실계좌 탭에서 자동화 상태까지 사라진다.
+       */
+      const readBlock = accountReadBlock(account);
+      const snapshot = readBlock ? null : await readAccountSnapshot(account);
       const rules = await getRiskRules(accountId);
 
       /*
@@ -460,15 +494,22 @@ async function main(): Promise<void> {
        * 부풀고(실측 +2,850만), 총평가는 모의 서버 정산 타이밍에 절반으로 나온 적이
        * 있다. 중단선은 늦게 잡는 쪽이 더 위험하므로 작은 값을 쓴다.
        */
-      const stock = snapshot.stockEvaluation ?? 0;
+      const stock = snapshot?.stockEvaluation ?? 0;
       const candidates = [
-        (snapshot.cashBalance ?? 0) + stock,
-        (snapshot.settlementCash ?? 0) + stock,
-        snapshot.totalEvaluation ?? 0,
+        (snapshot?.cashBalance ?? 0) + stock,
+        (snapshot?.settlementCash ?? 0) + stock,
+        snapshot?.totalEvaluation ?? 0,
       ].filter((v) => v > 0);
       const equity = candidates.length > 0 ? Math.min(...candidates) : 0;
 
       const alerts: TradingAlert[] = [];
+      if (readBlock) {
+        alerts.push({
+          level: 'warn',
+          message: '이 계좌는 지금 실행에서 볼 수 없습니다',
+          action: readBlock,
+        });
+      }
       if (rules.stopEquity > 0 && equity > 0 && equity < rules.stopEquity) {
         alerts.push({
           level: 'danger',
@@ -477,9 +518,11 @@ async function main(): Promise<void> {
         });
       }
 
-      const positions = await getLayerPositions(accountId);
-      const brokerQty = new Map(snapshot.positions.map((p) => [p.symbol, p.quantity]));
-      const mismatches = reconcile(positions, brokerQty);
+      // 잔고를 못 받았으면 대조할 것이 없다. 빈 지도로 대조하면 **보유 전부가
+      // "장부에만 있다"**로 나와 없는 사고를 지어낸다.
+      const positions = snapshot ? await getLayerPositions(accountId) : [];
+      const brokerQty = new Map((snapshot?.positions ?? []).map((p) => [p.symbol, p.quantity]));
+      const mismatches = snapshot ? reconcile(positions, brokerQty) : [];
       if (mismatches.length > 0) {
         alerts.push({
           level: 'danger',

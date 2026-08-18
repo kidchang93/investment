@@ -116,6 +116,14 @@ export function Dashboard({ accountId }: { accountId: string | null }): JSX.Elem
   const emptyLayers = rows.filter((l) => l.marketValue === 0 && l.targetWeight > 0);
   const nowhereToMove = emptyLayers.length > 0;
 
+  /*
+   * ★ 층 조회가 준 사유를 경보가 이미 말했으면 아래에 다시 적지 않는다. 서버가
+   * 볼 수 없는 계좌라고 답하면 두 API가 **같은 문장을 각자 돌려주므로** 화면에
+   * 같은 말이 두 번 떴다(2026-08-18, 실계좌 탭에서 실제로 봤다).
+   */
+  const noteEchoesAlert = layers?.message != null
+    && alerts.some((a) => a.action === layers.message);
+
   return (
     <section className="dash" aria-label="목표">
       <header className="dash__head">
@@ -243,9 +251,17 @@ export function Dashboard({ accountId }: { accountId: string | null }): JSX.Elem
           </p>
         </>
       ) : (
-        <p className="dash__note">
-          {layers?.message ?? '계좌를 고르면 3층 현황이 여기 나옵니다. 위에서 KIS VTS 주식을 선택하세요.'}
-        </p>
+        !noteEchoesAlert && (
+          <p className="dash__note">
+            {/*
+              ★ "계좌를 고르세요"라고 적어 뒀는데 **이미 고른 뒤에도** 그 문장이 떴다.
+              셋을 갈라 적는다 — 아직 안 왔나, 서버가 사유를 줬나, 비어 있나.
+            */}
+            {layers === null
+              ? '불러오는 중입니다.'
+              : (layers.message ?? '이 계좌에는 아직 담긴 것이 없습니다.')}
+          </p>
+        )
       )}
 
       {/* ── ③ 자동화가 살아 있나 ────────────────────────────────────────── */}
