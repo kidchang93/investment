@@ -107,6 +107,9 @@ import {
  */
 const HORIZONS = [1, 3, 5, 10, 20];
 
+/** 무엇 위에서 재나. **비용이 다르므로 섞으면 안 된다** — ETF는 매도 거래세가 면제다 */
+type AssetKind = 'stock' | 'etf';
+
 /**
  * 왕복 비용(%).
  *
@@ -155,6 +158,14 @@ const BUCKETS = 10;
 
 interface Options {
   dataset: string;
+  /**
+   * 주식 위에서 잴까 ETF 위에서 잴까.
+   *
+   * ★ **섞으면 안 된다.** 왕복 비용이 다르다 — 주식은 매도 거래세 0.20%가 붙고
+   * ETF는 면제다. 주식 패널에서 찾은 신호를 ETF 비용(0.12%)으로 채점하면
+   * 없는 우위가 생긴다(2026-08-18에 실제로 그럴 뻔했다).
+   */
+  asset: AssetKind;
   procedure: 'expanding' | 'rolling';
   /** 블록 A가 돌 축들 */
   axes: number[];
@@ -188,6 +199,7 @@ function parseNumberList(raw: string, label: string): number[] {
 
 function parseOptions(argv: string[]): Options {
   const options: Options = {
+    asset: 'stock',
     dataset: 'dailybars-20260812',
     procedure: 'expanding',
     axes: [...HORIZONS],
@@ -210,6 +222,12 @@ function parseOptions(argv: string[]): Options {
     const arg = argv[index];
     const next = (): string => argv[(index += 1)] ?? '';
     switch (arg) {
+      case '--asset': {
+        const raw = next();
+        if (raw !== 'stock' && raw !== 'etf') throw new Error(`--asset 은 stock|etf: ${raw}`);
+        options.asset = raw;
+        break;
+      }
       case '--dataset':
         options.dataset = next();
         break;
@@ -326,16 +344,30 @@ function elapsed(from: number): string {
  * (그중 66건은 사유가 이전상장이 아니다). **계열이 실제로 끊겼는지는 봉이 말한다** —
  * 그래서 여기서는 자격만 보고, 끊긴 자리 판정은 `scanAdjustmentBreaks`가 한다.
  */
-async function loadEligibleSymbols(): Promise<{
+async function loadEligibleSymbols(assetType: AssetKind): Promise<{
   symbols: Set<string>;
   preferred: number;
   inactive: number;
 }> {
+  /*
+   * ★ **ETF에는 우선주 필터를 걸지 않는다.** 주식에서는 끝자리가 0이 아니면
+   * 우선주로 보는데(`005935` 삼성전자우), ETF 종목코드에는 그 규칙이 없다 —
+   * `161510`처럼 0으로 끝나는 것도 `0000D0`처럼 아닌 것도 전부 정상 ETF다.
+   * 그대로 걸면 멀쩡한 ETF가 우선주로 몰려 통째로 빠진다.
+   *
+   * 시장 조건도 갈린다 — ETF는 `market`이 KOSPI로 오지만 앞으로 바뀔 수 있어
+   * KONEX만 뺀다(주식 쪽은 원래 조건을 그대로 지킨다).
+   */
   const { rows } = await pool.query<{ symbol: string; preferred: boolean; is_active: boolean }>(
-    `SELECT symbol, (right(symbol, 1) <> '0' OR name ~ '우[A-Z]?$') AS preferred, is_active
-     FROM instruments
-     WHERE country = 'KR' AND asset_type = 'stock' AND market IN ('KOSPI', 'KOSDAQ')
-     ORDER BY symbol`,
+    assetType === 'etf'
+      ? `SELECT symbol, false AS preferred, is_active
+           FROM instruments
+          WHERE country = 'KR' AND asset_type = 'etf' AND market <> 'KONEX'
+          ORDER BY symbol`
+      : `SELECT symbol, (right(symbol, 1) <> '0' OR name ~ '우[A-Z]?$') AS preferred, is_active
+           FROM instruments
+          WHERE country = 'KR' AND asset_type = 'stock' AND market IN ('KOSPI', 'KOSDAQ')
+          ORDER BY symbol`,
   );
   const usable = rows.filter((r) => !r.preferred);
   return {
@@ -484,7 +516,7 @@ async function main(): Promise<void> {
   }
 
   // ── 패널 ───────────────────────────────────────────────────────────────
-  const eligible = await loadEligibleSymbols();
+  const eligible = await loadEligibleSymbols(options.asset);
   const stored = await loadStoredSymbols();
   let targets = stored.filter((symbol) => eligible.symbols.has(symbol));
   if (options.limitSymbols !== null) {
@@ -492,7 +524,7 @@ async function main(): Promise<void> {
     targets = targets.slice(0, options.limitSymbols);
   }
   console.log(
-    `\n저장소 ${stored.length}종목 → 자격(국내 주식·KOSPI/KOSDAQ·우선주 제외) ${targets.length}종목`
+    `\n저장소 ${stored.length}종목 → 자격(${options.asset === 'etf' ? '국내 ETF·KONEX 제외' : '국내 주식·KOSPI/KOSDAQ·우선주 제외'}) ${targets.length}종목`
     + ` (우선주 ${eligible.preferred}종 제외)`,
   );
   // ★ 이 수가 0이면 폐지 종목이 유니버스에 없다는 뜻이다 — 그때 나온 값은 생존편향 위에 있다.
@@ -520,11 +552,26 @@ async function main(): Promise<void> {
    * `missingSymbols: 840`) 그날 밤 803종목이 들어와 하루 만에 거짓이 됐다.
    * 판정문 맨 위에 찍히는 문장이라 읽는 사람이 "편향이 그대로"라고 믿게 된다.
    */
-  const gap = await measureDelistingGap(
-    new Date().toISOString().slice(0, 10),
-    DEFAULT_ADJUSTMENT_SCAN.seriesEndGapDays,
-  );
-  const survivorship = describeSurvivorship(scanSurvivorship(panel, SURVIVORSHIP_CUTOFF), {
+  /*
+   * ★ **ETF 패널에서는 KIND 대조를 하지 않는다.** 그 목록은 KOSPI/KOSDAQ 주식의
+   * 상장폐지이고 ETF는 거기 없다. 그대로 붙이면 ETF 패널 아래에 "1,033종목 중
+   * 1,026종목이 표본에 들어왔다" 같은 **다른 표본의 숫자**가 찍혀, 읽는 사람이
+   * 이 패널의 편향 크기로 읽는다(2026-08-18에 실제로 그렇게 나왔다).
+   */
+  const gap = options.asset === 'etf'
+    ? null
+    : await measureDelistingGap(
+      new Date().toISOString().slice(0, 10),
+      DEFAULT_ADJUSTMENT_SCAN.seriesEndGapDays,
+    );
+  const survivorship = gap === null
+    ? [
+      ...describeSurvivorship(scanSurvivorship(panel, SURVIVORSHIP_CUTOFF)),
+      '★ ETF 패널이라 KIND 주식 상장폐지 목록과 대조하지 않았다 — 그 목록에 ETF는 없다.',
+      '  ETF의 퇴장은 상장폐지가 아니라 **청산·합병**이고, 그때 순자산이 돌아온다.',
+      '  다만 이 패널은 오늘 마스터에 살아 있는 ETF만 담고 있어 편향이 0이라는 뜻은 아니다.',
+    ]
+    : describeSurvivorship(scanSurvivorship(panel, SURVIVORSHIP_CUTOFF), {
     source: 'KIND 상장폐지 목록',
     fetchedOn: gap.fetchedOn?.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3') ?? '(모름)',
     measuredOn: gap.measuredOn,
@@ -594,8 +641,13 @@ async function main(): Promise<void> {
     buckets: BUCKETS,
     minNamesPerDay: UNIVERSE.minNamesPerDay,
     signalsByKey: new Map(usable.map((s) => [s.key, s])),
-    // 폐지 종목이 들어왔어도 **아직 빠진 것이 있으면** 편향은 남아 있다.
-    survivorshipExposed: gap.missingSymbols > 0,
+    /*
+     * 폐지 종목이 들어왔어도 **아직 빠진 것이 있으면** 편향은 남아 있다.
+     * ★ ETF 패널은 `gap`이 없다(KIND는 주식 목록이다). 그때는 **모른다**라서
+     * 편향이 없다고 적지 않고 노출된 것으로 둔다 — 없다고 적으면 뒤 문장들이
+     * 편향을 다 걷어낸 것처럼 읽힌다.
+     */
+    survivorshipExposed: gap === null || gap.missingSymbols > 0,
     cashPerPosition: 1_000_000,
   };
 
@@ -893,7 +945,12 @@ async function main(): Promise<void> {
    * 들어온 뒤로는 거짓이다. 맨 위 진단과 같은 값에서 말을 만든다 — 두 자리가
    * 각자 적으면 한쪽이 조용히 낡는다.
    */
-  if (gap.missingSymbols > 0) {
+  if (gap === null) {
+    console.log(
+      '★ ETF 패널이라 퇴장 크기를 재지 않았다 — KIND 목록은 주식만 담는다.'
+      + ' 이 패널은 오늘 마스터에 살아 있는 ETF만 있어 **편향의 크기를 모른다.**',
+    );
+  } else if (gap.missingSymbols > 0) {
     console.log(
       `★ 표본에 퇴장 ${gap.coveredSymbols.toLocaleString('ko-KR')}종목이 들어와 있지만`
       + ` ${gap.missingSymbols.toLocaleString('ko-KR')}종목은 아직 빠져 있다`
@@ -923,7 +980,7 @@ async function main(): Promise<void> {
       periodFrom: panel.days[0],
       periodTo: panel.days[panel.days.length - 1],
       universe:
-        `krx-stock-nonpreferred-${panel.symbols.length}`
+        `krx-${options.asset}-${options.asset === 'etf' ? 'all' : 'nonpreferred'}-${panel.symbols.length}`
         + `/bars>=120/active55of60/turnover>=1e8&top80%/scoregate${usable.length}/names>=200`,
       symbolsCount: panel.symbols.length,
       daysCount: result.oosEntryExcess.length,
@@ -964,7 +1021,7 @@ async function main(): Promise<void> {
       placeboMaxT: placeboTs.length > 0
         ? placeboTs.reduce((a, t) => Math.max(a, Math.abs(t)), 0)
         : undefined,
-      survivorshipExposed: gap.missingSymbols > 0,
+      survivorshipExposed: gap === null || gap.missingSymbols > 0,
       selectionSignature: selectionSignature(result),
       truncatedExits: result.truncatedExits,
       abstainSkillT: abstainScored?.abstainSkillT,
