@@ -38,6 +38,8 @@ import { ensureAutoTraderSchema, getAutoTraderRuns } from './db/autoTrader.js';
 import { ensureDailySelectionSchema } from './db/dailySelection.js';
 import { getLastBuySubmittedAt } from './db/brokerOrders.js';
 import { checkPositionGuard } from './trading/positionGuard.js';
+import { getLayerPositions, getLayerTradeStats, getRealizedByLayer } from './db/layers.js';
+import { LAYER_LABELS, LAYER_TARGETS, reconcile, summarizeLayers } from './trading/layers.js';
 import { ensureMarketSnapshotSchema } from './db/marketSnapshot.js';
 import { startDailySnapshot } from './trading/dailySnapshot.js';
 import { ensureSignalScoreSchema, getSignalScoreSummary } from './db/signalScores.js';
@@ -133,6 +135,8 @@ import type {
   AutoTraderConfig,
   BrokerExecution,
   BrokerPosition,
+  PortfolioLayerSummary,
+  PortfolioLayersSnapshot,
   ClientMessage,
   ClientSubscribeInstrument,
   CreateOrderRequest,
@@ -314,6 +318,93 @@ async function main(): Promise<void> {
     } catch (err) {
       req.log.warn({ err, accountId: req.query.accountId }, 'KIS 계좌 조회 실패');
       return reply.code(502).send({ message: 'KIS 계좌를 조회할 수 없습니다.' });
+    }
+  });
+
+  /**
+   * 3층 성과. **어느 층이 목표를 만들고 어느 층이 까먹는지** 한 번에 준다.
+   *
+   * 계좌 전체 손익만 보면 층이 섞여 보이지 않는다 — 2026-08-14에 평가손익의
+   * 98%가 한 종목에서 나왔는데 합계만으로는 분산이 작동하는 것처럼 읽혔다.
+   *
+   * ★ **장부와 잔고 대조 결과를 함께 준다.** 어긋나면 층별 숫자가 그만큼
+   * 거짓이므로, 화면이 그 사실을 값으로 알아야 한다.
+   */
+  app.get<{ Querystring: { accountId?: string } }>('/api/trading/layers', async (req, reply) => {
+    const account = resolveAccount(req.query.accountId);
+    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+    const accountId = account?.id ?? '';
+    try {
+      const snapshot = await getKisDomesticAccountSnapshot(account);
+      if (!snapshot.configured) {
+        return {
+          configured: false,
+          accountId,
+          totalAssets: 0,
+          cash: 0,
+          layers: [],
+          mismatches: [],
+          unpriced: [],
+          fetchedAt: Date.now(),
+          message: snapshot.message ?? 'KIS 계좌가 설정되지 않았습니다.',
+        } satisfies PortfolioLayersSnapshot;
+      }
+
+      const positions = await getLayerPositions(accountId);
+      const prices = new Map<string, number>();
+      for (const p of snapshot.positions) {
+        if (typeof p.currentPrice === 'number' && p.currentPrice > 0) prices.set(p.symbol, p.currentPrice);
+      }
+      const realized = await getRealizedByLayer(accountId);
+      /*
+       * ★ **D+2를 쓴다.** `cashBalance`(D+0)는 오늘 산 것이 아직 안 빠진 값이라
+       * 그것으로 비중을 내면 자산이 부풀어 현금이 실제의 두 배로 보인다
+       * (2026-08-14 실측: 17.3%가 37.5%로 나왔다).
+       */
+      const cash = snapshot.settlementCash ?? 0;
+      const { summaries, unpriced, totalAssets } = summarizeLayers(positions, prices, realized, cash);
+      const stats = new Map((await getLayerTradeStats(accountId)).map((s) => [s.layer, s]));
+
+      const layers: PortfolioLayerSummary[] = summaries.map((s) => {
+        const stat = stats.get(s.layer);
+        const closedTrades = stat?.closedTrades ?? 0;
+        const ratio = stat && stat.avgLoss > 0 ? stat.avgWin / stat.avgLoss : null;
+        return {
+          layer: s.layer,
+          label: LAYER_LABELS[s.layer],
+          rationale: LAYER_TARGETS[s.layer].rationale,
+          symbols: s.symbols,
+          cost: s.cost,
+          marketValue: s.marketValue,
+          unrealizedPnl: s.unrealizedPnl,
+          realizedPnl: s.realizedPnl,
+          totalPnl: s.totalPnl,
+          weight: s.weight,
+          targetWeight: s.targetWeight,
+          contribution: totalAssets > 0 ? s.totalPnl / totalAssets : 0,
+          closedTrades,
+          // 청산이 없으면 승률을 낼 수 없다. 0%로 적으면 "다 졌다"가 지어진다.
+          winRate: closedTrades > 0 ? (stat?.wins ?? 0) / closedTrades : null,
+          profitFactor: ratio,
+          // 손익비 2:1이면 승률 34%면 본전이다. 그 숫자가 판정의 기준선이다.
+          breakEvenWinRate: ratio !== null && ratio > 0 ? 1 / (1 + ratio) : null,
+        };
+      });
+
+      const brokerQty = new Map(snapshot.positions.map((p) => [p.symbol, p.quantity]));
+      return {
+        configured: true,
+        accountId,
+        totalAssets,
+        cash,
+        layers,
+        mismatches: reconcile(positions, brokerQty),
+        unpriced,
+        fetchedAt: Date.now(),
+      } satisfies PortfolioLayersSnapshot;
+    } catch (err) {
+      req.log.warn({ err, accountId }, '3층 성과 조회 실패');
+      return reply.code(502).send({ message: '3층 성과를 조회할 수 없습니다.' });
     }
   });
 

@@ -47,6 +47,7 @@ import {
   type FinancialsResult,
 } from './api';
 import { useStream } from './useStream';
+import { PortfolioLayers } from './PortfolioLayers';
 import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } from './Chart';
 import {
   CANDLE_AXIS_LABELS,
@@ -7372,6 +7373,16 @@ export function App(): JSX.Element {
                 실계좌와 모의 계좌 금액이 구분 없이 이어지면 어느 돈인지 헷갈린다.
                 실제로 실계좌 예수금 5만원 바로 아래 모의 현금 971만원이 나온다.
               */}
+              {/*
+                ★ 3층 성과를 맨 위에 둔다. 잔고보다 먼저 "목표까지 어디쯤인가"를
+                보여야 한다 — 아래에 두면 숫자를 다 읽은 뒤에 만나게 된다.
+              */}
+              <h2 className="portfolio-section" data-kind="live">
+                <span>3층 성과</span>
+                <em>ETF 50% · 단기 30% · 유망주 20%가 목표</em>
+              </h2>
+              <PortfolioLayers accountId={kisAccountId} />
+
               <h2 className="portfolio-section" data-kind="live">
                 <span>실계좌</span>
                 <em>{kisAccountSnapshot?.accountLabel ?? 'KIS'} · 실제 자금</em>

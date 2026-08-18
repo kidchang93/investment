@@ -1996,3 +1996,70 @@ export function krSellTaxRate(
   if (instrument.market === 'KONEX') return KR_KONEX_SELL_TAX_RATE;
   return KR_SELL_TAX_RATE;
 }
+
+/**
+ * 3층 포트폴리오의 한 층. **어느 층이 목표를 만들고 어느 층이 까먹는지** 본다.
+ *
+ * 계좌 전체 손익만 보면 층이 섞여 보이지 않는다 — 2026-08-14에 평가손익의 98%가
+ * 한 종목(KODEX 200)에서 나왔는데 합계만으로는 분산이 작동하는 것처럼 읽혔다.
+ */
+export interface PortfolioLayerSummary {
+  /** `etf` · `short` · `bet` */
+  layer: string;
+  /** 화면에 쓰는 이름 */
+  label: string;
+  /** 이 층이 왜 있는가 */
+  rationale: string;
+  /** 들고 있는 종목 수 */
+  symbols: number;
+  /** 취득원가 합(원) */
+  cost: number;
+  /** 지금 평가액(원) */
+  marketValue: number;
+  unrealizedPnl: number;
+  /** 누적 실현손익(원) */
+  realizedPnl: number;
+  totalPnl: number;
+  /** 총자산 대비 지금 비중(0~1) */
+  weight: number;
+  /** 총자산 대비 목표 비중(0~1) */
+  targetWeight: number;
+  /** 총자산 대비 이 층이 만든 손익(0~1). 크기가 다른 층을 견주는 자다 */
+  contribution: number;
+  /** 청산된 매매 수. 0이면 승률·손익비를 낼 수 없다 */
+  closedTrades: number;
+  /** 청산 매매 중 이익으로 끝난 비율(0~1). 청산이 없으면 `null` */
+  winRate: number | null;
+  /** 평균이익 ÷ 평균손실. 진 매매가 없으면 `null` */
+  profitFactor: number | null;
+  /** 이 손익비에서 본전이 되는 승률(0~1). 손익비가 없으면 `null` */
+  breakEvenWinRate: number | null;
+}
+
+/** 우리 장부와 증권사 잔고가 어긋난 한 건. **있으면 층별 숫자를 믿으면 안 된다** */
+export interface PortfolioLedgerMismatch {
+  symbol: string;
+  ledger: number;
+  broker: number;
+}
+
+export interface PortfolioLayersSnapshot {
+  configured: boolean;
+  accountId: string;
+  /** 총자산(원) = 보유 평가액 + D+2 현금 */
+  totalAssets: number;
+  /** D+2 정산 현금(원). **D+0은 오늘 산 것이 안 빠져 부풀어 보인다** */
+  cash: number;
+  layers: PortfolioLayerSummary[];
+  /**
+   * 장부와 잔고가 어긋난 종목. **빈 배열이어야 정상이다** —
+   * 어긋나면 빠진 체결이 있다는 뜻이고 층별 손익이 그만큼 거짓이다.
+   */
+  mismatches: PortfolioLedgerMismatch[];
+  /** 현재가를 못 받아 평가액에서 뺀 자리(`층:종목`). 0으로 채우지 않는다 */
+  unpriced: string[];
+  /** 언제 받은 값인가 (epoch ms) */
+  fetchedAt: number;
+  /** 못 읽었으면 왜 */
+  message?: string;
+}
