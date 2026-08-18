@@ -88,6 +88,11 @@ run_loop() {
         local slot="watch-$(date '+%H')$(( $(date '+%M') / 20 ))"
         if ! did_today "$slot"; then
           zsh scripts/watch.sh >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
+          # ★ 경보는 **감지만 하고 아무도 안 보면 없는 것과 같다.** --notify로
+          #   알림 센터에 띄운다(터미널에서 뜬 프로세스라 권한이 있다).
+          #   경보가 없으면 조용하다 — 늘 뜨는 알림은 안 읽힌다.
+          (cd backend && npx tsx src/scripts/checkAlerts.ts --notify) \
+            >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
           mark "$slot" "$(date '+%H:%M')"
         fi
       fi

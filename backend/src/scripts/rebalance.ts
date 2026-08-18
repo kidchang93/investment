@@ -37,6 +37,8 @@
  * 나가지 않는 쪽이 기본이어야 한다.
  */
 
+import { spawn } from 'node:child_process';
+
 import { config, getKisAccount } from '../config.js';
 import { closeDb } from '../db/client.js';
 import { getKisDomesticAccountSnapshot } from '../kis/rest.js';
@@ -249,6 +251,26 @@ async function main(): Promise<void> {
 
   if (!options.execute) {
     console.log('\n계획만 봤다. 실제로 내려면 --execute를 붙인다.');
+    return;
+  }
+
+  /*
+   * ★★ **집행 직전에 중단선을 본다.** 안전장치는 실행 지점에 있어야 한다 —
+   * 계획을 낸 뒤 집행하기까지 시간이 지날 수 있고, 그 사이 자산이 무너졌으면
+   * 새 매수를 얹으면 안 된다. `checkAlerts`가 경보를 내면 exit 1을 준다.
+   */
+  const guard = await new Promise<number>((resolve) => {
+    const child = spawn(
+      'npx',
+      ['tsx', 'src/scripts/checkAlerts.ts', options.accountId],
+      { stdio: 'inherit' },
+    );
+    child.on('close', (code) => resolve(code ?? 1));
+    child.on('error', () => resolve(1));
+  });
+  if (guard !== 0) {
+    console.log('\n★ 경보가 있어 집행하지 않는다. 위 사유를 먼저 해결하라.');
+    process.exitCode = 1;
     return;
   }
 
