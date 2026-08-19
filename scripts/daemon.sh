@@ -67,8 +67,29 @@ mark() {
     >/dev/null 2>&1
 }
 
+# Postgres가 준비될 때까지 기다린다. **재부팅 직후에는 데몬이 먼저 뜬다** —
+# 터미널(.zshrc)이 Docker Desktop보다 빠를 수 있다. 2026-08-19 아침에 그래서
+# 하트비트·브리핑·판단자가 전부 실패했고, DB가 없어 **실패했다는 기록조차
+# 안 남았다**(하트비트도 DB에 쓴다).
+wait_for_db() {
+  local tries="${1:-60}"
+  for i in $(seq 1 "$tries"); do
+    docker exec kis-postgres pg_isready -U kis >/dev/null 2>&1 && return 0
+    # 컨테이너가 멈춰 있으면 깨운다. 재시작 정책이 unless-stopped라 보통은
+    # Docker가 알아서 띄우지만, 사람이 손으로 멈춰 둔 경우가 있다.
+    [[ $((i % 10)) -eq 1 ]] && docker start kis-postgres >/dev/null 2>&1
+    sleep 5
+  done
+  return 1
+}
+
 run_loop() {
   log "데몬 시작 (pid $$)"
+  if wait_for_db 60; then
+    log "Postgres 준비됨"
+  else
+    log "★ Postgres를 5분 기다려도 없다 — 하트비트도 못 남긴다. Docker를 확인하라"
+  fi
   mark 'daemon-start' "pid $$"
   while true; do
     local dow hhmm
@@ -77,7 +98,11 @@ run_loop() {
 
     if [[ "$dow" -le 5 ]]; then
       # ── 08:12 개장 전 ──────────────────────────────────────────────
-      if [[ "$hhmm" == "0812" || ("$hhmm" > "0812" && "$hhmm" < "0850") ]] && ! did_today premarket; then
+      # ★ **창을 장 마감까지 넓혔다.** 예전에는 08:12~08:50이라, 재부팅 뒤
+      #   08:59에 데몬이 뜬 2026-08-19에는 그날 브리핑을 통째로 건너뛰었다.
+      #   늦게라도 하는 것이 안 하는 것보다 낫다 — 하트비트가 몇 시에 했는지
+      #   적으므로 "제때 했나"는 그것으로 판별한다.
+      if [[ "$hhmm" > "0811" && "$hhmm" < "1530" ]] && ! did_today premarket; then
         log "개장 전 브리핑 시작"
         zsh scripts/premarket.sh >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
         log "개장 전 브리핑 끝"
@@ -93,7 +118,9 @@ run_loop() {
       # 있기** 때문이다. 브리핑(08:12) 뒤라 그 결과를 재료로 쓴다.
       #
       # ★ 주문은 내지 않는다 — 판단을 기록하는 데까지다.
-      if [[ "$hhmm" > "0819" && "$hhmm" < "0855" ]] && ! did_today deliberate; then
+      # 판단자도 같다 — 늦게 떠도 그날 한 번은 소집한다(장중 소집은 실제로
+      # 2026-08-19 14:54에 돌려 정상 동작을 확인했다).
+      if [[ "$hhmm" > "0819" && "$hhmm" < "1530" ]] && ! did_today deliberate; then
         log "판단자 소집 시작"
         zsh scripts/deliberate.sh >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
         if [[ $? -eq 0 ]]; then
