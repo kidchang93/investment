@@ -13,7 +13,7 @@
  * 이 함수는 사용자가 명시적으로 부를 때만 돌고 결과는 언제 잰 값인지와 함께 보관한다.
  */
 
-import { getCategoryInstruments } from '../db/instruments.js';
+import { getCategoryInstruments, getTopTurnoverInstruments } from '../db/instruments.js';
 import { getInstrumentQuotes, MULTI_QUOTE_MAX_CODES } from '../kis/rest.js';
 import {
   ETF_ROUND_TRIP_COST_RATE,
@@ -59,21 +59,43 @@ function isOrderable(instrument: Instrument): boolean {
  * 없어 매번 "후보 없음"으로 끝났다. `loadAutoTraderCandidates`가 겪은 일이다.
  */
 async function buildPool(size: number): Promise<Instrument[]> {
-  const pools = await Promise.all(
-    SOURCE_CATEGORIES.map((category) => getCategoryInstruments(category, 300).catch(() => [])),
-  );
+  /*
+   * ★ **거래대금 큰 순으로 뽑는다.** 2026-08-19까지는 카테고리를 번갈아 뽑았는데,
+   * 그 카테고리가 `ORDER BY symbol`이라 **코드 앞쪽만** 들어왔다. 판단자가 그날
+   * 본 후보는 000020~0022T0 57종목이었고, 거래대금 상위 12종 중 하나도 없었다.
+   * *"살 것이 없었다"가 아니라 "대부분을 안 봤다"*였다.
+   *
+   * 유망 종목을 고르는 일을 알파벳 순서에 맡기고 있었던 셈이다.
+   */
+  const ranked = await getTopTurnoverInstruments(['stock', 'etf'], size * 2).catch(() => []);
   const pool: Instrument[] = [];
   const seen = new Set<string>();
-  for (let index = 0; pool.length < size; index += 1) {
-    let added = false;
-    for (const list of pools) {
-      const instrument = list[index];
-      if (!instrument || !isOrderable(instrument) || seen.has(instrument.id)) continue;
-      seen.add(instrument.id);
-      pool.push(instrument);
-      added = true;
+  for (const instrument of ranked) {
+    if (pool.length >= size) break;
+    if (!isOrderable(instrument) || seen.has(instrument.id)) continue;
+    seen.add(instrument.id);
+    pool.push(instrument);
+  }
+  /*
+   * 일봉이 없어 순위에 못 든 종목이 있을 수 있다(신규 상장·수집 중). 그때는
+   * 예전 경로로 자리를 채운다 — 비어 있는 것보다 낫고, 채운 자리가 어디서
+   * 왔는지는 이 주석이 답한다.
+   */
+  if (pool.length < size) {
+    const pools = await Promise.all(
+      SOURCE_CATEGORIES.map((category) => getCategoryInstruments(category, 300).catch(() => [])),
+    );
+    for (let index = 0; pool.length < size; index += 1) {
+      let added = false;
+      for (const list of pools) {
+        const instrument = list[index];
+        if (!instrument || !isOrderable(instrument) || seen.has(instrument.id)) continue;
+        seen.add(instrument.id);
+        pool.push(instrument);
+        added = true;
+      }
+      if (!added) break;
     }
-    if (!added) break;
   }
   return pool;
 }

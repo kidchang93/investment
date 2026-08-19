@@ -725,6 +725,61 @@ async function getByIds(ids: string[]): Promise<Instrument[]> {
   return result.rows.map(rowToInstrument);
 }
 
+/**
+ * **최근 거래대금이 큰 순서로** 국내 종목을 준다.
+ *
+ * ── 왜 (2026-08-19 판단자가 잡았다) ──────────────────────────────────────
+ *
+ * 스크리닝 후보 풀이 `ORDER BY symbol`로 앞쪽 300개를 가져오고 있었다. 그래서
+ * 판단자가 본 것은 **코드 오름차순 앞 조각(000020~0022T0) 57종목**뿐이었고,
+ * 그날 거래대금 상위 12종 중 후보에 들어온 것이 **0개**였다.
+ *
+ * *"살 것이 없었다"가 아니라 "대부분을 안 봤다"* 가 정확한 사실이었다 —
+ * 판단자가 스스로 `unknowns`에 그렇게 적었다. 유망 종목을 고르는 일을
+ * 알파벳 순서에 맡기고 있었던 것이다.
+ *
+ * ★ **거래대금으로 고르는 이유**는 두 가지다. ① 그날 사람들이 실제로 사고판
+ * 자리라 정보가 몰려 있고 ② 우리가 **살 수 있는** 종목이다 — 슬리피지 실측
+ * 0.09%는 유동성 있는 종목의 값이고, 얇은 종목에는 맞지 않는다.
+ *
+ * ★ **일봉 저장소를 쓴다.** 오늘 값이 아니라 최근 `days`거래일 평균이라
+ * 하루치 이상치에 흔들리지 않는다. KIS 호출이 0회다.
+ */
+export async function getTopTurnoverInstruments(
+  assetTypes: Array<'stock' | 'etf'>,
+  limit: number,
+  days = 20,
+): Promise<Instrument[]> {
+  if (assetTypes.length === 0 || limit <= 0) return [];
+  const result = await pool.query<InstrumentRow>(
+    `
+      WITH recent AS (
+        SELECT DISTINCT trading_day
+          FROM trading_daily_bars
+         ORDER BY trading_day DESC
+         LIMIT $3
+      ), turnover AS (
+        SELECT b.symbol AS tv_symbol, avg(b.turnover) AS tv
+          FROM trading_daily_bars b
+          JOIN recent r ON r.trading_day = b.trading_day
+         WHERE b.turnover IS NOT NULL
+         GROUP BY b.symbol
+      )
+      SELECT ${instrumentColumns()}
+        FROM instruments i
+        JOIN turnover t ON t.tv_symbol = i.symbol
+       WHERE i.country = 'KR'
+         AND i.is_active = true
+         AND i.asset_type = ANY($1)
+         AND i.market <> 'KONEX'
+       ORDER BY t.tv DESC
+       LIMIT $2
+    `,
+    [assetTypes, limit, days],
+  );
+  return result.rows.map(rowToInstrument);
+}
+
 async function getByFilter(whereSql: string, limit: number, query = ''): Promise<Instrument[]> {
   const q = query.trim();
   const result = await pool.query<InstrumentRow>(
