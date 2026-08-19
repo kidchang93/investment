@@ -81,6 +81,17 @@ interface Options {
   minLeg: number;
   /** 멱등 키에 들어갈 날짜 `YYYYMMDD`. 하루에 한 번만 복원한다 */
   day: string;
+  /**
+   * **전량 매도.** 보유한 것을 전부 팔아 현금으로 만든다.
+   *
+   * ★ 목표 비중을 0으로 두는 것과 같다 — `planRebalance`가 그대로 계산한다.
+   * 별도 경로를 만들지 않는 이유는 **매도 수량이 보유를 넘지 않는 가드**와
+   * 멱등 키를 그대로 물려받기 위해서다(2026-08-14 중복 체결 사고가 그 자리다).
+   *
+   * ★ 목표 비중 표에 없는 종목도 판다 — 전량 매도의 뜻이 그것이다.
+   *   비중 복원에서는 반대로 "모르는 것을 팔지 않는다"가 옳다.
+   */
+  liquidate: boolean;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -92,6 +103,7 @@ function parseArgs(argv: string[]): Options {
     budget: null,
     minLeg: MIN_LEG_AMOUNT,
     day: new Date().toISOString().slice(0, 10).replace(/-/g, ''),
+    liquidate: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     switch (argv[i]) {
@@ -109,6 +121,9 @@ function parseArgs(argv: string[]): Options {
       }
       case '--buy-only':
         options.buyOnly = true;
+        break;
+      case '--liquidate':
+        options.liquidate = true;
         break;
       case '--budget': {
         const value = Number(argv[++i]);
@@ -148,7 +163,7 @@ const padL = (t: string, n: number): string => ' '.repeat(Math.max(1, n - width(
  * 답한다. 2026-08-14에 없던 것이 정확히 이 성질이다.
  */
 async function placeLeg(leg: RebalanceLeg, options: Options): Promise<string> {
-  const kind = options.buyOnly ? 'deposit' : 'rebalance';
+  const kind = options.liquidate ? 'liquidate' : options.buyOnly ? 'deposit' : 'rebalance';
   const clientOrderId = `${kind}-${options.day}-${leg.symbol}-${leg.side}`;
   const response = await fetch(`http://127.0.0.1:${config.port}/api/broker/kis/orders`, {
     method: 'POST',
@@ -178,8 +193,9 @@ async function main(): Promise<void> {
   if (!account) throw new Error(`등록되지 않은 계좌: ${options.accountId}`);
 
   console.log(
-    `${options.buyOnly ? '적립 매수' : '비중 복원'} · 계좌 ${options.accountId}`
-    + ` · ETF 묶음 목표 ${pct(options.bucketWeight)}`
+    `${options.liquidate ? '★ 전량 매도' : options.buyOnly ? '적립 매수' : '비중 복원'}`
+    + ` · 계좌 ${options.accountId}`
+    + (options.liquidate ? ' · 보유 전부를 현금으로' : ` · ETF 묶음 목표 ${pct(options.bucketWeight)}`)
     + (options.budget === null ? '' : ` · 이번 예산 ${won(options.budget)}원`)
     + ` · ${options.execute ? '★ 실제로 낸다' : '계획만 본다(--execute로 집행)'}`,
   );
@@ -199,13 +215,26 @@ async function main(): Promise<void> {
    * 현금 비중이 17.3%인데 37.5%로 보였다).
    */
   const cash = snapshot.settlementCash ?? 0;
+  /*
+   * ★ 전량 매도는 **보유한 모든 종목**의 목표를 0으로 둔다. `TARGET_WEIGHTS`를
+   * 쓰지 않는 이유는 그 표에 없는 종목이 남아 버리기 때문이다 — 비중 복원에서는
+   * "모르는 것을 팔지 않는다"가 옳지만, 전량 매도에서는 그것이 곧 누락이다.
+   */
+  const targets = options.liquidate
+    ? holdings.map((h) => ({ symbol: h.symbol, weight: 0 }))
+    : TARGET_WEIGHTS.map(({ symbol, weight }) => ({ symbol, weight }));
   const plan = planRebalance({
     holdings,
-    targets: TARGET_WEIGHTS.map(({ symbol, weight }) => ({ symbol, weight })),
+    targets,
     cash,
     bucketWeight: options.bucketWeight,
     slipRate: SLIP_RATE,
-    minLegAmount: options.minLeg,
+    /*
+     * ★ **전량 매도에는 문턱을 두지 않는다.** 잔돈 매매를 막는 문턱이
+     * 여기서는 곧 누락이다 — 50만원 미만 자리가 남으면 "전부 현금"이
+     * 아니게 되는데, 화면에는 현금화한 것처럼 보인다.
+     */
+    minLegAmount: options.liquidate ? 1 : options.minLeg,
     buyOnly: options.buyOnly,
     ...(options.budget === null ? {} : { buyBudget: options.budget }),
   });

@@ -213,3 +213,56 @@ describe('적립 매수 — 팔지 않고 미달한 것만 산다', () => {
     assert.ok(plan.legs.some((l) => l.side === 'sell'), '복원 모드에서는 팔아야 한다');
   });
 });
+
+describe('전량 매도 — 보유를 전부 현금으로', () => {
+  /*
+   * 2026-08-19, 사용자가 *"모의투자 금액들 전부 현금으로 바꿔놓고 대기해"*라고
+   * 했다. 손으로 다섯 건을 내면 8/14 중복 체결이 되풀이될 자리라 도구로 만들었고,
+   * 여기서 두 가지를 못 박는다 — **전부 팔리는가**와 **없는 것을 팔지 않는가**.
+   */
+  const holdings: RebalanceHolding[] = [
+    { symbol: '360750', name: 'S&P500', quantity: 714, price: 26_750 },
+    { symbol: '329200', name: '리츠', quantity: 4362, price: 4_075 },
+    { symbol: '005930', name: '삼성전자', quantity: 3, price: 268_000 },
+  ];
+  /** 전량 매도는 **보유한 모든 종목**의 목표를 0으로 둔다 */
+  const liquidateTargets = holdings.map((h) => ({ symbol: h.symbol, weight: 0 }));
+
+  it('★ 보유한 것을 하나도 남기지 않는다 — 목표 표에 없는 종목도 판다', () => {
+    const plan = planRebalance({
+      holdings, targets: liquidateTargets, cash: 0, bucketWeight: 1,
+      slipRate: 0.002, minLegAmount: 1,
+    });
+    assert.equal(plan.legs.length, 3, '판 종목 수가 보유 수와 다르다');
+    assert.ok(plan.legs.every((l) => l.side === 'sell'));
+    for (const h of holdings) {
+      const leg = plan.legs.find((l) => l.symbol === h.symbol);
+      assert.equal(leg?.quantity, h.quantity, `${h.symbol}: 보유 ${h.quantity}주 중 ${leg?.quantity}주만 판다`);
+    }
+  });
+
+  it('★ 문턱이 남기지 않는다 — 잔돈 자리도 팔아야 "전부 현금"이다', () => {
+    const dust: RebalanceHolding[] = [{ symbol: '411060', name: '금현물', quantity: 3, price: 27_475 }];
+    const kept = planRebalance({
+      holdings: dust, targets: [{ symbol: '411060', weight: 0 }], cash: 0,
+      bucketWeight: 1, slipRate: 0.002, minLegAmount: 500_000,
+    });
+    assert.deepEqual(kept.legs, [], '문턱 500,000원이면 8만원짜리가 남는다 (그래서 전량 매도는 문턱을 1로 둔다)');
+
+    const swept = planRebalance({
+      holdings: dust, targets: [{ symbol: '411060', weight: 0 }], cash: 0,
+      bucketWeight: 1, slipRate: 0.002, minLegAmount: 1,
+    });
+    assert.equal(swept.legs[0]?.quantity, 3, '문턱을 1로 두면 잔돈 자리도 팔린다');
+  });
+
+  it('현재가를 못 받은 종목은 팔지 않고 사유를 남긴다 — 값 없이 주문을 지어내지 않는다', () => {
+    const plan = planRebalance({
+      holdings: [...holdings, { symbol: '999999', name: '알수없음', quantity: 10, price: null }],
+      targets: [...liquidateTargets, { symbol: '999999', weight: 0 }],
+      cash: 0, bucketWeight: 1, slipRate: 0.002, minLegAmount: 1,
+    });
+    assert.ok(!plan.legs.some((l) => l.symbol === '999999'));
+    assert.ok(plan.skipped.some((s) => s.symbol === '999999' && /현재가/.test(s.reason)));
+  });
+});
