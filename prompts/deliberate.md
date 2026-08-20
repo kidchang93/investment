@@ -99,8 +99,10 @@ cat round.json | npx tsx src/scripts/recordDeliberation.ts
 
 그러니 **적기 전에 다시 봅니다**:
 
-- `quantity` × `limitPrice`가 매수여력 안에 드나 (미체결이 여력을 묶습니다 —
-  `cashBalance`가 아니라 `cashAvailable`을 봅니다)
+- `quantity` × `limitPrice`가 **매수여력** 안에 드나. `deliberationState`가 예수금
+  옆에 함께 찍습니다 — ★ **예수금이 아니라 매수여력을 봅니다.** 예수금(D+0)에는
+  오늘 체결된 것도 미체결이 묶어 둔 것도 아직 안 빠져 있습니다. 2026-08-20에
+  예수금 19,649,294원인데 매수여력은 **984,524원**이었습니다
 - 층 상한과 한 종목 10%를 넘지 않나
 - `amend`·`cancel`에 `orderNo`와 `orderBranchNo`를 정확히 적었나
 
@@ -111,7 +113,9 @@ cat round.json | npx tsx src/scripts/recordDeliberation.ts
 
 ```
 action           'amend'(정정) | 'cancel'(취소)
-orderNo          원주문 번호. checkTrigger·executions 출력에 있습니다
+orderNo          원주문 번호. `deliberationState`의 「오늘 주문」 각 줄 끝에 있습니다
+                 ★ 줄 **앞** 숫자(`092226`)는 주문번호가 아니라 **주문시각**입니다.
+                   그것을 적으면 정정·취소가 조용히 안 나갑니다
 orderBranchNo    주문채번지점번호. 없으면 정정·취소가 나가지 않습니다
 limitPrice       amend에 필수 — 얼마로 정정하는지
 quantity         0이면 남은 수량 전부

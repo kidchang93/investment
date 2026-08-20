@@ -108,6 +108,14 @@ export interface DeliberationDecision {
 export interface DeliberationExecution {
   symbol: string;
   side: 'buy' | 'sell';
+  /**
+   * 무엇을 한 집행인가. **없으면 옛 기록**(신규 주문)이다.
+   *
+   * ★ 이 칸이 없어서 집행기가 `cancel`과 `buy`를 같은 칸으로 셌다 — 한 회차에서
+   *   같은 종목을 취소하고 다시 사면 뒤엣것이 "이미 했다"로 건너뛰어진다.
+   *   2026-08-20 회차 22가 코드를 읽고 잡았다(그날은 종목이 달라 안 걸렸다).
+   */
+  action?: 'buy' | 'sell' | 'amend' | 'cancel';
   quantity: number;
   orderNo: string;
   /** 판정 시점 단가. 슬리피지의 기준이 된다 */

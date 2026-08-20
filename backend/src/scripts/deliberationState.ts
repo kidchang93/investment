@@ -30,6 +30,7 @@ import {
   getDomesticIndex,
   getKisDomesticAccountSnapshot,
   getKisDomesticExecutions,
+  getKisDomesticOrderability,
   getDomesticTurnoverRanking,
   getQuote,
 } from '../kis/rest.js';
@@ -47,10 +48,15 @@ const kst = at.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false }
 console.log(`# 회의 상태 · ${kst} KST · 계좌 ${account.id} · 서버 ${config.env}`);
 console.log('★ 값만 모은 것이다. 판단은 들어 있지 않다.\n');
 
-const [snapshot, executionSnapshot, rules] = await Promise.all([
+const [snapshot, executionSnapshot, rules, orderability] = await Promise.all([
   getKisDomesticAccountSnapshot(account),
   getKisDomesticExecutions(account, 1).catch(() => null),
   getRiskRules(account.id),
+  /*
+   * 매수여력. 종목·유형은 아무거나 좋다 — `ord_psbl_cash`는 종목과 무관한
+   * 계좌 값이다. 시장가로 물어 지정가 계산에 걸리지 않게 한다.
+   */
+  getKisDomesticOrderability(account, '005930', 'market', 0).catch(() => null),
 ]);
 /**
  * ★ **오늘 것만 남긴다.** `days=1`은 `어제~오늘`을 준다(2026-08-05 실측: 28건 중
@@ -95,7 +101,13 @@ console.log('\n## 계좌');
 const won = (n: number | null | undefined): string =>
   n === null || n === undefined ? '—' : `${Math.round(n).toLocaleString('ko-KR')}원`;
 console.log(`총평가 ${won(snapshot.totalEvaluation)} · 주식 ${won(snapshot.stockEvaluation)}`
-  + ` · 예수금 ${won(snapshot.cashBalance)}`);
+  + ` · 예수금 ${won(snapshot.cashBalance)} · 매수여력 ${won(orderability?.cashAvailable ?? 0)}`
+  + `${orderability === null ? ' (매수여력 조회 실패)' : ''}`);
+/*
+ * ★ **예수금으로 자리 크기를 정하면 낼 수 없는 주문을 적게 된다.**
+ *   `cashBalance`(D+0)에는 오늘 체결된 것도, 미체결이 묶어 둔 것도 아직 안 빠져
+ *   있다. 2026-08-20에 예수금 19,649,294원인데 매수여력은 **984,524원**이었다.
+ */
 /*
  * 없는 값을 0%로 적지 않는다 — `평가손익률 0.00%`는 "본전이었다"로 읽힌다.
  *
@@ -147,9 +159,15 @@ if (executionSnapshot === null) {
 } else {
   for (const e of executions) {
     console.log(
+      /*
+       * ★ **주문번호를 반드시 함께 찍는다.** 앞 숫자는 주문**시각**이라, 그것을
+       *   주문번호로 읽고 `amend`·`cancel`에 적으면 정정·취소가 조용히 안 나간다.
+       *   2026-08-20 회차 22가 이 자리에서 걸려 DB를 직접 뒤져야 했다.
+       */
       `- ${e.orderTime ?? e.orderDate} ${e.symbol} ${e.name}`
       + ` ${e.side === 'buy' ? '매수' : '매도'} ${e.orderQuantity}주 (${e.orderTypeLabel})`
-      + ` · 체결 ${e.filledQuantity} · 잔량 ${e.remainQuantity} · ${e.status}`,
+      + ` · 체결 ${e.filledQuantity} · 잔량 ${e.remainQuantity} · ${e.status}`
+      + ` · 주문번호 ${e.orderNo}`,
     );
   }
 }

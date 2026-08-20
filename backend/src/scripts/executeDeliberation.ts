@@ -71,10 +71,15 @@ async function post(path: string, payload: unknown): Promise<PostResult> {
   return { ok: res.ok, status: res.status, body };
 }
 
-/** 이 결정이 이미 집행됐나. 같은 종목·같은 방향이 회차 기록에 있으면 건너뛴다. */
+/**
+ * 이 결정이 이미 집행됐나.
+ *
+ * ★ **`side`가 아니라 `action`으로 센다.** 처음에는 `side`로 셌는데 `cancel`도
+ *   `buy`로 떨어져서, 한 회차에서 같은 종목을 **취소하고 다시 사면 뒤엣것이
+ *   조용히 건너뛰어졌다.** 옛 기록에는 `action`이 없으므로 `side`로 되돌아간다.
+ */
 function alreadyDone(done: DeliberationExecution[], decision: DeliberationDecision): boolean {
-  const side = decision.action === 'sell' ? 'sell' : 'buy';
-  return done.some((e) => e.symbol === decision.symbol && e.side === side);
+  return done.some((e) => e.symbol === decision.symbol && (e.action ?? e.side) === decision.action);
 }
 
 /**
@@ -147,7 +152,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  const actionable = round.decisions.filter((d) => d.action !== 'hold');
+  // `hold`를 걸러내면서 타입도 함께 좁힌다 — 아래에서 `action`을 집행 기록에 그대로 넣는다.
+  const actionable = round.decisions.filter(
+    (d): d is DeliberationDecision & { action: 'buy' | 'sell' | 'amend' | 'cancel' } => d.action !== 'hold',
+  );
   const pending = actionable.filter((d) => !alreadyDone(round.executions, d));
   const skipped = actionable.length - pending.length;
 
@@ -172,6 +180,7 @@ async function main(): Promise<void> {
       executions.push({
         symbol: d.symbol,
         side,
+        action: d.action,
         quantity: d.quantity,
         orderNo: '',
         estimatedPrice: d.limitPrice ?? 0,
@@ -205,6 +214,7 @@ async function main(): Promise<void> {
         executions.push({
           symbol: d.symbol,
           side,
+          action: d.action,
           quantity: d.quantity,
           orderNo: '',
           estimatedPrice: d.limitPrice ?? 0,
@@ -232,6 +242,7 @@ async function main(): Promise<void> {
       executions.push({
         symbol: d.symbol,
         side,
+        action: d.action,
         quantity: d.quantity,
         orderNo,
         estimatedPrice: d.limitPrice ?? 0,
@@ -245,6 +256,7 @@ async function main(): Promise<void> {
       executions.push({
         symbol: d.symbol,
         side,
+        action: d.action,
         quantity: d.quantity,
         orderNo: '',
         estimatedPrice: d.limitPrice ?? 0,
