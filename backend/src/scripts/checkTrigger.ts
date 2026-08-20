@@ -19,6 +19,7 @@ import {
   getKisDomesticExecutions,
 } from '../kis/rest.js';
 import { checkDeliberationTrigger, TRIGGER_THRESHOLDS } from '../trading/deliberationTrigger.js';
+import { sessionElapsedRatio } from '../trading/universe.js';
 
 const accountId = process.argv[2] ?? 'VTS-ORDINARY';
 const account = getKisAccount(accountId);
@@ -77,15 +78,43 @@ const newFills = (executionSnapshot?.executions ?? [])
   .filter((e) => previousStamp !== null && stampOf(e.orderDate, e.orderTime) > previousStamp)
   .map((e) => ({ symbol: e.symbol, side: e.side, status: e.status }));
 
+/*
+ * ★ **아직 안 붙은 주문.** 값이 안 움직여도 "걸어 둔 값에 안 붙는다"는 것이
+ *   판단할 거리다 — 2026-08-20에 지정가 두 건 중 하나가 종일 미체결이었는데
+ *   정정할지 취소할지 그대로 둘지 **아무도 정하지 않았다.**
+ *
+ * 오늘 것만 본다. 어제 미체결은 그날 장 마감에 이미 실효됐다.
+ */
+const todayKst = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' })
+  .format(new Date())
+  .replace(/-/g, '');
+const openOrders = (executionSnapshot?.executions ?? [])
+  .filter((e) => e.status === 'open' && e.orderDate === todayKst)
+  .map((e) => {
+    const t = (e.orderTime ?? '000000').padStart(6, '0');
+    const d = e.orderDate;
+    // KST로 못박아 읽는다. 시간대를 안 적으면 이 프로세스의 지역 시간으로 읽힌다.
+    const iso = `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`
+      + `T${t.slice(0, 2)}:${t.slice(2, 4)}:${t.slice(4, 6)}+09:00`;
+    return { symbol: e.symbol, side: e.side, placedAt: new Date(iso).getTime() };
+  });
+
 const verdict = checkDeliberationTrigger({
   reference: previous?.reference ?? null,
   now,
   newFills,
+  openOrders,
+  now_ms: Date.now(),
+  sessionElapsed: sessionElapsedRatio(),
 });
 
 const kst = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false });
 console.log(`# 사건 판정 · ${kst} KST · 계좌 ${account.id}`);
-console.log(`문턱: 보유 ±${TRIGGER_THRESHOLDS.positionMovePercent}% · 지수 ±${TRIGGER_THRESHOLDS.indexMovePercent}% · 체결/거절\n`);
+console.log(
+  `문턱: 보유 ±${TRIGGER_THRESHOLDS.positionMovePercent}% · 지수 ±${TRIGGER_THRESHOLDS.indexMovePercent}%`
+  + ` · 체결/거절 · 미체결(장 ${TRIGGER_THRESHOLDS.staleOrderSessionRatio * 100}% 경과 후 ${TRIGGER_THRESHOLDS.minOpenOrderMinutes}분 이상)`
+  + `\n미체결 ${openOrders.length}건 · 장 경과 ${(sessionElapsedRatio() * 100).toFixed(0)}%\n`,
+);
 
 if (!previous) {
   console.log('직전 회차 없음 — 기준선이 없다. 값 변화로는 열지 않는다(첫 회차는 정기가 연다).');

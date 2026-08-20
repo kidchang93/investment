@@ -438,6 +438,20 @@ export async function insertInactiveInstruments(
   return { inserted, skippedNoMarket, alreadyPresent };
 }
 
+/**
+ * 종목코드 하나로 국내 종목을 찾는다.
+ *
+ * 주문 API는 `instrumentId`(`KR:KOSPI:005930`)를 받는데, 판단 기록과 증권사 응답은
+ * **종목코드**(`005930`)로만 말한다. 그 사이를 잇는 자리다 — 집행기가 쓴다.
+ *
+ * KOSPI를 KOSDAQ보다 먼저 본다. 같은 코드가 두 시장에 동시에 있지는 않지만,
+ * 순서를 정해 두지 않으면 결과가 조회마다 달라질 수 있다.
+ */
+export async function getKoreanInstrumentBySymbol(symbol: string): Promise<Instrument | null> {
+  const [found] = await getBySymbols([symbol], ['KOSPI', 'KOSDAQ']);
+  return found ?? null;
+}
+
 export async function getInstrument(id: string): Promise<Instrument | null> {
   const result = await pool.query<InstrumentRow>(
     `

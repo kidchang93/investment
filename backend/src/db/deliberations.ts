@@ -40,11 +40,39 @@ export type DeliberationTrigger = 'scheduled' | 'event' | 'manual';
 export interface DeliberationDecision {
   symbol: string;
   name: string;
-  action: 'buy' | 'sell' | 'hold';
-  /** `hold`면 0 */
+  /**
+   * `amend`·`cancel`은 **이미 낸 주문**을 다루는 결정이다(2026-08-20 추가).
+   *
+   * 그날 아침 지정가 두 건이 미체결로 남았는데, 그것을 정정할지 취소할지
+   * 그대로 둘지를 **아무도 정하지 않는 구조**였다 — 판단자는 하루 한 번
+   * 열리고, 그 회차가 끝나면 주문은 15:30에 그냥 실효됐다.
+   */
+  action: 'buy' | 'sell' | 'hold' | 'amend' | 'cancel';
+  /** `hold`면 0. `cancel`은 남은 수량 전부를 뜻하는 0을 쓸 수 있다 */
   quantity: number;
   /** 왜 이렇게 정했나. 사람이 읽을 글이다 */
   rationale: string;
+  /**
+   * ★ **지정가(원). 없으면 시장가다** — 집행기가 그렇게 읽는다.
+   *
+   * 2026-08-20까지 이 칸이 없어서, 회차 21은 지정가를 `rationale`에 글로만
+   * 적었다("지정가 252,000원 37주"). 사람은 읽지만 집행기는 못 읽는다.
+   * 그날 주문은 사람이 손으로 옮겨 적어야 했다.
+   */
+  limitPrice?: number;
+  /**
+   * ★ **3층 중 어디인가.** `buy`에 반드시 있어야 한다 — 없으면 `recordDeliberation`이
+   * 던진다.
+   *
+   * **증권사 잔고는 층을 모른다.** 주문 시점에 적어 두지 않으면 체결을 층으로
+   * 되돌릴 수 없고(`layerSync`), 층별 성과가 통째로 거짓이 된다. 2026-08-20에
+   * 실제로 그랬다 — 그날 낸 두 건은 `rationale`에 "유망주 층"이라고 적혀 있었지만
+   * 주문 기록의 `layer`는 비어 있었다.
+   */
+  layer?: 'etf' | 'short' | 'bet';
+  /** `amend`·`cancel`의 대상. 원주문 번호(ODNO)와 채번지점(KRX_FWDG_ORD_ORGNO) */
+  orderNo?: string;
+  orderBranchNo?: string;
   /**
    * ★ **예측. 사기 전에 적고, 나중에 맞았는지 잰다.**
    *
@@ -173,12 +201,57 @@ export async function ensureDeliberationSchema(): Promise<void> {
  * ★ **`falsifier`가 비면 던진다.** 기본값을 주면 아무도 안 적고, 그러면 몇 달 뒤
  * 결과에 맞춰 이야기를 붙이게 된다 — 이 표를 만든 이유가 사라진다.
  */
+/**
+ * 결정 하나가 **집행될 수 있는 모양인가**를 본다. 못 내는 결정을 기록만 하면
+ * "판단은 했는데 아무 일도 안 일어난" 자리가 조용히 생긴다.
+ *
+ * ★ 던지는 이유를 메시지에 정확히 적는다 — 판단자는 헤드리스라 이 문장을 읽고
+ *   JSON을 고쳐 다시 넣는다. `falsifier`가 이미 그렇게 동작한다.
+ */
+function decisionProblem(d: DeliberationDecision): string | null {
+  if (d.action === 'buy') {
+    // 층을 모르면 체결을 층에 되돌릴 수 없다. 짐작해서 채우지 않는다.
+    if (d.layer !== 'etf' && d.layer !== 'short' && d.layer !== 'bet') {
+      return `${d.symbol} 매수에 layer가 없습니다. 'etf' | 'short' | 'bet' 중 하나를 적으세요`
+        + ' — 증권사 잔고는 층을 모르므로 여기 없으면 층별 성과가 거짓이 됩니다.';
+    }
+    /*
+     * ★ **지정가 없는 매수를 받지 않는다.** `limitPrice`가 비면 집행기가 시장가로
+     *   읽는데, 시장가는 값을 모르는 채 나가는 주문이다. 2026-08-01에 러너가 늘
+     *   시장가라 일일 금액 한도에 **영원히 0원**으로 쌓인 적도 있다.
+     *   판단자는 얼마에 살지를 정하는 것이 일이다 — 안 정했으면 판단이 덜 된 것이다.
+     */
+    if (typeof d.limitPrice !== 'number' || !Number.isFinite(d.limitPrice) || d.limitPrice <= 0) {
+      return `${d.symbol} 매수에 limitPrice가 없습니다 — 얼마에 살지 적으세요.`
+        + ' 비우면 시장가로 나갑니다.';
+    }
+    // 예측이 없으면 나중에 맞았는지 잴 수 없다. 이 표를 만든 이유가 사라진다.
+    if (!d.plan) {
+      return `${d.symbol} 매수에 plan이 없습니다.`
+        + ' targetPrice · stopPrice · horizonDays · expectedReturn · basis를 사기 전에 적으세요.';
+    }
+  }
+  if (d.action === 'amend' || d.action === 'cancel') {
+    if (!d.orderNo) {
+      return `${d.symbol} ${d.action}에 orderNo가 없습니다 — 어느 주문을 다루는지 알 수 없습니다.`;
+    }
+    if (d.action === 'amend' && typeof d.limitPrice !== 'number') {
+      return `${d.symbol} amend에 limitPrice가 없습니다 — 얼마로 정정하는지 알 수 없습니다.`;
+    }
+  }
+  return null;
+}
+
 export async function recordDeliberation(round: DeliberationRound): Promise<number> {
   if (round.falsifier.trim().length < 10) {
     throw new Error(
       '회의 기록에 반증 조건(falsifier)이 없습니다.'
       + ' "이 판단이 틀렸다면 무엇이 관측될까"를 결과를 보기 전에 적어야 합니다.',
     );
+  }
+  for (const decision of round.decisions) {
+    const problem = decisionProblem(decision);
+    if (problem) throw new Error(problem);
   }
   await ensureDeliberationSchema();
   const { rows } = await pool.query<{ id: string }>(

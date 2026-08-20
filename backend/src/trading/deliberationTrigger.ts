@@ -28,6 +28,27 @@ export const TRIGGER_THRESHOLDS = {
   positionMovePercent: 3,
   /** 지수가 직전 회의 대비 이만큼 움직이면 (%) */
   indexMovePercent: 1.5,
+  /**
+   * 미체결 주문을 다시 볼 시점 — **장이 이만큼 지났을 때** (0~1).
+   *
+   * ── 왜 0.7인가 (2026-08-20) ──────────────────────────────────────────
+   *
+   * 이르게 깨우면 안 된다. 우리 측정(`measureOpeningGap`)이 말하는 갭 되돌림은
+   * **시가→종가** 전체에 걸쳐 일어난다 — 11시에 "아직 안 붙었네"라고 값을 올리면
+   * 기다렸으면 왔을 되돌림을 스스로 포기하는 것이다.
+   *
+   * 늦게 깨워도 안 된다. 정정한 값에도 체결될 시간이 남아야 한다.
+   *
+   * 정규장 09:00~15:20의 70%는 **약 13:30**이고, 정정 뒤 1시간 50분이 남는다.
+   */
+  staleOrderSessionRatio: 0.7,
+  /**
+   * 그리고 주문이 이만큼은 묵어야 한다 (분).
+   *
+   * 장 경과만 보면 **13:30에 갓 낸 주문도 즉시 "오래됐다"**가 된다. 둘 다
+   * 넘어야 사건으로 친다.
+   */
+  minOpenOrderMinutes: 60,
 } as const;
 
 export interface TriggerInput {
@@ -46,6 +67,26 @@ export interface TriggerInput {
    * 체결도 사건이다: 자리가 찼으니 다음 수를 정해야 한다.
    */
   newFills: Array<{ symbol: string; side: 'buy' | 'sell'; status: string }>;
+  /**
+   * 아직 안 붙은 주문. **낸 지 오래됐는데 안 붙는 것도 사건이다.**
+   *
+   * 2026-08-20에 지정가 두 건이 미체결로 남았는데, 그것을 정정할지 취소할지
+   * 그대로 둘지 **아무도 정하지 않았다** — 판단자는 하루 한 번 열리고 그 회차가
+   * 끝나면 주문은 15:30에 그냥 실효된다. 사용자가 그 자리를 짚었다.
+   *
+   * 안 넘기면 이 판정을 하지 않는다(기존 호출부를 깨지 않으려는 것이지,
+   * 안 봐도 된다는 뜻이 아니다 — `checkTrigger.ts`는 반드시 넘긴다).
+   */
+  openOrders?: Array<{
+    symbol: string;
+    side: 'buy' | 'sell';
+    /** 주문을 낸 시각 (epoch ms) */
+    placedAt: number;
+  }>;
+  /** 지금 (epoch ms). 미체결 나이를 재는 기준 */
+  now_ms?: number;
+  /** 정규장 경과 비율 0~1. 부르는 쪽이 `sessionElapsedRatio()`로 잰다 */
+  sessionElapsed?: number;
 }
 
 export interface TriggerVerdict {
@@ -75,6 +116,26 @@ export function checkDeliberationTrigger(input: TriggerInput): TriggerVerdict {
         ? `★ ${fill.symbol} ${label} ${fill.status === 'rejected' ? '거절' : '취소'}됨`
         : `${fill.symbol} ${label} 체결됨`,
     );
+  }
+
+  /*
+   * ★ **오래 묵은 미체결.** 기준선과 무관한 사건이다 — 값이 안 움직여도
+   *   "걸어 둔 값에 안 붙는다"는 사실 자체가 판단할 거리다.
+   */
+  if (
+    input.openOrders !== undefined
+    && input.sessionElapsed !== undefined
+    && input.now_ms !== undefined
+    && input.sessionElapsed >= TRIGGER_THRESHOLDS.staleOrderSessionRatio
+  ) {
+    for (const order of input.openOrders) {
+      const ageMinutes = (input.now_ms - order.placedAt) / 60_000;
+      if (ageMinutes < TRIGGER_THRESHOLDS.minOpenOrderMinutes) continue;
+      reasons.push(
+        `★ ${order.symbol} ${order.side === 'buy' ? '매수' : '매도'} 미체결`
+        + ` ${Math.round(ageMinutes)}분 (장 ${(input.sessionElapsed * 100).toFixed(0)}% 경과)`,
+      );
+    }
   }
 
   /*

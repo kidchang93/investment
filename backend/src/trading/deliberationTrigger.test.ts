@@ -142,3 +142,73 @@ describe('사건 감지 — 사유를 전부 적는다', () => {
     assert.equal(v.reasons.length, 3, v.reasons.join(' / '));
   });
 });
+
+describe('오래 묵은 미체결 — 안 붙는 것도 사건이다 (2026-08-20)', () => {
+  const HOUR = 60 * 60 * 1000;
+  const now = 1_000 * HOUR;
+  const stale = [{ symbol: '005930', side: 'buy' as const, placedAt: now - 4 * HOUR }];
+
+  it('장이 충분히 지나고 주문도 묵었으면 연다', () => {
+    const v = checkDeliberationTrigger({
+      reference: ref,
+      now: { prices: {} },
+      newFills: [],
+      openOrders: stale,
+      now_ms: now,
+      sessionElapsed: 0.75,
+    });
+    assert.equal(v.fire, true, v.reasons.join(' '));
+    assert.match(v.reasons[0], /005930 매수 미체결/);
+  });
+
+  it('★ 장이 덜 지났으면 열지 않는다 — 갭 되돌림은 종가까지 걸쳐 온다', () => {
+    const v = checkDeliberationTrigger({
+      reference: ref,
+      now: { prices: {} },
+      newFills: [],
+      openOrders: stale,
+      now_ms: now,
+      sessionElapsed: 0.3,
+    });
+    assert.equal(v.fire, false, v.reasons.join(' '));
+  });
+
+  it('★ 장은 지났어도 방금 낸 주문이면 열지 않는다', () => {
+    const v = checkDeliberationTrigger({
+      reference: ref,
+      now: { prices: {} },
+      newFills: [],
+      // 13:30에 갓 낸 주문. 장 경과만 보면 즉시 "오래됐다"가 되는 자리다
+      openOrders: [{ symbol: '005930', side: 'buy', placedAt: now - 10 * 60 * 1000 }],
+      now_ms: now,
+      sessionElapsed: 0.75,
+    });
+    assert.equal(v.fire, false, v.reasons.join(' '));
+  });
+
+  it('미체결을 안 넘기면 이 판정을 하지 않는다 — 기존 호출부가 깨지지 않는다', () => {
+    const v = checkDeliberationTrigger({
+      reference: ref,
+      now: { prices: {} },
+      newFills: [],
+      sessionElapsed: 0.9,
+      now_ms: now,
+    });
+    assert.equal(v.fire, false, v.reasons.join(' '));
+  });
+
+  it('여러 건이면 전부 적는다', () => {
+    const v = checkDeliberationTrigger({
+      reference: ref,
+      now: { prices: {} },
+      newFills: [],
+      openOrders: [
+        { symbol: '005930', side: 'buy', placedAt: now - 4 * HOUR },
+        { symbol: '105560', side: 'buy', placedAt: now - 4 * HOUR },
+      ],
+      now_ms: now,
+      sessionElapsed: 0.75,
+    });
+    assert.equal(v.reasons.length, 2, v.reasons.join(' / '));
+  });
+});

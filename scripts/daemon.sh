@@ -39,6 +39,9 @@ cd "$(dirname "$0")/.." || exit 1
 LOG_DIR=".cron-logs"
 mkdir -p "$LOG_DIR"
 
+# 이 데몬이 다루는 계좌. 바꾸려면 환경변수로 준다.
+ACCOUNT="${DAEMON_ACCOUNT:-VTS-ORDINARY}"
+
 # ★ **PID 파일을 쓰지 않는다.** 2026-08-14에 파일이 프로세스와 어긋나 살아 있는
 #   데몬을 "멈췄다"고 말했다(먼저 죽은 데몬의 trap이 남의 파일을 지웠고, trap을
 #   고친 뒤에도 어긋났다). 프로세스를 직접 찾는 쪽이 거짓말을 안 한다.
@@ -140,6 +143,19 @@ acquire_lock() {
   return 0
 }
 
+# ★ **판단을 주문으로 옮긴다.** 2026-08-20 이전에는 이 자리가 비어 있었다 —
+#   판단자가 매수를 적어도 `decisions`를 읽어 주문을 내는 것이 아무것도 없어서,
+#   그날 첫 매수 두 건은 **사람이 손으로 옮겨 적어** 냈다.
+#
+#   집행기가 스스로 막는 것이 있다(지정가 없는 주문·층 없는 매수). 막힌 것은
+#   회차의 `blockedBy`에 남고 다음 회차가 본다.
+run_executor() {
+  log "집행기 시작 ($1)"
+  (cd backend && npx tsx src/scripts/executeDeliberation.ts "$ACCOUNT" --execute) \
+    >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
+  log "집행기 끝"
+}
+
 run_loop() {
   if ! acquire_lock; then
     # 조용히 물러난다. `.zshrc`가 터미널을 열 때마다 부르므로 시끄러우면 안 된다.
@@ -197,8 +213,44 @@ run_loop() {
         if [[ $? -eq 0 ]]; then
           mark deliberate "$(date '+%H:%M')"
           log "판단자 소집 끝"
+          run_executor "정기 회차"
         else
           log "판단자 실패 — 하트비트를 남기지 않는다(다음 회차가 다시 시도한다)"
+        fi
+      fi
+
+      # ── 장중 사건 재소집 (오전·오후 각 1회) ───────────────────────
+      #
+      # ★ **왜 둘로 나눴나.** 하루 1회로 두면 오전 급변에 자리가 소진돼 **오후
+      #   미체결을 못 본다.** 미체결 트리거는 장 70%(약 13:30)가 지나야 켜지므로
+      #   그 시간대에 자리를 따로 남긴다.
+      #
+      # ★ **왜 재소집이 필요한가** (2026-08-20, 사용자가 짚었다). 그날 아침 지정가
+      #   두 건 중 하나가 종일 미체결이었는데, 정정할지 취소할지 그대로 둘지를
+      #   **아무도 정하지 않았다** — 판단자는 하루 한 번 열리고, 그 회차가 끝나면
+      #   주문은 15:30에 그냥 실효된다.
+      #
+      # 값을 올려 잡을지는 **판단자가 정한다.** 코드는 깨우기만 한다 —
+      # "안 붙으니 현재가로 따라간다"는 규칙을 숫자로 박으면 애초에 그 값에 건
+      # 근거를 매번 스스로 지우게 된다.
+      if [[ "$hhmm" > "0929" && "$hhmm" < "1500" ]] && did_today deliberate; then
+        local event_slot
+        if [[ "$hhmm" < "1300" ]]; then event_slot="deliberate-event-am"
+        else event_slot="deliberate-event-pm"; fi
+        if ! did_today "$event_slot"; then
+          (cd backend && npx tsx src/scripts/checkTrigger.ts "$ACCOUNT") \
+            >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
+          # checkTrigger는 사건이 있으면 10으로 끝난다.
+          if [[ $? -eq 10 ]]; then
+            log "사건 감지 — 판단자 재소집 ($event_slot)"
+            zsh scripts/deliberate.sh "$ACCOUNT" >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
+            if [[ $? -eq 0 ]]; then
+              mark "$event_slot" "$(date '+%H:%M')"
+              run_executor "$event_slot"
+            else
+              log "재소집 실패 — 하트비트를 남기지 않는다"
+            fi
+          fi
         fi
       fi
 
