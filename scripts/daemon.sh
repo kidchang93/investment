@@ -75,15 +75,77 @@ wait_for_db() {
   local tries="${1:-60}"
   for i in $(seq 1 "$tries"); do
     docker exec kis-postgres pg_isready -U kis >/dev/null 2>&1 && return 0
-    # 컨테이너가 멈춰 있으면 깨운다. 재시작 정책이 unless-stopped라 보통은
-    # Docker가 알아서 띄우지만, 사람이 손으로 멈춰 둔 경우가 있다.
-    [[ $((i % 10)) -eq 1 ]] && docker start kis-postgres >/dev/null 2>&1
+    if [[ $((i % 10)) -eq 1 ]]; then
+      # ★ **Docker 데몬 자체가 없으면 `docker start`는 아무 소용이 없다.**
+      #   2026-08-20 아침에 그랬다 — 재부팅 뒤 Docker Desktop이 안 떠서, 어제
+      #   넣은 이 대기가 컨테이너만 두드리며 5분을 흘려보낼 참이었다. 사람이
+      #   `morning.sh`를 돌려 Docker를 띄운 09:01:47에야 데몬이 풀렸다.
+      #   **아무도 안 깨우면 그날 자동화가 통째로 빠진다.** 앱을 직접 띄운다
+      #   (터미널에서 뜬 프로세스라 TCC 권한이 있다 — 파일 머리말 참고).
+      if ! docker info >/dev/null 2>&1; then
+        log "Docker 데몬이 없다 — Docker Desktop을 띄운다 (30~60초)"
+        open -a Docker >/dev/null 2>&1
+      else
+        # 컨테이너가 멈춰 있으면 깨운다. 재시작 정책이 unless-stopped라 보통은
+        # Docker가 알아서 띄우지만, 사람이 손으로 멈춰 둔 경우가 있다.
+        docker start kis-postgres >/dev/null 2>&1
+      fi
+    fi
     sleep 5
   done
   return 1
 }
 
+# ★ **데몬이 둘 이상 뜨는 것을 막는다.** 2026-08-20 09:00:03과 09:02:10에 두 개가
+#   떠서 **판단자를 각각 소집했다**(헤드리스 Claude 두 벌 + 같은 회차 이중 기록).
+#   `.zshrc`도 `daemon.sh start`도 "pgrep으로 보고 → 띄운다"라 그 사이가 원자적이
+#   아니었고, 창이 여럿 열리면 둘 다 "없다"를 보고 지나간다.
+#
+#   ★ PID 파일 문제(2026-08-14, 먼저 죽은 데몬의 trap이 남의 파일을 지웠다)를
+#     되풀이하지 않으려고 `mkdir`을 쓴다 — 원자적이라 경쟁에서 한 쪽만 이긴다.
+#
+#   ★★ **락을 지우는 trap을 걸지 않는다.** 걸어 봤다가 되돌렸다 — zsh는 명령
+#      치환 서브셸(`$(date ...)` 같은 것)이 끝날 때도 EXIT trap을 실행한다.
+#      락을 잡자마자 루프 첫 줄의 `$(date '+%u')`에서 스스로 지워 버려, 막으려던
+#      중복이 그대로 되살아났다(2026-08-20에 시험으로 잡았다).
+#      **정리는 다음 데몬이 한다** — 주인 PID가 죽었거나 다른 프로그램이 그 번호를
+#      물려받았으면 회수한다. 락이 남아 있는 것은 고장이 아니다.
+LOCK_FILE="$LOG_DIR/daemon.lock"
+
+lock_owner_alive() {
+  local owner
+  owner=$(cat "$LOCK_FILE" 2>/dev/null) || return 1
+  [[ -n "$owner" ]] || return 1
+  # PID 번호만 보지 않는다 — 재부팅 뒤 그 번호를 다른 프로그램이 물려받는다.
+  ps -p "$owner" -o command= 2>/dev/null | grep -q "daemon.sh __loop"
+}
+
+acquire_lock() {
+  local tmp="$LOG_DIR/.lock.$$"
+  print -r -- "$$" > "$tmp" 2>/dev/null || return 1
+  # ★ `mkdir`이 아니라 `ln`이다. mkdir은 디렉터리를 먼저 만들고 PID를 나중에
+  #   적으므로 그 사이에 들어온 쪽이 "주인이 없다"며 회수해 버린다 —
+  #   2026-08-20에 동시 기동 10개로 시험했더니 **5개가 이겼다.** 하드링크는
+  #   PID가 이미 들어 있는 파일을 거는 것이라 그 창이 없다.
+  if ln "$tmp" "$LOCK_FILE" 2>/dev/null; then rm -f "$tmp"; return 0; fi
+  if lock_owner_alive; then rm -f "$tmp"; return 1; fi
+  log "락 주인이 죽어 있다 — 회수한다"
+  rm -f "$LOCK_FILE"
+  ln "$tmp" "$LOCK_FILE" 2>/dev/null || { rm -f "$tmp"; return 1; }
+  rm -f "$tmp"
+  # 회수만은 둘이 동시에 지우고 동시에 걸 수 있다. 잡은 뒤 한 번 더 확인하고,
+  # 내 것이 아니면 물러난다.
+  sleep 1
+  [[ "$(cat "$LOCK_FILE" 2>/dev/null)" == "$$" ]] || return 1
+  return 0
+}
+
 run_loop() {
+  if ! acquire_lock; then
+    # 조용히 물러난다. `.zshrc`가 터미널을 열 때마다 부르므로 시끄러우면 안 된다.
+    log "이미 다른 데몬이 돌고 있다 (pid $(cat "$LOCK_FILE" 2>/dev/null)) — 이 프로세스는 물러난다"
+    return 0
+  fi
   log "데몬 시작 (pid $$)"
   if wait_for_db 60; then
     log "Postgres 준비됨"
@@ -92,6 +154,15 @@ run_loop() {
   fi
   mark 'daemon-start' "pid $$"
   while true; do
+    # ★ **DB가 없으면 이 회차는 아무것도 하지 않는다.** `did_today`는 DB를 못
+    #   읽으면 "아직 안 했다"를 돌려주므로, 그대로 두면 매 분 브리핑과 판단자를
+    #   다시 부른다 — 판단자는 헤드리스 Claude라 부를 때마다 실제 비용이 나간다.
+    #   여기서 60초를 쓰므로 아래 sleep 없이도 주기가 유지된다.
+    if ! wait_for_db 12; then
+      log "Postgres가 없다 — 이 회차를 건너뛴다 (Docker를 확인하라)"
+      continue
+    fi
+
     local dow hhmm
     dow=$(date '+%u')      # 1=월 … 7=일
     hhmm=$(date '+%H%M')
