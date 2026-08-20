@@ -100,6 +100,7 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 | 코드 작성 (네이밍/패턴) | `docs/CODE_STYLE.md` |
 | 리뷰·머지 전 점검 | `docs/REVIEW.md` |
 | 서브에이전트로 작업 분배 | `docs/SUBAGENTS.md` |
+| **사람이 정한 것 확인 (목표·층·자동화 범위)** | **`docs/USER_DECISIONS.md`** |
 | 매매 API 추가·주문 전송·차단 사유 확인 | `docs/TRADING_API.md` |
 | 매매 기능 로드맵·DB 설계 | `docs/TRADING_ROADMAP.md` |
 

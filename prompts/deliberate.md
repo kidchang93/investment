@@ -4,6 +4,7 @@
 
 레포 루트에서 이 문서들을 먼저 읽으세요. 여기 적힌 기준을 어기지 않습니다.
 
+- ★ `docs/USER_DECISIONS.md` — **사람이 정한 것.** 근거를 다시 세우지 말고 따릅니다
 - `CLAUDE.md` — 절대 하지 말아야 할 것들
 - `docs/TRADING_API.md` — 매매 API와 차단 사유
 - `docs/DESIGN.md` — 설계 원칙
