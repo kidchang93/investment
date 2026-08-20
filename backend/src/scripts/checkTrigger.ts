@@ -89,7 +89,12 @@ const todayKst = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' })
   .format(new Date())
   .replace(/-/g, '');
 const openOrders = (executionSnapshot?.executions ?? [])
-  .filter((e) => e.status === 'open' && e.orderDate === todayKst)
+  /*
+   * ★ **`status`만 보면 안 된다.** 취소된 원주문이 `open`인 채 잔량만 0으로
+   *   남는다(2026-08-20 11:01, 삼성전자 취소 뒤 실측). 그대로 두면 오후 재소집이
+   *   **이미 없는 주문 때문에** 판단자를 부른다 — 헤드리스 Claude가 헛돈다.
+   */
+  .filter((e) => e.status === 'open' && e.remainQuantity > 0 && e.orderDate === todayKst)
   .map((e) => {
     const t = (e.orderTime ?? '000000').padStart(6, '0');
     const d = e.orderDate;
