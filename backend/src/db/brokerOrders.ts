@@ -280,7 +280,17 @@ export async function claimClientOrderId(
   return rowCount === 1;
 }
 
-/** 선점해 둔 줄을 결과로 채운다. 실패해도 주문 응답을 깨뜨리지 않는다. */
+/**
+ * 선점해 둔 줄을 결과로 채운다. 실패해도 주문 응답을 깨뜨리지 않는다.
+ *
+ * ★ **`layer`를 반드시 함께 채운다** (2026-08-21에 빠져 있는 것을 잡았다).
+ *   `claimClientOrderId`가 만든 줄에는 층이 없고 여기서도 안 채우고 있어서,
+ *   **멱등 키를 쓰는 모든 주문의 층이 사라졌다.** 집행기는 항상 그 키를 쓰므로
+ *   자동 매매 전부가 해당한다 — 2026-08-20 티에스이 매수가 유망주 층 대신
+ *   **ETF 층으로** 들어갔고 층별 성과가 그만큼 거짓이 됐다.
+ *
+ *   증권사 잔고는 층을 모른다. 주문 시점에 안 적으면 되돌릴 길이 없다.
+ */
 export async function completeClaimedOrder(
   clientOrderId: string,
   attempt: Omit<BrokerOrderAttempt, 'accountId' | 'action' | 'clientOrderId'>,
@@ -292,7 +302,7 @@ export async function completeClaimedOrder(
           status = $2, side = $3, instrument_id = $4, requested_instrument_id = $5, symbol = $6,
           order_type = $7, quantity = $8, limit_price = $9, estimated_price = $10, stop_price = $11,
           order_no = $12, order_branch_no = $13, original_order_no = $14, message = $15,
-          blockers = $16::jsonb
+          blockers = $16::jsonb, layer = $17
         WHERE client_order_id = $1
       `,
       [
@@ -312,6 +322,7 @@ export async function completeClaimedOrder(
         attempt.originalOrderNo ?? null,
         attempt.message,
         JSON.stringify(attempt.blockers ?? []),
+        attempt.layer ?? null,
       ],
     );
     return true;
@@ -370,14 +381,22 @@ export async function getLastBuySubmittedAt(
 /** 이미 처리된 키의 결과. 재시도에 그대로 돌려준다. */
 export async function getOrderByClientOrderId(
   clientOrderId: string,
-): Promise<{ status: string; orderNo: string | null; orderBranchNo: string | null; message: string } | null> {
+): Promise<{
+  status: string;
+  orderNo: string | null;
+  orderBranchNo: string | null;
+  message: string;
+  /** 3층 중 어디. 멱등 재요청이 층까지 되돌려줘야 집행기가 되짚을 수 있다 */
+  layer: string | null;
+} | null> {
   const { rows } = await pool.query<{
     status: string;
     order_no: string | null;
     order_branch_no: string | null;
     message: string;
+    layer: string | null;
   }>(
-    `SELECT status, order_no, order_branch_no, message FROM trading_broker_orders WHERE client_order_id = $1`,
+    `SELECT status, order_no, order_branch_no, message, layer FROM trading_broker_orders WHERE client_order_id = $1`,
     [clientOrderId],
   );
   const row = rows[0];
@@ -387,5 +406,6 @@ export async function getOrderByClientOrderId(
     orderNo: row.order_no,
     orderBranchNo: row.order_branch_no,
     message: row.message,
+    layer: row.layer,
   };
 }

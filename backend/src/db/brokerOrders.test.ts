@@ -91,6 +91,33 @@ describe('멱등성 키', { skip: false }, () => {
     assert.equal(saved?.message, '접수 완료');
   });
 
+  it('★ 선점한 줄에 층을 채운다 — 빠지면 층별 성과가 통째로 거짓이 된다', async (t) => {
+    if (!usable) return t.skip('DB에 붙지 못해 건너뜀');
+    const key = `test-${randomUUID()}`;
+    created.push(key);
+
+    /*
+     * 2026-08-20에 이 자리가 비어 있어서 티에스이 매수가 유망주 층 대신 ETF 층으로
+     * 들어갔다. 집행기는 항상 멱등 키를 쓰므로 **자동 매매 전부**가 해당했다.
+     */
+    await claimClientOrderId('21', key, 'place');
+    await completeClaimedOrder(key, {
+      status: 'submitted',
+      message: '접수 완료',
+      side: 'buy',
+      symbol: '131290',
+      orderType: 'limit',
+      quantity: 20,
+      limitPrice: 245_500,
+      orderNo: 'TEST-LAYER',
+      orderBranchNo: '00',
+      layer: 'bet',
+    });
+
+    const saved = await getOrderByClientOrderId(key);
+    assert.equal(saved?.layer, 'bet', '층이 저장돼야 layerSync가 되돌릴 수 있다');
+  });
+
   it('없는 키를 조회하면 null', async (t) => {
     if (!usable) return t.skip('DB에 붙지 못해 건너뜀');
     assert.equal(await getOrderByClientOrderId(`test-none-${randomUUID()}`), null);
