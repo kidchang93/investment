@@ -24,6 +24,7 @@
  */
 
 import { getKisAccount, config } from '../config.js';
+import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
 import { getRiskRules } from '../db/riskRules.js';
 import {
   DOMESTIC_INDEX_CODES,
@@ -32,6 +33,7 @@ import {
   getKisDomesticExecutions,
   getKisDomesticOrderability,
   getDomesticTurnoverRanking,
+  getInstrumentNews,
   getQuote,
 } from '../kis/rest.js';
 import { sellableQuantity } from '../trading/positionGuard.js';
@@ -206,8 +208,58 @@ try {
   console.log(`★ 조회 실패: ${e instanceof Error ? e.message : String(e)}`);
 }
 
+/*
+ * ## 보유 종목 공시·뉴스
+ *
+ * ★ **여기 없어서 판단자가 웹을 헤맸다.** 2026-08-21까지 이 스크립트는
+ *   *"뉴스는 여기 없다. 필요하면 따로 조사해야 한다"*고 적어 뒀는데, 정작
+ *   `getInstrumentNews`(KIS `FHKST01011800`)가 이미 있었다. 판단자는 회차
+ *   22·23·24에서 세 번 연속 "티에스이 8/20 공시 확인"을 반증 조건으로 걸고
+ *   세 번 다 실패했다 — 네이버는 차단, DART 검색은 빈 결과였다.
+ *
+ * 공시를 못 보면 *"악재가 없어서 들고 간다"*가 근거 없는 문장이 된다.
+ *
+ * ★ 조회가 실패해도 회차를 막지 않는다. 못 본 것은 못 봤다고 적는다.
+ */
+console.log('\n## 보유 종목 공시·뉴스 (최근 5건)');
+if (snapshot.positions.length === 0) {
+  console.log('보유 없음');
+} else {
+  for (const position of snapshot.positions) {
+    const instrument = await getKoreanInstrumentBySymbol(position.symbol).catch(() => null);
+    if (!instrument) {
+      console.log(`- ${position.symbol} ${position.name} — 종목 마스터에 없어 조회 못 함`);
+      continue;
+    }
+    try {
+      const news = await getInstrumentNews(instrument);
+      if (news.length === 0) {
+        console.log(`- ${position.symbol} ${position.name} — 최근 공시·뉴스 없음`);
+        continue;
+      }
+      console.log(`- ${position.symbol} ${position.name}`);
+      for (const item of news.slice(0, 5)) {
+        // ★ `publishedAt`은 **초** 단위다(차트 라이브러리가 초를 쓴다). 밀리초로 읽으면
+        //   1970년이 나온다 — 처음 쓸 때 그렇게 틀렸다.
+        const when = item.publishedAt
+          ? new Date(item.publishedAt * 1000).toLocaleString('ko-KR', {
+              timeZone: 'Asia/Seoul',
+              month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+            })
+          : '시각 없음';
+        console.log(`    ${when} [${item.source}] ${item.title}`);
+      }
+    } catch (e) {
+      console.log(
+        `- ${position.symbol} ${position.name} — ★ 조회 실패:`
+        + ` ${e instanceof Error ? e.message : String(e)} (못 본 것은 unknowns에 적을 것)`,
+      );
+    }
+  }
+}
+
 console.log('\n## 이 회의에서 알 수 없는 것 — 결론에 반드시 적을 것');
-console.log('- 뉴스는 여기 없다. 필요하면 따로 조사해야 한다');
+console.log('- 위 공시·뉴스는 KIS가 주는 제목뿐이다. 본문과 DART 원문은 따로 봐야 한다');
 console.log('- 미체결 조회는 모의 서버에서 안 된다(오늘 주문 목록이 전부일 수 있다)');
 console.log('- 이 값들은 위 시각의 것이다. 몇 분 지나면 다르다');
 

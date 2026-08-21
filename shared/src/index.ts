@@ -367,6 +367,14 @@ export interface NewsItem {
   id: string;
   title: string;
   source: string;
+  /**
+   * 발행 시각 — **초 단위**다(밀리초가 아니다).
+   *
+   * 차트 라이브러리가 초를 쓰기 때문에 `Trade.time`과 같은 축으로 맞췄다.
+   * ★ 밀리초로 읽으면 **1970년 1월**이 나온다. 2026-08-21에 실제로 그렇게 틀렸다 —
+   *   화면(`formatNewsTime`)은 맞게 쓰고 있었고 새로 쓴 스크립트만 틀렸다.
+   *   `ScreeningResult.scannedAt` 같은 다른 스냅샷 시각은 밀리초라 헷갈리기 쉽다.
+   */
   publishedAt?: number;
   symbol?: string;
 }
