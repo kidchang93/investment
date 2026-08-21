@@ -84,14 +84,24 @@ async function main(): Promise<void> {
 
   const result = checkStops(snapshot.positions, stops, executionSnapshot?.executions ?? []);
   const breached = result.breaches;
+
+  /*
+   * ★ **아무 일도 없으면 조용하다.** 데몬이 장중 매 분 부르므로 한 줄씩만 찍어도
+   *   하루 390줄이 쌓이고, 그러면 정작 손절이 나간 줄이 묻힌다 — `checkAlerts`가
+   *   "늘 뜨는 경고는 안 읽힌다"고 적어 둔 것과 같은 이유다.
+   *
+   *   사람이 부를 때(`--execute` 없음)는 항상 찍는다. 안 그러면 돌았는지 모른다.
+   */
+  const worthSaying = breached.length > 0 || result.unknownPrice.length > 0 || !execute;
+  if (worthSaying) {
+    console.log(
+      `손절 검사 · 보유 ${snapshot.positions.length} · 감시 중 ${result.watched}`
+      + ` · 깬 것 ${breached.length}${execute ? '' : '   [판정만 — 실제로 팔려면 --execute]'}`,
+    );
+  }
   for (const symbol of result.unknownPrice) {
     console.log(`  ? ${symbol} — 현재가를 못 읽어 판정하지 않는다`);
   }
-
-  console.log(
-    `손절 검사 · 보유 ${snapshot.positions.length} · 감시 중 ${result.watched}`
-    + ` · 깬 것 ${breached.length}${execute ? '' : '   [판정만 — 실제로 팔려면 --execute]'}`,
-  );
   for (const b of breached) {
     console.log(
       `  ★ ${b.symbol} ${b.name} ${b.quantity}주 · 현재가 ${won(b.price)}원`
