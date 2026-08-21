@@ -51,6 +51,20 @@ fi
 
 log "판단자 소집 · 계좌 $ACCOUNT"
 
+# ★ **소집 전 회차 수를 세어 둔다.** 아래에서 "정말 한 회차가 남았나"를 이것으로
+#   가린다 — `claude -p`의 종료 코드만 보면 **아무것도 안 하고 끝나도 성공**이다.
+#   2026-08-21에 실제로 그랬다: 판단자가 리서처를 띄웠다가 백그라운드 대기
+#   한도(600초)에 걸려 강제 종료됐는데, 종료 코드가 0이라 데몬이 "오늘 판단자
+#   했다"고 하트비트를 남겼다. **그날 판단이 통째로 사라졌고 아무도 몰랐다.**
+count_rounds() {
+  docker exec kis-postgres psql -U kis -d kis -tAc \
+    "SELECT count(*) FROM trading_deliberations
+      WHERE account_id='$ACCOUNT'
+        AND trading_day = (now() AT TIME ZONE 'Asia/Seoul')::date" 2>/dev/null | tr -d ' '
+}
+BEFORE=$(count_rounds)
+BEFORE=${BEFORE:-0}
+
 # ★ 허용 도구를 좁힌다. 판단에 필요한 것만 준다 —
 #   Bash(상태 수집·기록)·Read·Grep·Glob·WebSearch·WebFetch.
 #   Write/Edit는 주지 않는다. 판단자가 코드를 고칠 일이 없다.
@@ -62,9 +76,20 @@ claude -p "$(cat prompts/deliberate.md)
   >> "$LOG" 2>&1
 code=$?
 
-if [[ $code -eq 0 ]]; then
-  log "판단자 회차 끝"
-else
+AFTER=$(count_rounds)
+AFTER=${AFTER:-0}
+
+if [[ $code -ne 0 ]]; then
   log "판단자가 실패했다 (exit $code) — 로그를 본다: $LOG"
+  exit $code
 fi
-exit $code
+
+# ★ 종료 코드가 0이어도 **회차가 안 늘었으면 실패다.** 하트비트를 남기지 않아야
+#   데몬이 다음 루프에서 다시 부른다.
+if [[ "${AFTER:-0}" -le "${BEFORE:-0}" ]]; then
+  log "★ 판단자가 정상 종료했지만 회차를 남기지 않았다 (오늘 $BEFORE → $AFTER) — 실패로 친다"
+  exit 3
+fi
+
+log "판단자 회차 끝 (오늘 $BEFORE → $AFTER)"
+exit 0

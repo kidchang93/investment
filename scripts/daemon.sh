@@ -150,6 +150,15 @@ acquire_lock() {
 #   집행기가 스스로 막는 것이 있다(지정가 없는 주문·층 없는 매수). 막힌 것은
 #   회차의 `blockedBy`에 남고 다음 회차가 본다.
 run_executor() {
+  # ★ **장이 열리기 전에는 부르지 않는다.** 리스크 룰이 09:00~15:30만 허용하므로
+  #   개장 전 집행은 전부 거부되는데, **거부도 회차의 `executions`에 남아
+  #   `alreadyDone`이 참이 된다** — 그날 그 주문은 다시는 안 나간다.
+  #   2026-08-21 회차가 죽기 전에 스스로 적어 둔 결함이다. 개장 직후 자리에서
+  #   다시 부른다.
+  if [[ "$(date '+%H%M')" < "0900" ]]; then
+    log "장 전이라 집행을 미룬다 ($1) — 개장 직후에 낸다"
+    return
+  fi
   log "집행기 시작 ($1)"
   (cd backend && npx tsx src/scripts/executeDeliberation.ts "$ACCOUNT" --execute) \
     >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
@@ -217,6 +226,15 @@ run_loop() {
         else
           log "판단자 실패 — 하트비트를 남기지 않는다(다음 회차가 다시 시도한다)"
         fi
+      fi
+
+      # ── 개장 직후 집행 (09:00~09:20, 하루 한 번) ──────────────────
+      #
+      # 개장 전에 끝난 회차의 주문을 여기서 낸다. 집행기는 멱등이므로 낼 것이
+      # 없으면 아무 일도 하지 않는다.
+      if [[ "$hhmm" > "0859" && "$hhmm" < "0921" ]] && ! did_today execute-open; then
+        run_executor "개장 직후"
+        mark execute-open "$(date '+%H:%M')"
       fi
 
       # ── 손절 감시 (장중 매 분) ────────────────────────────────────
