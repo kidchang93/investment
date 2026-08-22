@@ -13,6 +13,8 @@ import {
   applyTrade,
   averageCost,
   reconcile,
+  resolveFillLayer,
+  tradeStampFor,
   summarizeLayers,
   type Layer,
   type LayerPosition,
@@ -157,5 +159,55 @@ describe('★ 증권사 잔고 대조 — 2026-08-14에 중복 체결을 잡은 
       new Map([['069500', 96]]),
     );
     assert.deepEqual(m, []);
+  });
+});
+
+/*
+ * ★ 체결을 어느 층에 넣을 것인가 (2026-08-22).
+ *
+ * 예전 `layerSync`는 기본값이 `--layer etf`였고 데몬은 인자 없이 부른다 —
+ * **자동 경로가 모르는 것을 ETF라고 단정하는 구조**였다. 잘못 들어간 체결은
+ * 잔고 대조로도 안 걸린다(합계는 맞으므로).
+ */
+describe('체결의 층 판정 — 모르면 넣지 않는다', () => {
+  it('주문에 층이 적혀 있으면 그것이 맞다', () => {
+    const d = resolveFillLayer('bet', 'etf');
+    assert.deepEqual(d, { kind: 'use', layer: 'bet', fromOrder: true });
+  });
+
+  it('주문에 없고 사람이 정해 줬으면 그 값으로 넣는다', () => {
+    const d = resolveFillLayer(undefined, 'short');
+    assert.deepEqual(d, { kind: 'use', layer: 'short', fromOrder: false });
+  });
+
+  it('★★ 둘 다 없으면 건너뛴다 — 예전에는 조용히 ETF로 들어갔다', () => {
+    const d = resolveFillLayer(undefined, undefined);
+    assert.equal(d.kind, 'skip');
+    assert.match(d.kind === 'skip' ? d.why : '', /--layer/, '무엇을 해야 하는지 말해야 한다');
+  });
+});
+
+/*
+ * ★ 체결일 도장 (2026-08-22). `traded_at`이 **기록한 시각**이라 하루 늦게 메우면
+ *   "언제 판 자리인가"가 거짓이 됐다 — 8/21 티에스이 손절이 8/22로 적혔다.
+ */
+describe('체결일 도장 — 기록한 날이 아니라 판 날', () => {
+  it('YYYYMMDD를 그날 장 마감 시각으로 바꾼다', () => {
+    assert.equal(tradeStampFor('20260821'), '2026-08-21 15:30:00+09');
+  });
+
+  it('★ 자정이 아니라 15:30이다 — 시간대 변환에서 하루가 밀릴 여지를 없앤다', () => {
+    assert.match(tradeStampFor('20260821') ?? '', /15:30:00\+09$/);
+  });
+
+  it('형식이 아니면 null — 부르는 쪽이 now()로 적는다', () => {
+    for (const bad of [undefined, '', '2026-08-21', '2026082', '오늘']) {
+      assert.equal(tradeStampFor(bad), null, `입력 ${String(bad)}`);
+    }
+  });
+
+  it('있을 수 없는 달·일은 적지 않는다 — DB가 던지느니 now()가 낫다', () => {
+    assert.equal(tradeStampFor('20261301'), null);
+    assert.equal(tradeStampFor('20260800'), null);
   });
 });

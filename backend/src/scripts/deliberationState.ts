@@ -25,6 +25,7 @@
 
 import { getKisAccount, config } from '../config.js';
 import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
+import { getLayerTradeStats, getRecentClosedTrades } from '../db/layers.js';
 import { getRiskRules } from '../db/riskRules.js';
 import {
   DOMESTIC_INDEX_CODES,
@@ -36,6 +37,7 @@ import {
   getInstrumentNews,
   getQuote,
 } from '../kis/rest.js';
+import { LAYER_LABELS } from '../trading/layers.js';
 import { sellableQuantity } from '../trading/positionGuard.js';
 
 const accountId = process.argv[2] ?? 'VTS-ORDINARY';
@@ -145,6 +147,50 @@ if (snapshot.positions.length === 0) {
       `- ${p.symbol} ${p.name} · ${p.quantity}주 (팔 수 있는 수량 ${sellable})`
       + ` · 평단 ${won(p.averagePrice)} · 현재 ${won(p.currentPrice)}`
       + ` · 손익 ${won(p.unrealizedPnl)} (${rate(p.unrealizedPnlRate)})`,
+    );
+  }
+}
+
+/*
+ * ★★ **판단의 결과를 되먹이는 자리** (2026-08-22).
+ *
+ * 그 전까지 회의 상태에는 **평가손익(미실현)만** 있었다. 판단자는 사기 전에
+ * `plan`(목표가·손절가·기간)을 적지만, *"내가 판 것이 실제로 얼마를 벌었나"*를
+ * 매 회차 모른 채 시작했다 — **예측을 남겨도 채점을 안 보면 나아지지 않는다.**
+ *
+ * ★ 이 값은 **층 장부 기준**이다. 체결이 아직 안 들어왔으면 뒤처져 있다
+ *   (`layerSync`가 마감 뒤에 채운다). 그래서 몇 건인지를 함께 적는다.
+ */
+console.log('\n## 청산된 매매 — 내 판단이 실제로 얼마를 벌었나 (층 장부 기준)');
+const signedWon = (n: number): string => `${n >= 0 ? '+' : ''}${Math.round(n).toLocaleString('ko-KR')}원`;
+const [layerStats, closedTrades] = await Promise.all([
+  getLayerTradeStats(account.id).catch(() => []),
+  getRecentClosedTrades(account.id, 8).catch(() => []),
+]);
+if (closedTrades.length === 0) {
+  console.log('없음 — 아직 판 자리가 없다. 승률·손익비를 말할 근거가 아직 없다.');
+} else {
+  for (const st of layerStats) {
+    const winRate = st.closedTrades > 0 ? st.wins / st.closedTrades : 0;
+    const ratio = st.avgLoss > 0 ? st.avgWin / st.avgLoss : 0;
+    /*
+     * ★ 손익비에서 본전 승률을 낸다. 2026-08-03 실주행이 승률 33.3%·손익비 0.44라
+     *   **승률 70%를 요구하는 구조**였고 그래서 졌다. 그 사실이 여기 보여야 한다.
+     */
+    const breakEven = ratio > 0 ? 1 / (1 + ratio) : null;
+    console.log(
+      `- ${LAYER_LABELS[st.layer]} ${st.closedTrades}건 · 승률 ${(winRate * 100).toFixed(1)}%`
+      + ` · 손익비 ${ratio.toFixed(2)}`
+      + (breakEven === null ? '' : ` → 본전 승률 ${(breakEven * 100).toFixed(1)}%`)
+      + ` · 실현 ${signedWon(st.realizedPnl)}`,
+    );
+  }
+  console.log(`최근 청산 ${closedTrades.length}건 (새것부터):`);
+  for (const t of closedTrades) {
+    console.log(
+      `- ${t.tradedOn} ${t.symbol} ${t.quantity}주 @ ${won(t.price)}`
+      + ` · 실현 ${signedWon(t.realizedPnl)} · ${LAYER_LABELS[t.layer]} 층`
+      + (t.orderNo ? ` · 주문번호 ${t.orderNo}` : ''),
     );
   }
 }

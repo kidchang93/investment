@@ -14,6 +14,7 @@ import { after, before, describe, it } from 'node:test';
 
 import { pool } from './client.js';
 import {
+  applyOrderFill,
   claimClientOrderId,
   completeClaimedOrder,
   ensureBrokerOrderSchema,
@@ -179,5 +180,87 @@ describe('감사 기록 — 스톱가는 지정가와 갈라서 남는다', () =
 
     const { records } = await getBrokerOrderRecords(accountId, 1);
     assert.equal(records[0].stopPrice, undefined);
+  });
+});
+
+/*
+ * ★ 체결 되채움 (2026-08-22). 주문 기록은 "냈다"에서 멈춰 있었고, 실제 체결단가는
+ *   증권사에만 있었다. 접수값을 덮어쓰면 슬리피지를 영영 못 재므로 그것도 잰다.
+ */
+describe('체결 되채움 — 접수값을 덮지 않는다', () => {
+  it('체결수량·체결단가가 들어가고 접수값은 그대로 남는다', async (t) => {
+    if (!usable) return t.skip('DB에 붙지 못해 건너뜀');
+    const key = `test-${randomUUID()}`;
+    const accountId = `test-fill-${randomUUID()}`;
+    const orderNo = `FILL-${randomUUID().slice(0, 8)}`;
+    created.push(key);
+
+    await recordBrokerOrderAttempt({
+      accountId,
+      clientOrderId: key,
+      action: 'place',
+      status: 'submitted',
+      message: '시험용 기록 — 주문은 보내지 않았습니다',
+      side: 'buy',
+      symbol: '005930',
+      orderType: 'limit',
+      quantity: 10,
+      limitPrice: 252_000,
+      orderNo,
+    });
+
+    const touched = await applyOrderFill(accountId, orderNo, 10, 253_500);
+    assert.equal(touched, 1, '그 주문 한 줄만 바뀌어야 한다');
+
+    const { rows } = await pool.query<{ q: string; p: string; oq: string; lp: string; at: string | null }>(
+      `SELECT filled_quantity::text AS q, filled_price::text AS p,
+              quantity::text AS oq, limit_price::text AS lp,
+              fills_synced_at::text AS at
+         FROM trading_broker_orders WHERE account_id = $1`,
+      [accountId],
+    );
+    assert.equal(Number(rows[0].q), 10);
+    assert.equal(Number(rows[0].p), 253_500);
+    // ★ 접수값이 그대로 남아야 슬리피지(253,500 − 252,000)를 잴 수 있다.
+    assert.equal(Number(rows[0].oq), 10);
+    assert.equal(Number(rows[0].lp), 252_000);
+    assert.ok(rows[0].at, '언제 받아 적었는지가 남아야 한다');
+  });
+
+  it('★ 우리 기록에 없는 주문번호면 아무것도 바꾸지 않는다 — 손으로 낸 주문이다', async (t) => {
+    if (!usable) return t.skip('DB에 붙지 못해 건너뜀');
+    const accountId = `test-fill-${randomUUID()}`;
+    assert.equal(await applyOrderFill(accountId, `NOPE-${randomUUID().slice(0, 8)}`, 5, 1_000), 0);
+  });
+
+  it('체결이 0이거나 단가가 0이면 쓰지 않는다 — 미체결을 "0원에 체결"로 적지 않는다', async (t) => {
+    if (!usable) return t.skip('DB에 붙지 못해 건너뜀');
+    const key = `test-${randomUUID()}`;
+    const accountId = `test-fill-${randomUUID()}`;
+    const orderNo = `FILL0-${randomUUID().slice(0, 8)}`;
+    created.push(key);
+
+    await recordBrokerOrderAttempt({
+      accountId,
+      clientOrderId: key,
+      action: 'place',
+      status: 'submitted',
+      message: '시험용 기록 — 주문은 보내지 않았습니다',
+      side: 'buy',
+      symbol: '005930',
+      orderType: 'limit',
+      quantity: 10,
+      limitPrice: 252_000,
+      orderNo,
+    });
+
+    assert.equal(await applyOrderFill(accountId, orderNo, 0, 253_500), 0, '체결 0');
+    assert.equal(await applyOrderFill(accountId, orderNo, 10, 0), 0, '단가 0');
+
+    const { rows } = await pool.query<{ q: string | null }>(
+      `SELECT filled_quantity::text AS q FROM trading_broker_orders WHERE account_id = $1`,
+      [accountId],
+    );
+    assert.equal(rows[0].q, null, '비어 있어야 "아직 안 받아 왔다"로 읽힌다');
   });
 });

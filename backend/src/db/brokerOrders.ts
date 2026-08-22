@@ -127,6 +127,31 @@ export async function ensureBrokerOrderSchema(): Promise<void> {
     ALTER TABLE trading_broker_orders ADD COLUMN IF NOT EXISTS layer text;
 
     /*
+     * ★ **실제로 얼마에 몇 주가 붙었나** (2026-08-22).
+     *
+     * 그 전까지 이 표에는 **접수한 값만** 있었다 — quantity(주문수량)와
+     * limit_price(지정가), 시장가면 estimated_price(판정 시점 추정치).
+     * 체결은 증권사에만 있었고 우리 기록은 "냈다"에서 멈췄다.
+     *
+     * 그래서 실현손익을 이 표로 세면 **낙관 쪽으로 틀린다**(2026-08-03 실측:
+     * 4건 전부 유리한 방향 +20,940원 = 시장가 슬리피지가 통째로 빠진 것).
+     *
+     * ★ **접수값과 체결값의 차이를 전부 슬리피지라고 읽으면 안 된다.** 지정가는
+     *   그 값보다 유리하게 붙는 것이 정상이다(2026-08-22 실측: 지정가 8건 중
+     *   6건이 유리한 방향, 최대 −0.77%). **슬리피지는 시장가 주문에서
+     *   estimated_price 대비로만 뜻이 있다.** 둘을 섞어 평균 내면 매매비용이
+     *   실제보다 싸게 나온다.
+     *
+     * ★ 비어 있는 것은 "체결 0"이 아니라 **"아직 안 받아 왔다"**이다.
+     *   0으로 채우지 않는다 — 미체결과 구별되지 않게 된다.
+     */
+    ALTER TABLE trading_broker_orders ADD COLUMN IF NOT EXISTS filled_quantity numeric(24, 8);
+    ALTER TABLE trading_broker_orders ADD COLUMN IF NOT EXISTS filled_price numeric(20, 6);
+    -- 체결 시각이 아니라 **우리가 받아 적은 시각**이다. KIS 체결 조회는 체결
+    -- 시각을 안 준다(주문시각만 준다) — 이름이 사실과 어긋나지 않게 갈라 둔다.
+    ALTER TABLE trading_broker_orders ADD COLUMN IF NOT EXISTS fills_synced_at timestamptz;
+
+    /*
      * 멱등성 키. 같은 키로 다시 요청하면 새 주문을 내지 않고 앞선 결과를 돌려준다.
      * 네트워크가 끊겨 재시도할 때 같은 주문이 두 번 나가는 것을 막는 유일한 장치라
      * DB 유니크 제약으로 건다 — 애플리케이션에서 조회 후 삽입하면 동시 요청 사이에
@@ -376,6 +401,41 @@ export async function getLastBuySubmittedAt(
     if (Number.isFinite(at)) found.set(row.symbol, at);
   }
   return found;
+}
+
+/**
+ * **체결을 주문 기록에 되채운다.** 증권사 체결 조회로 받은 값이다.
+ *
+ * ── 왜 되채우나 (2026-08-22) ─────────────────────────────────────────────
+ *
+ * 주문 기록은 "냈다"에서 멈춰 있었다. 실제 체결단가는 증권사에만 있어서,
+ * 슬리피지를 재려면 사람이 손으로 체결 조회를 열어 봐야 했다.
+ *
+ * ★ **접수값을 덮어쓰지 않는다.** `quantity`·`limit_price`·`estimated_price`는
+ *   그대로 두고 체결 칸만 채운다 — 둘이 얼마나 벌어졌는지가 슬리피지다.
+ *   덮어쓰면 그 질문을 영영 못 묻는다.
+ *
+ * ★ **부분체결이면 그 시점의 값**이다. 다음에 다시 부르면 늘어난 값으로 덮인다.
+ *   `fills_synced_at`이 언제 기준인지 말해 준다.
+ *
+ * @returns 실제로 바뀐 행 수. 0이면 그 주문번호가 우리 기록에 없다 —
+ *          사람이 HTS로 낸 주문이거나 우리가 기록에 실패한 것이다.
+ */
+export async function applyOrderFill(
+  accountId: string,
+  orderNo: string,
+  filledQuantity: number,
+  filledPrice: number,
+): Promise<number> {
+  if (!orderNo || !Number.isFinite(filledQuantity) || filledQuantity <= 0) return 0;
+  if (!Number.isFinite(filledPrice) || filledPrice <= 0) return 0;
+  const { rowCount } = await pool.query(
+    `UPDATE trading_broker_orders
+        SET filled_quantity = $3, filled_price = $4, fills_synced_at = now()
+      WHERE account_id = $1 AND order_no = $2`,
+    [accountId, orderNo, filledQuantity, filledPrice],
+  );
+  return rowCount ?? 0;
 }
 
 /** 이미 처리된 키의 결과. 재시도에 그대로 돌려준다. */

@@ -9,7 +9,13 @@
  */
 
 import { pool } from './client.js';
-import { applyTrade, type Layer, type LayerPosition, type LayerTrade } from '../trading/layers.js';
+import {
+  applyTrade,
+  tradeStampFor,
+  type Layer,
+  type LayerPosition,
+  type LayerTrade,
+} from '../trading/layers.js';
 
 export async function ensureLayerSchema(): Promise<void> {
   await pool.query(`
@@ -84,6 +90,19 @@ export async function recordLayerTrade(
   accountId: string,
   trade: LayerTrade,
   note = '',
+  /**
+   * ★ **체결한 날**(`YYYYMMDD`). 생략하면 지금 시각으로 적는다.
+   *
+   * ── 왜 받나 (2026-08-22) ──────────────────────────────────────────────
+   *
+   * 이 칸은 원래 `now()`였다 — **기록한 시각**이지 체결한 시각이 아니다. 마감
+   * 직후에 넣으면 같은 날이라 안 드러나지만, 데몬이 멈춰 하루 늦게 메우면
+   * 그대로 어긋난다. 2026-08-21 티에스이 손절이 8/22로 적혔다.
+   *
+   * 그러면 "언제 판 자리인가"가 거짓이 되고, 날짜로 자르는 모든 집계
+   * (그날 실현손익 · 보유 기간 · 회차 대조)가 함께 틀린다.
+   */
+  tradedOn?: string,
 ): Promise<{ realizedPnl: number | null; shortfall: number }> {
   await ensureLayerSchema();
   const client = await pool.connect();
@@ -108,14 +127,16 @@ export async function recordLayerTrade(
        DO UPDATE SET quantity = EXCLUDED.quantity, cost = EXCLUDED.cost, updated_at = now()`,
       [accountId, trade.layer, trade.symbol, result.position.quantity, result.position.cost],
     );
+    // 체결일을 못 읽으면 `null`이 오고, 그러면 now()로 적힌다.
+    const stampedAt = tradeStampFor(tradedOn);
     await client.query(
       `INSERT INTO trading_layer_trades
-         (account_id, layer, symbol, side, quantity, price, fee, realized_pnl, note)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+         (account_id, layer, symbol, side, quantity, price, fee, realized_pnl, note, traded_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, coalesce($10::timestamptz, now()))`,
       [
         accountId, trade.layer, trade.symbol, trade.side,
         trade.quantity - result.shortfall, trade.price, trade.fee,
-        result.realizedPnl, note,
+        result.realizedPnl, note, stampedAt,
       ],
     );
     await client.query('COMMIT');
@@ -166,4 +187,61 @@ export async function getLayerTradeStats(accountId: string): Promise<LayerTradeS
     avgLoss: r.avg_loss === null ? 0 : Number(r.avg_loss),
     realizedPnl: Number(r.total),
   }));
+}
+
+/** 판 자리 하나. **실제로 얼마에 팔았고 얼마를 벌었나** */
+export interface ClosedLayerTrade {
+  layer: Layer;
+  symbol: string;
+  quantity: number;
+  /** 체결단가(원) */
+  price: number;
+  realizedPnl: number;
+  /** 매도한 날 (`YYYY-MM-DD`, Asia/Seoul) */
+  tradedOn: string;
+  /** 되짚을 실. 손으로 넣은 옛 기록에는 없다 */
+  orderNo?: string;
+}
+
+/**
+ * 최근에 **청산된 매매**. 판단자가 자기 판단의 결과를 보는 자리다.
+ *
+ * ── 왜 (2026-08-22) ──────────────────────────────────────────────────────
+ *
+ * 판단자는 `plan`(목표가·손절가·기간)을 사기 전에 적지만, **결과를 되먹는
+ * 고리가 없었다.** 회의 상태에는 평가손익(미실현)만 있어서 *"내가 판 것이
+ * 실제로 얼마를 벌었나"*를 매 회차 모른 채 시작했다. 예측을 남겨도 채점을
+ * 안 보면 나아지지 않는다.
+ */
+export async function getRecentClosedTrades(
+  accountId: string,
+  limit = 8,
+): Promise<ClosedLayerTrade[]> {
+  await ensureLayerSchema();
+  const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.floor(limit), 1), 50) : 8;
+  const { rows } = await pool.query<{
+    layer: string; symbol: string; quantity: string; price: string;
+    realized_pnl: string; traded_on: string; note: string;
+  }>(
+    `SELECT layer, symbol, quantity::text, price::text, realized_pnl::text,
+            to_char(traded_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD') AS traded_on, note
+       FROM trading_layer_trades
+      WHERE account_id = $1 AND side = 'sell' AND realized_pnl IS NOT NULL
+      ORDER BY traded_at DESC
+      LIMIT $2`,
+    [accountId, safeLimit],
+  );
+  return rows.map((r) => {
+    // note는 `orderNo:0000017227 20260821` 꼴이다. 없는 옛 기록은 그냥 비운다.
+    const match = /^orderNo:(\S+)/.exec(r.note ?? '');
+    return {
+      layer: r.layer as Layer,
+      symbol: r.symbol,
+      quantity: Number(r.quantity),
+      price: Number(r.price),
+      realizedPnl: Number(r.realized_pnl),
+      tradedOn: r.traded_on,
+      orderNo: match?.[1],
+    };
+  });
 }

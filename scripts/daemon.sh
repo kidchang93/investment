@@ -324,11 +324,20 @@ run_loop() {
       if [[ "$hhmm" > "1539" && "$hhmm" < "1620" ]] && ! did_today close; then
         log "마감 정리 시작"
         zsh scripts/close.sh >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
-        # ★ 체결을 층 장부에 넣는다. **접수가 아니라 체결만** 들어간다.
-        #   손으로 치는 것을 잊으면 장부가 어긋나고 층별 성과가 통째로 거짓이 된다
-        #   (2026-08-18에 실제로 그랬다 — 4건을 접수했는데 층 표는 그대로였다).
-        (cd backend && npx tsx src/scripts/layerSync.ts --apply) \
+        # ★ 체결을 우리 기록에 되채운다 — 주문 기록의 체결단가와 층 장부의 실현손익.
+        #   **접수가 아니라 체결만** 들어간다. 손으로 치는 것을 잊으면 장부가
+        #   어긋나고 층별 성과가 통째로 거짓이 된다 (2026-08-18에 실제로 그랬다 —
+        #   4건을 접수했는데 층 표는 그대로였다).
+        #
+        # ★ **`--layer`를 주지 않는다.** 층 모르는 체결을 자동으로 ETF에 넣지
+        #   않기 위해서다(2026-08-22). 그런 체결이 있으면 exit 3으로 알려 오고,
+        #   그때는 **사람이 층을 정해** 넣어야 한다 — 자동이 짐작하면 두 층의
+        #   손익이 함께 거짓이 되고 잔고 대조로는 안 걸린다.
+        (cd backend && npx tsx src/scripts/layerSync.ts "$ACCOUNT" --apply) \
           >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
+        if [[ $? -eq 3 ]]; then
+          log "★ 층을 몰라 못 넣은 체결이 있다 — 로그를 보고 layerSync --layer 로 넣어라"
+        fi
         (cd backend && npx tsx src/scripts/layerReport.ts) \
           >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
         mark close "$(date '+%H:%M')"

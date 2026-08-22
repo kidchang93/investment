@@ -52,6 +52,58 @@ export const LAYER_TARGETS: Record<Layer, { weight: number; rationale: string }>
   },
 };
 
+/**
+ * 체결 하나를 **어느 층에 넣을 것인가.**
+ *
+ * ── 왜 판정을 함수로 뺐나 (2026-08-22) ───────────────────────────────────
+ *
+ * `layerSync`가 층을 모르는 체결을 **조용히 ETF로 떨어뜨리고 있었다.** 기본값이
+ * `--layer etf`였고, 인자를 안 주면 그 값이 쓰였다. 데몬은 인자 없이 부른다 —
+ * 즉 **자동 경로가 모르는 것을 ETF라고 단정하는 구조**였다.
+ *
+ * 2026-08-21 티에스이 손절이 그 자리에 걸릴 뻔했다(층 없이 나간 매도였다).
+ * 유망주 층에서 판 20주가 ETF 층에서 빠진 것으로 기록됐을 것이고, **두 층의
+ * 손익이 동시에 거짓**이 된다. 게다가 잔고 대조는 합계만 보므로 **안 걸린다.**
+ *
+ * ★ 그래서 사람이 `--layer`로 **명시할 때만** 그 값을 쓴다. 안 주면 넣지 않고
+ *   건너뛴다 — 빠진 것은 잔고 대조가 잡아 주지만, 잘못 들어간 것은 아무도 못 잡는다.
+ */
+export type FillLayerDecision =
+  | { kind: 'use'; layer: Layer; fromOrder: boolean }
+  | { kind: 'skip'; why: string };
+
+export function resolveFillLayer(
+  /** 주문 시점에 우리가 적어 둔 층. 이것이 있으면 언제나 이것이 맞다 */
+  orderLayer: Layer | undefined,
+  /** 사람이 `--layer`로 명시한 값. 없으면 `undefined` */
+  requested: Layer | undefined,
+): FillLayerDecision {
+  if (orderLayer) return { kind: 'use', layer: orderLayer, fromOrder: true };
+  if (requested) return { kind: 'use', layer: requested, fromOrder: false };
+  return {
+    kind: 'skip',
+    why: '주문에 층이 없다 — 짐작해서 넣으면 두 층의 손익이 함께 거짓이 된다. --layer로 정해 준다',
+  };
+}
+
+/**
+ * 체결일(`YYYYMMDD`)을 장부에 적을 시각으로. 형식이 아니면 `null`(그러면 지금 시각).
+ *
+ * ★ **자정이 아니라 그날 장 마감(15:30 KST)으로 적는다.** 날짜만 맞으면 되지만,
+ *   자정으로 적으면 시간대 변환에서 하루가 밀릴 여지가 있다. 하루 안쪽의 안전한
+ *   시각을 골라 그 여지를 없앤다.
+ *
+ * 왜 체결일을 받아야 하는지는 `recordLayerTrade`에 적었다 — 하루 늦게 메우면
+ * "언제 판 자리인가"가 통째로 거짓이 된다(2026-08-21 티에스이가 8/22로 적혔다).
+ */
+export function tradeStampFor(tradedOn?: string): string | null {
+  if (!tradedOn || !/^\d{8}$/.test(tradedOn)) return null;
+  const [y, m, d] = [tradedOn.slice(0, 4), tradedOn.slice(4, 6), tradedOn.slice(6, 8)];
+  // 달·일이 있을 수 없는 값이면 적지 않는다 — Postgres가 던지느니 now()가 낫다.
+  if (Number(m) < 1 || Number(m) > 12 || Number(d) < 1 || Number(d) > 31) return null;
+  return `${y}-${m}-${d} 15:30:00+09`;
+}
+
 export interface LayerPosition {
   layer: Layer;
   symbol: string;
