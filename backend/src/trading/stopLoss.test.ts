@@ -77,4 +77,21 @@ describe('손절 판정 — 규칙이 집행하므로 시험으로 덮는다 (20
     assert.equal(r.breaches.length, 2);
     assert.equal(r.watched, 2);
   });
+
+  /*
+   * ★ 2026-08-21에 티에스이 손절이 층 없이 나가 층 장부가 끊겼다. 매도가 어느
+   *   층에서 빠지는지는 **파는 순간 함께 나가야** 되돌릴 수 있다.
+   */
+  it('★ 규칙에 적힌 층을 매도로 그대로 옮긴다 — 층 장부가 여기서 끊겼다', () => {
+    const stops = new Map<string, StopRule>([
+      ['131290', { stop: 218_000, round: 22, layer: 'bet' }],
+    ]);
+    const r = checkStops([pos('131290', 20, 217_000)], stops, NO_EXEC);
+    assert.equal(r.breaches[0].layer, 'bet');
+  });
+
+  it('층을 모르면 비운 채 낸다 — 짐작해서 채우면 그 층 손익이 거짓이 된다', () => {
+    const r = checkStops([pos('131290', 20, 217_000)], rules(['131290', 218_000]), NO_EXEC);
+    assert.equal(r.breaches[0].layer, undefined);
+  });
 });

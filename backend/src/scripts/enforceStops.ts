@@ -34,28 +34,59 @@
 import { getKisAccount } from '../config.js';
 import { getDeliberations } from '../db/deliberations.js';
 import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
+import { getLayerPositions } from '../db/layers.js';
 import { getKisDomesticAccountSnapshot, getKisDomesticExecutions } from '../kis/rest.js';
+import type { Layer } from '../trading/layers.js';
 import { checkStops, type StopRule } from '../trading/stopLoss.js';
 
 const API_BASE = process.env.INVEST_API_BASE ?? 'http://localhost:4000';
 const won = (n: number): string => Math.round(n).toLocaleString('ko-KR');
 
 /**
- * 종목별 **가장 최근에 적힌** 손절가.
+ * 종목 → 층. **층 장부가 지금 그 종목을 어디에 두고 있나.**
+ *
+ * 매수 결정에 층이 안 적힌 옛 자리를 메우는 뒷받침이다. 같은 종목이 두 층에
+ * 걸쳐 있으면 **비운다** — 어느 쪽에서 파는 것인지 우리가 모르는 것이고,
+ * 짐작해서 고르면 두 층의 손익이 함께 거짓이 된다.
+ */
+async function layersOfLedger(accountId: string): Promise<Map<string, Layer | null>> {
+  const positions = await getLayerPositions(accountId);
+  const found = new Map<string, Layer | null>();
+  for (const p of positions) {
+    if (p.quantity <= 0) continue;
+    const seen = found.get(p.symbol);
+    found.set(p.symbol, seen === undefined ? p.layer : seen === p.layer ? p.layer : null);
+  }
+  return found;
+}
+
+/**
+ * 종목별 **가장 최근에 적힌** 손절가와 그 자리의 층.
  *
  * 회차는 새것부터 오므로 처음 만난 값이 최신이다. 나중 회차가 같은 종목을 다시
  * 사면서 손절을 옮겼으면 그 값이 맞다 — 옛 회차의 값으로 팔면 판단자가 이미
  * 바꾼 약속을 지키는 것이 된다.
+ *
+ * ★ **층을 함께 들고 온다**(2026-08-22). 손절 매도가 층 없이 나가면 그 체결을
+ *   층으로 되돌릴 수 없다 — `StopRule.layer` 주석에 그날 무슨 일이 있었는지 적었다.
+ *   결정에 층이 없으면 층 장부에서 찾고, 그것도 갈리면 비운 채 둔다.
  */
 async function stopPricesOf(accountId: string): Promise<Map<string, StopRule>> {
-  const rounds = await getDeliberations({ accountId, limit: 30 });
+  const [rounds, ledger] = await Promise.all([
+    getDeliberations({ accountId, limit: 30 }),
+    layersOfLedger(accountId),
+  ]);
   const stops = new Map<string, StopRule>();
   for (const round of rounds) {
     for (const d of round.decisions) {
       if (d.action !== 'buy' || !d.plan) continue;
       if (stops.has(d.symbol)) continue;
       if (!Number.isFinite(d.plan.stopPrice) || d.plan.stopPrice <= 0) continue;
-      stops.set(d.symbol, { stop: d.plan.stopPrice, round: round.id });
+      stops.set(d.symbol, {
+        stop: d.plan.stopPrice,
+        round: round.id,
+        layer: d.layer ?? ledger.get(d.symbol) ?? undefined,
+      });
     }
   }
   return stops;
@@ -102,11 +133,37 @@ async function main(): Promise<void> {
   for (const symbol of result.unknownPrice) {
     console.log(`  ? ${symbol} — 현재가를 못 읽어 판정하지 않는다`);
   }
+  /*
+   * ★ 사람이 부를 때는 **감시 중인 자리를 펼쳐 찍는다.** 층이 비어 있는 것을
+   *   미리 보라고 두는 자리다 — 2026-08-21에는 층이 빈 채로 손절이 나가고 나서야
+   *   장부가 어긋나 있다는 것을 알았다. 데몬(`--execute`)은 여전히 조용하다.
+   */
+  if (!execute) {
+    for (const position of snapshot.positions) {
+      const rule = stops.get(position.symbol);
+      if (!rule) continue;
+      console.log(
+        `  · ${position.symbol} ${position.name} 손절 ${won(rule.stop)}원 (회차 ${rule.round})`
+        + `${rule.layer ? ` · 층 ${rule.layer}` : ' · ★ 층 없음 — 팔면 층 장부가 끊긴다'}`,
+      );
+    }
+  }
   for (const b of breached) {
     console.log(
       `  ★ ${b.symbol} ${b.name} ${b.quantity}주 · 현재가 ${won(b.price)}원`
       + ` ≤ 손절 ${won(b.stop)}원 (회차 ${b.round})`,
     );
+    /*
+     * ★ **층을 모르면 크게 적는다.** 팔기는 판다 — 손절을 미루는 것이 더 나쁘다.
+     *   대신 그 체결은 층으로 되돌아가지 않으므로, 조용히 넘어가면 어제처럼
+     *   층 손익이 거짓이 된 채 아무도 모른다.
+     */
+    if (!b.layer) {
+      console.log(
+        `    ! 층을 모른다 — 매도는 나가지만 층 장부에 안 들어간다.`
+        + ` 판 뒤 layerSync --layer 로 사람이 넣어야 한다`,
+      );
+    }
   }
   if (breached.length === 0 || !execute) {
     // 경보처럼 종료 코드로 알린다 — 부르는 쪽이 그것으로 알림을 띄운다.
@@ -128,13 +185,22 @@ async function main(): Promise<void> {
         side: 'sell',
         orderType: 'market',
         quantity: b.quantity,
+        /*
+         * ★ **층을 함께 보낸다**(2026-08-22). 이 값이 `trading_broker_orders.layer`에
+         *   남아야 `layerSync`가 체결을 제 층으로 되돌린다. 없으면 기본값(ETF)으로
+         *   떨어져 **조용히 틀린다** — 2026-08-21 티에스이 손절이 그랬다.
+         */
+        layer: b.layer,
         clientOrderId: `stop-${b.symbol}-${today}`,
       }),
     });
     const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     const order = (body.order ?? body) as Record<string, unknown>;
     if (res.ok && typeof order.orderNo === 'string' && order.orderNo) {
-      console.log(`  ✓ 손절 매도 ${b.symbol} ${b.name} ${b.quantity}주 시장가 → 주문번호 ${order.orderNo}`);
+      console.log(
+        `  ✓ 손절 매도 ${b.symbol} ${b.name} ${b.quantity}주 시장가`
+        + `${b.layer ? ` · 층 ${b.layer}` : ' · 층 없음'} → 주문번호 ${order.orderNo}`,
+      );
     } else {
       const why = Array.isArray(body.blockers)
         ? (body.blockers as string[]).join(' · ')
