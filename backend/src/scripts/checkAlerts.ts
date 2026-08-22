@@ -14,22 +14,38 @@
  * 없으면 화면에만 적는다.
  *
  * ★ **경보가 있으면 exit 1이다.** 부르는 쪽(데몬·자동 집행)이 그것으로 멈춘다.
+ *
+ * ★ **같은 경보를 하루에 한 번만 알린다**(2026-08-22). 2026-08-21에 경보 하나가
+ *   20분마다 16번 울려 사용자가 데몬을 껐다 — 왜 그렇게 정했는지는
+ *   `trading/alertNotice.ts`에 적었다. 억제되는 것은 **알림뿐이고** 경보 자체와
+ *   종료 코드는 그대로다. 사람이 부를 때(`--notify` 없음)는 억제하지 않는다.
  */
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { getKisAccount } from '../config.js';
+import { getAlertNotices, markAlertNotified } from '../db/alertNotices.js';
 import { closeDb, pool } from '../db/client.js';
 import { getLayerPositions } from '../db/layers.js';
 import { getRiskRules } from '../db/riskRules.js';
 import { getKisDomesticAccountSnapshot } from '../kis/rest.js';
+import { splitByNotice } from '../trading/alertNotice.js';
 import { reconcile } from '../trading/layers.js';
 
 const run = promisify(execFile);
 const won = (n: number): string => Math.round(n).toLocaleString('ko-KR');
 
 interface Alert {
+  /** 경보 종류. 알림 이력에서 이 경보를 찾는 자리 */
+  key: string;
+  /**
+   * 내용의 정체성. 바뀌면 그날 안이라도 다시 알린다.
+   *
+   * ★ **매번 달라지는 값을 넣지 않는다** — 자산 평가액을 넣으면 시세가 움직일
+   *   때마다 새 경보가 되어 억제가 한 번도 안 걸린다.
+   */
+  digest: string;
   /** 사람이 읽을 한 줄 */
   message: string;
   /** 무엇을 해야 하나 */
@@ -93,6 +109,9 @@ async function main(): Promise<void> {
   }
   if (rules.stopEquity > 0 && equity < rules.stopEquity) {
     alerts.push({
+      key: 'stop-equity',
+      // 자산은 시세 따라 매초 바뀐다. 정체성은 **중단선 아래라는 사실** 하나다.
+      digest: String(rules.stopEquity),
       message: `중단선 도달 — 자산 ${won(equity)}원 < ${won(rules.stopEquity)}원`,
       action: '새 매수를 멈추고 무엇이 빠졌는지 본다. 자동 집행은 이 상태에서 거부된다.',
     });
@@ -103,8 +122,13 @@ async function main(): Promise<void> {
   const brokerQty = new Map(snapshot.positions.map((p) => [p.symbol, p.quantity]));
   const mismatches = reconcile(positions, brokerQty);
   if (mismatches.length > 0) {
+    const symbols = mismatches.map((m) => m.symbol);
     alerts.push({
-      message: `장부와 잔고가 ${mismatches.length}종목 어긋난다 (${mismatches.map((m) => m.symbol).join(' ')})`,
+      key: 'layer-mismatch',
+      // 어긋난 종목이 바뀌면 새 사실이다. 수량 차이까지는 안 담는다 —
+      // 부분체결이 이어지는 동안 매 회차 값이 달라져 억제가 안 걸린다.
+      digest: [...symbols].sort().join(' '),
+      message: `장부와 잔고가 ${mismatches.length}종목 어긋난다 (${symbols.join(' ')})`,
       action: 'npx tsx src/scripts/layerSync.ts 로 빠진 체결을 넣는다. 층별 손익은 그때까지 믿을 수 없다.',
     });
   }
@@ -123,6 +147,8 @@ async function main(): Promise<void> {
   const hhmm = seoulNow.getUTCHours() * 100 + seoulNow.getUTCMinutes();
   if (dow >= 1 && dow <= 5 && hhmm > 900 && Number(rows[0]?.n ?? 0) === 0) {
     alerts.push({
+      key: 'daemon-idle',
+      digest: '',
       message: '평일 개장 뒤인데 오늘 자동 실행 기록이 없다',
       action: 'zsh scripts/daemon.sh status 로 확인하고 멈춰 있으면 start.',
     });
@@ -134,15 +160,33 @@ async function main(): Promise<void> {
     console.log(`${stamp} 경보 없음 · 자산 ${won(equity)}원 · 중단선 ${won(rules.stopEquity)}원`);
     return;
   }
-  console.log(`${stamp} ★ 경보 ${alerts.length}건`);
-  for (const a of alerts) {
+
+  /*
+   * ★ **사람이 부를 때는 억제하지 않는다.** 손으로 부른 것은 "지금 상태를
+   *   보여 달라"이므로 전부 찍는다. 억제는 데몬이 20분마다 부르는 자리
+   *   (`--notify`)에만 건다.
+   */
+  const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' }).format(new Date());
+  const { fresh, muted } = shouldNotify
+    ? splitByNotice(alerts, await getAlertNotices(accountId), today)
+    : { fresh: alerts, muted: [] as Alert[] };
+
+  console.log(`${stamp} ★ 경보 ${alerts.length}건${muted.length > 0 ? ` (새것 ${fresh.length})` : ''}`);
+  for (const a of fresh) {
     console.log(`  ★ ${a.message}`);
     console.log(`    → ${a.action}`);
   }
-  if (shouldNotify) {
-    await notify(`투자 경보 ${alerts.length}건`, alerts.map((a) => a.message).join(' / '));
+  // 되풀이되는 것은 한 줄로 줄인다 — 없어진 것이 아니라 오늘 이미 알린 것이다.
+  for (const a of muted) {
+    console.log(`  · ${a.message} (오늘 이미 알렸다)`);
   }
-  // 부르는 쪽이 이 값으로 멈춘다.
+
+  if (shouldNotify && fresh.length > 0) {
+    await notify(`투자 경보 ${fresh.length}건`, fresh.map((a) => a.message).join(' / '));
+    // 알림을 띄운 뒤에 적는다 — 먼저 적으면 실패한 알림이 하루를 조용하게 만든다.
+    for (const a of fresh) await markAlertNotified(accountId, a.key, a.digest, today);
+  }
+  // 부르는 쪽이 이 값으로 멈춘다. **억제해도 경보는 경보다.**
   process.exitCode = 1;
 }
 
