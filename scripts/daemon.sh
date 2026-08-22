@@ -25,10 +25,16 @@
 #
 #   zsh scripts/daemon.sh start     # 띄운다 (터미널을 닫아도 산다)
 #   zsh scripts/daemon.sh status    # 돌고 있나 · 오늘 무엇을 했나
-#   zsh scripts/daemon.sh stop      # 멈춘다
+#   zsh scripts/daemon.sh stop      # 멈춘다 (자동 기동도 함께 꺼진다)
 #
 # 터미널을 열 때 자동으로 띄우려면 ~/.zshrc에 한 줄:
-#   (cd ~/Desktop/ck/privacy/investment && zsh scripts/daemon.sh start >/dev/null 2>&1)
+#   (cd ~/Desktop/ck/privacy/investment && zsh scripts/daemon.sh __autostart) 2>/dev/null
+#
+# ★ **`start`가 아니라 `__autostart`다**(2026-08-22). `start`를 걸어 두면
+#   `stop`으로 멈춰도 **다음 터미널에서 되살아난다** — Claude Code의 Bash 호출
+#   하나하나가 새 셸이라 사실상 즉시 부활한다. 2026-08-21에 그래서 사용자가
+#   `.zshrc` 줄을 통째로 주석 처리했고 자동 시작이 통째로 사라졌다.
+#   `__autostart`는 `stop`이 남긴 표식(`.cron-logs/daemon.disabled`)을 보고 물러난다.
 #
 # ★ **주문을 내지 않는다.** 상태를 준비하고 기록만 한다. 매매 자동화는
 #   그 위에 따로 얹는다 — 무엇을 자동으로 살지는 사람이 정한 뒤다.
@@ -363,8 +369,19 @@ run_loop() {
   done
 }
 
+# ★ **`stop`이 존중되게 만드는 표식.** 2026-08-21에 사용자가 데몬을 멈췄는데
+#   `.zshrc`의 자동 기동이 **다음 터미널에서 되살렸다**(Claude Code의 Bash 호출
+#   하나하나가 새 셸이다). 멈춰도 다시 뜨니 사용자는 `.zshrc` 줄을 통째로 주석
+#   처리할 수밖에 없었고, 그래서 **자동 시작이 통째로 사라졌다.**
+#
+#   `stop`은 이 파일을 남기고 `__autostart`는 파일이 있으면 안 뜬다. 사람이
+#   `start`라고 말할 때만 지워진다 — **끄는 것도 켜는 것도 사람이 정한다.**
+DISABLED_FILE="$LOG_DIR/daemon.disabled"
+
 case "${1:-status}" in
   start)
+    # 사람이 명시적으로 켰다. 중지 표식을 거둔다.
+    rm -f "$DISABLED_FILE"
     if [[ -n "$(daemon_pid)" ]]; then
       print -r -- "이미 돌고 있다 (pid $(daemon_pid))"
       exit 0
@@ -374,10 +391,20 @@ case "${1:-status}" in
     disown
     print -r -- "데몬을 띄웠다. 상태: zsh scripts/daemon.sh status"
     ;;
+  __autostart)
+    # `.zshrc`가 부르는 자리. **아무 말도 하지 않는다** — 터미널을 열 때마다
+    # 뜨는 줄은 읽히지 않고, 스크립트가 그것을 출력으로 오해할 수도 있다.
+    [[ -f "$DISABLED_FILE" ]] && exit 0
+    [[ -n "$(daemon_pid)" ]] && exit 0
+    nohup zsh "$0" __loop > /dev/null 2>&1 &
+    disown
+    ;;
   __loop)
     run_loop
     ;;
   stop)
+    # ★ 먼저 표식을 남긴다. 죽이는 사이에 새 셸이 자동 기동을 부를 수 있다.
+    : > "$DISABLED_FILE"
     local_pid="$(daemon_pid)"
     if [[ -n "$local_pid" ]]; then
       pkill -f "daemon.sh __loop" && print -r -- "멈췄다 (pid $local_pid)"
@@ -385,12 +412,16 @@ case "${1:-status}" in
     else
       print -r -- "돌고 있지 않다"
     fi
+    print -r -- "자동 기동도 껐다 — 다시 켜려면 zsh scripts/daemon.sh start"
     ;;
   status)
     if [[ -n "$(daemon_pid)" ]]; then
       print -r -- "● 돌고 있다 (pid $(daemon_pid))"
     else
       print -r -- "○ 멈춰 있다 — zsh scripts/daemon.sh start"
+    fi
+    if [[ -f "$DISABLED_FILE" ]]; then
+      print -r -- "  (자동 기동 꺼짐 — 터미널을 열어도 안 뜬다)"
     fi
     print -r -- ""
     print -r -- "오늘 한 일:"
