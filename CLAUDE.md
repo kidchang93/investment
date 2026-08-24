@@ -104,6 +104,7 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 | **사람이 정한 것 확인 (목표·층·자동화 범위)** | **`docs/USER_DECISIONS.md`** |
 | 매매 API 추가·주문 전송·차단 사유 확인 | `docs/TRADING_API.md` |
 | 매매 기능 로드맵·DB 설계 | `docs/TRADING_ROADMAP.md` |
+| **전략 파라미터를 바꾸려 할 때** | **`docs/STRATEGY_DISCIPLINE.md`** — 동결 기간·되돌리기·바꿀 수 있는 것의 목록 |
 
 ---
 
