@@ -30,6 +30,7 @@ import { closeDb, pool } from '../db/client.js';
 import { getLayerPositions } from '../db/layers.js';
 import { getRiskRules } from '../db/riskRules.js';
 import { getKisDomesticAccountSnapshot } from '../kis/rest.js';
+import { escapeMrkdwn, sendSlack } from '../notify/slack.js';
 import { splitByNotice } from '../trading/alertNotice.js';
 import { reconcile } from '../trading/layers.js';
 
@@ -183,6 +184,16 @@ async function main(): Promise<void> {
 
   if (shouldNotify && fresh.length > 0) {
     await notify(`투자 경보 ${fresh.length}건`, fresh.map((a) => a.message).join(' / '));
+    /*
+     * ★ **슬랙도 같은 억제를 받는다.** `fresh`만 보내므로 하루 한 번이다 —
+     *   슬랙에 16번 울리면 macOS 알림으로 겪은 일(2026-08-21에 사용자가 데몬을
+     *   껐다)이 채널에서 되풀이될 뿐이다. 알림을 늘리는 것이 아니라
+     *   **닿는 곳을 늘리는 것**이 목적이다.
+     */
+    await sendSlack(
+      `:warning: *투자 경보 ${fresh.length}건* · ${accountId}\n`
+      + fresh.map((a) => `• ${escapeMrkdwn(a.message)}\n  ↳ ${escapeMrkdwn(a.action)}`).join('\n'),
+    );
     // 알림을 띄운 뒤에 적는다 — 먼저 적으면 실패한 알림이 하루를 조용하게 만든다.
     for (const a of fresh) await markAlertNotified(accountId, a.key, a.digest, today);
   }

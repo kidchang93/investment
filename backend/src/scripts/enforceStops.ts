@@ -36,6 +36,7 @@ import { getDeliberations } from '../db/deliberations.js';
 import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
 import { getLayerPositions } from '../db/layers.js';
 import { getKisDomesticAccountSnapshot, getKisDomesticExecutions } from '../kis/rest.js';
+import { escapeMrkdwn, sendSlack, won as slackWon } from '../notify/slack.js';
 import type { Layer } from '../trading/layers.js';
 import { checkStops, type StopRule } from '../trading/stopLoss.js';
 
@@ -201,11 +202,35 @@ async function main(): Promise<void> {
         `  ✓ 손절 매도 ${b.symbol} ${b.name} ${b.quantity}주 시장가`
         + `${b.layer ? ` · 층 ${b.layer}` : ' · 층 없음'} → 주문번호 ${order.orderNo}`,
       );
+      /*
+       * ★ **슬랙으로 알린다.** 손절은 사람이 가장 급하게 알아야 하는 일인데,
+       *   macOS 알림은 맥 앞에 있어야 보인다 — 개장 시간에 다른 일을 하려고
+       *   만든 시스템에서 그 알림은 대부분 아무도 못 본다.
+       *
+       * ★ 값을 잘 받는 것이 목적이 아니라 빠져나오는 것이 목적인 주문이라
+       *   시장가로 나갔다는 사실도 함께 적는다.
+       */
+      await sendSlack(
+        `:rotating_light: *손절 집행* — ${escapeMrkdwn(b.name)} (${b.symbol})\n`
+        + `${b.quantity}주 *시장가 전량 매도* · 주문번호 \`${order.orderNo}\`\n`
+        + `현재가 ${slackWon(b.price)} ≤ 손절 ${slackWon(b.stop)} (회차 ${b.round})`
+        + `${b.layer ? ` · ${b.layer} 층` : ' · ★ 층 없음 — 장부에 안 들어간다'}`,
+      );
     } else {
       const why = Array.isArray(body.blockers)
         ? (body.blockers as string[]).join(' · ')
         : String(body.message ?? `HTTP ${res.status}`);
       console.log(`  ✗ 손절 매도 ${b.symbol} 실패 — ${why}`);
+      /*
+       * ★★ **못 판 것이 판 것보다 급하다.** 손절선을 깼는데 주문이 안 나갔다는
+       *   것은 그 자리가 무방비로 남아 있다는 뜻이다 — 사람이 손으로 팔아야 한다.
+       */
+      await sendSlack(
+        `:x: *손절이 나가지 못했다* — ${escapeMrkdwn(b.name)} (${b.symbol}) ${b.quantity}주\n`
+        + `현재가 ${slackWon(b.price)} ≤ 손절 ${slackWon(b.stop)} (회차 ${b.round})\n`
+        + `사유: ${escapeMrkdwn(why)}\n`
+        + `*이 자리는 지금 무방비다 — 손으로 처리해야 한다.*`,
+      );
     }
   }
   // 손절이 나갔다는 것은 사람도 알아야 한다.

@@ -42,6 +42,7 @@ import {
   type DeliberationDecision,
   type DeliberationExecution,
 } from '../db/deliberations.js';
+import { escapeMrkdwn, sendSlack, won as slackWon } from '../notify/slack.js';
 
 const API_BASE = process.env.INVEST_API_BASE ?? 'http://localhost:4000';
 
@@ -267,6 +268,36 @@ async function main(): Promise<void> {
 
   await attachExecutions(round.id, executions);
   console.log(`\n회차 ${round.id}에 집행 결과 ${executions.length}건을 붙였다.`);
+
+  /*
+   * ★ **낸 주문을 슬랙으로 알린다** (2026-08-24). 자동 매매의 값어치는 사람이
+   *   자리를 비워도 도는 것인데, 무엇을 샀는지 저녁까지 모르면 그건 무인이 아니라
+   *   **깜깜이**다. 낸 것과 막힌 것을 한 줄씩 적는다.
+   *
+   * ★ 낸 것이 없으면 보내지 않는다 — hold만 있는 날이 대부분이고, 매일 "오늘은
+   *   아무것도 안 했다"가 오면 정작 주문이 나간 날의 알림이 묻힌다.
+   */
+  if (executions.length > 0) {
+    const placed = executions.filter((e) => e.orderNo);
+    const blocked = executions.filter((e) => !e.orderNo);
+    const lines = [
+      `:white_check_mark: *주문 ${placed.length}건* · 회차 ${round.id} · ${account.id}`,
+      ...placed.map((e) => {
+        const d = round.decisions.find((x) => x.symbol === e.symbol && x.action === e.action);
+        const price = e.estimatedPrice > 0 ? `지정가 ${slackWon(e.estimatedPrice)}` : '시장가';
+        return `• ${e.side === 'buy' ? '매수' : '매도'} ${escapeMrkdwn(d?.name ?? e.symbol)}`
+          + ` (${e.symbol}) ${e.quantity}주 · ${price}`
+          + `${d?.layer ? ` · ${d.layer} 층` : ''} · \`${e.orderNo}\``
+          + (d?.plan ? `\n  ↳ 목표 ${slackWon(d.plan.targetPrice)} / 손절 ${slackWon(d.plan.stopPrice)}`
+            + ` / ${d.plan.horizonDays}거래일` : '');
+      }),
+      ...(blocked.length > 0
+        ? [`:no_entry: *막힌 것 ${blocked.length}건*`,
+          ...blocked.map((e) => `• ${escapeMrkdwn(e.symbol)} ${e.action} — ${escapeMrkdwn((e.blockedBy ?? []).join(' · '))}`)]
+        : []),
+    ];
+    await sendSlack(lines.join('\n'));
+  }
 }
 
 main().catch((err) => {
