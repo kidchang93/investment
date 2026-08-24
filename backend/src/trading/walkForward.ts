@@ -578,6 +578,17 @@ export interface WalkForwardSpec {
    * 없다. 60이면 가장 긴 축(20일)의 청산이 검증 구간에 닿지 않는다.
    */
   embargoDays: number;
+  /**
+   * 국면 마스크 — 1인 날만 **학습과 검증 양쪽에서** 쓴다. `panel.days` 길이.
+   *
+   * ★ **양쪽에 똑같이 걸어야 한다.** 학습만 거르면 "추세장에서 고른 것을 아무 날에나
+   * 쓴다"가 되고, 검증만 거르면 "아무 날에나 고른 것을 추세장에서만 채점한다"가
+   * 된다. 둘 다 물어보려던 질문이 아니다 — 묻는 것은 **그 국면 안에서 절차가
+   * 작동하나**이고, 그러려면 절차 전체가 그 국면 안에 있어야 한다.
+   *
+   * 생략하면 지금까지처럼 모든 날을 쓴다.
+   */
+  regimeMask?: Uint8Array;
   selection: {
     rule: 'top1';
     objective: 'netIR';
@@ -780,6 +791,25 @@ function slopeOn(y: ArrayLike<number>, x: ArrayLike<number>): number {
   return sxx > 0 ? sxy / sxx : 0;
 }
 
+/**
+ * `[start, end)` 중 국면에 맞는 날의 값만 뽑는다. 마스크가 없으면 그대로 잘라 준다.
+ *
+ * ★ 마스크가 없을 때 `subarray`인 것은 복사를 피하려는 것이다 — 이 함수는 창마다
+ * 후보 수만큼 불린다(15창 × 15신호). 마스크가 있을 때만 새 배열을 만든다.
+ */
+function regimeValues(
+  leg: Float64Array,
+  dayIndex: Int32Array,
+  start: number,
+  end: number,
+  regimeMask: Uint8Array | undefined,
+): Float64Array {
+  if (!regimeMask) return leg.subarray(start, end);
+  const kept: number[] = [];
+  for (let i = start; i < end; i += 1) if (regimeMask[dayIndex[i]] === 1) kept.push(leg[i]);
+  return Float64Array.from(kept);
+}
+
 /** `dayIndex`(오름차순)에서 `[from, to]` 구간의 자리. 이진탐색이다. */
 function rangeBounds(dayIndex: Int32Array, from: number, to: number): [number, number] {
   const lower = (target: number): number => {
@@ -909,7 +939,9 @@ function runProcedure(spec: WalkForwardSpec, options: ProcedureOptions): WalkFor
       // ★ 축 고정. 이 한 줄이 "짧은 축을 못 박는 비용 상수"를 절차에서 걷어낸다.
       if (spec.fixHorizon !== undefined && series.horizon !== spec.fixHorizon) continue;
       const [start, end] = rangeBounds(series.dayIndex, trainFromIndex, trainToIndex);
-      const values = legOf(series, options.selectionLeg).subarray(start, end);
+      const values = regimeValues(
+        legOf(series, options.selectionLeg), series.dayIndex, start, end, spec.regimeMask,
+      );
       if (values.length < minTrainEntries) continue;
       ranked.push({
         signalKey: series.signalKey,
@@ -933,6 +965,8 @@ function runProcedure(spec: WalkForwardSpec, options: ProcedureOptions): WalkFor
         const values = legOf(series, options.evalLeg);
         let windowTotal = 0;
         for (let i = start; i < end; i += 1) {
+          // ★ 국면 밖의 날은 관측을 만들지 않는다. 넣고 나중에 빼면 창 평균이 이미 오염된다.
+          if (spec.regimeMask && spec.regimeMask[series.dayIndex[i]] !== 1) continue;
           const value = values[i] - evalCostPct;
           excess.push(value);
           windowTotal += value;
@@ -940,8 +974,9 @@ function runProcedure(spec: WalkForwardSpec, options: ProcedureOptions): WalkFor
           dayIndexes.push(series.dayIndex[i]);
           markets.push(series.market[i] / series.horizon);
           truncatedExits += series.truncated[i];
+          // ★ `end - start`로 세면 안 된다 — 거른 날까지 센 수가 된다.
+          oosEntries += 1;
         }
-        oosEntries = end - start;
         if (oosEntries > 0) takenWindowMeans.push(windowTotal / oosEntries / series.horizon);
         horizonWindows.set(series.horizon, (horizonWindows.get(series.horizon) ?? 0) + 1);
         horizonEntries.set(series.horizon, (horizonEntries.get(series.horizon) ?? 0) + oosEntries);
@@ -959,17 +994,21 @@ function runProcedure(spec: WalkForwardSpec, options: ProcedureOptions): WalkFor
           const [start, end] = rangeBounds(series.dayIndex, validFromIndex, validToIndex);
           const values = legOf(series, options.evalLeg);
           let windowTotal = 0;
+          let taken = 0;
           for (let i = start; i < end; i += 1) {
+            // 반사실도 같은 국면 안에서 세야 참여 구간과 견줄 수 있다.
+            if (spec.regimeMask && spec.regimeMask[series.dayIndex[i]] !== 1) continue;
             const value = values[i] - evalCostPct;
             abstained.push(value);
             windowTotal += value;
+            taken += 1;
           }
-          abstainedEntries += end - start;
-          if (end > start) {
-            abstainedWindowMeans.push(windowTotal / (end - start) / series.horizon);
+          abstainedEntries += taken;
+          if (taken > 0) {
+            abstainedWindowMeans.push(windowTotal / taken / series.horizon);
             const h = series.horizon;
             abstainedHorizonWindows.set(h, (abstainedHorizonWindows.get(h) ?? 0) + 1);
-            abstainedHorizonEntries.set(h, (abstainedHorizonEntries.get(h) ?? 0) + (end - start));
+            abstainedHorizonEntries.set(h, (abstainedHorizonEntries.get(h) ?? 0) + taken);
           }
         }
       }

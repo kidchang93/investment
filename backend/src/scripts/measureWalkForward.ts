@@ -56,6 +56,7 @@ import {
   recordSignalMeasurements,
 } from '../db/signalMeasurements.js';
 import { bonferroniThreshold } from '../trading/signalHarness.js';
+import { buildRegimeSeries, regimeMaskOf } from '../trading/regime.js';
 import {
   DEFAULT_ADJUSTMENT_SCAN,
   buildPanel,
@@ -245,6 +246,13 @@ interface Options {
   dryRun: boolean;
   annotateLegacy: boolean;
   limitSymbols: number | null;
+  /**
+   * 이 국면의 날만 쓴다(학습·검증·위약 전부). `null`이면 지금까지처럼 전부.
+   *
+   * ★ 추세 계열이 15창에서 한 창도 못 뽑힌 것이 **섞어서 잰 탓인지** 묻는 자리다.
+   * 국면은 `trading/regime.ts`가 그날까지의 과거로만 정한다.
+   */
+  regime: 'trend' | 'chop' | null;
 }
 
 function parseNumberList(raw: string, label: string): number[] {
@@ -277,6 +285,7 @@ function parseOptions(argv: string[]): Options {
     dryRun: false,
     annotateLegacy: false,
     limitSymbols: null,
+    regime: null,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -369,6 +378,14 @@ function parseOptions(argv: string[]): Options {
         // ★ 시간을 재려고 줄일 때만. 시장을 대표하지 않으므로 판정에 쓰지 않는다.
         options.limitSymbols = Number(next());
         break;
+      case '--regime': {
+        const value = next();
+        if (value !== 'trend' && value !== 'chop') {
+          throw new Error(`--regime은 trend 또는 chop입니다: ${value}`);
+        }
+        options.regime = value;
+        break;
+      }
       default:
         throw new Error(`모르는 인자입니다: ${arg}`);
     }
@@ -728,6 +745,25 @@ async function main(): Promise<void> {
     return;
   }
 
+  // ── 국면 ───────────────────────────────────────────────────────────────
+  /*
+   * ★ 국면을 **유니버스가 정해진 뒤에** 만든다. 시장 지수가 유니버스 동일가중이라
+   * 유니버스가 바뀌면 지수도 바뀐다 — 순서가 뒤바뀌면 다른 시장의 국면을 쓴다.
+   */
+  let regimeMask: Uint8Array | undefined;
+  if (options.regime !== null) {
+    const series = buildRegimeSeries(panel, universe);
+    regimeMask = regimeMaskOf(series, options.regime);
+    let keptUsable = 0;
+    for (let d = 0; d < panel.days.length; d += 1) if (regimeMask[d] === 1) keptUsable += 1;
+    console.log(`\n국면 ${options.regime} — 효율성 비율(20일) · 문턱은 전일까지의 중앙값`);
+    console.log(
+      `  추세 ${series.trendDays}일 · 횡보 ${series.chopDays}일`
+      + ` · 판정 못 함 ${series.unknownDays}일 (앞 250일은 문턱을 못 만든다)`,
+    );
+    console.log(`  이번 실행이 쓰는 날 ${keptUsable}일 — 학습·검증·위약 전부 이 날들만 본다`);
+  }
+
   // ── 계열 ───────────────────────────────────────────────────────────────
   console.log('\n계열 만들기 (셀당 한 번 훑는다)');
   const cellSeries = buildCells(panel, universe, usable, '실신호', buckets, universeConfig.minNamesPerDay);
@@ -741,6 +777,7 @@ async function main(): Promise<void> {
     rollingYears: 10,
     validationStarts: VALIDATION_STARTS,
     embargoDays: embargoFor(options.axes),
+    regimeMask,
     selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
     buckets,
     minNamesPerDay: universeConfig.minNamesPerDay,
