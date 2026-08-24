@@ -208,7 +208,7 @@ describe('신호 — 목록이 규율을 지킨다', () => {
     assert.equal(requirementOf('shortRatioLow'), 'short');
     for (const key of [
       'momentum20', 'reversal1', 'reversal5', 'lowVolatility', 'parkinsonVol',
-      'turnoverSurge', 'surgeMomentum',
+      'turnoverSurge', 'surgeMomentum', 'squeezeWidth', 'squeezeRelease',
     ]) {
       assert.equal(requirementOf(key), 'price', key);
     }
@@ -243,6 +243,86 @@ describe('신호 — 목록이 규율을 지킨다', () => {
       const usable = score !== undefined && Number.isFinite(score);
       assert.equal(usable, false, `${signal.key}: 수급이 없는데 쓸 수 있는 점수를 냈다`);
     }
+  });
+});
+
+/*
+ * ── 변동성 압축·확장 ─────────────────────────────────────────────────────
+ *
+ * 위의 시험들은 **목록을 통째로 도는** 것이라 "미래를 보나 / 0으로 채우나"만 잰다.
+ * 값이 실제로 맞는지는 손으로 셀 수 있는 계열을 만들어 따로 재야 한다 — 부호가
+ * 뒤집혀 있어도 저 시험들은 전부 통과하기 때문이다.
+ */
+describe('변동성 압축·확장', () => {
+  function signalOf(key: string): (ctx: SignalContext) => number | undefined {
+    const found = SIGNAL_CANDIDATES.find((s) => s.key === key);
+    assert.ok(found, `${key}가 목록에 없다`);
+    return (ctx) => found.score(ctx);
+  }
+
+  /** 매일 같은 폭으로 움직이는 계열. 종가는 `closes`가 정한다. */
+  function flat(length: number, halfRange: number, closeOf: (i: number) => number): DailyBar[] {
+    return Array.from({ length }, (_, i) => {
+      const close = closeOf(i);
+      return {
+        tradingDay: `2026${String(700 + i).padStart(4, '0')}`,
+        close,
+        foreign: 1,
+        institution: 1,
+        individual: -2,
+        open: close,
+        high: close + halfRange,
+        low: close - halfRange,
+      };
+    });
+  }
+
+  it('squeezeRelease — 오늘 진폭이 평소의 네 배면 log 4다', () => {
+    const bars = flat(30, 1, () => 100);
+    // 앞 20일은 고−저 = 2로 고정이고, 오늘만 8이다.
+    bars[29] = { ...bars[29], high: 104, low: 96 };
+    const score = signalOf('squeezeRelease')({ history: bars, index: 29 });
+    assert.ok(
+      Math.abs((score as number) - Math.log(4)) < 1e-9,
+      `${score} (log4 = ${Math.log(4)})`,
+    );
+  });
+
+  it('squeezeRelease — 평소와 같은 날이면 0이다', () => {
+    const bars = flat(30, 1, () => 100);
+    const score = signalOf('squeezeRelease')({ history: bars, index: 29 });
+    assert.ok(Math.abs(score as number) < 1e-12, String(score));
+  });
+
+  /*
+   * ★ 국내 시장에서 이것이 실제로 있는 일이다 — 상한가 직행은 고가와 저가가 같아
+   * **고−저로 재면 진폭 0**, 즉 "가장 조용한 날"이 된다. 트루 레인지는 전일 종가를
+   * 보므로 그 날을 가장 큰 날로 잡는다. 이 시험이 그 차이를 지킨다.
+   */
+  it('squeezeRelease — 고가와 저가가 같아도 갭이 있으면 진폭으로 잡는다', () => {
+    const bars = flat(30, 1, () => 100);
+    // 전일 종가 100에서 130으로 뛰어 그대로 굳었다. 고−저는 0이고 트루 레인지는 30이다.
+    bars[29] = { ...bars[29], close: 130, open: 130, high: 130, low: 130 };
+    const score = signalOf('squeezeRelease')({ history: bars, index: 29 });
+    assert.ok(
+      Math.abs((score as number) - Math.log(15)) < 1e-9,
+      `${score} (log15 = ${Math.log(15)})`,
+    );
+  });
+
+  it('squeezeWidth — 종가 산포가 같아도 장중 진폭이 크면 더 압축으로 본다', () => {
+    const closeOf = (i: number): number => 100 + (i % 2) * 2;
+    const narrow = signalOf('squeezeWidth')({ history: flat(30, 1, closeOf), index: 29 }) as number;
+    const wide = signalOf('squeezeWidth')({ history: flat(30, 5, closeOf), index: 29 }) as number;
+    // 켈트너가 넓어지면 볼린저÷켈트너가 작아지고, 역방향이라 점수는 올라간다.
+    assert.ok(wide > narrow, `장중이 넓은 쪽이 더 높아야 한다: ${wide} vs ${narrow}`);
+  });
+
+  it('squeezeWidth — 종가가 20일 내내 같으면 점수를 내지 않는다', () => {
+    const bars = flat(30, 1, () => 100);
+    const score = signalOf('squeezeWidth')({ history: bars, index: 29 });
+    // 산포가 0이면 볼린저 폭이 0이라 비를 만들 수 없다. 0으로 채우지 않는다.
+    assert.equal(score, undefined);
   });
 });
 

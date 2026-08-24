@@ -219,6 +219,58 @@ function flowSum(
 }
 
 /**
+ * `from`~`to`(양끝 포함) 종가의 표준편차(모집단 기준, N으로 나눈다).
+ *
+ * ★ `bollingerB`가 같은 계산을 자기 안에 인라인으로 들고 있다. **합치지 않았다** —
+ *   그쪽은 2026-08-24에 이미 잰 신호라, 결과가 같아도 계산을 옮기면 "그때 잰 것과
+ *   같은 것"이라고 말할 근거가 흐려진다. 중복이 보이는 편이 낫다.
+ */
+function closeStdDev(ctx: SignalContext, from: number, to: number): number | undefined {
+  const mean = windowMean(ctx, from, to, (b) => b.close);
+  if (mean === undefined) return undefined;
+  let sq = 0;
+  for (let i = from; i <= to; i += 1) {
+    const { close } = ctx.history[i];
+    if (!(close > 0)) return undefined;
+    sq += (close - mean) ** 2;
+  }
+  return Math.sqrt(sq / (to - from + 1));
+}
+
+/**
+ * 그날의 트루 레인지 — max(고−저, |고−전일종가|, |저−전일종가|).
+ *
+ * **전일 종가를 보므로 `i`는 1 이상이어야 한다.** 고−저만으로 재면 갭으로 열려
+ * 그대로 굳은 날이 "조용한 날"이 된다. 켈트너 채널 원본이 이 값을 쓰는 이유이고,
+ * 국내 주식은 상·하한가 직행이 있어 그 차이가 더 크다.
+ */
+function trueRange(ctx: SignalContext, i: number): number | undefined {
+  if (i < 1 || i >= ctx.history.length) return undefined;
+  const { high, low } = ctx.history[i];
+  const prevClose = ctx.history[i - 1].close;
+  if (high === undefined || low === undefined) return undefined;
+  if (!(high > 0) || !(low > 0) || !(prevClose > 0) || high < low) return undefined;
+  return Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+}
+
+/**
+ * `from`~`to`(양끝 포함) 트루 레인지의 평균. **하나라도 없으면 undefined다.**
+ *
+ * `windowMean`으로 못 쓰는 이유는 트루 레인지가 하루치 값이 아니라 **전일까지 보는**
+ * 값이라서다 — `pick(bar)` 한 줄로는 나오지 않는다.
+ */
+function trueRangeMean(ctx: SignalContext, from: number, to: number): number | undefined {
+  if (from < 1 || to >= ctx.history.length || from > to) return undefined;
+  let total = 0;
+  for (let i = from; i <= to; i += 1) {
+    const range = trueRange(ctx, i);
+    if (range === undefined) return undefined;
+    total += range;
+  }
+  return total / (to - from + 1);
+}
+
+/**
  * 후보 목록.
  *
  * ★ **여기에 넣는 순간 다중검정 부담이 는다.** 후보 하나가 늘면 모든 후보의
@@ -562,6 +614,78 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
       if (!(sd > 0)) return undefined;
       const close = ctx.history[ctx.index].close;
       return -((close - mean) / (2 * sd));
+    },
+  },
+
+  /*
+   * ── 변동성 압축·확장 (2026-08-24 추가) ────────────────────────────────
+   *
+   * 사용자가 트레이딩뷰의 공개 전략들을 가져와 보자고 했다. 인기 스크립트를
+   * 훑으니 계열이 다섯으로 모였는데(ATR 트레일링 스톱 · 변동성 압축 · 오실레이터 ·
+   * 국면 필터 · 평활화), 그중 **이 레포가 한 번도 안 잰 것은 압축 하나**다.
+   * 나머지는 이미 있거나(오실레이터 = `rsi14`·`bollingerB`, 트레일링 스톱 =
+   * `donchian20`) 신호가 아니라 전처리다(평활화).
+   *
+   * ★ **둘만 넣는다.** 후보가 늘면 모든 후보의 문턱이 함께 오른다 — 5일 축이
+   *   지금 10칸에 |t| > 2.92이고, 2026-08-24에 유명 전략 여섯이 t +2.08로
+   *   문턱 2.89에 걸려 떨어진 것이 정확히 이 산수였다. 계열마다 대표 하나씩만
+   *   재는 것이 후보를 아끼는 유일한 방법이다.
+   *
+   * ★ 둘은 **같은 서사의 앞뒤**다 — "눌렸다가 터진다". 앞이 `squeezeWidth`,
+   *   뒤가 `squeezeRelease`다. 서사가 맞다면 둘 다 살아야 하고, **하나만 살면
+   *   그건 발견이 아니라 잡음**이다(`parkinsonVol`↔`lowVolatility`와 같은 자리).
+   */
+  {
+    key: 'squeezeWidth',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-24',
+    label: '변동성 압축 · 볼린저÷켈트너 폭 (20일, 역방향)',
+    rationale:
+      'LazyBear의 Squeeze Momentum — 트레이딩뷰에서 가장 많이 쓰이는 공개 스크립트 중'
+      + ' 하나다. **볼린저 밴드가 켈트너 채널 안으로 들어가면 압축**이고, 눌린 것은'
+      + ' 언젠가 풀린다는 것이 가설이다. 이 레포에는 변동성 계열이 탐색에서 가장 강했던'
+      + ' 실측이 있다(`lowVolatility` t 10.68 · `parkinsonVol` t 12.45).'
+      + ' 다만 그 둘은 **변동성의 수준**을 재고 이것은 **두 자의 비**라 크기가 지워진다 —'
+      + ' 종가 산포(볼린저)와 장중 진폭(켈트너)이 서로 다른 말을 하는 상태를 잡는 값이라,'
+      + ' 같은 것을 재는지 다른 것을 재는지가 이번에 갈린다.'
+      + ' 압축일수록 사고 싶다는 뜻이므로 **부호를 뒤집어** 넣는다.',
+    // 종가 20개(index−19…index)와 트루 레인지 20개가 필요하고, 트루 레인지는
+    // 전일 종가를 보므로 가장 이른 자리가 index−19 ≥ 1 → index ≥ 20이다.
+    minHistory: 20,
+    score: (ctx) => {
+      const sd = closeStdDev(ctx, ctx.index - 19, ctx.index);
+      const range = trueRangeMean(ctx, ctx.index - 19, ctx.index);
+      if (sd === undefined || range === undefined) return undefined;
+      // 20일 내내 값이 안 움직였거나(거래정지) 진폭이 0이면 비를 만들 수 없다.
+      if (!(sd > 0) || !(range > 0)) return undefined;
+      // LazyBear 기본값 그대로: 볼린저 ±2σ → 폭 4σ, 켈트너 ±1.5·평균TR → 폭 3·평균TR.
+      const ratio = (4 * sd) / (3 * range);
+      // 비는 오른쪽 꼬리가 길다. 로그로 줄 세워야 몇 종목이 순위를 삼키지 않는다.
+      return -Math.log(ratio);
+    },
+  },
+  {
+    key: 'squeezeRelease',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-24',
+    label: '변동성 확장 · 오늘 진폭 ÷ 앞선 20일 평균 진폭',
+    rationale:
+      '같은 Squeeze의 **반대편 순간**을 잰다 — 압축이 풀리는 날. `turnoverSurge`가'
+      + ' 거래대금에 대해 하는 것을 가격 진폭에 대해 하는 값이고, 둘이 함께 살면'
+      + ' "자금과 변동성이 같이 몰린다"가 되지만 **재료가 달라 하나만 살 수도 있다.**'
+      + ' 가설은 "변동성 확장이 방향의 시작"이고, 반대 가설은 "확장한 날은 이미 움직인'
+      + ' 날이라 늦었다"이다 — 이 레포의 `reversal5`가 t −4.28로 역방향이었으므로'
+      + ' **후자로 나올 이유가 실제로 있다.** 그렇다면 값이 음수로 나와야 앞뒤가 맞는다.',
+    // 분모가 index−20…index−1이므로 가장 이른 자리가 1 → index ≥ 21이다.
+    minHistory: 21,
+    score: (ctx) => {
+      const today = trueRange(ctx, ctx.index);
+      // ★ 오늘을 분모에서 뺀다. 자기가 자기 평균에 섞이면 비율에 상한이 생기고,
+      //   진폭이 큰 날일수록 그 왜곡이 커져 순위가 눌린다.
+      const base = trueRangeMean(ctx, ctx.index - 20, ctx.index - 1);
+      if (today === undefined || base === undefined) return undefined;
+      if (!(today > 0) || !(base > 0)) return undefined;
+      return Math.log(today / base);
     },
   },
 ];
