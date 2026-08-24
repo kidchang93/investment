@@ -39,9 +39,18 @@ function bar(day: number, close: number, foreign = 100, institution = 50, indivi
   };
 }
 
-/** 30봉짜리 계열. 값이 서로 달라야 신호가 실제로 계산된다. */
+/**
+ * 300봉짜리 계열. 값이 서로 달라야 신호가 실제로 계산된다.
+ *
+ * ★ **30봉이었다가 늘렸다**(2026-08-24). 12-1 모멘텀·52주 신고가처럼 1년 축을
+ *   보는 후보가 생겼는데, 짧은 계열에서는 그것들이 늘 `undefined`라 **미래를
+ *   보는지 검사하지 못한 채 통과**했다. 시험 데이터가 후보의 축을 못 따라가면
+ *   이 파일의 시험 전체가 있으나 마나 해진다.
+ *
+ *   규칙을 약하게 만든 것이 아니라 **재는 범위를 후보에 맞춘 것**이다.
+ */
 function series(): DailyBar[] {
-  return Array.from({ length: 30 }, (_, i) =>
+  return Array.from({ length: 300 }, (_, i) =>
     bar(i, 10_000 + i * 137 - (i % 3) * 400, 100 + (i % 7) * 30, 50 - (i % 5) * 20, -150 + (i % 4) * 60),
   );
 }
@@ -218,13 +227,19 @@ describe('신호 — 목록이 규율을 지킨다', () => {
       institution: Number.NaN,
       shortRatio: undefined,
     }));
+    /*
+     * ★ 자리는 **신호마다 그 축에 맞춰** 준다. 28로 못 박으면 1년 축 후보가
+     *   "수급이 없어서"가 아니라 "앞자리가 모자라서" undefined가 되고, 시험이
+     *   재려던 것과 다른 것을 재게 된다.
+     */
+    const at = (signal: { minHistory: number }): number => Math.max(28, signal.minHistory);
     for (const signal of SIGNAL_CANDIDATES.filter((s) => s.dataRequirement === 'price')) {
-      const score = signal.score({ history: priceOnly, index: 28 });
+      const score = signal.score({ history: priceOnly, index: at(signal) });
       assert.notEqual(score, undefined, `${signal.key}: price라는데 값이 안 나온다`);
       assert.ok(Number.isFinite(score as number), `${signal.key}: ${score}`);
     }
     for (const signal of SIGNAL_CANDIDATES.filter((s) => s.dataRequirement !== 'price')) {
-      const score = signal.score({ history: priceOnly, index: 28 });
+      const score = signal.score({ history: priceOnly, index: at(signal) });
       const usable = score !== undefined && Number.isFinite(score);
       assert.equal(usable, false, `${signal.key}: 수급이 없는데 쓸 수 있는 점수를 냈다`);
     }

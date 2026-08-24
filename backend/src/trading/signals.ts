@@ -158,6 +158,49 @@ function turnoverSurge(ctx: SignalContext): number | undefined {
   return Math.log(recent / base);
 }
 
+/**
+ * `from`~`to`(양끝 포함) 구간의 최고 고가. **하나라도 없으면 undefined다.**
+ *
+ * 고가가 빠진 날을 건너뛰고 최댓값을 내면 "그 구간에 그보다 높은 날이 없었다"는
+ * 거짓이 된다 — 돌파 신호에서는 그 거짓이 곧바로 매수 신호가 된다.
+ */
+function highestHigh(ctx: SignalContext, from: number, to: number): number | undefined {
+  if (from < 0 || to >= ctx.history.length || from > to) return undefined;
+  let top = 0;
+  for (let i = from; i <= to; i += 1) {
+    const { high } = ctx.history[i];
+    if (high === undefined || !Number.isFinite(high) || !(high > 0)) return undefined;
+    if (high > top) top = high;
+  }
+  return top > 0 ? top : undefined;
+}
+
+/**
+ * 와일더 RSI. 0~100이고 낮을수록 많이 떨어진 것이다.
+ *
+ * ★ **단순 평균(SMA) 방식이다** — 첫 구간을 평균으로 잡는 원본의 초기값 계산과 같다.
+ *   와일더의 지수평활은 과거 전체를 물고 들어가 `index`보다 앞을 얼마나 보는지가
+ *   흐려진다. 이 파일의 규칙은 "본 자리를 명확히 안다"가 먼저다.
+ */
+function rsi(ctx: SignalContext, period: number): number | undefined {
+  const from = ctx.index - period;
+  if (from < 0) return undefined;
+  let gains = 0;
+  let losses = 0;
+  for (let i = from + 1; i <= ctx.index; i += 1) {
+    const a = ctx.history[i - 1].close;
+    const b = ctx.history[i].close;
+    if (!(a > 0) || !(b > 0)) return undefined;
+    const change = b - a;
+    if (change >= 0) gains += change;
+    else losses -= change;
+  }
+  // 내린 날이 하나도 없으면 원본 정의상 100이다(0으로 나누지 않는다).
+  if (losses === 0) return gains === 0 ? undefined : 100;
+  const rs = gains / losses;
+  return 100 - 100 / (1 + rs);
+}
+
 /** 최근 `days`일 순매수 비중의 합. 하루치 잡음을 줄인다. */
 function flowSum(
   ctx: SignalContext,
@@ -377,6 +420,148 @@ export const SIGNAL_CANDIDATES: SignalCandidate[] = [
         total += Math.log(high / low) ** 2;
       }
       return -Math.sqrt(total / (4 * Math.LN2 * 20));
+    },
+  },
+
+  /*
+   * ── 널리 알려진 전략들 (2026-08-24 추가) ──────────────────────────────
+   *
+   * 사용자가 물었다 — *"유명한 트레이딩 전략을 반영해서 완전 자동매매로 하면
+   * 어떨까?"* 그래서 **의견 대신 잰다.**
+   *
+   * ★★ **"유명하니까 될 것"은 가설이 아니다.** 오히려 반대로 볼 이유가 있다 —
+   *   널리 알려진 규칙이 계속 통하면 모두가 쓰고, 그러면 통하지 않게 된다.
+   *   여기 넣는 이유는 유명해서가 아니라 **아직 우리 시장·우리 비용에서
+   *   안 재봤기 때문**이다. 살아 있으면 그 사실이 값이고, 죽었으면 그것도
+   *   하루 만에 아는 답이다.
+   *
+   * ★ 여섯이 서로 독립이 아니다. 겹치는 쌍을 미리 적어 둔다 — 둘 다 살거나
+   *   둘 다 죽어야 정상이고, **하나만 살면 그건 발견이 아니라 잡음**이다
+   *   (`parkinsonVol`이 `lowVolatility`에 대해 같은 자리에 있다):
+   *
+   *     추세    donchian20  ↔  maCross2060
+   *     반전    rsi14       ↔  bollingerB
+   *     장기    momentum12_1 ↔ near52wHigh   (앵커링 대 수익률, 재료가 다르다)
+   */
+  {
+    key: 'momentum12_1',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-24',
+    label: '12-1 모멘텀 (1년 수익에서 최근 1개월 제외)',
+    rationale:
+      '제가디시–티트만(1993) 이후 가장 많이 재현된 학술 팩터. **최근 1개월을 빼는 것이'
+      + ' 핵심**이다 — 그 구간은 단기 반전이 지배해서 넣으면 신호가 상쇄된다.'
+      + ' 이 레포의 `momentum20`은 20일 축이라 이것과 다른 것을 잰다(그쪽은 살아남지'
+      + ' 못했다). 우위가 있다면 근거는 정보의 느린 확산이나 처분효과다.',
+    // index-252 … index-21을 보므로 252 자리는 돼야 한다.
+    minHistory: 252,
+    score: (ctx) => {
+      const from = ctx.index - 252;
+      const to = ctx.index - 21;
+      // ★ `to`도 본다. `from`만 보면 index가 계열 밖일 때 undefined에서 터진다.
+      if (from < 0 || to >= ctx.history.length) return undefined;
+      const a = ctx.history[from].close;
+      const b = ctx.history[to].close;
+      return a > 0 && b > 0 ? b / a - 1 : undefined;
+    },
+  },
+  {
+    key: 'donchian20',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-24',
+    label: '돈치안 20일 돌파 (터틀 트레이딩)',
+    rationale:
+      '리처드 데니스의 터틀 규칙 그대로 — **20일 신고가를 뚫으면 산다.** 원본은 선물'
+      + ' 추세추종이고 한국 주식 일봉에 그대로 통한다는 근거는 없다. 가설은 "돌파가'
+      + ' 추세의 시작을 알린다"이고, 반대 가설은 "돌파는 이미 오른 것을 비싸게 사는'
+      + ' 것"이다. 값은 **전일까지의 20일 최고가 대비 오늘 종가**라 양수면 돌파다.',
+    minHistory: 20,
+    score: (ctx) => {
+      // ★ 오늘 고가를 넣으면 안 된다 — 오늘 값으로 오늘을 판정하는 셈이다.
+      const highest = highestHigh(ctx, ctx.index - 20, ctx.index - 1);
+      const close = ctx.history[ctx.index].close;
+      if (highest === undefined || !(highest > 0) || !(close > 0)) return undefined;
+      return close / highest - 1;
+    },
+  },
+  {
+    key: 'maCross2060',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-24',
+    label: '이동평균 20/60 이격 (골든크로스)',
+    rationale:
+      '가장 널리 쓰이는 기술적 규칙. 교차 여부를 불리언으로 보면 교차한 날만 표본이'
+      + ' 되어 십분위를 만들 수 없으므로 **이격률로 잰다**(20일선이 60일선 위로 얼마나).'
+      + ' `donchian20`과 같은 추세 가설이라 **둘 다 살거나 둘 다 죽어야 한다.**',
+    minHistory: 59,
+    score: (ctx) => {
+      const fast = windowMean(ctx, ctx.index - 19, ctx.index, (b) => b.close);
+      const slow = windowMean(ctx, ctx.index - 59, ctx.index, (b) => b.close);
+      if (fast === undefined || slow === undefined || !(slow > 0)) return undefined;
+      return fast / slow - 1;
+    },
+  },
+  {
+    key: 'near52wHigh',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-24',
+    label: '52주 신고가 근접도',
+    rationale:
+      '조지–황(2004). **모멘텀과 재료가 다르다** — 수익률이 아니라 "신고가라는 기준점에'
+      + ' 얼마나 가까운가"이고, 근거는 앵커링 편향이다(사람이 신고가를 심리적 저항선으로'
+      + ' 삼아 좋은 소식에 늦게 반응한다). `momentum12_1`과 같은 장기 축이라 둘을'
+      + ' 나란히 재면 어느 쪽이 진짜 재료인지 갈린다.',
+    // index-251 … index를 보므로 251 자리면 된다(252가 아니다 — 오늘도 세니까).
+    minHistory: 251,
+    score: (ctx) => {
+      const highest = highestHigh(ctx, ctx.index - 251, ctx.index);
+      const close = ctx.history[ctx.index].close;
+      if (highest === undefined || !(highest > 0) || !(close > 0)) return undefined;
+      return close / highest;
+    },
+  },
+  {
+    key: 'rsi14',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-24',
+    label: 'RSI(14) 과매도 (역방향)',
+    rationale:
+      '웰스 와일더(1978). 통념은 **RSI 30 이하가 과매도라 되돌아온다**는 것이라, 낮을수록'
+      + ' 살 만하다는 뜻으로 부호를 뒤집어 넣는다. 이 레포에는 반대 방향 실측이 있다 —'
+      + ' `reversal5`가 t −4.28로 **역방향으로 유의**했다(떨어진 것이 더 떨어졌다).'
+      + ' 그렇다면 이 신호도 음수로 나와야 앞뒤가 맞는다.',
+    // 변화량 14개를 보려면 종가 15개가 필요하다 → index가 14는 돼야 한다.
+    minHistory: 14,
+    score: (ctx) => {
+      const value = rsi(ctx, 14);
+      return value === undefined ? undefined : -value;
+    },
+  },
+  {
+    key: 'bollingerB',
+    dataRequirement: 'price',
+    frozenAt: '2026-08-24',
+    label: '볼린저 %B (20일, 역방향)',
+    rationale:
+      '존 볼린저. 하단 밴드에 붙을수록 과매도라는 같은 가설을 **변동성으로 정규화해서**'
+      + ' 잰다 — 종목마다 변동폭이 다르므로 RSI보다 종목 간 비교에 낫다는 것이 이쪽의'
+      + ' 주장이다. `rsi14`와 짝이라 **하나만 살면 잡음으로 본다.**',
+    minHistory: 19,
+    score: (ctx) => {
+      const mean = windowMean(ctx, ctx.index - 19, ctx.index, (b) => b.close);
+      if (mean === undefined) return undefined;
+      let sq = 0;
+      for (let i = ctx.index - 19; i <= ctx.index; i += 1) {
+        if (i < 0) return undefined;
+        const { close } = ctx.history[i];
+        if (!(close > 0)) return undefined;
+        sq += (close - mean) ** 2;
+      }
+      const sd = Math.sqrt(sq / 20);
+      // 20일 내내 같은 값이면 밴드 폭이 0이라 %B를 만들 수 없다(거래정지 구간).
+      if (!(sd > 0)) return undefined;
+      const close = ctx.history[ctx.index].close;
+      return -((close - mean) / (2 * sd));
     },
   },
 ];
