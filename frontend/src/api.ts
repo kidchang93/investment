@@ -20,6 +20,7 @@ import type {
   BrokerExecutionSnapshot,
   BrokerOrderability,
   CandlesResponse,
+  ChartTradeMark,
   CreateOrderRequest,
   CreateOrderResponse,
   ExchangeRate,
@@ -51,6 +52,24 @@ export async function fetchCandles(code: string): Promise<CandlesResponse> {
   const res = await fetch(`${API_BASE}/api/candles/${code}`);
   if (!res.ok) throw new Error(`candles 조회 실패: ${res.status}`);
   return res.json();
+}
+
+/**
+ * 그 종목에서 **우리가 실제로 사고판 자리.** 차트에 마커로 찍는다.
+ *
+ * 접수가 아니라 체결만 온다 — 걸어 두고 안 붙은 주문은 매매가 아니다.
+ * 실패해도 차트를 깨뜨리지 않는다(부르는 쪽이 빈 배열로 받는다).
+ */
+export async function fetchTradeMarks(
+  symbol: string,
+  accountId?: string,
+): Promise<ChartTradeMark[]> {
+  const query = new URLSearchParams({ symbol });
+  if (accountId) query.set('accountId', accountId);
+  const res = await fetch(`${API_BASE}/api/trading/trade-marks?${query.toString()}`);
+  if (!res.ok) throw new Error(`매매 표시 조회 실패: ${res.status}`);
+  const body = (await res.json()) as { marks?: ChartTradeMark[] };
+  return body.marks ?? [];
 }
 
 export async function fetchQuote(code: string): Promise<Quote> {

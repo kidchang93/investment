@@ -39,7 +39,7 @@ import { ensureAutoTraderSchema, getAutoTraderRuns } from './db/autoTrader.js';
 import { ensureDailySelectionSchema } from './db/dailySelection.js';
 import { getLastBuySubmittedAt } from './db/brokerOrders.js';
 import { checkPositionGuard } from './trading/positionGuard.js';
-import { getLayerPositions, getLayerTradeStats, getRealizedByLayer } from './db/layers.js';
+import { getLayerPositions, getLayerTradeStats, getRealizedByLayer, getTradeMarks } from './db/layers.js';
 import { pool } from './db/client.js';
 import { LAYER_LABELS, LAYER_TARGETS, reconcile, summarizeLayers } from './trading/layers.js';
 import { ensureMarketSnapshotSchema } from './db/marketSnapshot.js';
@@ -167,6 +167,7 @@ import type {
   BrokerExecution,
   BrokerPosition,
   BrokerAccountSnapshot,
+  ChartTradeMark,
   PortfolioLayerSummary,
   PortfolioLayersSnapshot,
   TradingAlert,
@@ -364,6 +365,48 @@ async function main(): Promise<void> {
    * ★ **장부와 잔고 대조 결과를 함께 준다.** 어긋나면 층별 숫자가 그만큼
    * 거짓이므로, 화면이 그 사실을 값으로 알아야 한다.
    */
+  /*
+   * ★ **차트에 찍을 우리 매매.** 접수가 아니라 체결만 준다(층 장부를 본다).
+   *
+   * 계좌 조회를 안 탄다 — DB만 보므로 실계좌 차단(`accountReadBlock`) 상태에서도
+   * 내가 언제 무엇을 샀는지는 볼 수 있어야 한다. 그건 우리 기록이지 증권사 값이 아니다.
+   */
+  app.get<{ Querystring: { accountId?: string; symbol?: string } }>(
+    '/api/trading/trade-marks',
+    async (req, reply) => {
+      const symbol = (req.query.symbol ?? '').trim();
+      if (!/^[0-9A-Z]{6}$/.test(symbol)) {
+        return reply.code(400).send({ message: '종목코드(6자리)가 필요합니다.' });
+      }
+      const account = resolveAccount(req.query.accountId);
+      if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+      const accountId = account?.id ?? '';
+      if (!accountId) return { accountId: '', symbol, marks: [] as ChartTradeMark[] };
+
+      const rows = await getTradeMarks(accountId, symbol).catch(() => []);
+      const marks: ChartTradeMark[] = [];
+      for (const row of rows) {
+        /*
+         * ★ **UTC epoch seconds로 바꾼다.** `Candle.time`과 같은 축이어야 마커가
+         *   캔들에 붙는다 — ms로 넣으면 차트가 조용히 안 그린다.
+         */
+        const [y, m, d] = row.tradedOn.split('-').map(Number);
+        if (!y || !m || !d) continue;
+        marks.push({
+          time: Date.UTC(y, m - 1, d) / 1000,
+          side: row.side,
+          quantity: row.quantity,
+          price: row.price,
+          layer: row.layer,
+          realizedPnl: row.realizedPnl ?? undefined,
+        });
+      }
+      // 오름차순으로 준다 — 차트 마커는 시간순이어야 한다.
+      marks.sort((a, b) => a.time - b.time);
+      return { accountId, symbol, marks };
+    },
+  );
+
   app.get<{ Querystring: { accountId?: string } }>('/api/trading/layers', async (req, reply) => {
     const account = resolveAccount(req.query.accountId);
     if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });

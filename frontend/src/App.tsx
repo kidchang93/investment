@@ -34,6 +34,7 @@ import {
   fetchMarketMovers,
   fetchScreening,
   fetchSignalScores,
+  fetchTradeMarks,
   fetchInstrumentQuotes,
   fetchTerminalInstruments,
   fetchThemePulses,
@@ -60,6 +61,7 @@ import type {
   AutoTraderMode,
   AutoTraderState,
   BrokerAccountRef,
+  ChartTradeMark,
   BrokerAccountSnapshot,
   BrokerAmendableOrder,
   BrokerExecutionSnapshot,
@@ -2741,6 +2743,8 @@ export function App(): JSX.Element {
   );
   const [kisAccounts, setKisAccounts] = useState<BrokerAccountRef[]>([]);
   const [kisAccountId, setKisAccountId] = useState<string | null>(null);
+  /** 선택한 종목에서 우리가 실제로 체결한 자리. 차트 마커의 재료다 */
+  const [tradeMarks, setTradeMarks] = useState<ChartTradeMark[]>([]);
   const [kisAccountSnapshot, setKisAccountSnapshot] = useState<BrokerAccountSnapshot | null>(null);
   const [usdKrwRate, setUsdKrwRate] = useState<ExchangeRate | null>(null);
   const [isKisAccountRefreshing, setIsKisAccountRefreshing] = useState(false);
@@ -3019,6 +3023,34 @@ export function App(): JSX.Element {
       disposed = true;
     };
   }, [activePage, kisAccountId]);
+
+  /*
+   * ★ **선택한 종목에서 우리가 사고판 자리.** 차트에 화살표로 찍는다(2026-08-24).
+   *
+   * 계좌 조회를 안 탄다 — 우리 장부(체결)를 읽는 것이라 실계좌 차단 상태에서도
+   * "내가 언제 무엇을 샀나"는 볼 수 있어야 한다.
+   *
+   * ★ **못 받으면 빈 배열로 둔다.** 매매 표시가 없다고 차트가 안 그려지면 안 된다 —
+   *   이건 시세가 아니라 덧그리는 것이다.
+   */
+  useEffect(() => {
+    const symbol = selectedInstrument?.providerSymbol;
+    if (!symbol || selectedInstrument?.country !== 'KR') {
+      setTradeMarks([]);
+      return;
+    }
+    let disposed = false;
+    fetchTradeMarks(symbol, kisAccountId ?? undefined)
+      .then((marks) => {
+        if (!disposed) setTradeMarks(marks);
+      })
+      .catch(() => {
+        if (!disposed) setTradeMarks([]);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [selectedInstrument?.providerSymbol, selectedInstrument?.country, kisAccountId]);
 
   const refreshAutoTrader = useCallback(() => {
     if (!kisAccountId) return;
@@ -7166,6 +7198,11 @@ export function App(): JSX.Element {
                 showMovingAverage={showMovingAverage}
                 showRsi={showRsi}
                 showPriceLevels={showPriceLevels}
+                /*
+                 * ★ 일봉에서만 넘긴다. 마커 시각이 일봉 축(UTC epoch seconds)이라
+                 *   분봉에 넘기면 캔들에 안 붙고 조용히 사라진다.
+                 */
+                tradeMarks={timeframe === '1D' ? tradeMarks : undefined}
                 onReadoutChange={setHoveredChartReadout}
               />
             ) : (

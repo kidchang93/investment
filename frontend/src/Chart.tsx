@@ -9,10 +9,11 @@ import {
   type CandlestickData,
   type HistogramData,
   type LineData,
+  type SeriesMarker,
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import type { Candle, PriceSign, Trade } from '@invest/shared';
+import type { Candle, ChartTradeMark, PriceSign, Trade } from '@invest/shared';
 
 interface LatestPrice {
   price: number;
@@ -74,6 +75,13 @@ interface ChartProps {
   showRsi?: boolean;
   /** 당일 시가/고가/저가 기준선 표시 여부 */
   showPriceLevels?: boolean;
+  /**
+   * **우리가 실제로 사고판 자리.** 캔들 위에 화살표로 찍는다.
+   *
+   * ★ `ChartTradeMark.time`은 일봉과 같은 축(UTC epoch seconds)이라 **일봉에서만**
+   *   캔들에 붙는다. 분봉 차트에는 넘기지 않는다 — 시각이 안 맞아 조용히 사라진다.
+   */
+  tradeMarks?: ChartTradeMark[];
   /** crosshair가 가리키는 캔들의 readout 값 */
   onReadoutChange?: (readout: ChartReadout | null) => void;
 }
@@ -238,6 +246,7 @@ export function Chart({
   showMovingAverage = false,
   showRsi = false,
   showPriceLevels = false,
+  tradeMarks,
   onReadoutChange,
 }: ChartProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -468,6 +477,42 @@ export function Chart({
     chartRef.current?.timeScale().fitContent();
     scheduleLastPriceYRefresh();
   }, [candles, scheduleLastPriceYRefresh, showMovingAverage]);
+
+  /*
+   * ★ **우리가 산 자리와 판 자리를 캔들 위에 찍는다** (2026-08-24).
+   *
+   * 그 전까지 차트는 시세만 그렸고, 무엇을 언제 샀는지는 로그와 DB에만 있었다.
+   * 자기가 산 자리를 캔들 위에서 보면 *"왜 하필 저기서 샀나"*를 눈으로 되짚을 수 있다.
+   *
+   * ★ 매수는 캔들 **아래**에서 위로, 매도는 **위**에서 아래로 — 한국 관례대로
+   *   매수를 빨강, 매도를 파랑으로 둔다(이 차트의 상승/하락 색과 같은 축이다).
+   *
+   * ★ 마커는 **시간 오름차순**이어야 한다. 어긋나면 lightweight-charts가 조용히
+   *   일부를 안 그린다.
+   */
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    if (!tradeMarks || tradeMarks.length === 0) {
+      series.setMarkers([]);
+      return;
+    }
+    const markers: SeriesMarker<Time>[] = [...tradeMarks]
+      .sort((a, b) => a.time - b.time)
+      .map((mark) => {
+        const buy = mark.side === 'buy';
+        const price = Math.round(mark.price).toLocaleString('ko-KR');
+        return {
+          time: mark.time as UTCTimestamp,
+          position: buy ? ('belowBar' as const) : ('aboveBar' as const),
+          color: buy ? '#e5484d' : '#3b82f6',
+          shape: buy ? ('arrowUp' as const) : ('arrowDown' as const),
+          // 캔들 위 글자는 짧아야 읽힌다 — 수량과 단가까지만.
+          text: `${buy ? '매수' : '매도'} ${mark.quantity}주 ${price}`,
+        };
+      });
+    series.setMarkers(markers);
+  }, [tradeMarks]);
 
   useEffect(() => {
     const series = seriesRef.current;

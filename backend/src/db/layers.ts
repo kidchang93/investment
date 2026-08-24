@@ -189,6 +189,48 @@ export async function getLayerTradeStats(accountId: string): Promise<LayerTradeS
   }));
 }
 
+/**
+ * 그 종목에서 우리가 한 매매 전부. **차트에 찍을 값이다.**
+ *
+ * ★ 층 장부를 보므로 **체결만** 들어 있다(접수·미체결은 없다). 걸어 두고 안 붙은
+ *   주문은 매매가 아니다.
+ *
+ * ★ 층이 여럿이면 같은 날 같은 방향이 두 줄일 수 있다. 합치지 않고 그대로 준다 —
+ *   어느 층에서 산 것인지가 화면에서 사라지면 안 된다.
+ */
+export async function getTradeMarks(
+  accountId: string,
+  symbol: string,
+  limit = 200,
+): Promise<Array<{
+  tradedOn: string; side: 'buy' | 'sell'; quantity: number; price: number;
+  layer: Layer; realizedPnl: number | null;
+}>> {
+  await ensureLayerSchema();
+  const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.floor(limit), 1), 500) : 200;
+  const { rows } = await pool.query<{
+    traded_on: string; side: string; quantity: string; price: string;
+    layer: string; realized_pnl: string | null;
+  }>(
+    `SELECT to_char(traded_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS traded_on,
+            side, quantity::text, price::text, layer, realized_pnl::text
+       FROM trading_layer_trades
+      WHERE account_id = $1 AND symbol = $2 AND quantity > 0
+      ORDER BY traded_at DESC
+      LIMIT $3`,
+    [accountId, symbol, safeLimit],
+  );
+  return rows.map((r) => ({
+    tradedOn: r.traded_on,
+    side: r.side === 'sell' ? 'sell' : 'buy',
+    quantity: Number(r.quantity),
+    price: Number(r.price),
+    layer: r.layer as Layer,
+    // 매수에는 실현손익이 없다. 0으로 채우면 "본전이었다"가 된다.
+    realizedPnl: r.realized_pnl === null ? null : Number(r.realized_pnl),
+  }));
+}
+
 /** 판 자리 하나. **실제로 얼마에 팔았고 얼마를 벌었나** */
 export interface ClosedLayerTrade {
   layer: Layer;

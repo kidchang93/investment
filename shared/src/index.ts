@@ -2072,6 +2072,34 @@ export interface PortfolioLayersSnapshot {
   message?: string;
 }
 
+/**
+ * **차트에 찍는 우리 매매 한 건.** 그 종목에서 언제 얼마에 사고 팔았나.
+ *
+ * ── 왜 (2026-08-24) ──────────────────────────────────────────────────────
+ *
+ * 자동매매가 사고파는데 **화면에는 그 자취가 없었다.** 차트는 시세만 그리고,
+ * 무엇을 언제 샀는지는 로그와 DB에만 있었다. 자기가 산 자리를 캔들 위에서 보면
+ * *"왜 하필 저기서 샀나"*를 눈으로 되짚을 수 있다 — 판단자의 예측(`plan`)이
+ * 맞았는지를 사람이 확인하는 가장 빠른 길이다.
+ *
+ * ★ **접수가 아니라 체결이다.** 걸어 두고 안 붙은 주문은 매매가 아니다.
+ */
+export interface ChartTradeMark {
+  /**
+   * 체결일. **UTC epoch seconds**다 — `Candle.time`과 같은 축이어야 마커가
+   * 캔들에 붙는다(ms로 넣으면 조용히 사라진다).
+   */
+  time: number;
+  side: OrderSide;
+  quantity: number;
+  /** 체결단가(원). 접수가가 아니다 */
+  price: number;
+  /** 3층 중 어디. 옛 기록에는 없을 수 있다 */
+  layer?: string;
+  /** 매도면 그때 실현한 손익(원). 매수에는 없다 */
+  realizedPnl?: number;
+}
+
 /** 자동화가 언제 무엇을 했나. 안 돌았으면 그 사실이 값으로 보여야 한다 */
 export interface AutomationHeartbeat {
   name: string;
