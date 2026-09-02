@@ -26,7 +26,8 @@ import {
   recordLayerTrade,
 } from '../db/layers.js';
 import { getKisDomesticAccountSnapshot } from '../kis/rest.js';
-import { LAYER_LABELS, reconcile, summarizeLayers } from '../trading/layers.js';
+import { getTodaySubmittedQuantities } from '../db/brokerOrders.js';
+import { LAYER_LABELS, explainMismatches, reconcile, summarizeLayers } from '../trading/layers.js';
 
 const won = (n: number): string => Math.round(n).toLocaleString('ko-KR');
 const pct = (n: number): string => `${(n * 100).toFixed(1)}%`;
@@ -165,10 +166,31 @@ async function main(): Promise<void> {
    * ★★ **장부와 잔고 대조.** 여기가 어긋나면 위 숫자가 전부 거짓이다.
    * 2026-08-14 중복 체결도 이 대조로 잡았다.
    */
-  const mismatches = reconcile(positions, brokerQty);
+  /*
+   * ★ 오늘 낸 주문으로 설명되는 차이는 **따로 적는다** (2026-09-02). 장부는
+   *   체결이 확인된 것만 담고 그 확인은 마감 정리에서 하므로, 장중에 체결되면
+   *   15:40까지 어긋나 보이는 것이 정상이다. 그것과 **진짜로 빠진 것**을 섞어
+   *   적으면 "위 숫자를 믿지 마라"가 매매하는 날마다 뜨고, 그러면 안 읽힌다.
+   */
+  const explained = explainMismatches(
+    reconcile(positions, brokerQty),
+    await getTodaySubmittedQuantities(accountId),
+  );
+  const pendingSync = explained.filter((m) => m.explained);
+  const mismatches = explained.filter((m) => !m.explained);
   console.log('');
+  if (pendingSync.length > 0) {
+    console.log(`오늘 낸 주문으로 설명되는 차이 — ${pendingSync.length}종목 (마감 정리에서 들어온다)`);
+    for (const m of pendingSync) {
+      console.log(`  ${m.symbol}  장부 ${won(m.ledger)}주 · 증권사 ${won(m.broker)}주 (차이 ${signed(m.broker - m.ledger)}주)`);
+    }
+  }
   if (mismatches.length === 0) {
-    console.log('장부와 증권사 잔고가 맞는다.');
+    console.log(
+      pendingSync.length > 0
+        ? '그 밖에는 장부와 증권사 잔고가 맞는다.'
+        : '장부와 증권사 잔고가 맞는다.',
+    );
   } else {
     console.log(`★ 장부와 잔고가 어긋난다 — ${mismatches.length}종목. **위 숫자를 믿지 마라.**`);
     for (const m of mismatches) {

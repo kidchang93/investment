@@ -13,6 +13,7 @@ import {
   applyTrade,
   averageCost,
   reconcile,
+  explainMismatches,
   resolveFillLayer,
   resolveSellLayer,
   tradeStampFor,
@@ -185,6 +186,76 @@ describe('체결의 층 판정 — 모르면 넣지 않는다', () => {
     const d = resolveFillLayer(undefined, undefined);
     assert.equal(d.kind, 'skip');
     assert.match(d.kind === 'skip' ? d.why : '', /--layer/, '무엇을 해야 하는지 말해야 한다');
+  });
+});
+
+/*
+ * ★★ 장중 체결은 어긋나 보이는 것이 정상이다 (2026-09-02).
+ *
+ * 장부는 **체결이 확인된 것만** 담고 그 확인은 마감 정리에서 한다. 그래서
+ * 장중에 체결되면 15:40까지 반드시 어긋나 보이고, 그것이 20분마다 경보로
+ * 나갔다. 이 경보는 2026-08-21에 하루 16번 울려 감시를 멈추게 한 전력이 있다.
+ *
+ * **매일 울리는 경보는 읽히지 않는다** — 그러면 8/25 삼성전자처럼 진짜로 빠진
+ * 것을 8일간 못 본다.
+ */
+describe('어긋남 — 오늘 낸 주문으로 설명되나', () => {
+  const mismatch = (symbol: string, ledger: number, broker: number) => ({ symbol, ledger, broker });
+
+  it('오늘 매도한 만큼 잔고가 줄었으면 설명된다', () => {
+    // 2026-09-02 실제 값: KB금융 장부 58주 · 잔고 54주 · 오늘 매도 4주
+    const [m] = explainMismatches(
+      [mismatch('105560', 58, 54)],
+      [{ symbol: '105560', side: 'sell', quantity: 4 }],
+    );
+    assert.equal(m.explained, true);
+  });
+
+  it('오늘 매수한 만큼 잔고가 늘었으면 설명된다', () => {
+    const [m] = explainMismatches(
+      [mismatch('010950', 0, 30)],
+      [{ symbol: '010950', side: 'buy', quantity: 30 }],
+    );
+    assert.equal(m.explained, true);
+  });
+
+  it('부분체결이면 차이가 접수량보다 작다 — 여전히 설명된다', () => {
+    const [m] = explainMismatches(
+      [mismatch('105560', 58, 56)],
+      [{ symbol: '105560', side: 'sell', quantity: 4 }],
+    );
+    assert.equal(m.explained, true, '접수량은 상한이다');
+  });
+
+  it('★ 차이가 접수량을 넘으면 설명이 안 된다 — 우리 주문 밖의 일이 있었다', () => {
+    const [m] = explainMismatches(
+      [mismatch('105560', 58, 50)],
+      [{ symbol: '105560', side: 'sell', quantity: 4 }],
+    );
+    assert.equal(m.explained, false);
+  });
+
+  it('★ 방향이 반대면 설명이 안 된다 — 팔았는데 잔고가 늘 수는 없다', () => {
+    const [m] = explainMismatches(
+      [mismatch('105560', 58, 62)],
+      [{ symbol: '105560', side: 'sell', quantity: 10 }],
+    );
+    assert.equal(m.explained, false);
+  });
+
+  it('★★ 오늘 주문이 없으면 무엇도 설명되지 않는다 — 손으로 낸 매매는 알려야 한다', () => {
+    const [m] = explainMismatches([mismatch('005930', 34, 0)], []);
+    assert.equal(m.explained, false, '8/25 삼성전자가 정확히 이 모양이었다');
+  });
+
+  it('한 종목에 매수와 매도가 다 있으면 각각을 상한으로 본다', () => {
+    const orders = [
+      { symbol: '069500', side: 'buy' as const, quantity: 10 },
+      { symbol: '069500', side: 'sell' as const, quantity: 5 },
+    ];
+    assert.equal(explainMismatches([mismatch('069500', 100, 108)], orders)[0].explained, true);
+    assert.equal(explainMismatches([mismatch('069500', 100, 96)], orders)[0].explained, true);
+    assert.equal(explainMismatches([mismatch('069500', 100, 94)], orders)[0].explained, false);
   });
 });
 

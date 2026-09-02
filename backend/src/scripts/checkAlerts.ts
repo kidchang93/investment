@@ -27,12 +27,13 @@ import { promisify } from 'node:util';
 import { getKisAccount } from '../config.js';
 import { getAlertNotices, markAlertNotified } from '../db/alertNotices.js';
 import { closeDb, pool } from '../db/client.js';
+import { getTodaySubmittedQuantities } from '../db/brokerOrders.js';
 import { getLayerPositions } from '../db/layers.js';
 import { getRiskRules } from '../db/riskRules.js';
 import { getKisDomesticAccountSnapshot } from '../kis/rest.js';
 import { escapeMrkdwn, sendSlack } from '../notify/slack.js';
 import { splitByNotice } from '../trading/alertNotice.js';
-import { reconcile } from '../trading/layers.js';
+import { explainMismatches, reconcile } from '../trading/layers.js';
 
 const run = promisify(execFile);
 const won = (n: number): string => Math.round(n).toLocaleString('ko-KR');
@@ -119,9 +120,34 @@ async function main(): Promise<void> {
   }
 
   // ── ② 장부와 잔고 ───────────────────────────────────────────────────
+  /*
+   * ★★ **오늘 우리가 낸 주문으로 설명되는 차이는 알리지 않는다** (2026-09-02).
+   *
+   * 장부는 체결이 확인된 것만 담고 그 확인은 마감 정리에서 한다. 그래서 장중에
+   * 체결되면 15:40까지 **반드시** 어긋나 보인다 — 그 정상 상태가 20분마다
+   * 경보로 나갔다. 이 경보는 2026-08-21에 하루 16번 울려 감시를 통째로 멈추게
+   * 한 전력이 있고, 그때 붙인 중복 억제는 **매매하는 날마다 한 번**은 그대로
+   * 울리게 둔다. 매일 울리는 경보는 읽히지 않고, 그러면 8/25 삼성전자처럼
+   * 진짜로 빠진 것을 8일간 못 본다.
+   *
+   * ★ 설명으로 인정하는 것은 **우리 주문뿐**이다. 사람이 손으로 판 것은 여전히
+   *   알린다 — 그것이야말로 이 경보가 잡아야 할 일이다.
+   */
   const positions = await getLayerPositions(accountId);
   const brokerQty = new Map(snapshot.positions.map((p) => [p.symbol, p.quantity]));
-  const mismatches = reconcile(positions, brokerQty);
+  const explained = explainMismatches(
+    reconcile(positions, brokerQty),
+    await getTodaySubmittedQuantities(accountId),
+  );
+  const pendingSync = explained.filter((m) => m.explained);
+  const mismatches = explained.filter((m) => !m.explained);
+  if (pendingSync.length > 0) {
+    // 경보는 아니지만 **로그에는 남긴다.** 조용히 지나가면 나중에 못 되짚는다.
+    console.log(
+      `  (오늘 낸 주문으로 설명되는 차이 ${pendingSync.length}종목:`
+      + ` ${pendingSync.map((m) => m.symbol).join(' ')} — 마감 정리에서 들어온다)`,
+    );
+  }
   if (mismatches.length > 0) {
     const symbols = mismatches.map((m) => m.symbol);
     alerts.push({

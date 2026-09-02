@@ -342,6 +342,65 @@ export interface LedgerMismatch {
   broker: number;
 }
 
+/**
+ * 오늘 실제로 나간 주문 하나. **설명이 되는지 판정하는 데 필요한 만큼만** 담는다.
+ */
+export interface SubmittedQuantity {
+  symbol: string;
+  side: 'buy' | 'sell';
+  /** 접수 수량. 부분체결이면 실제 체결은 이보다 작다 — 그래서 **상한**으로 쓴다 */
+  quantity: number;
+}
+
+export interface ExplainedMismatch extends LedgerMismatch {
+  /** 오늘 낸 주문으로 설명되나. 참이면 마감 정리(`layerSync`)에서 들어온다 */
+  explained: boolean;
+}
+
+/**
+ * 어긋남 중 **오늘 우리가 낸 주문으로 설명되는 것**을 가른다.
+ *
+ * ── 왜 필요한가 (2026-09-02) ─────────────────────────────────────────────
+ *
+ * 장부는 **체결이 확인된 것만** 담고(접수 시점에 쓰면 미체결이 사실로 기록된다),
+ * 그 확인은 마감 정리에서 한다. 그래서 **장중에 체결되면 15:40까지는 반드시
+ * 어긋나 보인다.** 그것이 20분마다 "장부와 잔고가 어긋난다"로 울렸다.
+ *
+ * ★ 이 경보는 2026-08-21에 하루 **16번** 울려 감시를 통째로 멈추게 한 전력이
+ *   있다. 그때는 중복을 억제해 하루 한 번으로 줄였지만, **매매하는 날마다
+ *   울리는 것은 그대로**였다. 매일 울리는 경보는 읽히지 않고, 그러면 진짜
+ *   불일치를 놓친다 — 8/25 삼성전자 매도가 장부에서 8일간 빠져 있던 것처럼.
+ *
+ * ── 무엇을 설명으로 인정하나 ─────────────────────────────────────────────
+ *
+ * **우리가 오늘 낸 주문만이다.** 사람이 MTS로 손수 판 것은 설명하지 않는다 —
+ * 그것이야말로 알려야 할 일이고, 그것까지 덮으면 이 경보가 할 일이 없어진다.
+ *
+ * 접수 수량을 **상한**으로 본다. 부분체결이면 차이가 그보다 작으므로 여전히
+ * 설명되고, 차이가 접수량을 넘으면 우리 주문으로는 설명이 안 되는 것이다.
+ * 매수·매도를 각각 상한으로 두어 `[-매도합, +매수합]` 범위로 본다.
+ */
+export function explainMismatches(
+  mismatches: LedgerMismatch[],
+  submitted: SubmittedQuantity[],
+): ExplainedMismatch[] {
+  const bought = new Map<string, number>();
+  const sold = new Map<string, number>();
+  for (const order of submitted) {
+    const target = order.side === 'buy' ? bought : sold;
+    target.set(order.symbol, (target.get(order.symbol) ?? 0) + order.quantity);
+  }
+  return mismatches.map((m) => {
+    const diff = m.broker - m.ledger;
+    // 부동소수 여유. 수량은 numeric이라 소수가 올 수 있다.
+    const epsilon = 1e-9;
+    const explained = diff < 0
+      ? -diff <= (sold.get(m.symbol) ?? 0) + epsilon
+      : diff <= (bought.get(m.symbol) ?? 0) + epsilon;
+    return { ...m, explained };
+  });
+}
+
 export function reconcile(
   positions: LayerPosition[],
   brokerQuantities: Map<string, number>,

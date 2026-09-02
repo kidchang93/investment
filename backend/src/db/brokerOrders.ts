@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { pool } from './client.js';
 import type { BrokerOrderRecord, OrderSide, OrderType } from '@invest/shared';
+import type { SubmittedQuantity } from '../trading/layers.js';
 
 /**
  * 실계좌 주문 전송 감사 기록.
@@ -468,4 +469,46 @@ export async function getOrderByClientOrderId(
     message: row.message,
     layer: row.layer,
   };
+}
+
+/**
+ * 오늘 **실제로 증권사에 나간** 신규 주문의 수량. 잔고 대조가 쓴다.
+ *
+ * ── 왜 필요한가 (2026-09-02) ─────────────────────────────────────────────
+ *
+ * 장부는 체결이 확인된 것만 담고 그 확인은 마감 정리에서 한다. 그래서 장중에
+ * 체결되면 15:40까지 **반드시** 장부와 잔고가 어긋나 보이고, 그 사이 경보가
+ * "장부와 잔고가 어긋난다"를 울린다. 오늘 우리가 낸 주문으로 설명되는 차이는
+ * 알릴 것이 아니다 → `trading/layers.ts`의 `explainMismatches`.
+ *
+ * ★ `action='place'` · `status='submitted'`만이다. 막히거나 거부된 것은 잔고를
+ *   바꾸지 않고, `cancel`은 오히려 미체결을 되돌린다. **접수된 신규 주문만**
+ *   잔고를 움직일 수 있다.
+ *
+ * ★ 날짜는 **KST 기준**이다. `created_at::date`로 자르면 UTC로 판정해 개장 전
+ *   주문이 어제로 밀린다 — 이 레포가 하트비트에서 이미 겪은 함정이다.
+ */
+export async function getTodaySubmittedQuantities(
+  accountId: string,
+): Promise<SubmittedQuantity[]> {
+  const { rows } = await pool.query<{ symbol: string; side: string; quantity: string }>(
+    `SELECT symbol, side, quantity::text
+       FROM trading_broker_orders
+      WHERE account_id = $1
+        AND action = 'place'
+        AND status = 'submitted'
+        AND side IS NOT NULL
+        AND symbol IS NOT NULL
+        AND quantity IS NOT NULL
+        AND (created_at AT TIME ZONE 'Asia/Seoul')::date
+            = (now() AT TIME ZONE 'Asia/Seoul')::date`,
+    [accountId],
+  );
+  return rows
+    .filter((row) => row.side === 'buy' || row.side === 'sell')
+    .map((row) => ({
+      symbol: row.symbol,
+      side: row.side as 'buy' | 'sell',
+      quantity: Number(row.quantity),
+    }));
 }
