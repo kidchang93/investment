@@ -584,6 +584,7 @@ async function main(): Promise<void> {
     + ` · 종목 사이 ${options.symbolGapMs}ms`,
   );
   console.log('수급은 2005년 10월 말부터 있다 — 그 전은 전부 0으로 와서 저장하지 않는다');
+  if (!options.force) console.log('★ 장이 열리면 스스로 멈춘다 — 저녁에 다시 돌리면 이어받는다');
   console.log(`오늘(${formatDay(today)})치는 담지 않는다 — 장중이면 미완성이다\n`);
 
   const startedAt = Date.now();
@@ -598,6 +599,22 @@ async function main(): Promise<void> {
 
   for (const instrument of pending) {
     if (stopRequested) break;
+    /*
+     * ★★ **장이 열리면 스스로 멈춘다.** 시작할 때만 보는 것으로는 모자란다 —
+     *   이 수집은 전 종목이면 38시간이라 **밤에 걸면 아침 개장을 그대로 넘어간다.**
+     *   그러면 감시·잔고 조회와 KIS 유량을 다투고 화면이 502를 받는다
+     *   (2026-08-18에 일봉 수집으로 실측했다. 그건 3시간짜리라 안 겪었을 뿐이다).
+     *
+     *   커서가 있으므로 여기서 끊어도 **잃는 것은 지금 종목 하나**고, 저녁에
+     *   다시 돌리면 이어받는다.
+     */
+    if (!options.force) {
+      const nowBlock = marketHoursBlock(new Date());
+      if (nowBlock) {
+        console.log(`\n★ 장이 열렸다 — 여기서 멈춘다 (다음 실행이 이어받는다).\n  ${nowBlock}`);
+        break;
+      }
+    }
     const symbolStartedAt = Date.now();
     const label = `${instrument.symbol} ${instrument.name.slice(0, 12).padEnd(14)}`;
 
