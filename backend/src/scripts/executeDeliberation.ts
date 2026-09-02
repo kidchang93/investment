@@ -36,6 +36,8 @@
 
 import { getKisAccount } from '../config.js';
 import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
+import { getLayerPositions } from '../db/layers.js';
+import { resolveSellLayer, type Layer, type SellLayerDecision } from '../trading/layers.js';
 import {
   attachExecutions,
   getDeliberations,
@@ -91,7 +93,7 @@ function alreadyDone(done: DeliberationExecution[], decision: DeliberationDecisi
  * ★ **막을 때는 조용히 넘기지 않고 크게 적는다.** "판단은 했는데 아무 일도 안
  *   일어났다"가 조용히 생기는 것이 이 고리 전체에서 가장 나쁜 실패다.
  */
-function executionProblem(d: DeliberationDecision): string | null {
+function executionProblem(d: DeliberationDecision, sellLayer: SellLayerDecision | null): string | null {
   if (d.action === 'buy' || d.action === 'sell') {
     if (typeof d.limitPrice !== 'number' || d.limitPrice <= 0) {
       return '지정가(limitPrice)가 없다 — 시장가로 나가므로 집행하지 않는다';
@@ -100,6 +102,12 @@ function executionProblem(d: DeliberationDecision): string | null {
   if (d.action === 'buy' && !d.layer) {
     return '층(layer)이 없다 — 체결을 층으로 되돌릴 수 없어 집행하지 않는다';
   }
+  /*
+   * ★ 매도는 판단자에게 층을 묻지 않고 **장부에서 읽는다** — 이미 가진 것을
+   *   파는 것이라 답이 장부에 있다. 장부가 답을 못 내는 경우(두 층에 걸침 ·
+   *   판단자와 어긋남)에만 막는다. 자세한 근거는 `resolveSellLayer`.
+   */
+  if (d.action === 'sell' && sellLayer?.kind === 'block') return sellLayer.why;
   if ((d.action === 'amend' || d.action === 'cancel') && !d.orderNo) {
     return '대상 주문번호(orderNo)가 없다';
   }
@@ -112,7 +120,8 @@ function describe(d: DeliberationDecision): string {
     case 'buy':
       return `매수 ${d.symbol} ${d.name} ${d.quantity}주 ${price} · 층 ${d.layer}`;
     case 'sell':
-      return `매도 ${d.symbol} ${d.name} ${d.quantity}주 ${price}`;
+      return `매도 ${d.symbol} ${d.name} ${d.quantity}주 ${price}`
+        + (d.layer ? ` · 층 ${d.layer}(판단자)` : '');
     case 'amend':
       return `정정 ${d.symbol} ${d.name} 주문 ${d.orderNo} → ${price}`;
     case 'cancel':
@@ -173,9 +182,27 @@ async function main(): Promise<void> {
   console.log();
   const executions: DeliberationExecution[] = [...round.executions];
 
+  /*
+   * 매도의 층을 장부에서 읽는다. **한 번만 읽는다** — 이 회차를 집행하는 동안
+   * 층 장부는 바뀌지 않는다(체결이 들어와야 바뀌고 그건 마감 뒤 `layerSync`다).
+   */
+  const holdingLayers = new Map<string, Layer[]>();
+  for (const position of await getLayerPositions(account.id)) {
+    const layers = holdingLayers.get(position.symbol) ?? [];
+    layers.push(position.layer);
+    holdingLayers.set(position.symbol, layers);
+  }
+
   for (const d of pending) {
     const side = d.action === 'sell' ? 'sell' : 'buy';
-    const problem = executionProblem(d);
+    const sellLayer = d.action === 'sell'
+      ? resolveSellLayer(d.layer as Layer | undefined, holdingLayers.get(d.symbol) ?? [])
+      : null;
+    if (sellLayer && sellLayer.kind !== 'use') {
+      // 층을 못 정한 이유는 **주문을 내든 안 내든** 적어 둔다. 조용히 넘기지 않는다.
+      console.log(`  · ${d.symbol} 매도 층: ${sellLayer.why}`);
+    }
+    const problem = executionProblem(d, sellLayer);
     if (problem) {
       console.log(`  ✗ ${describe(d)} → ${problem}`);
       executions.push({
@@ -230,7 +257,8 @@ async function main(): Promise<void> {
         orderType: d.limitPrice ? 'limit' : 'market',
         quantity: d.quantity,
         limitPrice: d.limitPrice,
-        layer: d.layer,
+        // 매수는 판단자가 적은 층, 매도는 장부에서 읽은 층이다.
+        layer: sellLayer?.kind === 'use' ? sellLayer.layer : d.layer,
         // 회차 id를 넣어 같은 판단이 두 번 나가지 않게 한다.
         clientOrderId: `delib${round.id}-${round.tradingDay.replace(/-/g, '')}-${d.symbol}-${side}${d.quantity}`,
       });

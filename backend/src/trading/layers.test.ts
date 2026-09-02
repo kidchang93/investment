@@ -14,6 +14,7 @@ import {
   averageCost,
   reconcile,
   resolveFillLayer,
+  resolveSellLayer,
   tradeStampFor,
   summarizeLayers,
   type Layer,
@@ -184,6 +185,56 @@ describe('체결의 층 판정 — 모르면 넣지 않는다', () => {
     const d = resolveFillLayer(undefined, undefined);
     assert.equal(d.kind, 'skip');
     assert.match(d.kind === 'skip' ? d.why : '', /--layer/, '무엇을 해야 하는지 말해야 한다');
+  });
+});
+
+/*
+ * ★★ 매도 주문에 어느 층을 실어 보낼 것인가 (2026-09-02).
+ *
+ * 집행기가 **매수에만** 층을 요구하고 있었다. 매도는 층 없이 나갔고, 체결이
+ * 돌아오면 `resolveFillLayer`가 `skip`을 돌려줘 **장부에 안 들어가고 사람이
+ * 손으로 넣어야** 했다. 무인 운영이 목적인데 팔 때마다 사람 손이 필요했다.
+ *
+ * 판단자에게 적으라고 하지 않는 이유: **매도는 이미 가진 것을 파는 것이라
+ * 층이 장부에 있다.** 다시 묻으면 틀릴 여지만 는다.
+ */
+describe('매도의 층 — 판단자에게 묻지 않고 장부에서 읽는다', () => {
+  it('한 층에만 있으면 그 층으로 보낸다', () => {
+    assert.deepEqual(
+      resolveSellLayer(undefined, ['etf']),
+      { kind: 'use', layer: 'etf', from: 'position' },
+    );
+  });
+
+  it('판단자가 적었고 장부와 같으면 그대로 쓴다', () => {
+    assert.deepEqual(
+      resolveSellLayer('bet', ['bet']),
+      { kind: 'use', layer: 'bet', from: 'decision' },
+    );
+  });
+
+  it('★ 판단자와 장부가 어긋나면 내지 않는다 — 둘 중 하나가 틀렸다', () => {
+    const d = resolveSellLayer('bet', ['etf']);
+    assert.equal(d.kind, 'block');
+    assert.match(d.kind === 'block' ? d.why : '', /장부/);
+  });
+
+  it('★★ 두 층에 걸쳐 있으면 짐작하지 않고 막는다', () => {
+    const d = resolveSellLayer(undefined, ['etf', 'short']);
+    assert.equal(d.kind, 'block');
+    assert.match(d.kind === 'block' ? d.why : '', /layer/, '무엇을 해야 하는지 말해야 한다');
+  });
+
+  it('두 층에 걸쳐 있어도 판단자가 그중 하나를 골랐으면 따른다', () => {
+    assert.deepEqual(
+      resolveSellLayer('short', ['etf', 'short']),
+      { kind: 'use', layer: 'short', from: 'decision' },
+    );
+  });
+
+  it('장부가 모르는 물량은 층 없이 낸다 — 판단자가 적었어도 믿지 않는다', () => {
+    const d = resolveSellLayer('etf', []);
+    assert.equal(d.kind, 'none', '없는 수량을 빼면 음수 포지션이 된다');
   });
 });
 

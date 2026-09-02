@@ -87,6 +87,75 @@ export function resolveFillLayer(
 }
 
 /**
+ * **매도 주문에 어느 층을 적어 보낼 것인가.**
+ *
+ * ── 왜 생겼나 (2026-09-02) ───────────────────────────────────────────────
+ *
+ * 집행기가 **매수에만** 층을 요구하고 있었다(`d.action === 'buy' && !d.layer`).
+ * 매도는 층 없이 나갔고, 그러면 체결이 돌아왔을 때 `resolveFillLayer`가
+ * `skip`을 돌려준다 — **장부에 안 들어가고 사람이 `--layer`로 손수 넣어야 한다.**
+ *
+ * 2026-09-02 회차 33이 매도 둘(411060 · 105560)을 층 없이 냈고, 그대로 체결됐으면
+ * 그날 밤 마감 정리가 exit 3으로 끝났을 것이다. **무인 운영이 목적인데 팔 때마다
+ * 사람 손이 필요한 구조**였다. 손절 경로는 2026-08-22에 같은 이유로 이미 고쳤는데
+ * (`e576ba3`) 판단자 집행 경로가 남아 있었다.
+ *
+ * ── 왜 판단자에게 적으라고 하지 않나 ─────────────────────────────────────
+ *
+ * **매도는 이미 가진 것을 파는 것이라 층이 장부에 있다.** 판단자가 다시 적으면
+ * 틀릴 여지만 는다 — 틀린 층으로 나가면 두 층의 손익이 함께 거짓이 되고
+ * 잔고 대조로는 안 걸린다(합계는 맞으므로). **아는 것을 다시 묻지 않는다.**
+ *
+ * 다만 한 종목을 두 층에서 들고 있으면 장부도 답을 모른다. 그때는 **막고**
+ * 판단자가 `layer`로 정하게 한다 — 짐작하지 않는다.
+ */
+export type SellLayerDecision =
+  /** 이 층으로 보낸다. `from`은 근거가 판단자인지 장부인지 */
+  | { kind: 'use'; layer: Layer; from: 'decision' | 'position' }
+  /** 층 없이 보낸다. 장부가 모르는 물량이라 어차피 장부에 넣을 수도 없다 */
+  | { kind: 'none'; why: string }
+  /** 짐작할 수 없다 — 주문을 내지 않는다 */
+  | { kind: 'block'; why: string };
+
+export function resolveSellLayer(
+  /** 판단자가 결정에 적어 둔 층. 보통은 비어 있다 */
+  decided: Layer | undefined,
+  /** 우리 장부가 그 종목을 들고 있는 층들 (수량 > 0) */
+  holding: Layer[],
+): SellLayerDecision {
+  if (holding.length === 0) {
+    /*
+     * 장부에 없는 물량이다(러너 시절 매매·사람이 손으로 산 것). 층을 적어 보내면
+     * 그 층에서 없던 수량이 빠져 **음수 포지션**이 된다. 판단자가 적어 놨더라도
+     * 그것을 믿지 않는다 — 장부가 근거이고 장부가 모른다고 말하고 있다.
+     */
+    return {
+      kind: 'none',
+      why: '우리 장부에 이 종목의 층 기록이 없다 — 층 없이 낸다(체결도 장부에 안 들어간다)',
+    };
+  }
+  if (holding.length === 1) {
+    const only = holding[0];
+    if (decided && decided !== only) {
+      return {
+        kind: 'block',
+        why: `판단자는 ${LAYER_LABELS[decided]} 층이라는데 장부는 ${LAYER_LABELS[only]} 층에만 있다`
+          + ' — 둘 중 하나가 틀렸으므로 내지 않는다',
+      };
+    }
+    return { kind: 'use', layer: only, from: decided ? 'decision' : 'position' };
+  }
+  if (decided && holding.includes(decided)) {
+    return { kind: 'use', layer: decided, from: 'decision' };
+  }
+  return {
+    kind: 'block',
+    why: `${holding.map((l) => LAYER_LABELS[l]).join('·')} ${holding.length}개 층에 걸쳐 있다`
+      + ' — 어느 쪽을 파는지 판단자가 layer로 정해야 한다',
+  };
+}
+
+/**
  * 체결일(`YYYYMMDD`)을 장부에 적을 시각으로. 형식이 아니면 `null`(그러면 지금 시각).
  *
  * ★ **자정이 아니라 그날 장 마감(15:30 KST)으로 적는다.** 날짜만 맞으면 되지만,
