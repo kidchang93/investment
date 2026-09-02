@@ -6,6 +6,9 @@ import {
   startScheduler,
 } from './automation/scheduler.js';
 import cors from '@fastify/cors';
+import fastifyStatic from '@fastify/static';
+import { existsSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
   config,
@@ -1847,6 +1850,44 @@ async function main(): Promise<void> {
       return reply.code(502).send({ message: '호가를 조회하지 못했습니다.' });
     }
   });
+
+  /*
+   * ── ★★ 화면을 백엔드가 함께 낸다 (2026-09-02) ────────────────────────
+   *
+   * 사용자가 말했다 — *"백 프론트 두 개를 꼭 둬야 되나? 하나로 서빙할 수 있는
+   * 방법이 제일 좋을 것 같다."*
+   *
+   * 맞다. 띄울 것이 둘이면 **둘 다 떠 있는지 사람이 확인**해야 하고, 그것이
+   * 곧 명령어를 치는 일이 된다. `frontend/dist`가 있으면 백엔드가 그대로 낸다 —
+   * `http://localhost:4000` 하나로 화면·API·WebSocket이 전부 나온다.
+   *
+   * ★ **API 라우트를 전부 등록한 뒤에 붙인다.** 정적 서빙이 먼저 오면
+   *   `/api/...`까지 파일로 찾으려 든다.
+   *
+   * ★ dist가 없으면 **조용히 넘어가지 않고 로그로 말한다.** 화면이 안 뜨는데
+   *   이유를 모르는 것이 가장 나쁘다 — `npm run build`를 하면 생긴다.
+   *
+   * ★ 개발 중에는 `npm run dev:web`(:5173)이 그대로 낫다(HMR). 그쪽은
+   *   `VITE_API_BASE`로 이 서버를 부르므로 둘이 공존한다.
+   */
+  const webRoot = resolvePath(process.cwd(), process.cwd().endsWith('backend') ? '../frontend/dist' : 'frontend/dist');
+  if (existsSync(webRoot)) {
+    await app.register(fastifyStatic, { root: webRoot });
+    /*
+     * SPA라 새로고침·딥링크가 서버에 없는 경로로 들어온다. **API가 아닌 404만**
+     * `index.html`로 돌린다 — API 404까지 HTML을 주면 화면이 JSON 파싱에서
+     * 깨지고 원인이 안 보인다.
+     */
+    app.setNotFoundHandler((req, reply) => {
+      if (req.url.startsWith('/api') || req.url.startsWith('/stream')) {
+        return reply.code(404).send({ message: '없는 경로입니다.' });
+      }
+      return reply.sendFile('index.html');
+    });
+    app.log.info({ webRoot }, '화면을 함께 낸다 — http://localhost:%d', config.port);
+  } else {
+    app.log.warn({ webRoot }, '화면 빌드가 없다 — npm run build 를 하면 이 주소에서 화면도 나온다');
+  }
 
   await app.listen({ port: config.port, host: '0.0.0.0' });
 
