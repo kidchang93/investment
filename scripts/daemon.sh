@@ -212,6 +212,24 @@ run_executor() {
   log "집행기 끝"
 }
 
+# ★★ **맥이 잠들면 데몬도 함께 멈춘다.** 2026-09-02 실측: `pmset -g custom`이
+#   AC 전원에서도 `sleep 1`이다. 화면이 켜져 있는 동안은 powerd의
+#   `PreventUserIdleSystemSleep`이 막아 주지만, **뚜껑을 닫거나 화면이 꺼지면
+#   잔다.** 자는 동안은 손절 감시도 판단자도 없다 — 장중에 그러면 그날 위험을
+#   아무도 안 보고 있는 것이 된다.
+#
+# ★ `-w $$`로 **이 데몬이 살아 있는 동안만** 붙잡는다. 데몬이 죽으면 caffeinate도
+#   따라 끝나므로 "멈췄는데 맥만 계속 깨어 있는" 상태가 남지 않는다.
+# ★ `-i`(유휴 절전)와 `-s`(시스템 절전)를 함께 준다. `-s`는 AC에서만 유효해서
+#   배터리로 돌 때는 `-i`가 맡는다. 화면은 재우게 둔다(`-d`를 안 준다) —
+#   무인 운영에 화면은 필요 없고 켜 두면 전력만 쓴다.
+keep_awake() {
+  command -v caffeinate >/dev/null 2>&1 || { log "caffeinate가 없다 — 절전을 못 막는다"; return 1; }
+  nohup caffeinate -i -s -w $$ >/dev/null 2>&1 &
+  disown
+  log "절전 차단 시작 (caffeinate -i -s -w $$)"
+}
+
 run_loop() {
   if ! acquire_lock; then
     # 조용히 물러난다. `.zshrc`가 터미널을 열 때마다 부르므로 시끄러우면 안 된다.
@@ -219,6 +237,7 @@ run_loop() {
     return 0
   fi
   log "데몬 시작 (pid $$)"
+  keep_awake
   if wait_for_db 60; then
     log "Postgres 준비됨"
   else
@@ -481,6 +500,14 @@ case "${1:-status}" in
     fi
     if [[ -f "$DISABLED_FILE" ]]; then
       print -r -- "  (자동 기동 꺼짐 — 터미널을 열어도 안 뜬다)"
+    fi
+    # ★ 데몬이 살아 있어도 **맥이 자면 함께 멈춘다.** 그것이 걸려 있는지 함께 본다.
+    if [[ -n "$(daemon_pid)" ]]; then
+      if pgrep -f "caffeinate -i -s -w $(daemon_pid)" >/dev/null 2>&1; then
+        print -r -- "  절전 차단 ● (맥이 자도 계속 돈다)"
+      else
+        print -r -- "  절전 차단 ○ — 화면이 꺼지면 데몬도 멈춘다. 다시 띄워라(stop → start)"
+      fi
     fi
     print -r -- ""
     print -r -- "오늘 한 일:"
