@@ -47,7 +47,16 @@ docker run -d --name kis-postgres -p 55432:5432 \
   -e POSTGRES_USER=kis -e POSTGRES_PASSWORD=kis_local -e POSTGRES_DB=kis \
   postgres:16-alpine
 
-# 개발 모드: 백엔드(:4000) + 프론트(:5173) 동시 실행
+# ★ 기동은 이 하나다 (2026-09-02~) — Docker·Postgres·백엔드·화면
+#   http://localhost:4000 에서 화면·API·WebSocket이 전부 나온다.
+#   스케줄러는 백엔드 안에 있고(`backend/src/automation/`) 켜고 끄는 것은 화면에서 한다.
+#   ★ 자동 시작은 걸지 않는다 — 사용자가 기동하라고 할 때만 (docs/USER_DECISIONS.md)
+zsh scripts/morning.sh
+
+# 프론트를 고쳤으면 빌드해야 :4000에 반영된다
+npm run build
+
+# 개발 모드: 백엔드(:4000) + 프론트(:5173) 동시 실행 (HMR이 필요할 때만)
 npm run dev
 
 # 개별 실행
