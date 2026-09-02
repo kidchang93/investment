@@ -48,7 +48,7 @@
 import { config } from '../config.js';
 import { closeDb, pool } from '../db/client.js';
 import { getAccessToken, primaryCredentials } from '../kis/auth.js';
-import { getDomesticTurnoverRanking } from '../kis/rest.js';
+import { getDomesticTurnoverRanking, getQuote } from '../kis/rest.js';
 
 type Session = 'close' | 'open';
 
@@ -209,24 +209,45 @@ async function collect(session: Session, symbolCount: number, intervalSec: numbe
    */
   console.log('\n창이 끝났다. 확정가를 받는다…');
   await delay(session === 'close' ? 90_000 : 60_000);
+  await settlePrices(session, symbols);
+}
+
+/**
+ * 확정가를 받아 담는다.
+ *
+ * ── ★★ 예상체결 TR을 쓰면 안 된다 (2026-09-02 실측) ─────────────────────
+ *
+ * 처음에는 같은 `snapshot()`(예상체결 TR)으로 받았는데 **20종목 중 4개만**
+ * 들어왔다. 15:34는 **마감 후**라 그 TR의 `output2`가 빈 값을 준다 — 그리고
+ * `catch {}`가 그것을 조용히 삼켜 **왜 빠졌는지 알 수도 없었다.**
+ *
+ * 확정가는 **정규 현재가 조회**(`getQuote`)로 받는다. 마감 후에도 종가를 준다.
+ * 시가 세션은 `open` 필드가 그날 시가다.
+ *
+ * ★ 실패를 세어서 말한다. 조용히 빠지면 표본이 왜 작은지 모른 채 결론을 낸다.
+ */
+async function settlePrices(session: Session, symbols: string[]): Promise<void> {
+  const day = kstNow().day;
   let settled = 0;
+  const failed: string[] = [];
   for (const code of symbols) {
     try {
-      const s = await snapshot(code, token);
-      const price = session === 'close' ? s.currentPrice : s.dayOpen;
-      if (price === null) continue;
+      const quote = await getQuote(code);
+      const price = session === 'close' ? quote.price : quote.open;
+      if (!(price > 0)) { failed.push(`${code}(가격 0)`); continue; }
       await pool.query(
         `INSERT INTO trading_auction_settled (symbol, trading_day, session, settled_price)
          VALUES ($1,$2,$3,$4)
          ON CONFLICT (symbol, trading_day, session) DO UPDATE SET settled_price = EXCLUDED.settled_price`,
-        [code, kstNow().day, session, price],
+        [code, day, session, price],
       );
       settled += 1;
-    } catch {
-      // 한 종목이 실패해도 나머지는 담는다.
+    } catch (error) {
+      failed.push(`${code}(${(error as Error).message.slice(0, 40)})`);
     }
   }
   console.log(`확정가 ${settled}/${symbols.length}종목 저장. 집계: --report`);
+  if (failed.length > 0) console.log(`  못 받은 것: ${failed.join(' · ')}`);
 }
 
 /**
@@ -241,11 +262,16 @@ async function report(): Promise<void> {
     session: string; clock: string; n: string; mean_err: string; abs_err: string; p90: string;
   }>(
     `
+    /* 마감 전 마지막 값만 쓴다 — 아래 clock 조건이 그것이다.
+       종가 세션의 15:30·15:31 스냅샷은 이미 마감된 뒤라 그때 값으로 오차를 재면
+       "주문할 때 내가 본 값"이 아니다. 주문은 15:30 전에 넣어야 하므로
+       종가는 15:29까지, 시가는 08:59까지가 우리가 아는 전부다. */
     WITH last_snap AS (
       SELECT DISTINCT ON (symbol, trading_day, session)
              symbol, trading_day, session, clock, expected_price, expected_volume
         FROM trading_auction_snapshots
        WHERE expected_price IS NOT NULL
+         AND ((session = 'close' AND clock <= '1529') OR (session = 'open' AND clock <= '0859'))
        ORDER BY symbol, trading_day, session, clock DESC
     ),
     joined AS (
@@ -301,6 +327,23 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   if (args.includes('--report')) {
     await report();
+    return;
+  }
+  /*
+   * ★ 확정가만 다시 받는다. 수집은 됐는데 확정가가 빠진 날을 살린다 —
+   *   2026-09-02에 예상체결 TR로 받다가 16종목을 놓쳤고, 스냅샷은 멀쩡했다.
+   */
+  if (args.includes('--settle')) {
+    await ensureSchema();
+    const session: Session = args.includes('--open') ? 'open' : 'close';
+    const { rows } = await pool.query<{ symbol: string }>(
+      `SELECT DISTINCT symbol FROM trading_auction_snapshots
+        WHERE session = $1 AND trading_day = $2 ORDER BY symbol`,
+      [session, kstNow().day],
+    );
+    if (rows.length === 0) { console.log('오늘 그 세션의 스냅샷이 없습니다.'); return; }
+    console.log(`${session} 확정가를 다시 받는다 · ${rows.length}종목`);
+    await settlePrices(session, rows.map((r) => r.symbol));
     return;
   }
   const session: Session | null = args.includes('--close') ? 'close' : args.includes('--open') ? 'open' : null;
