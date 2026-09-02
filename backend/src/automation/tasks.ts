@@ -62,6 +62,21 @@ export interface TaskSpec {
    * 쌓인다. 실제로 집행됐을 때만 따로 남긴다.
    */
   noHeartbeat?: boolean;
+  /**
+   * ★★ **밖에서 같은 일이 이미 돌고 있나**를 보는 `pgrep -f` 패턴.
+   *
+   * 2026-09-03에 판단자가 **두 벌 떴다.** 사람이 08:46에 손으로 소집했는데
+   * 그것이 아직 하트비트를 안 남긴 상태에서, 08:48에 매매를 켜자 스케줄러가
+   * 08:49 회차에 *"오늘 아직 안 했다"*고 읽고 또 불렀다. **헤드리스 Claude 두
+   * 벌이 같은 계좌를 판단했고**, 그대로 뒀으면 회차가 둘 남아 집행기가 각각
+   * 주문을 냈을 것이다.
+   *
+   * 스케줄러의 `running` 집합은 **자기가 띄운 것만** 안다. 사람이 손으로 돌린
+   * 것·이전 인스턴스가 남긴 것은 프로세스를 직접 봐야 알 수 있다.
+   *
+   * ★ 비싸거나 부작용이 있는 작업에만 건다. 손절처럼 멱등한 것은 필요 없다.
+   */
+  guard?: string;
 }
 
 /**
@@ -84,6 +99,7 @@ export const TASKS: TaskSpec[] = [
     trading: false,
     daily: true,
     background: true,
+    guard: 'measureAuctionSlippage.ts --open',
     command: 'cd backend && npx tsx src/scripts/measureAuctionSlippage.ts --open',
   },
   {
@@ -92,6 +108,8 @@ export const TASKS: TaskSpec[] = [
     window: [820, 1530],
     trading: true,
     daily: true,
+    // 헤드리스 Claude라 두 벌이 뜨면 비용도 두 배이고 회차도 둘 남는다.
+    guard: 'deliberate.sh',
     command: 'zsh scripts/deliberate.sh',
   },
   {
@@ -100,6 +118,8 @@ export const TASKS: TaskSpec[] = [
     window: [900, 921],
     trading: true,
     daily: true,
+    // ★ 주문을 내는 자리다. 두 벌이 뜨면 같은 결정이 두 번 나갈 수 있다.
+    guard: 'executeDeliberation.ts',
     command: 'cd backend && npx tsx src/scripts/executeDeliberation.ts VTS-ORDINARY --execute',
   },
   {
@@ -133,6 +153,7 @@ export const TASKS: TaskSpec[] = [
     trading: false,
     daily: true,
     background: true,
+    guard: 'measureAuctionSlippage.ts --close',
     command: 'cd backend && npx tsx src/scripts/measureAuctionSlippage.ts --close',
   },
   {
@@ -164,6 +185,7 @@ export const TASKS: TaskSpec[] = [
     trading: false,
     daily: true,
     background: true,
+    guard: 'collectDailyBars.ts',
     command: 'cd backend && npx tsx src/scripts/collectDailyBars.ts --refresh',
   },
 ];

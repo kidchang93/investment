@@ -22,7 +22,7 @@
  * **⑤ 평일만.** 주말·공휴일에는 루프가 돌지만 아무 일도 하지 않는다.
  */
 
-import { exec } from 'node:child_process';
+import { exec, execFile } from 'node:child_process';
 import path from 'node:path';
 
 import { pool } from '../db/client.js';
@@ -194,6 +194,30 @@ function runShell(command: string, timeoutMs: number): Promise<{ ok: boolean; ou
   });
 }
 
+/**
+ * 밖에서 같은 일이 이미 돌고 있나. **스케줄러의 `running`은 자기 것만 안다** —
+ * 사람이 손으로 돌린 것과 이전 인스턴스가 남긴 것은 프로세스를 봐야 알 수 있다.
+ *
+ * ★ 2026-09-03에 판단자가 두 벌 떴다. 사람이 08:46에 손으로 소집했고 그것이
+ *   하트비트를 남기기 전에 스케줄러가 08:49에 또 불렀다.
+ *
+ * ★ **모르면 "돌고 있다"고 답한다.** `pgrep`이 실패했을 때 없다고 치면 겹치는
+ *   쪽으로 틀리고, 그 대가가 크다(주문이 두 번 나간다). 한 회차 쉬는 쪽이 싸다.
+ */
+function isRunningOutside(pattern: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile('pgrep', ['-f', pattern], (error, stdout) => {
+      // pgrep은 못 찾으면 종료 코드 1이다 — 그건 오류가 아니라 "없다"이다.
+      if (error && (error as NodeJS.ErrnoException & { code?: number }).code === 1) {
+        resolve(false);
+        return;
+      }
+      if (error) { resolve(true); return; }
+      resolve(stdout.trim().length > 0);
+    });
+  });
+}
+
 async function runTask(task: TaskSpec, clock: Clock, hhmm: string): Promise<void> {
   const name = heartbeatName(task, clock);
   if (running.has(task.name)) return;
@@ -248,6 +272,12 @@ async function tick(): Promise<void> {
       if (done === null) return;
       if (done) continue;
     }
+
+    /*
+     * ★★ 밖에서 같은 일이 돌고 있으면 건너뛴다. 하트비트는 **끝난 뒤에** 남으므로
+     *    도는 중인 것을 못 본다 — 그 창에서 겹친다.
+     */
+    if (task.guard && (await isRunningOutside(task.guard))) continue;
 
     // ★ 한 회차에 하나씩. 여럿이 동시에 KIS를 두드리면 유량을 다툰다.
     void runTask(task, clock, hhmm);
@@ -311,6 +341,9 @@ export async function runNow(taskName: string): Promise<{ ok: boolean; message: 
   if (running.has(task.name)) return { ok: false, message: '이미 돌고 있습니다' };
   if (task.trading && !settings.tradingEnabled) {
     return { ok: false, message: '매매가 꺼져 있습니다 — 먼저 매매를 켜야 합니다' };
+  }
+  if (task.guard && (await isRunningOutside(task.guard))) {
+    return { ok: false, message: '같은 일이 이미 돌고 있습니다 (터미널에서 띄운 것일 수 있습니다)' };
   }
   const { clock, hhmm } = kstNow();
   void runTask(task, clock, hhmm);
