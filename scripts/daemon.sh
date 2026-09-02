@@ -23,7 +23,9 @@
 #
 # ── 쓰는 법 ──────────────────────────────────────────────────────────────
 #
-#   zsh scripts/daemon.sh start     # 띄운다 (터미널을 닫아도 산다)
+#   zsh scripts/daemon.sh start --no-trade   # 매매 없이 띄운다 (지금 방식)
+#   zsh scripts/daemon.sh start --trade      # 판단자 매매까지 켠다
+#   zsh scripts/daemon.sh start              # 직전 모드를 그대로 이어간다
 #   zsh scripts/daemon.sh status    # 돌고 있나 · 오늘 무엇을 했나
 #   zsh scripts/daemon.sh stop      # 멈춘다 (자동 기동도 함께 꺼진다)
 #
@@ -162,6 +164,23 @@ ensure_backend() {
 #      물려받았으면 회수한다. 락이 남아 있는 것은 고장이 아니다.
 LOCK_FILE="$LOG_DIR/daemon.lock"
 
+# ★★ **매매 없음 모드** (2026-09-02, 사용자가 정했다).
+#
+#   *"전략도 없이 자동매매는 좀 맞지 않는 것 같고"* — 검증된 규칙이 설 때까지
+#   **판단자가 새로 사고파는 것을 멈춘다.** 그런데 그날 사용자가 곧이어
+#   *"내가 직접 명령어를 치는 일은 없어야 될 거야"*라고도 했다. 데몬을 통째로
+#   끄면 수집·측정·손절까지 사람 몫이 된다.
+#
+#   그래서 **매매만 뺀다**:
+#     끈다  판단자 소집 · 개장 직후 집행 · 장중 사건 재소집
+#     켠다  브리핑 · 감시 · 경보 · **손절** · 마감 정리 · 일봉 수집 · 단일가 수집
+#
+#   ★ **손절은 켠 채로 둔다.** 이미 산 자리의 `plan.stopPrice`는 판단자가 사기
+#     전에 스스로 적은 값이라, 그것을 지키는 것은 **새 매매가 아니라 약속을
+#     지키는 것**이다. 지금 보유 7종목이 있고 그것을 방치할 수는 없다.
+NO_TRADE_FILE="$LOG_DIR/daemon.no-trade"
+trading_enabled() { [[ ! -f "$NO_TRADE_FILE" ]]; }
+
 lock_owner_alive() {
   local owner
   owner=$(cat "$LOCK_FILE" 2>/dev/null) || return 1
@@ -291,7 +310,7 @@ run_loop() {
       # ★ 주문은 내지 않는다 — 판단을 기록하는 데까지다.
       # 판단자도 같다 — 늦게 떠도 그날 한 번은 소집한다(장중 소집은 실제로
       # 2026-08-19 14:54에 돌려 정상 동작을 확인했다).
-      if [[ "$hhmm" > "0819" && "$hhmm" < "1530" ]] && ! did_today deliberate; then
+      if trading_enabled && [[ "$hhmm" > "0819" && "$hhmm" < "1530" ]] && ! did_today deliberate; then
         log "판단자 소집 시작"
         zsh scripts/deliberate.sh >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
         if [[ $? -eq 0 ]]; then
@@ -307,7 +326,7 @@ run_loop() {
       #
       # 개장 전에 끝난 회차의 주문을 여기서 낸다. 집행기는 멱등이므로 낼 것이
       # 없으면 아무 일도 하지 않는다.
-      if [[ "$hhmm" > "0859" && "$hhmm" < "0921" ]] && ! did_today execute-open; then
+      if trading_enabled && [[ "$hhmm" > "0859" && "$hhmm" < "0921" ]] && ! did_today execute-open; then
         run_executor "개장 직후"
         mark execute-open "$(date '+%H:%M')"
       fi
@@ -354,7 +373,7 @@ run_loop() {
       # 값을 올려 잡을지는 **판단자가 정한다.** 코드는 깨우기만 한다 —
       # "안 붙으니 현재가로 따라간다"는 규칙을 숫자로 박으면 애초에 그 값에 건
       # 근거를 매번 스스로 지우게 된다.
-      if [[ "$hhmm" > "0929" && "$hhmm" < "1500" ]] && did_today deliberate; then
+      if trading_enabled && [[ "$hhmm" > "0929" && "$hhmm" < "1500" ]] && did_today deliberate; then
         local event_slot
         if [[ "$hhmm" < "1300" ]]; then event_slot="deliberate-event-am"
         else event_slot="deliberate-event-pm"; fi
@@ -387,6 +406,28 @@ run_loop() {
             >> "$LOG_DIR/daemon-$(date '+%Y%m%d').log" 2>&1
           mark "$slot" "$(date '+%H:%M')"
         fi
+      fi
+
+      # ── 단일가 수집 (08:30 시가 · 15:20 종가) ─────────────────────
+      #
+      # ★ **밤사이 전략의 승패가 여기서 갈린다** (2026-09-02). 종가 매수 →
+      #   익일 시가 매도의 우위가 21년에서 나왔는데(하루 +0.228%, t 16.1)
+      #   비용선이 정확히 그 자리다 — 세금·수수료만으로 0.23%다. 단일가에서
+      #   내가 본 값과 실제 값이 얼마나 벌어지는지를 알아야 판정할 수 있다.
+      #
+      # ★ 스크립트가 창 밖에서는 스스로 거부하므로 여기서는 넉넉히 부른다.
+      #   13분쯤 돌고(확정가까지 받고) 끝난다 — 루프를 막지 않게 백그라운드다.
+      if [[ "$hhmm" > "0829" && "$hhmm" < "0835" ]] && ! did_today auction-open; then
+        log "시가 단일가 수집 시작"
+        mark auction-open "$(date '+%H:%M')"
+        (cd backend && npx tsx src/scripts/measureAuctionSlippage.ts --open \
+          >> "../$LOG_DIR/auction-$(date '+%Y%m%d').log" 2>&1) &
+      fi
+      if [[ "$hhmm" > "1519" && "$hhmm" < "1525" ]] && ! did_today auction-close; then
+        log "종가 단일가 수집 시작"
+        mark auction-close "$(date '+%H:%M')"
+        (cd backend && npx tsx src/scripts/measureAuctionSlippage.ts --close \
+          >> "../$LOG_DIR/auction-$(date '+%Y%m%d').log" 2>&1) &
       fi
 
       # ── 15:40 마감 정리 ───────────────────────────────────────────
@@ -460,6 +501,15 @@ case "${1:-status}" in
   start)
     # 사람이 명시적으로 켰다. 중지 표식을 거둔다.
     rm -f "$DISABLED_FILE"
+    # ★ 매매를 켤지 끌지는 **띄울 때 정한다.** 기본은 매매 없음이 아니다 —
+    #   그러나 2026-09-02 이후로는 사람이 `--no-trade`로 띄우고 있다.
+    if [[ "${2:-}" == "--no-trade" ]]; then
+      : > "$NO_TRADE_FILE"
+      print -r -- "매매 없음 모드 — 판단자·집행을 끄고 수집·감시·손절만 돈다"
+    elif [[ "${2:-}" == "--trade" ]]; then
+      rm -f "$NO_TRADE_FILE"
+      print -r -- "★ 매매를 켰다 — 판단자가 새로 사고판다"
+    fi
     if [[ -n "$(daemon_pid)" ]]; then
       print -r -- "이미 돌고 있다 (pid $(daemon_pid))"
       exit 0
@@ -500,6 +550,11 @@ case "${1:-status}" in
     fi
     if [[ -f "$DISABLED_FILE" ]]; then
       print -r -- "  (자동 기동 꺼짐 — 터미널을 열어도 안 뜬다)"
+    fi
+    if [[ -f "$NO_TRADE_FILE" ]]; then
+      print -r -- "  매매 없음 ● — 판단자·집행이 꺼져 있다 (손절·수집·감시는 돈다)"
+    else
+      print -r -- "  ★ 매매 켜짐 — 판단자가 새로 사고판다"
     fi
     # ★ 데몬이 살아 있어도 **맥이 자면 함께 멈춘다.** 그것이 걸려 있는지 함께 본다.
     if [[ -n "$(daemon_pid)" ]]; then
