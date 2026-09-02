@@ -48,6 +48,7 @@ import {
   type FinancialsResult,
 } from './api';
 import { useStream } from './useStream';
+import { Automation } from './Automation';
 import { Dashboard } from './Dashboard';
 import { PortfolioLayers } from './PortfolioLayers';
 import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } from './Chart';
@@ -7440,6 +7441,12 @@ export function App(): JSX.Element {
               <div className="dash__account">
                 <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
               </div>
+              {/*
+                ★ 자동화를 **맨 위에** 둔다. 잔고보다 먼저 답해야 하는 질문이
+                "지금 이게 돌고 있나"다 — 2026-08-25부터 9일간 안 돌고 있었는데
+                아무도 몰랐고, 그 사이 5거래일이 통째로 빠졌다.
+              */}
+              <Automation />
               <Dashboard accountId={kisAccountId} />
             </>
           )}

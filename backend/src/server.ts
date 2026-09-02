@@ -1,4 +1,10 @@
 import Fastify from 'fastify';
+import {
+  getStatus as getAutomationStatus,
+  runNow as runAutomationTask,
+  setSettings as setAutomationSettings,
+  startScheduler,
+} from './automation/scheduler.js';
 import cors from '@fastify/cors';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
@@ -331,6 +337,42 @@ async function main(): Promise<void> {
 
   // ── REST ────────────────────────────────────────────────
   app.get('/api/health', async () => ({ ok: true, env: config.env }));
+
+  /*
+   * ── 자동화 제어 (2026-09-02) ──────────────────────────────────────────
+   *
+   * 사용자가 *"웹에서 컨트롤하고 싶은데 데몬 이런 게 아니라"*고 했다. 데몬은
+   * 터미널에 묶여 있어 켜고 끄는 것도 상태를 보는 것도 명령어를 쳐야 한다.
+   * 스케줄러가 이제 백엔드 안에 있으므로 여기서 제어한다.
+   *
+   * ★ **매매를 켜는 것은 별도 스위치**다. 자동화를 켜도 판단자는 안 돈다 —
+   *   검증된 규칙이 설 때까지 새로 사지 않기로 했다(2026-09-02). 손절·수집·
+   *   감시는 자동화 스위치만으로 돈다.
+   */
+  app.get('/api/automation/status', async () => getAutomationStatus());
+
+  app.post('/api/automation/settings', async (req, reply) => {
+    const body = (req.body ?? {}) as { enabled?: unknown; tradingEnabled?: unknown };
+    const next: { enabled?: boolean; tradingEnabled?: boolean } = {};
+    if (typeof body.enabled === 'boolean') next.enabled = body.enabled;
+    if (typeof body.tradingEnabled === 'boolean') next.tradingEnabled = body.tradingEnabled;
+    if (Object.keys(next).length === 0) {
+      return reply.code(400).send({ message: 'enabled 또는 tradingEnabled를 boolean으로 주세요.' });
+    }
+    const settings = await setAutomationSettings(next);
+    req.log.info({ settings }, '자동화 설정 변경');
+    return { settings };
+  });
+
+  app.post('/api/automation/run', async (req, reply) => {
+    const body = (req.body ?? {}) as { task?: unknown };
+    if (typeof body.task !== 'string') {
+      return reply.code(400).send({ message: 'task를 주세요.' });
+    }
+    const result = await runAutomationTask(body.task);
+    if (!result.ok) return reply.code(409).send({ message: result.message });
+    return result;
+  });
   app.get('/api/watchlist', async () => WATCHLIST);
 
   app.get('/api/trading/overview', async () => {
@@ -1807,6 +1849,15 @@ async function main(): Promise<void> {
   });
 
   await app.listen({ port: config.port, host: '0.0.0.0' });
+
+  /*
+   * ★ 스케줄러를 **백엔드가 들고 있다.** 설정은 DB에서 읽어 이어간다 —
+   *   재시작으로 자동화가 조용히 꺼지면 그날이 통째로 빈다(2026-08-07부터
+   *   8일간 실제로 그랬다).
+   */
+  await startScheduler().catch((err: unknown) => {
+    app.log.error({ err }, '자동화 스케줄러를 시작하지 못했습니다');
+  });
 
   // ── 프론트로 실시간 중계하는 WebSocket 서버 (/stream) ────
   const kis = new KisRealtime();

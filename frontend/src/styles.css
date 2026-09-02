@@ -7337,3 +7337,116 @@ span.sample-badge {
   display: flex;
   justify-content: flex-end;
 }
+
+/* ── 자동화 관제 (2026-09-02) ──────────────────────────────────────────
+   데몬을 터미널에서 웹으로 옮기면서 생긴 카드. 스위치가 둘인 것이 핵심이라
+   그 둘을 가장 크게 둔다 — "자동화"와 "매매"는 다른 것이다. */
+.automation {
+  border: 1px solid var(--line, #d8dee6);
+  border-radius: 10px;
+  padding: 1rem 1.1rem 1.2rem;
+  margin-bottom: 1rem;
+  background: var(--surface, #fff);
+}
+.automation__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .6rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: .7rem;
+}
+.automation__switches { display: flex; flex-wrap: wrap; gap: .5rem; }
+.automation__switch {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  padding: .45rem .85rem;
+  border: 1px solid var(--line, #d8dee6);
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  font-size: .88rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: inherit;
+}
+.automation__switch:disabled { opacity: .55; cursor: progress; }
+.automation__dot {
+  width: .55rem; height: .55rem; border-radius: 50%;
+  background: #9aa5b1;
+}
+.automation__switch[data-on="true"] { border-color: #12805c; color: #12805c; }
+.automation__switch[data-on="true"] .automation__dot { background: #12805c; }
+.automation__switch--trade[data-on="true"] { border-color: #b3261e; color: #b3261e; }
+.automation__switch--trade[data-on="true"] .automation__dot { background: #b3261e; }
+.automation__now { font-size: .82rem; color: var(--muted, #66707a); font-variant-numeric: tabular-nums; }
+.automation__note {
+  margin: 0 0 .8rem;
+  font-size: .85rem;
+  color: var(--muted, #66707a);
+  padding: .5rem .7rem;
+  background: var(--surface-2, #f1f4f7);
+  border-radius: 6px;
+}
+.automation__note--warn { color: #b3261e; background: #fdeceb; }
+.automation__tasks { list-style: none; margin: 0; padding: 0; }
+.automation__task {
+  display: grid;
+  grid-template-columns: 8.5rem 1fr 5rem 3.5rem auto;
+  gap: .6rem;
+  align-items: center;
+  padding: .4rem 0;
+  border-top: 1px solid var(--line-soft, #eceff3);
+  font-size: .86rem;
+}
+.automation__task[data-window="true"] { background: var(--surface-2, #f7f9fb); }
+.automation__task-time { color: var(--muted, #66707a); font-variant-numeric: tabular-nums; font-size: .8rem; }
+.automation__task-label { font-weight: 500; }
+.automation__tag {
+  display: inline-block;
+  margin-left: .4rem;
+  padding: .05rem .35rem;
+  border-radius: 4px;
+  background: #fdeceb;
+  color: #b3261e;
+  font-size: .7rem;
+  font-style: normal;
+  font-weight: 600;
+}
+.automation__tag--bg { background: #eef1f5; color: #66707a; }
+.automation__task-state { font-size: .8rem; color: var(--muted, #66707a); }
+.automation__task[data-state="도는 중"] .automation__task-state { color: #12805c; font-weight: 600; }
+.automation__task[data-state="오늘 함"] .automation__task-state { color: #12805c; }
+.automation__task-last { font-size: .8rem; color: var(--muted, #66707a); font-variant-numeric: tabular-nums; }
+.automation__run {
+  padding: .25rem .6rem;
+  border: 1px solid var(--line, #d8dee6);
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: .78rem;
+  cursor: pointer;
+  color: inherit;
+}
+.automation__run:disabled { opacity: .4; cursor: not-allowed; }
+.automation__recent { margin-top: .9rem; font-size: .84rem; }
+.automation__recent summary { cursor: pointer; color: var(--muted, #66707a); }
+.automation__recent ul { list-style: none; margin: .6rem 0 0; padding: 0; }
+.automation__recent li { padding: .35rem 0; border-top: 1px solid var(--line-soft, #eceff3); display: grid; gap: .3rem; }
+.automation__recent-time { color: var(--muted, #66707a); font-variant-numeric: tabular-nums; }
+.automation__recent li[data-ok="false"] .automation__recent-result { color: #b3261e; font-weight: 600; }
+.automation__recent pre {
+  margin: .2rem 0 0;
+  padding: .5rem .6rem;
+  background: var(--surface-2, #f1f4f7);
+  border-radius: 6px;
+  font-size: .74rem;
+  white-space: pre-wrap;
+  max-height: 12rem;
+  overflow: auto;
+}
+@media (max-width: 720px) {
+  .automation__task { grid-template-columns: 1fr auto; }
+  .automation__task-time, .automation__task-last { grid-column: 1 / -1; }
+}
