@@ -54,8 +54,8 @@ import { escapeMrkdwn, sendSlackBot, slackBotConfigured } from '../notify/slack.
 import { crossesGate, gateSignature } from '../trading/judgeGate.js';
 import {
   ASSET_KIND_LABEL, ASSET_KIND_METHOD,
-  NEUTRAL_BAND,
-  chartBand, classifyAsset, combine, describe, fundamentalBand,
+  FALLING_GATE, MOMENTUM_DAYS, NEUTRAL_BAND,
+  chartBand, classifyAsset, combine, describe, fundamentalBand, isFalling, return60,
   type AssetKind, type Bar, type FairValue,
 } from '../trading/fairValue.js';
 
@@ -198,6 +198,40 @@ function pastMultiples(bars: Bar[], value: number | undefined):
   return { low: at(0.25), mid: at(0.5), high: at(0.75) };
 }
 
+/**
+ * **시장 전체의 60일 수익률 중앙값.** 추세 축의 기준선이다.
+ *
+ * ★★ **후보 집합이 아니라 전 종목에서 낸다** (2026-09-03에 고쳤다).
+ *
+ * 처음에는 오늘 후보(거래대금 상위 150)의 중앙값을 썼다. 그런데 그 값이
+ * **−12.3%**로 전 종목 중앙 **−7.6%**보다 훨씬 낮았다 — 거래대금 상위는
+ * 대형주 편향이 있어 그날 더 빠져 있었다. 문턱(−20%p)은 전 종목 분포를 재서
+ * 정한 값이라, 기준선이 4.7%p 내려앉은 만큼 **문턱이 느슨해져** 걸러야 할
+ * 리가켐바이오(−18.0%p)·현대로템(−19.6%p)이 그대로 통과했다.
+ *
+ * ★ 쿼리 한 번이고 일봉은 이미 DB에 있다 — 정확한 쪽이 싸다.
+ */
+async function marketMedianReturn60(): Promise<number | null> {
+  const { rows } = await pool.query<{ med: string | null }>(
+    `WITH ranked AS (
+       SELECT symbol, close,
+              row_number() OVER (PARTITION BY symbol ORDER BY trading_day DESC) AS rn
+         FROM trading_daily_bars
+        WHERE trading_day >= to_char(current_date - 300, 'YYYYMMDD')
+     ), pivot AS (
+       SELECT symbol,
+              max(close) FILTER (WHERE rn = 1) AS c0,
+              max(close) FILTER (WHERE rn = $1) AS cn
+         FROM ranked WHERE rn IN (1, $1) GROUP BY symbol
+     )
+     SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY c0 / cn - 1)::text AS med
+       FROM pivot WHERE c0 > 0 AND cn > 0`,
+    [MOMENTUM_DAYS + 1],
+  );
+  const med = rows[0]?.med;
+  return med === null || med === undefined ? null : Number(med);
+}
+
 interface Row {
   symbol: string;
   name: string;
@@ -205,6 +239,8 @@ interface Row {
   news: string[];
   /** 들고 있는 것인가. 브리핑에서 보유와 후보를 갈라 보여준다 */
   held: boolean;
+  /** 60거래일 수익률. 못 내면 null */
+  ret60: number | null;
 }
 
 async function main(): Promise<void> {
@@ -299,6 +335,7 @@ async function main(): Promise<void> {
     }));
     const chart = chartBand(bars);
     if (!chart) missing.push(`차트(봉 ${bars.length})`);
+    const ret60 = return60(bars);
 
     /*
      * ── ① 재무 — **개별 주식에만 묻는다** ──
@@ -328,7 +365,7 @@ async function main(): Promise<void> {
       .map((n) => n.title);
 
     const fv = combine(symbol, kind, price, chart, fundamental, missing);
-    rows.push({ symbol, name, fv, news: hit, held: held.has(symbol) });
+    rows.push({ symbol, name, fv, news: hit, held: held.has(symbol), ret60 });
 
     await pool.query(
       `INSERT INTO trading_fair_values (symbol, price, chart_mid, fundamental_mid, gap, basis)
@@ -368,6 +405,23 @@ async function main(): Promise<void> {
   const scored = rows.filter((r) => !r.held && r.fv.gap !== null);
   const gapOf = (r: Row): number => r.fv.gap ?? 0;
 
+  /*
+   * ── ★★ 세 번째 축: **떨어지는 중인 것을 거른다** ──
+   *
+   * 사용자가 정했다 — *"급락 종목 걸러내는 축 추가해줘."*
+   *
+   * 후보를 147종목으로 넓힌 첫 판에서 추천 다섯이 **전부 급락 종목**이었다.
+   * 적정가가 6개월 분포 대비라 **떨어진 종목은 자동으로 "싸다"가 된다.**
+   *
+   * ★ **시장 대비**로 잰다. 그날 시장 전체의 60일 중앙이 −7.6%였다 — 절대
+   *   문턱을 두면 시장이 빠지는 날 전부 걸린다. 중앙값은 **오늘 후보 집합**에서
+   *   구한다(이미 일봉을 읽었으므로 공짜다).
+   */
+  const marketReturn = await marketMedianReturn60();
+  const relativeOf = (r: Row): number | null =>
+    r.ret60 === null || marketReturn === null ? null : r.ret60 - marketReturn;
+  const falling = new Set(scored.filter((r) => isFalling(relativeOf(r))).map((r) => r.symbol));
+
   /* ① 절대 기준 — 그 종목 자신의 최근 궤적 대비 싸다 */
   const byAbsolute = new Set(scored.filter((r) => gapOf(r) <= RECOMMEND_GAP).map((r) => r.symbol));
 
@@ -390,6 +444,8 @@ async function main(): Promise<void> {
 
   const picks = scored
     .filter((r) => byAbsolute.has(r.symbol) || byRelative.has(r.symbol))
+    // ★ 떨어지는 중인 것은 "싸다"가 아니라 "떨어졌다"이다. 추천에서 뺀다.
+    .filter((r) => !falling.has(r.symbol))
     .sort((a, b) => gapOf(a) - gapOf(b))
     .slice(0, RECOMMEND_LIMIT);
 
@@ -405,6 +461,9 @@ async function main(): Promise<void> {
       ? `상대 순위 미사용(후보 ${scored.length} < ${MIN_CANDIDATES_FOR_RANK})`
       : `상대 하위 ${(RECOMMEND_PERCENTILE * 100).toFixed(0)}%(컷 ${(cutoff * 100).toFixed(1)}%, `
         + `천장 +${(RELATIVE_CEILING * 100).toFixed(0)}%)`,
+    marketReturn === null
+      ? '추세 축 없음'
+      : `추세: 시장 60일 ${(marketReturn * 100).toFixed(1)}% 대비 ${(FALLING_GATE * 100).toFixed(0)}%p 이상 빠진 것 제외`,
   ].join(' · ');
 
   if (picks.length > 0) {
@@ -425,6 +484,9 @@ async function main(): Promise<void> {
      */
     if (byRelative.size > 0) {
       lines.push('_★ `상대`는 "오늘 후보 중 덜 비싸다"입니다 — 절대적으로 싸다는 뜻이 아닙니다._');
+    }
+    if (falling.size > 0) {
+      lines.push(`_★ 떨어지는 중인 ${falling.size}종목을 뺐습니다 — "싸다"가 아니라 "떨어졌다"입니다._`);
     }
     lines.push('_층 상한·매수여력·계획은 판단자가 봅니다. 이 목록은 "사라"가 아닙니다._');
   } else if (scored.length > 0) {

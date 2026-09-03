@@ -273,6 +273,57 @@ export function combine(
  *   두었더니 곧바로 어긋났다 — 2026-09-03에 추천 천장을 5%로 잡았는데 여기가
  *   2%라, **줄에 "비싸다"고 적힌 종목이 ⭐를 달고 올라왔다.**
  */
+/**
+ * ── ★★ 세 번째 축: **떨어지는 중인가** (2026-09-03) ──────────────────────
+ *
+ * 사용자가 정했다 — *"급락 종목 걸러내는 축 추가해줘."*
+ *
+ * 후보를 147종목으로 넓히자 추천 다섯이 **전부 급락 종목**이었다 —
+ * 코오롱티슈진 −65.4%, HLB −28.1%, 리가켐바이오 −26.9%. 적정가는 6개월 분포
+ * 대비이므로 **떨어진 종목은 자동으로 "싸다"가 된다.** "추세장에서는 전부
+ * 비싸다"의 정확한 거울상이고, 같은 축이 만드는 같은 착시다.
+ *
+ * ★ 앞의 두 축(차트·재무)은 **수준**을 본다. 이 축은 **방향**을 본다 — 그래야
+ *   독립적이다. 두 축이 사실상 하나였던 것이 이 문제의 뿌리다(재무 축도
+ *   "그 종목 자신의 과거 배수" 대비라 차트와 같은 편향을 갖는다).
+ *
+ * ★ **절대 수익률이 아니라 시장 대비**다. 2026-09-03 실측에서 시장 전체의
+ *   60일 중앙이 −7.6%였다 — 절대 문턱을 두면 시장이 빠질 때 전부 걸린다.
+ */
+export const MOMENTUM_DAYS = 60;
+
+/**
+ * `MOMENTUM_DAYS` 거래일 전 대비 수익률. 봉이 모자라면 `null`이다.
+ *
+ * ★ `bars`는 **오름차순**(오래된 것이 앞)이다 — `chartBand`가 `slice(-N)`으로
+ *   최근을 집는 것과 같은 전제다.
+ */
+export function return60(bars: Bar[]): number | null {
+  if (bars.length < MOMENTUM_DAYS + 1) return null;
+  const now = bars[bars.length - 1]?.close;
+  const then = bars[bars.length - 1 - MOMENTUM_DAYS]?.close;
+  if (!(now > 0) || !(then > 0)) return null;
+  return now / then - 1;
+}
+
+/**
+ * 이만큼 **시장보다** 더 빠졌으면 "급락 중"이다.
+ *
+ * ★★ **분포에서 정했다** (2026-09-03, 전 종목 3,921개 실측). 시장 대비 60일
+ *    수익률의 분위는 5% −34.7%p · 10% −24.1%p · 15% −18.5%p · 25% −11.4%p였다.
+ *    문제의 셋(HLB −25.1 · 현대로템 −24.3 · 리가켐 −22.7)은 걸리고
+ *    삼성전자(−13.1)·SK하이닉스(−10.6)는 통과하는 자리가 **−20%p**다.
+ *
+ * ★ 이 값은 그날 분포에 맞춘 것이다. 바꾸려면 `docs/STRATEGY_DISCIPLINE.md`에
+ *   따라 **분포를 다시 재고 근거 수치를 남긴다.**
+ */
+export const FALLING_GATE = -0.20;
+
+/** 시장 대비 이만큼 빠졌으면 "싸다"를 믿지 않는다 */
+export function isFalling(relativeReturn60: number | null): boolean {
+  return relativeReturn60 !== null && relativeReturn60 <= FALLING_GATE;
+}
+
 export const NEUTRAL_BAND = 0.02;
 
 export function describe(fv: FairValue, name: string): string {

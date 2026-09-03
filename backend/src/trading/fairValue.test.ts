@@ -13,7 +13,8 @@ import assert from 'node:assert/strict';
 import { describe as suite, it } from 'node:test';
 
 import {
-  chartBand, classifyAsset, combine, describe, fundamentalBand,
+  FALLING_GATE, chartBand, classifyAsset, combine, describe, fundamentalBand,
+  isFalling, return60,
   type Bar,
 } from './fairValue.js';
 
@@ -161,5 +162,49 @@ suite('종목 갈래 — 갈래마다 적정가의 뜻이 다르다', () => {
     assert.equal(classifyAsset('PLUS 고배당주', 'etf'), 'sectorEtf');
     assert.equal(classifyAsset('TIGER 리츠부동산인프라', 'etf'), 'sectorEtf');
     assert.equal(classifyAsset('TIGER K방산&우주', 'etf'), 'sectorEtf');
+  });
+});
+
+suite('추세 축 — 떨어지는 중인가', () => {
+  /** 한 방향으로 곧게 가는 봉 */
+  function ramp(count: number, from: number, to: number): Bar[] {
+    const out: Bar[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const close = from + ((to - from) * i) / (count - 1);
+      out.push({ tradingDay: `2026${String((i % 12) + 1).padStart(2, '0')}01`, close, high: close, low: close });
+    }
+    return out;
+  }
+
+  it('봉이 모자라면 짐작하지 않고 null이다', () => {
+    assert.equal(return60(ramp(40, 100, 90)), null);
+    assert.equal(return60([]), null);
+  });
+
+  it('60거래일 전 대비로 잰다 — 시작점이 아니다', () => {
+    // 121봉: 마지막이 index 120, 60일 전이 index 60.
+    const bars = ramp(121, 100, 220);
+    const r = return60(bars);
+    assert.ok(r !== null);
+    // index60 = 160, index120 = 220 → 37.5%
+    assert.ok(Math.abs(r - 0.375) < 1e-6, `r=${r}`);
+  });
+
+  it('★★ 시장보다 크게 빠졌으면 급락이다 — 절대값이 아니라 상대값이다', () => {
+    /*
+     * 2026-09-03 회귀. 시장 전체가 60일 −7.6%인 날이었다. 절대 문턱을 쓰면
+     * 시장이 빠질 때 전부 걸린다.
+     */
+    assert.equal(isFalling(FALLING_GATE - 0.01), true);
+    assert.equal(isFalling(FALLING_GATE + 0.01), false);
+  });
+
+  it('상대값을 모르면 급락이라고 하지 않는다 — 모르는 것은 근거가 아니다', () => {
+    assert.equal(isFalling(null), false);
+  });
+
+  it('많이 올랐어도 시장이 더 올랐으면 급락일 수 있다', () => {
+    // 절대 +10%인데 시장이 +35%면 상대 −25%p다.
+    assert.equal(isFalling(0.10 - 0.35), true);
   });
 });
