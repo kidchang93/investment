@@ -218,6 +218,27 @@ function isRunningOutside(pattern: string): Promise<boolean> {
   });
 }
 
+/**
+ * ★★ **연속 실패한 슬롯을 세어 둔다** (2026-09-03).
+ *
+ * 실패하면 하트비트를 안 남기므로 다음 회차가 **같은 것을 또 시도한다.** 그
+ * 자체는 옳다(고쳐지면 이어서 해야 한다). 그런데 트랙 B는 **하나를 돌리고
+ * `return`**하므로, 위쪽 작업이 계속 실패하면 **그 아래가 영영 굶는다.**
+ *
+ * 그날 실제로 그랬다: 매도가 많아 D+0 자산이 3,700만원 적게 잡히자 중단선
+ * 경보가 떴고, `checkAlerts`가 종료코드 1을 내 `watch`가 매 분 실패했다.
+ * **`fair-value`가 2시간 반 동안 한 번도 못 돌았다.**
+ *
+ * ★ 아침에 고친 "손절이 모든 작업을 굶긴다"와 **같은 구조**다. 그때는 우선순위가
+ *   높은 작업이 항상 먼저 잡혀서였고, 이번엔 실패가 반복돼서다.
+ *
+ * ★ **포기하지는 않는다.** 문턱을 넘으면 그 슬롯을 건너뛰어 **아래에 차례를
+ *   주고**, 다음 슬롯이 오면 다시 시도한다(슬롯 이름에 시각이 들어간다).
+ */
+const failures = new Map<string, number>();
+/** 한 슬롯에서 이만큼 연속 실패하면 아래에 차례를 준다 */
+const MAX_SLOT_FAILURES = 2;
+
 async function runTask(task: TaskSpec, clock: Clock, hhmm: string): Promise<void> {
   const name = heartbeatName(task, clock);
   if (running.has(task.name)) return;
@@ -247,6 +268,18 @@ async function runTask(task: TaskSpec, clock: Clock, hhmm: string): Promise<void
    */
   if (result.ok && !task.noHeartbeat) {
     await mark(task.background ? `${name}-done` : name, hhmm);
+  }
+  if (result.ok) {
+    failures.delete(name);
+  } else {
+    const n = (failures.get(name) ?? 0) + 1;
+    failures.set(name, n);
+    if (n === MAX_SLOT_FAILURES) {
+      console.warn(
+        `[automation] ${task.name} 슬롯 ${name}이 ${n}번 연속 실패했다`
+        + ' — 이 슬롯은 건너뛰고 아래 작업에 차례를 준다',
+      );
+    }
   }
   running.delete(task.name);
 }
@@ -301,6 +334,12 @@ async function tick(): Promise<void> {
     // ★ DB를 못 읽으면 이 회차는 **아무것도 하지 않는다**(위 계약 ②).
     if (done === null) return;
     if (done) continue;
+
+    /*
+     * ★★ 이 슬롯이 연달아 실패했으면 **아래에 차례를 준다.** 안 그러면 고장난
+     *    작업 하나가 그 아래 전부를 굶긴다(`failures` 주석 참고).
+     */
+    if ((failures.get(name) ?? 0) >= MAX_SLOT_FAILURES) continue;
 
     /*
      * ★★ 밖에서 같은 일이 돌고 있으면 건너뛴다. 하트비트는 **끝난 뒤에** 남으므로

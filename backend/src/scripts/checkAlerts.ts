@@ -83,29 +83,38 @@ async function main(): Promise<void> {
 
   // ── ① 중단선 ────────────────────────────────────────────────────────
   /*
-   * ★★ **가장 작은 값으로 본다.** 중단선은 보수적이어야 하고, 세 값이 서로
+   * ★★ **가장 작은 값으로 본다.** 중단선은 보수적이어야 하고, 값들이 서로
    * 다르게 틀리기 때문이다:
    *
-   *   D+0 예수금 + 주식   오늘 산 것이 안 빠져 **부풀어 보인다**
-   *                       (2026-08-18 실측: 1.26억 vs 실제 0.97억, +2,850만)
    *   D+2 정산액 + 주식   실제로 쓸 수 있는 돈. 보통 이것이 맞다
    *   총평가              모의 서버가 전일 매수대금을 한 번 더 뺀 적이 있다
    *                       (2026-08-12: 절반으로 나왔다가 정산 뒤 돌아왔다)
    *
-   * 부풀면 중단선을 늦게 잡고, 쪼그라들면 없는 손실로 멈춘다. **늦게 잡는 쪽이
-   * 더 위험하므로** 작은 값을 쓰되, 값들이 크게 갈리면 그 사실을 함께 적는다.
+   * ── ★★ D+0을 뺀 이유 (2026-09-03) ──────────────────────────────────
+   *
+   * 전에는 `D+0 예수금 + 주식`도 후보에 넣고 *"오늘 산 것이 안 빠져 부풀어
+   * 보인다"*고 적어 두었다. **그 설명이 반쪽이었다** — D+0은 오늘 **판** 것도
+   * 안 들어와 있어서, 매도가 많은 날에는 반대로 **쪼그라든다.**
+   *
+   * 그날 ETF를 1,650만원어치 팔자 D+0이 5,788만원으로 나왔다(D+2·총평가는
+   * 9,483만원). 3,700만원 적은 값이 중단선 7,600만원 아래로 떨어져 **없는
+   * 손실로 경보가 울렸고**, `checkAlerts`가 종료코드 1을 내자 스케줄러가
+   * `watch`를 실패로 보아 하트비트를 안 남겼다. 매 분 재시도가 트랙 B를
+   * 점유해 **`fair-value`가 2시간 반을 굶었다.**
+   *
+   * ★ D+0은 **양방향으로 틀린다.** 사는 날엔 부풀고 파는 날엔 쪼그라든다 —
+   *   그래서 "작은 쪽을 고른다"는 보수적 규칙이 성립하지 않는다. 뺀다.
    */
   const stock = snapshot.stockEvaluation ?? 0;
-  const byD0 = (snapshot.cashBalance ?? 0) + stock;
   const byD2 = (snapshot.settlementCash ?? 0) + stock;
   const byTotal = snapshot.totalEvaluation ?? 0;
-  const candidates = [byD0, byD2, byTotal].filter((v) => v > 0);
+  const candidates = [byD2, byTotal].filter((v) => v > 0);
   const equity = candidates.length > 0 ? Math.min(...candidates) : 0;
   const spread = candidates.length > 0 ? Math.max(...candidates) - equity : 0;
   // 1% 넘게 갈리면 어느 값을 썼는지 밝힌다 — 조용히 고르면 나중에 못 되짚는다.
   if (spread > equity * 0.01) {
     console.log(
-      `  (자산 계산이 갈린다 — D+0 ${won(byD0)} · D+2 ${won(byD2)} · 총평가 ${won(byTotal)}`
+      `  (자산 계산이 갈린다 — D+2 ${won(byD2)} · 총평가 ${won(byTotal)}`
       + ` → 가장 작은 ${won(equity)}원으로 본다)`,
     );
   }
