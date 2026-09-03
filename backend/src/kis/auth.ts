@@ -24,6 +24,17 @@ import { kisErrorSuffix } from './errorCodes.js';
  * 모의 도메인 호출이 재사용하면 모의 서버에 실전 토큰을 보내게 된다.
  */
 
+/**
+ * ★★ **토큰 발급에도 타임아웃을 준다** (2026-09-03).
+ *
+ * 없었다. KIS가 연결을 받아 두고 답을 안 주면 **영원히 기다린다** — 그리고
+ * 주문 라우트는 보내기 전에 반드시 토큰을 확인하므로, 그 순간 **주문이 통째로
+ * 매달린다.** 그날 주문 POST가 45초를 넘겨도 응답이 없었다.
+ *
+ * 발급은 조회보다 느릴 수 있어 넉넉히 준다.
+ */
+const KIS_AUTH_TIMEOUT_MS = 20_000;
+
 export interface KisCredentials {
   id: string;
   appKey: string;
@@ -127,6 +138,7 @@ async function writeTokenCache(credentials: KisCredentials, cache: TokenCache): 
 
 async function issueAccessToken(credentials: KisCredentials): Promise<string> {
   const res = await fetch(`${restBaseFor(credentialServer(credentials))}/oauth2/tokenP`, {
+    signal: AbortSignal.timeout(KIS_AUTH_TIMEOUT_MS),
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -209,6 +221,7 @@ export async function getApprovalKey(credentials: KisCredentials = primaryCreden
   if (cached) return cached;
 
   const res = await fetch(`${restBaseFor(credentialServer(credentials))}/oauth2/Approval`, {
+    signal: AbortSignal.timeout(KIS_AUTH_TIMEOUT_MS),
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({

@@ -102,6 +102,8 @@ async function kisPost(
   return scheduleKisCall(config.env, async () => {
     const res = await fetch(config.restBase + path, {
       method: 'POST',
+      // ★ 무한 대기는 큐 전체를 막는다. 중복 접수는 `clientOrderId`가 막는다.
+      signal: AbortSignal.timeout(KIS_ORDER_TIMEOUT_MS),
       headers: {
         'content-type': 'application/json; charset=utf-8',
         authorization: `Bearer ${token}`,
@@ -201,6 +203,26 @@ function delay(ms: number): Promise<void> {
  * (`restBaseFor`)를 정하는 것과 같은 값이어야 한다 — 어긋나면 빠른 간격으로
  * 느린 서버를 두드려 `EGW00201`을 부른다.
  */
+/**
+ * ★★ **응답을 이만큼 안 주면 끊는다.**
+ *
+ * ── 왜 (2026-09-03) ──────────────────────────────────────────────────────
+ *
+ * `fetch`에 타임아웃이 없었다. KIS가 연결을 받아 두고 응답을 안 주면 **영원히
+ * 기다린다.** 그리고 `scheduleKisCall`은 **체인**이라(`chain.then(run, run)`)
+ * 하나가 매달리면 **그 서버로 가는 모든 호출이 뒤에서 영구히 막힌다.**
+ *
+ * 그날 실제로 그랬다: 주문 POST 세 건이 연달아 `incoming request`만 남기고
+ * 완료되지 않았다. 백엔드는 살아 있었고(상태 API는 200) KIS 큐만 막혀 있었다.
+ * 재시작 말고는 푸는 길이 없었다.
+ *
+ * ★ 주문에 더 넉넉히 준다. 끊긴다고 안 나간 것이 아니므로(서버는 큐에 두고
+ *   계속 처리한다) **끊는 것 자체가 위험**하다 — 다만 무한 대기는 더 위험하다.
+ *   끊긴 주문은 `clientOrderId` 멱등 키가 중복 접수를 막는다.
+ */
+const KIS_READ_TIMEOUT_MS = 15_000;
+const KIS_ORDER_TIMEOUT_MS = 30_000;
+
 function scheduleKisCall<T>(server: KisServer, run: () => Promise<T>): Promise<T> {
   const gap = KIS_MIN_CALL_GAP_BY_SERVER[server];
   const result = kisCallChains[server].then(run, run);
@@ -268,6 +290,8 @@ async function kisGet(
 function isTransientNetworkError(error: unknown): boolean {
   const cause = (error as { cause?: { code?: string } })?.cause;
   const code = cause?.code;
+  // AbortSignal.timeout은 cause 없이 TimeoutError를 던진다
+  if ((error as { name?: string })?.name === 'TimeoutError') return true;
   return code === 'UND_ERR_SOCKET'      // 상대가 연결을 끊었다
     || code === 'UND_ERR_CONNECT_TIMEOUT'
     || code === 'ECONNRESET'
@@ -316,7 +340,7 @@ async function kisGetWithHeaders(
    * 여기서 끊겼다. 상태 코드가 아니라 본문의 msg_cd로 판단한다.
    */
   async function callOnce(): Promise<{ body: Record<string, unknown>; headers: Headers }> {
-    const res = await fetch(url, { headers: { ...headers } });
+    const res = await fetch(url, { headers: { ...headers }, signal: AbortSignal.timeout(KIS_READ_TIMEOUT_MS) });
     const text = await res.text();
     let body: Record<string, unknown> = {};
     try {

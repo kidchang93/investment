@@ -1950,7 +1950,36 @@ async function main(): Promise<void> {
     broadcast({ type: 'status', data: s });
   });
 
-  await kis.start(WATCHLIST.map((w) => w.code));
+  /*
+   * ★★ **실시간이 안 떠도 서버는 뜬다** (2026-09-03).
+   *
+   * 전에는 `await kis.start(...)`가 맨몸이었다. 그래서 KIS **모의 서버가 죽자
+   * 백엔드가 통째로 못 떴다** — 승인키(`/oauth2/Approval`) 발급이 실패하면서
+   * `main()`이 그 자리에서 죽었고, REST·화면·스케줄러가 전부 함께 멈췄다.
+   *
+   * ★ 실시간 체결가는 **부가 기능**이다. 없으면 차트가 실시간으로 안 움직일
+   *   뿐, 시세 조회·주문·손절 감시·적정가 분석은 REST로 다 된다. 그것들까지
+   *   못 쓰게 만드는 것은 값이 맞지 않는다.
+   *
+   * ★ **조용히 넘기지 않는다.** 경고를 남기고 `status`로도 알린다 — 실시간이
+   *   빠진 것을 모르면 "값이 안 변한다"를 시장이 조용한 것으로 읽는다.
+   */
+  try {
+    await kis.start(WATCHLIST.map((w) => w.code));
+  } catch (error) {
+    app.log.error(
+      { err: error },
+      '★ KIS 실시간을 시작하지 못했다 — 서버는 뜬다. 실시간 체결가만 빠지고'
+      + ' 시세 조회·주문·자동화는 REST로 그대로 돈다.',
+    );
+    broadcast({
+      type: 'status',
+      data: {
+        kisConnected: false,
+        message: '실시간 연결 실패 — 조회는 정상입니다. KIS 서버 상태를 확인하세요.',
+      } as ConnectionStatus,
+    });
+  }
 
   app.log.info(
     `KIS env=${config.env} · 계좌 ${config.kisAccounts.map((a) => a.id).join(', ') || '없음'}`
