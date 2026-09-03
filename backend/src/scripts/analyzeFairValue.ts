@@ -45,9 +45,9 @@ import type { FinancialSnapshot } from '@invest/shared';
 import { getKisAccount } from '../config.js';
 import { closeDb, pool } from '../db/client.js';
 import { getDailyBars } from '../db/dailyBars.js';
-import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
+import { getKoreanInstrumentBySymbol, getTopTurnoverInstruments } from '../db/instruments.js';
 import {
-  getDomesticQuotes, getDomesticTurnoverRanking, getFinancials, getKisDomesticAccountSnapshot,
+  getDomesticQuotes, getFinancials, getKisDomesticAccountSnapshot,
 } from '../kis/rest.js';
 import { getMainNews } from '../naver/finance.js';
 import { escapeMrkdwn, sendSlackBot, slackBotConfigured } from '../notify/slack.js';
@@ -78,7 +78,19 @@ const MAX_SYMBOLS = 12;
  *
  * ★ 개별 주식만 후보로 본다. ETF는 층 배분의 문제이지 "싸서 사는" 것이 아니다.
  */
-const CANDIDATE_POOL = 40;
+/**
+ * ★★ **KIS 거래대금 순위 TR은 30종목이 상한이다** (2026-09-03 실측: 200을
+ *    요청해도 30이 온다). 그 30에서 ETF를 빼면 개별주식이 14종목뿐이고,
+ *    그중 기준을 넘는 것이 하나 나올까 말까다 — **후보가 없는 것이 아니라
+ *    후보를 안 본 것이었다.**
+ *
+ * 그래서 소스를 **DB의 20일 평균 거래대금**으로 바꾼다(`getTopTurnoverInstruments`).
+ * 일봉 저장소에 21년치가 있으므로 원하는 만큼 넓힐 수 있고 KIS 호출도 0이다.
+ *
+ * ★ 넓히는 값은 **시세 호출 수**로 정한다. 멀티시세가 30종목에 1회이므로
+ *   150종목이면 5회다(2026-07-31 실측: 300종목 10회가 1.08초).
+ */
+const CANDIDATE_POOL = 150;
 /** 이보다 싸야 **절대 기준**으로 추천한다. 판단자를 부르는 문턱(−7%)보다 엄하게 잡는다 */
 const RECOMMEND_GAP = -0.10;
 /** 추천을 이만큼만 보여준다. 더 길면 안 읽힌다 */
@@ -231,14 +243,17 @@ async function main(): Promise<void> {
   const candidates: string[] = [];
   if (!args.includes('--no-candidates')) {
     try {
-      const ranked = await getDomesticTurnoverRanking(CANDIDATE_POOL);
-      for (const code of ranked) {
-        if (held.has(code) || candidates.length >= CANDIDATE_POOL) continue;
-        const inst = await getKoreanInstrumentBySymbol(code);
-        if (!inst || classifyAsset(inst.name, inst.assetType) !== 'stock') continue;
-        candidates.push(code);
+      /*
+       * ★ `assetTypes`에 'stock'만 준다 — ETF는 애초에 안 딸려 온다. 그래도
+       *   `classifyAsset`으로 한 번 더 거른다(레버리지가 stock으로 등록된 경우).
+       */
+      const ranked = await getTopTurnoverInstruments(['stock'], CANDIDATE_POOL);
+      for (const inst of ranked) {
+        if (held.has(inst.symbol)) continue;
+        if (classifyAsset(inst.name, inst.assetType) !== 'stock') continue;
+        candidates.push(inst.symbol);
       }
-      console.log(`후보 ${candidates.length}종목 (거래대금 상위 ${CANDIDATE_POOL} 중 개별주식, 보유 제외)`);
+      console.log(`후보 ${candidates.length}종목 (20일 평균 거래대금 상위 ${CANDIDATE_POOL} 중 개별주식, 보유 제외)`);
     } catch (error) {
       console.log(`후보를 못 뽑았다 — 보유만 본다 (${(error as Error).message.slice(0, 50)})`);
     }

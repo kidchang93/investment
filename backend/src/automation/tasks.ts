@@ -103,6 +103,34 @@ export const TASKS: TaskSpec[] = [
     command: 'cd backend && npx tsx src/scripts/measureAuctionSlippage.ts --open',
   },
   {
+    /*
+     * ★★ **층이 비면 발굴 회차를 더 부른다** (2026-09-03).
+     *
+     * 사용자가 정했다 — *"빈층 채우기는 자동화로 진행해줘."*
+     *
+     * 그날 ETF 층을 60.8%→48.5%로 줄여 현금 3,148만원이 생겼는데 **자동화가
+     * 그것을 쓸 길이 없었다.** 발굴하는 정식 회차는 `daily: true`라 하루 한 번이고,
+     * 5분마다 도는 빠른 회차는 발굴이 금지돼 있다(그 회차를 2~3분에 끝내려고
+     * 우리가 막았다). 그래서 단기 층이 21%p 비어 있는데도 판단자가
+     * *"새 종목 발굴은 이 회차의 일이 아니다"*라고 적고 지나갔다.
+     *
+     * ★ 스크립트가 **먼저 판정한다** — 미달·매수여력·오늘 횟수 셋을 보고
+     *   이유가 있을 때만 판단자를 띄운다. 조건이 안 맞으면 계좌 조회 두 번으로
+     *   끝나 싸다. 판단자를 부르는 것은 13분이고 헤드리스 Claude 값이 든다.
+     *
+     * ★ 정식 회차와 **같은 guard**를 쓴다 — 둘이 같은 `deliberate.sh`를 띄우므로
+     *   한쪽이 도는 중이면 다른 쪽은 건너뛴다.
+     */
+    name: 'layer-fill',
+    label: '빈 층 채우기',
+    window: [920, 1450],
+    trading: true,
+    daily: false,
+    everyMinutes: 30,
+    guard: 'deliberate.sh',
+    command: 'cd backend && npx tsx src/scripts/fillEmptyLayers.ts VTS-ORDINARY --execute',
+  },
+  {
     name: 'deliberate',
     label: '판단자 소집',
     window: [820, 1530],

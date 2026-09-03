@@ -297,6 +297,29 @@ export async function attachExecutions(
   );
 }
 
+/**
+ * 회차를 **최신부터** 준다.
+ *
+ * ★★ **`id`로 정렬한다 — `started_at`이 아니다** (2026-09-03에 고쳤다).
+ *
+ * `started_at`은 **판단자(에이전트)가 스스로 적는 값**이라 믿을 수 없다. 그날
+ * 회차 37이 `1788492900000`(=2026-09-04 12:15, **내일**)을, 회차 44가 09-04
+ * 10:46을 적어 두 회차가 목록 맨 위에 올라앉았다.
+ *
+ * 집행기는 `rounds[0]`을 집행 대상으로 삼는다. 그래서 11:52에 판단자가 매도
+ * 2건(우리금융 블록딜·KB금융 목표도달)을 남겼는데, 1분 뒤 집행기가 **회차 37을
+ * 보고 "결정 0 · 낼 것 0"이라며 끝냈다.** 판단이 나와도 주문이 안 나가는
+ * 상태였고, 로그는 정상 종료라 아무도 몰랐다.
+ *
+ * `id`는 DB가 매기는 삽입 순서라 에이전트가 건드릴 수 없다. 표시에는 여전히
+ * `started_at`을 쓰되 **순서의 근거로는 쓰지 않는다.**
+ *
+ * ★★ **테이블을 한정해 정렬한다** — `ORDER BY id`가 아니라
+ *    `ORDER BY trading_deliberations.id`다. PostgreSQL의 `ORDER BY`는 **출력 열
+ *    이름을 먼저 찾는데**, 위에서 `id::text`를 뽑으므로 `id`가 그 **텍스트** 열을
+ *    가리킨다. 그러면 문자열 정렬이라 `'9' > '49'`가 되어 8월 6일 회차가 맨 위에
+ *    온다. 고친 직후 그대로 겪었다.
+ */
 export async function getDeliberations(filter: {
   accountId?: string;
   tradingDay?: string;
@@ -321,7 +344,7 @@ export async function getDeliberations(filter: {
             reference, executions
      FROM trading_deliberations
      ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
-     ORDER BY started_at DESC
+     ORDER BY trading_deliberations.id DESC
      LIMIT $${values.length}`,
     values,
   );
