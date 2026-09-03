@@ -260,18 +260,47 @@ async function tick(): Promise<void> {
   const { clock, weekday, hhmm } = kstNow();
   if (weekday > 5) return;   // 주말에는 아무 일도 하지 않는다
 
+  /*
+   * ★★ **두 트랙으로 나눈다** (2026-09-03에 고쳤다).
+   *
+   * 처음에는 "한 회차에 하나씩"으로 `TASKS`를 훑다가 첫 후보를 띄우고 `return`
+   * 했다. 그런데 **손절 감시는 `noHeartbeat`라 매 분 무조건 후보가 된다** —
+   * 목록 위쪽에 있으니 매번 그것이 뽑히고 `return`으로 끝나, **그 아래 작업이
+   * 영영 차례를 못 받았다.**
+   *
+   * 실제로 그랬다: 10:14 이후 적정가 분석·시황 브리핑·뉴스 감시가 통째로 멈췄고
+   * 손절만 매 분 돌았다. 사용자가 *"10시14분 이후로 브리핑이 안 오는데"*로 발견했다.
+   *
+   * ★ 데몬에는 없던 문제다 — 셸 루프는 순차라 손절 뒤에 나머지도 다 했다.
+   *   "하나씩"을 옮기며 **매 분 도는 것과 가끔 도는 것을 같은 줄에 세운 것**이
+   *   원인이다.
+   *
+   *   트랙 A  하트비트를 안 남기는 짧은 작업(손절) — **막지 않고 다 띄운다**
+   *   트랙 B  나머지 — 한 회차에 하나씩(KIS 유량을 다투지 않게)
+   */
+
+  // ── 트랙 A: 손절처럼 매 분 도는 것 ──
   for (const task of TASKS) {
+    if (!task.noHeartbeat) continue;
+    if (!isInWindow(task, clock)) continue;
+    if (task.trading && !settings.tradingEnabled) continue;
+    if (running.has(task.name)) continue;
+    if (task.guard && (await isRunningOutside(task.guard))) continue;
+    void runTask(task, clock, hhmm);
+  }
+
+  // ── 트랙 B: 나머지 중 하나 ──
+  for (const task of TASKS) {
+    if (task.noHeartbeat) continue;
     if (!isInWindow(task, clock)) continue;
     if (task.trading && !settings.tradingEnabled) continue;
     if (running.has(task.name)) continue;
 
     const name = heartbeatName(task, clock);
-    if (!task.noHeartbeat) {
-      const done = await doneToday(name);
-      // ★ DB를 못 읽으면 이 회차는 **아무것도 하지 않는다**(위 계약 ②).
-      if (done === null) return;
-      if (done) continue;
-    }
+    const done = await doneToday(name);
+    // ★ DB를 못 읽으면 이 회차는 **아무것도 하지 않는다**(위 계약 ②).
+    if (done === null) return;
+    if (done) continue;
 
     /*
      * ★★ 밖에서 같은 일이 돌고 있으면 건너뛴다. 하트비트는 **끝난 뒤에** 남으므로

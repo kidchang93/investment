@@ -1343,6 +1343,15 @@ export interface BrokerExecution {
   rejectedQuantity: number;
   status: BrokerExecutionStatus;
   currency: string;
+  /**
+   * 주문채번지점번호. **정정·취소 전송에 주문번호와 함께 필요하다.**
+   *
+   * ★ 2026-09-03에 더했다 — 모의 서버에 정정취소가능주문조회가 없어 이 응답으로
+   *   미체결을 대신 읽는데, 지점번호가 없으면 **보이기만 하고 정정은 못 한다.**
+   */
+  orderBranchNo?: string;
+  /** KIS 주문구분 코드. 정정 전송 시 그대로 되돌려준다 */
+  orderTypeCode?: string;
 }
 
 /** KIS 실계좌 체결 내역 스냅샷. 계좌번호 원문은 서버 밖으로 내보내지 않는다. */

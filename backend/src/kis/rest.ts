@@ -2140,6 +2140,13 @@ function rowToBrokerExecution(row: Record<string, string>, index: number): Broke
     averageFilledPrice: optionalNumber(row.avg_prvs) ?? 0,
     remainQuantity: optionalNumber(row.rmn_qty) ?? 0,
     rejectedQuantity: optionalNumber(row.rjct_qty) ?? 0,
+    /*
+     * ★ 정정·취소에 필요한 값. 2026-09-03에 담기 시작했다 — 모의 서버에
+     *   정정취소가능주문조회가 없어 이 응답으로 미체결을 대신 읽기 때문이다.
+     *   없으면 미체결이 **보이기만 하고 정정은 못 한다.**
+     */
+    orderBranchNo: row.ord_gno_brno || undefined,
+    orderTypeCode: row.ord_dvsn_cd || undefined,
     status: toBrokerExecutionStatus(row),
     currency: 'KRW',
   };
@@ -2555,6 +2562,42 @@ export async function getKisDomesticSellability(
  * 국내주식 정정취소가능주문 조회 (tr_id: TTTC0084R, 모의투자 미지원).
  * 정정·취소 전송에는 주문번호(odno)와 **주문채번지점번호(ord_gno_brno)** 가 함께 필요하다.
  */
+/**
+ * 모의 서버용 미체결 조회 — **일별 주문체결 조회로 대신한다.**
+ *
+ * 정정취소가능주문조회(`TTTC0084R`)가 모의에 없어서다. 오늘 낸 주문 중
+ * `remainQuantity > 0`인 것이 곧 미체결이다.
+ *
+ * ★ 취소·거부된 주문은 남은 수량이 있어도 미체결이 아니다 — `rejectedQuantity`를
+ *   빼고 본다. 2026-08-20에 취소된 주문이 미체결로 남아 판단자를 헛부를 뻔했다.
+ */
+async function amendableFromExecutions(account: KisAccountConfig): Promise<BrokerAmendableOrder[]> {
+  const snapshot = await getKisDomesticExecutions(account);
+  const out: BrokerAmendableOrder[] = [];
+  for (const row of snapshot.executions) {
+    const remain = row.remainQuantity - (row.rejectedQuantity ?? 0);
+    if (!(remain > 0)) continue;
+    out.push({
+      id: `${row.orderBranchNo ?? ''}-${row.orderNo}-${out.length}`,
+      orderNo: row.orderNo,
+      originalOrderNo: undefined,
+      orderBranchNo: row.orderBranchNo ?? '',
+      symbol: row.symbol,
+      name: row.name,
+      side: row.side,
+      orderTypeLabel: row.orderTypeLabel ?? '',
+      orderTypeCode: row.orderTypeCode ?? '00',
+      orderQuantity: row.orderQuantity,
+      orderPrice: row.orderPrice ?? 0,
+      filledQuantity: row.filledQuantity,
+      amendableQuantity: remain,
+      orderTime: row.orderTime,
+      currency: 'KRW',
+    });
+  }
+  return out;
+}
+
 export async function getKisDomesticAmendableOrders(
   account: KisAccountConfig | null,
 ): Promise<BrokerAmendableOrder[]> {
@@ -2564,6 +2607,28 @@ export async function getKisDomesticAmendableOrders(
   let fk100 = '';
   let nk100 = '';
   let trCont = '';
+
+  /*
+   * ★★ **모의 서버에는 이 TR이 없다.** `VTTC0084R`로 바꿔 봤지만 *"없는 서비스
+   *    코드"*가 온다(2026-09-03 실측) — 이름 문제가 아니라 **기능이 없는 것**이다
+   *    (CLAUDE.md 7-2가 가르는 그 구분이다).
+   *
+   * 그래서 모의에서는 **일별 주문체결 조회**로 대신한다. 그 응답의
+   * `remainQuantity`(미체결 수량)가 정정·취소 대상 수량이고, 정정에 필요한
+   * `orderBranchNo`도 함께 온다.
+   *
+   * ★ 이것을 안 하면 판단자가 **미체결을 모르는 채로 판단한다** — 이미 낸 주문을
+   *   또 낼 수 있다. 2026-09-03에 빠른 판단자가 스스로 그 위험을 적어 냈다:
+   *   *"주문이 여러 건인 날 같은 오류가 나면 이 회차는 미체결을 모르는 채로
+   *   판단하게 됩니다."*
+   *
+   * ★ 완전한 대체는 아니다 — 체결 조회는 **오늘 낸 주문**만 보므로 어제 걸어 둔
+   *   미체결은 안 나온다. 다만 이 계좌는 장 마감에 미체결이 실효되므로
+   *   (15:30 이후 주문을 안 낸다) 실질적으로 같다.
+   */
+  if (config.env !== 'prod') {
+    return amendableFromExecutions(account);
+  }
 
   for (let depth = 0; depth < 10; depth += 1) {
     const { body, headers } = await kisGetWithHeaders(
