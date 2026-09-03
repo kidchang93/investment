@@ -44,7 +44,7 @@ import {
   type DeliberationDecision,
   type DeliberationExecution,
 } from '../db/deliberations.js';
-import { escapeMrkdwn, sendSlack, won as slackWon } from '../notify/slack.js';
+import { escapeMrkdwn, sendSlackBot, won as slackWon } from '../notify/slack.js';
 
 const API_BASE = process.env.INVEST_API_BASE ?? 'http://localhost:4000';
 
@@ -324,7 +324,12 @@ async function main(): Promise<void> {
           ...blocked.map((e) => `• ${escapeMrkdwn(e.symbol)} ${e.action} — ${escapeMrkdwn((e.blockedBy ?? []).join(' · '))}`)]
         : []),
     ];
-    await sendSlack(lines.join('\n'));
+    /*
+     * ★ **매매 결과는 `trade-briefing`으로** (2026-09-03). 사용자가 정했다 —
+     *   *"trade-agent는 trade 결과에 대해서만 메세지 보내도록 해줘."*
+     *   브리핑과 섞으면 5분마다 오는 글 사이에 **돈이 움직인 순간이 묻힌다.**
+     */
+    await sendSlackBot(lines.join('\n'), 'trade');
   }
 }
 

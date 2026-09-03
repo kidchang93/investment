@@ -1494,6 +1494,14 @@ export interface BrokerSellability {
 export interface BrokerAmendableOrder {
   id: string;
   orderNo: string;
+  /**
+   * 주문일 `YYYYMMDD`. **며칠 묵었는지는 이것이 있어야 안다.**
+   *
+   * ★ 2026-09-03에 더했다 — 미체결 정리가 `orderTime`(HHMMSS)만 보고 몇 분
+   *   전인지 계산해서, **8/14에 걸어 둔 주문을 "오늘 그 시각"으로 읽었다.**
+   *   3주 묵은 주문이 "5분 안 지났다"로 빠져나갔다.
+   */
+  orderDate?: string;
   originalOrderNo?: string;
   /** 정정취소 전송 시 필요한 주문채번지점번호 */
   orderBranchNo: string;

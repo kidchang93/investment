@@ -36,7 +36,7 @@ import { getDeliberations } from '../db/deliberations.js';
 import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
 import { getLayerPositions } from '../db/layers.js';
 import { getKisDomesticAccountSnapshot, getKisDomesticExecutions } from '../kis/rest.js';
-import { escapeMrkdwn, sendSlack, won as slackWon } from '../notify/slack.js';
+import { escapeMrkdwn, sendSlack, sendSlackBot, won as slackWon } from '../notify/slack.js';
 import type { Layer } from '../trading/layers.js';
 import { checkStops, type StopRule } from '../trading/stopLoss.js';
 
@@ -210,11 +210,12 @@ async function main(): Promise<void> {
        * ★ 값을 잘 받는 것이 목적이 아니라 빠져나오는 것이 목적인 주문이라
        *   시장가로 나갔다는 사실도 함께 적는다.
        */
-      await sendSlack(
+      await sendSlackBot(
         `:rotating_light: *손절 집행* — ${escapeMrkdwn(b.name)} (${b.symbol})\n`
         + `${b.quantity}주 *시장가 전량 매도* · 주문번호 \`${order.orderNo}\`\n`
         + `현재가 ${slackWon(b.price)} ≤ 손절 ${slackWon(b.stop)} (회차 ${b.round})`
         + `${b.layer ? ` · ${b.layer} 층` : ' · ★ 층 없음 — 장부에 안 들어간다'}`,
+        'trade',
       );
     } else {
       const why = Array.isArray(body.blockers)

@@ -156,48 +156,6 @@ export const TASKS: TaskSpec[] = [
     command: 'cd backend && npx tsx src/scripts/analyzeFairValue.ts VTS-ORDINARY',
   },
   {
-    /*
-     * ★ **장중 시황 브리핑** (2026-09-03). 사용자가 *"로컬 켜있으면 지속적으로
-     *   브리핑하도록 하자"*고 정했다.
-     *
-     * ★ 아래 `news-watch`와 역할이 다르다 — 그쪽은 "보유 종목에 무슨 일이 났나"
-     *   (있을 때만), 이쪽은 "시장이 지금 어떤가"(매번). 내 종목이 조용해도
-     *   시장은 움직인다.
-     *
-     * ★ 네이버 금융을 그냥 받는다. 비용 0 — Firecrawl 크레딧도 Playwright 브라우저도
-     *   필요 없었다(정적 HTML이다).
-     *
-     * 30분 간격인 이유: 10분이면 하루 39개라 읽히지 않는다. 시황은 그렇게 자주
-     * 바뀌지 않는다 — 급한 것은 `news-watch`와 손절이 따로 본다.
-     */
-    name: 'market-brief',
-    label: '시황 브리핑',
-    window: [905, 1520],
-    trading: false,
-    daily: false,
-    everyMinutes: 30,
-    command: 'cd backend && npx tsx src/scripts/marketBrief.ts VTS-ORDINARY',
-  },
-  {
-    /*
-     * ★ **장중 뉴스 감시** (2026-09-03). 슬랙 `stock-briefing`은 하루 두 번
-     *   (08:20·18:15)뿐이라 **장이 도는 6시간 반을 아무도 안 본다.**
-     *
-     * ★ 클라우드 루틴으로는 못 한다 — 최소 간격이 1시간이고, 무엇보다 클라우드는
-     *   이 맥의 계좌·DB를 못 본다. 로컬이라 **보유 종목을 알고** 검색한다.
-     *
-     * ★ 비싸지 않다: KIS 뉴스 제목 조회라 헤드리스 Claude를 안 부른다.
-     *   조용한 회차는 아무것도 보내지 않는다.
-     */
-    name: 'news-watch',
-    label: '장중 뉴스 감시',
-    window: [905, 1520],
-    trading: false,
-    daily: false,
-    everyMinutes: 10,
-    command: 'cd backend && npx tsx src/scripts/newsWatch.ts VTS-ORDINARY',
-  },
-  {
     name: 'auction-close',
     label: '종가 단일가 수집',
     window: [1520, 1525],
@@ -206,6 +164,27 @@ export const TASKS: TaskSpec[] = [
     background: true,
     guard: 'measureAuctionSlippage.ts --close',
     command: 'cd backend && npx tsx src/scripts/measureAuctionSlippage.ts --close',
+  },
+  {
+    /*
+     * ★★ **미체결 정리** (2026-09-03). 사용자가 정했다 — *"미체결 건은 5분 이상
+     *    미체결이면 가격을 조정해서 주문을 넣어야 되는데 적정가 수준에서 주문
+     *    넣어야 돼. 그게 아니라면 철회하는 게 맞아."*
+     *
+     * ★ 그날 **20일 묵은 미체결 두 건**이 나왔다(8/14 KODEX 200 45주 ·
+     *   ACE KRX금현물 170주). 모의에서 미체결 조회가 늘 실패해 아무도 몰랐고,
+     *   예수금이 그만큼 묶인 채 **값이 닿으면 3주 전 판단으로 체결될** 참이었다.
+     *
+     * ★ 적정가 분석 **뒤에** 둔다 — 정정 기준이 그 값이라 최신이어야 한다.
+     */
+    name: 'open-orders',
+    label: '미체결 정리',
+    window: [905, 1520],
+    trading: true,
+    daily: false,
+    everyMinutes: 5,
+    guard: 'manageOpenOrders.ts',
+    command: 'cd backend && npx tsx src/scripts/manageOpenOrders.ts VTS-ORDINARY --execute',
   },
   {
     /*

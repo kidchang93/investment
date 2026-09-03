@@ -2573,13 +2573,30 @@ export async function getKisDomesticSellability(
  */
 async function amendableFromExecutions(account: KisAccountConfig): Promise<BrokerAmendableOrder[]> {
   const snapshot = await getKisDomesticExecutions(account);
+  /*
+   * ★★ **오늘 주문만이 미체결이다** (2026-09-03에 배웠다).
+   *
+   * 처음에 `remainQuantity > 0`을 전부 미체결로 봤다가 8/14 주문 둘이 나왔고,
+   * **"3주 묵은 주문이 걸려 있다"고 잘못 결론냈다.** 정정·취소를 보내니 KIS가
+   * *"모의투자 원주문번호가 존재하지 않습니다"*라고 답했다.
+   *
+   * 한국 주식 주문은 **당일 유효**다 — 안 붙으면 그날 15:30에 실효된다. 체결
+   * 조회의 `status='open'`은 *"지금 살아 있다"*가 아니라 **"그 주문이 안 붙은
+   * 채로 끝났다"**는 뜻이다. 감사 기록이라 지난 것도 그대로 남는다.
+   *
+   * ★ 이것을 안 거르면 **매일 지난 주문에 정정·취소를 쏘고 매번 실패한다.**
+   */
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' })
+    .format(new Date()).replace(/-/g, '');
   const out: BrokerAmendableOrder[] = [];
   for (const row of snapshot.executions) {
+    if (row.orderDate !== today) continue;
     const remain = row.remainQuantity - (row.rejectedQuantity ?? 0);
     if (!(remain > 0)) continue;
     out.push({
       id: `${row.orderBranchNo ?? ''}-${row.orderNo}-${out.length}`,
       orderNo: row.orderNo,
+      orderDate: row.orderDate,
       originalOrderNo: undefined,
       orderBranchNo: row.orderBranchNo ?? '',
       symbol: row.symbol,
@@ -2657,6 +2674,7 @@ export async function getKisDomesticAmendableOrders(
       orders.push({
         id: `${row.ord_gno_brno ?? ''}-${row.odno ?? ''}-${offset + index}`,
         orderNo: row.odno ?? '',
+        orderDate: /^\d{8}$/.test(row.ord_dt ?? '') ? row.ord_dt : undefined,
         originalOrderNo: /^0*$/.test(row.orgn_odno ?? '') ? undefined : row.orgn_odno,
         orderBranchNo: row.ord_gno_brno ?? '',
         symbol: row.pdno ?? '',

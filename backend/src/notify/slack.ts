@@ -109,6 +109,14 @@ export function escapeMrkdwn(text: string): string {
 
 const BOT_TOKEN_ENV = 'BOT_TOKEN';
 const BRIEFING_CHANNEL_ENV = 'SLACK_BRIEFING_CHANNEL';
+/**
+ * ★ **매매 결과는 따로 간다** (2026-09-03). 사용자가 정했다 —
+ *   *"trade-agent는 trade 결과에 대해서만 메세지 보내도록 해줘."*
+ *
+ * 브리핑과 섞으면 **매매가 그 사이에 묻힌다.** 브리핑은 5분마다 오고 매매는
+ * 하루 몇 번인데, 한 채널에 두면 실제로 돈이 움직인 순간을 놓친다.
+ */
+const TRADE_CHANNEL_ENV = 'SLACK_TRADE_CHANNEL';
 
 /** 봇으로 보낼 수 있나. 토큰과 채널이 둘 다 있어야 한다 */
 export function slackBotConfigured(): boolean {
@@ -121,10 +129,19 @@ function botToken(): string | null {
   return raw.startsWith('xoxb-') ? raw : null;
 }
 
-function briefingChannel(): string | null {
-  const raw = (process.env[BRIEFING_CHANNEL_ENV] ?? '').trim().replace(/^["']|["']$/g, '');
-  // 채널 ID는 C(공개)·G(비공개)·D(DM)로 시작한다. 이름(`#stock-briefing`)은 API가 안 받는다.
+/** 채널 ID는 C(공개)·G(비공개)·D(DM)로 시작한다. 이름(`#stock-briefing`)은 API가 안 받는다 */
+function channelFrom(envName: string): string | null {
+  const raw = (process.env[envName] ?? '').trim().replace(/^["']|["']$/g, '');
   return /^[CGD][A-Z0-9]{6,}$/.test(raw) ? raw : null;
+}
+
+function briefingChannel(): string | null {
+  return channelFrom(BRIEFING_CHANNEL_ENV);
+}
+
+/** 매매 결과 채널. 없으면 브리핑 채널로 떨어진다 — 조용히 사라지는 것보다 낫다 */
+function tradeChannel(): string | null {
+  return channelFrom(TRADE_CHANNEL_ENV) ?? briefingChannel();
 }
 
 /**
@@ -133,9 +150,9 @@ function briefingChannel(): string | null {
  * @returns 슬랙이 받았으면 true. 설정이 없거나 실패하면 false — **던지지 않는다.**
  *   (`sendSlack`과 같은 원칙: 알림은 전달 수단이지 판정이 아니다)
  */
-export async function sendSlackBot(text: string): Promise<boolean> {
+export async function sendSlackBot(text: string, target: 'briefing' | 'trade' = 'briefing'): Promise<boolean> {
   const token = botToken();
-  const channel = briefingChannel();
+  const channel = target === 'trade' ? tradeChannel() : briefingChannel();
   if (!token || !channel) return false;
   if (!text.trim()) return false;
   try {
