@@ -248,6 +248,37 @@ async function kisGet(
  * 실제로 생겼다). 사유는 `readServerMismatch`에 적어 뒀다. 예외는 개장일 하나이며
  * 호출부가 `crossServerRead`로 밝힌다.
  */
+/**
+ * **연결 자체가 끊긴 것인가.** 응답이 온 실패(4xx·5xx)와 다르다.
+ *
+ * ── 왜 (2026-09-03) ──────────────────────────────────────────────────────
+ *
+ * 미체결 정리가 두 회차 연달아 이것으로 죽었다:
+ *
+ *   TypeError: fetch failed
+ *     [cause] SocketError: other side closed  (UND_ERR_SOCKET)
+ *
+ * KIS가 keep-alive 연결을 끊은 것이고 **다시 물으면 대개 된다.** 그런데 재시도가
+ * 토큰 만료와 한도 초과에만 있어서, 5분마다 도는 작업이 그 회차를 통째로 놓쳤다.
+ *
+ * ★ 여기서 잡는 것은 **응답을 못 받은 경우**뿐이다. 서버가 답을 준 실패는
+ *   아래 기존 경로가 코드별로 처리한다 — 섞으면 "없는 서비스 코드"를
+ *   네트워크 탓으로 알고 계속 두드린다.
+ */
+function isTransientNetworkError(error: unknown): boolean {
+  const cause = (error as { cause?: { code?: string } })?.cause;
+  const code = cause?.code;
+  return code === 'UND_ERR_SOCKET'      // 상대가 연결을 끊었다
+    || code === 'UND_ERR_CONNECT_TIMEOUT'
+    || code === 'ECONNRESET'
+    || code === 'ECONNREFUSED'
+    || code === 'EPIPE'
+    || code === 'ETIMEDOUT';
+}
+
+/** 끊긴 연결이면 한 번만 다시. 그래도 안 되면 그대로 던진다 */
+const TRANSIENT_RETRY_DELAY_MS = 400;
+
 async function kisGetWithHeaders(
   path: string,
   trId: string,
@@ -306,7 +337,27 @@ async function kisGetWithHeaders(
 
   // 목적지를 정하는 값과 같은 것으로 줄을 고른다. 어긋나면 한도를 잘못 먹는다.
   const server = credentialServer(credentials);
-  let first = await scheduleKisCall(server, callOnce);
+
+  /*
+   * ★★ **연결이 끊긴 경우만 한 번 다시 부른다.**
+   *
+   * ★ 이 함수는 **GET 전용**이라 안전하다. 같은 조회를 두 번 해도 값이 같다.
+   *   **주문(POST)에는 절대 이것을 붙이지 않는다** — 2026-08-14에 타임아웃 뒤
+   *   손으로 재전송했다가 **같은 주문이 두 번 체결됐다.** 서버는 큐에 두고
+   *   계속 처리하고 있었다. 보내는 쪽은 "안 갔다"와 "답을 못 받았다"를 구별할
+   *   수 없으므로, 부작용이 있는 요청은 멱등 키로 막지 재시도로 풀지 않는다.
+   */
+  async function callWithReconnect(): Promise<{ body: Record<string, unknown>; headers: Headers }> {
+    try {
+      return await scheduleKisCall(server, callOnce);
+    } catch (error) {
+      if (!isTransientNetworkError(error)) throw error;
+      await delay(TRANSIENT_RETRY_DELAY_MS);
+      return scheduleKisCall(server, callOnce);
+    }
+  }
+
+  let first = await callWithReconnect();
 
   /*
    * 토큰이 죽었으면 **한 번만** 다시 받아 재시도한다. 캐시의 만료 시각이 남아 있어도
@@ -319,7 +370,7 @@ async function kisGetWithHeaders(
    */
   if (isExpiredToken(first.body)) {
     headers.authorization = `Bearer ${await reissueAccessToken(credentials)}`;
-    first = await scheduleKisCall(server, callOnce);
+    first = await callWithReconnect();
     if (isExpiredToken(first.body)) {
       throw new KisRequestError(
         `KIS GET ${path} 실패: 토큰을 다시 받았는데도 만료라고 합니다 (자격증명 ${credentials.id}).`,
@@ -330,7 +381,7 @@ async function kisGetWithHeaders(
   // 한도에 걸리면 잠시 쉬고 한 번만 더 시도한다. 계속 두드리면 더 오래 막힌다.
   if (!isRateLimited(first.body)) return first;
   await delay(KIS_RATE_LIMIT_BACKOFF_MS);
-  const second = await scheduleKisCall(server, callOnce);
+  const second = await callWithReconnect();
   /*
    * 두 번째도 한도면 그대로 넘기지 않는다. 빈 본문이 정상 응답처럼 흘러가면
    * 호출한 쪽은 `캔들 0건`을 사실로 받아들인다 — 이번 작업 내내 고쳐 온 그
