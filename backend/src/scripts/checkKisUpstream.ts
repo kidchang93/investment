@@ -16,10 +16,19 @@
  * KIS가 스펙을 바꾸면 이것들이 **조용히 거짓이 된다.** 멀티시세는 31개를 보내도
  * 오류가 안 나고 31번째만 사라졌다(CLAUDE.md 4-1) — 그런 종류의 침묵이다.
  *
- * ── ★ pull은 하지 않는다 ─────────────────────────────────────────────────
+ * ── pull은 한다 (2026-09-03 사용자 결정) ────────────────────────────────
  *
- * `fetch`만 하고 **알리기만** 한다. 받아 놓은 파일이 참조 중에 바뀌면 무엇을
- * 보고 짠 코드인지 흐려진다. 받을지, 무엇을 고칠지는 사람이 정한다.
+ * 처음엔 `fetch`만 하고 받지 않게 짰다. 사용자가 정리했다 — *"웬만해선 API
+ * 호출하는 데 있어서 큰 변화는 없을 거야. git pull 해도 상관없고, 만약 큰
+ * 변화가 있다면 공지사항에 나올 테니 그걸 확인하면 될 것 같아."*
+ *
+ * 맞다. 클론은 **읽기 전용 참고 자료**라 최신이 낫고, 우리 코드가 그 파일을
+ * 빌드에 쓰지 않는다. 받아 두고 **무엇이 바뀌었는지만 알린다.**
+ *
+ * ★ **공지사항은 자동으로 못 읽는다.** `apiportal.koreainvestment.com`의 공지
+ *   게시판은 SPA라 서버가 빈 목록(`총 0건`)만 준다 — 본문은 브라우저에서 JS로
+ *   채운다. 브라우저를 띄우면 되지만 하루 한 번 확인에 그건 과하다. 그래서
+ *   **알림에 링크를 넣어** 사람이 열어 보게 한다.
  *
  * ── ★★ 우리가 쓰는 경로만 본다 ──────────────────────────────────────────
  *
@@ -60,6 +69,9 @@ const WATCHED = [
   'stocks_info/',      // 종목 마스터 규격
 ];
 
+/** 큰 변화는 여기 난다. 자동으로 못 읽으므로 링크만 실어 보낸다 */
+const NOTICE_URL = 'https://apiportal.koreainvestment.com/community/10000000-0000-0011-0000-000000000001';
+
 function findClone(): string | null {
   for (const p of CANDIDATE_PATHS) if (existsSync(join(p, '.git'))) return p;
   return null;
@@ -68,6 +80,19 @@ function findClone(): string | null {
 async function git(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await run('git', args, { cwd, maxBuffer: 8 * 1024 * 1024 });
   return stdout.trim();
+}
+
+/**
+ * 받아 둔다. **`--ff-only`다** — 이 클론은 읽기 전용 참고 자료이고, 우리가 커밋한
+ * 것이 있다면 그건 사고이므로 조용히 병합해 덮지 않는다.
+ */
+async function pull(repo: string, branch: string): Promise<void> {
+  try {
+    await git(repo, ['merge', '--ff-only', `origin/${branch}`]);
+    console.log('  받았다 (ff-only).');
+  } catch (error) {
+    console.log(`  ★ 받지 못했다 — 로컬에 커밋이 있는 것 같다: ${(error as Error).message.slice(0, 100)}`);
+  }
 }
 
 async function main(): Promise<void> {
@@ -100,6 +125,7 @@ async function main(): Promise<void> {
   if (changed.length === 0) {
     console.log('  우리가 쓰는 경로는 그대로다 — 알리지 않는다.');
     console.log(`  (바뀐 곳: ${[...new Set(allChanged.map((f) => f.split('/')[0]))].join(', ')})`);
+    await pull(repo, branch);
     return;
   }
 
@@ -116,8 +142,8 @@ async function main(): Promise<void> {
     '*커밋*',
     ...commits.split('\n').slice(0, 8).map((c) => `• ${escapeMrkdwn(c)}`),
     '',
-    '_받지 않았습니다. `git pull`과 코드 반영은 사람이 정합니다._',
-    `_확인: ${escapeMrkdwn(repo)}_`,
+    `_클론은 받아 두었습니다(${escapeMrkdwn(repo)}). **코드 반영은 사람이 정합니다.**_`,
+    `_큰 변경은 공지사항에 납니다 → ${NOTICE_URL}_`,
   ].filter(Boolean);
 
   console.log(`\n${lines.join('\n')}`);
@@ -126,6 +152,8 @@ async function main(): Promise<void> {
     const sent = await sendSlackBot(lines.join('\n'));
     console.log(sent ? '\n슬랙으로 알렸다.' : '\n슬랙 전송 실패.');
   }
+  // ★ 알린 **뒤에** 받는다. 받고 나면 diff가 사라져 무엇을 알렸는지 못 되짚는다.
+  await pull(repo, branch);
   // ★ 사람이 봐야 하는 변경이므로 종료코드로도 알린다.
   process.exitCode = 2;
 }
