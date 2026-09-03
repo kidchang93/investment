@@ -46,17 +46,78 @@ import { getKisAccount } from '../config.js';
 import { closeDb, pool } from '../db/client.js';
 import { getDailyBars } from '../db/dailyBars.js';
 import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
-import { getDomesticQuotes, getFinancials, getKisDomesticAccountSnapshot } from '../kis/rest.js';
+import {
+  getDomesticQuotes, getDomesticTurnoverRanking, getFinancials, getKisDomesticAccountSnapshot,
+} from '../kis/rest.js';
 import { getMainNews } from '../naver/finance.js';
 import { escapeMrkdwn, sendSlackBot, slackBotConfigured } from '../notify/slack.js';
 import {
   ASSET_KIND_LABEL, ASSET_KIND_METHOD,
+  NEUTRAL_BAND,
   chartBand, classifyAsset, combine, describe, fundamentalBand,
   type AssetKind, type Bar, type FairValue,
 } from '../trading/fairValue.js';
 
 /** 한 회차에 볼 종목 수 상한. 보유 + 인자로 준 것 */
 const MAX_SYMBOLS = 12;
+
+/**
+ * ── 후보 발굴 (2026-09-03) ───────────────────────────────────────────────
+ *
+ * 사용자가 정했다 — *"보유하지 않는 종목과 주식에 대해서도 적정가 분석을 하는데
+ * 워낙 많을 것이니 적정한 기준을 잡고 그 기준 안에서 추천해주는 것도 있으면
+ * 좋을 것 같아."*
+ *
+ * ★ **기준이 곧 이 상수들이다.** 전 종목 3,900개를 5분마다 잴 수는 없고,
+ *   잰다 해도 대부분은 살 수 없는 종목이다(유동성·가격).
+ *
+ *   ① **거래대금 상위** — 자금이 실제로 도는 곳. 여기 없으면 사도 못 판다
+ *   ② **차트 6개월** — 적정가를 낼 수 있어야 후보다(`chartBand`가 없으면 뺀다)
+ *   ③ **문턱을 넘게 싸야** 추천한다 — 그냥 목록은 판단자에게 짐이다
+ *
+ * ★ 개별 주식만 후보로 본다. ETF는 층 배분의 문제이지 "싸서 사는" 것이 아니다.
+ */
+const CANDIDATE_POOL = 40;
+/** 이보다 싸야 **절대 기준**으로 추천한다. 판단자를 부르는 문턱(−7%)보다 엄하게 잡는다 */
+const RECOMMEND_GAP = -0.10;
+/** 추천을 이만큼만 보여준다. 더 길면 안 읽힌다 */
+const RECOMMEND_LIMIT = 5;
+
+/**
+ * ── ★★ 두 번째 기준: **오늘 후보 사이의 순위** (2026-09-03) ────────────
+ *
+ * 처음엔 절대 기준 하나만 두었다. 그날 재보니 **13종목 중 추천 0건**이었고,
+ * 가장 싼 것이 −4.4%(삼성전자우), 나머지는 +1.6% ~ +145.1%였다.
+ *
+ * ★★ **문턱을 잘못 잡은 것이 아니라 잼는 법이 그렇다.** 차트 축은 6개월
+ *    분포 대비로 재는데, 시장이 6개월간 올랐으면 **지금 값이 항상 그 위에 있다.**
+ *    삼성전자 +43%는 "고평가"가 아니라 "6개월 전보다 많이 올랐다"는 말이다.
+ *    이미 빠른 판단자 프롬프트에 적어 둔 경고가 실제로 일어난 것이다.
+ *
+ * 그래서 **같은 날 후보끼리 줄을 세운다.** 시장 전체의 오르내림은 모두에게
+ * 같이 얽혀 있으므로, 서로 빼면 상쇄된다. 이 레포가 21년 측정에서 쓴
+ * 분위 나누기와 같은 원리다.
+ *
+ * ★ **그래도 절대 기준을 안 버린다.** 둘 중 하나라도 맞으면 올리고, **어느
+ *   기준으로 올라왔는지를 적는다.** 하락장이 오면 상대 기준은 반대로
+ *   고장난다 — 전부 싸다고 할 때 가장 덜 싼 것을 골라 올린다. 두 기준이
+ *   서로의 구멍을 메운다.
+ */
+/** 오늘 후보 중 싸기 하위 이만큼을 상대 기준으로 올린다 */
+const RECOMMEND_PERCENTILE = 0.2;
+/** 분포가 이보다 적으면 "하위 20%"가 뜻이 없다 — 상대 기준을 안 쓴다 */
+const MIN_CANDIDATES_FOR_RANK = 8;
+/**
+ * ★ 상대 기준에도 **천장**이 있다. 첫 판에서 알테오젠이 **+2.2%(비싸다)**인데
+ *   하위 20%라는 이유로 ⭐를 달고 올라왔다 — 줄에는 "비싸다"고 적혀 있는데
+ *   추천이라 부르면 그 둘 중 하나는 거짓말이다.
+ *
+ * ★★ **순위가 아무리 낮아도 비싼 것은 추천하지 않는다.** 후보 전부가 비싼
+ *    날에는 추천이 0건인 것이 맞다 — 그것이 그날의 사실이다. `describe()`가
+ *    "비싸다"를 붙이는 문턱 그 자체(`NEUTRAL_BAND`)를 가져다 쓴다 — 숫자를
+ *    베껴 적었더니 5% vs 2%로 어긋나 같은 종목이 "비싸다"이면서 추천이었다.
+ */
+const RELATIVE_CEILING = NEUTRAL_BAND;
 
 /**
  * 재무는 분기마다 바뀐다. 5분마다 다시 받을 이유가 없다.
@@ -129,6 +190,8 @@ interface Row {
   name: string;
   fv: FairValue;
   news: string[];
+  /** 들고 있는 것인가. 브리핑에서 보유와 후보를 갈라 보여준다 */
+  held: boolean;
 }
 
 async function main(): Promise<void> {
@@ -152,8 +215,35 @@ async function main(): Promise<void> {
     }
   }
   for (const s of extra) if (!symbols.includes(s)) symbols.push(s);
+  const held = new Set(symbols);
   const targets = symbols.slice(0, MAX_SYMBOLS);
-  if (targets.length === 0) {
+
+  /*
+   * ── 후보: 거래대금 상위 중 **안 들고 있는 개별 주식** ──
+   *
+   * ★ 자금이 실제로 도는 곳만 본다. 거래대금 순위 밖이면 사도 못 파는 종목이라
+   *   적정가가 싸도 쓸모가 없다 — `universe.ts`가 유동성 문을 두는 것과 같은 이유다.
+   *
+   * ★ ETF는 후보에서 뺀다. ETF는 **층 배분**의 문제이지 "싸서 사는" 것이 아니다
+   *   (오늘 판단자도 KODEX 200이 −10%인데 ETF 층이 60.9%라 안 샀다).
+   */
+  const candidates: string[] = [];
+  if (!args.includes('--no-candidates')) {
+    try {
+      const ranked = await getDomesticTurnoverRanking(CANDIDATE_POOL);
+      for (const code of ranked) {
+        if (held.has(code) || candidates.length >= CANDIDATE_POOL) continue;
+        const inst = await getKoreanInstrumentBySymbol(code);
+        if (!inst || classifyAsset(inst.name, inst.assetType) !== 'stock') continue;
+        candidates.push(code);
+      }
+      console.log(`후보 ${candidates.length}종목 (거래대금 상위 ${CANDIDATE_POOL} 중 개별주식, 보유 제외)`);
+    } catch (error) {
+      console.log(`후보를 못 뽑았다 — 보유만 본다 (${(error as Error).message.slice(0, 50)})`);
+    }
+  }
+
+  if (targets.length === 0 && candidates.length === 0) {
     console.log('볼 종목이 없다.');
     return;
   }
@@ -163,7 +253,7 @@ async function main(): Promise<void> {
   try {
     // ★ `quotes`는 배열이 아니라 **Map<종목코드, Quote>**다. 배열로 알고 돌리면
     //   `[code, quote]` 튜플이 와서 `q.price`가 undefined가 된다(2026-09-03에 그랬다).
-    const batch = await getDomesticQuotes(targets);
+    const batch = await getDomesticQuotes([...targets, ...candidates]);
     for (const [code, q] of batch.quotes) if (q.price > 0) quotes.set(code, q.price);
     if (batch.blank.length > 0) console.log(`  시세가 빈 종목: ${batch.blank.join(' ')}`);
   } catch (error) {
@@ -179,7 +269,7 @@ async function main(): Promise<void> {
   }
 
   const rows: Row[] = [];
-  for (const symbol of targets) {
+  for (const symbol of [...targets, ...candidates]) {
     const instrument = await getKoreanInstrumentBySymbol(symbol);
     const name = instrument?.name ?? symbol;
     const kind = classifyAsset(name, instrument?.assetType);
@@ -222,7 +312,7 @@ async function main(): Promise<void> {
       .map((n) => n.title);
 
     const fv = combine(symbol, kind, price, chart, fundamental, missing);
-    rows.push({ symbol, name, fv, news: hit });
+    rows.push({ symbol, name, fv, news: hit, held: held.has(symbol) });
 
     await pool.query(
       `INSERT INTO trading_fair_values (symbol, price, chart_mid, fundamental_mid, gap, basis)
@@ -243,13 +333,104 @@ async function main(): Promise<void> {
    */
   const ORDER: AssetKind[] = ['stock', 'indexEtf', 'sectorEtf', 'commodityEtf', 'leveraged'];
   const lines: string[] = [];
+
+  /*
+   * ── ★ 추천을 **먼저** 보여준다 ──
+   *
+   * 보유 현황은 매번 비슷하지만 추천은 바뀐다. 뒤에 두면 안 읽힌다.
+   *
+   * ★ **문턱을 넘는 것만** 올린다. 그냥 목록은 판단자에게 짐이고, 사람에게는
+   *   소음이다 — 40종목을 5분마다 나열하면 아무도 안 본다.
+   *
+   * ★★ **문턱이 둘이다** — 절대(`RECOMMEND_GAP`)와 상대(`RECOMMEND_PERCENTILE`).
+   *    하나만 두면 추세장에서 영영 0건이 된다(2026-09-03 실측). 둘 중 하나라도
+   *    맞으면 올리고, **어느 쪽으로 올라왔는지를 줄에 적는다.**
+   *
+   * ★ **이것은 "사라"가 아니다.** 층 상한·매수여력·`plan`을 세울 수 있는지는
+   *   판단자가 본다. 여기서는 *"기준 안에서 싼 것이 이만큼 있다"*까지다.
+   */
+  const scored = rows.filter((r) => !r.held && r.fv.gap !== null);
+  const gapOf = (r: Row): number => r.fv.gap ?? 0;
+
+  /* ① 절대 기준 — 그 종목 자신의 최근 궤적 대비 싸다 */
+  const byAbsolute = new Set(scored.filter((r) => gapOf(r) <= RECOMMEND_GAP).map((r) => r.symbol));
+
+  /*
+   * ② 상대 기준 — 오늘 후보 중 싸기 하위 RECOMMEND_PERCENTILE
+   *
+   * ★ 후보가 MIN_CANDIDATES_FOR_RANK보다 적으면 **쓰지 않는다.** 셋 중 하나를
+   *   "하위 20%"라고 부르는 것은 순위가 아니라 그냥 최솟값이다.
+   */
+  const byRelative = new Set<string>();
+  let cutoff: number | null = null;
+  if (scored.length >= MIN_CANDIDATES_FOR_RANK) {
+    const ascending = [...scored].sort((a, b) => gapOf(a) - gapOf(b));
+    const k = Math.max(1, Math.floor(ascending.length * RECOMMEND_PERCENTILE));
+    cutoff = gapOf(ascending[k - 1]);
+    for (const r of ascending.slice(0, k)) {
+      if (gapOf(r) < RELATIVE_CEILING) byRelative.add(r.symbol);
+    }
+  }
+
+  const picks = scored
+    .filter((r) => byAbsolute.has(r.symbol) || byRelative.has(r.symbol))
+    .sort((a, b) => gapOf(a) - gapOf(b))
+    .slice(0, RECOMMEND_LIMIT);
+
+  /* ★ 어느 기준으로 올라왔는지 — 없으면 판단자가 둘을 같게 읽는다 */
+  const standardOf = (symbol: string): string => [
+    byAbsolute.has(symbol) ? '절대' : null,
+    byRelative.has(symbol) ? '상대' : null,
+  ].filter(Boolean).join('+');
+
+  const rule = [
+    `절대 ${(RECOMMEND_GAP * 100).toFixed(0)}% 이하`,
+    cutoff === null
+      ? `상대 순위 미사용(후보 ${scored.length} < ${MIN_CANDIDATES_FOR_RANK})`
+      : `상대 하위 ${(RECOMMEND_PERCENTILE * 100).toFixed(0)}%(컷 ${(cutoff * 100).toFixed(1)}%, `
+        + `천장 +${(RELATIVE_CEILING * 100).toFixed(0)}%)`,
+  ].join(' · ');
+
+  if (picks.length > 0) {
+    const head = `⭐ *추천* — 거래대금 상위 ${CANDIDATE_POOL} 중 개별주식 ${scored.length}종목에서`;
+    console.log(`\n${head}\n   기준: ${rule}`);
+    lines.push(head);
+    lines.push(`_기준: ${escapeMrkdwn(rule)}_`);
+    for (const r of picks) {
+      const text = `[${standardOf(r.symbol)}] ${describe(r.fv, r.name)}`;
+      console.log(`  ⭐ ${text}`);
+      lines.push(`⭐ ${escapeMrkdwn(text)}`);
+      for (const n of r.news) lines.push(`     _${escapeMrkdwn(n)}_`);
+    }
+    /*
+     * ★★ **상대 기준의 뜻을 반드시 적는다.** "하위 20%"는 *싸다*가 아니라
+     *    *오늘 후보 중 덜 비싸다*이다. 이 줄이 없으면 판단자가 ⭐를 매수
+     *    신호로 읽는다 — 시장 전체가 비싸면 그중 가장 덜 비싼 것도 비싸다.
+     */
+    if (byRelative.size > 0) {
+      lines.push('_★ `상대`는 "오늘 후보 중 덜 비싸다"입니다 — 절대적으로 싸다는 뜻이 아닙니다._');
+    }
+    lines.push('_층 상한·매수여력·계획은 판단자가 봅니다. 이 목록은 "사라"가 아닙니다._');
+  } else if (scored.length > 0) {
+    console.log(`\n추천 없음 — ${rule}`);
+    lines.push(`⭐ _추천 없음 — ${escapeMrkdwn(rule)}_`);
+  } else if (rows.some((r) => !r.held)) {
+    /*
+     * ★ 후보는 있는데 gap을 하나도 못 냈다. **"살 것이 없다"와 다른 사실이다** —
+     *   조용히 "추천 없음"으로 적으면 자료가 없는 것을 판단으로 읽는다.
+     */
+    console.log('\n★ 후보의 적정가를 하나도 못 냈다 — 추천을 낼 수 없다.');
+    lines.push('⭐ _★ 후보의 적정가를 하나도 못 냈습니다 — 살 것이 없다는 뜻이 아닙니다._');
+  }
+
+  // ── 보유 종목만 갈래별로 ──
   for (const kind of ORDER) {
-    const group = rows.filter((r) => r.fv.kind === kind);
+    const group = rows.filter((r) => r.held && r.fv.kind === kind);
     if (group.length === 0) continue;
     group.sort((a, b) => (a.fv.gap ?? 99) - (b.fv.gap ?? 99));
 
-    console.log(`\n[${ASSET_KIND_LABEL[kind]}] ${ASSET_KIND_METHOD[kind]}`);
-    lines.push(`\n*${ASSET_KIND_LABEL[kind]}*  _${escapeMrkdwn(ASSET_KIND_METHOD[kind])}_`);
+    console.log(`\n[보유 · ${ASSET_KIND_LABEL[kind]}] ${ASSET_KIND_METHOD[kind]}`);
+    lines.push(`\n*보유 · ${ASSET_KIND_LABEL[kind]}*  _${escapeMrkdwn(ASSET_KIND_METHOD[kind])}_`);
 
     for (const r of group) {
       const text = describe(r.fv, r.name);

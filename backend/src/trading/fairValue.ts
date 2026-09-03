@@ -266,12 +266,21 @@ export function combine(
  * ★ **부호를 말로도 적는다.** `-12.3%`만 보면 "적정가가 12% 낮다"로 읽는 사람이
  *   있다. 실제 뜻은 "지금 값이 적정가보다 12% 싸다"이다.
  */
+/**
+ * 이 폭 안이면 **"비슷하다"**고 부른다. 밖이면 싸다/비싸다다.
+ *
+ * ★ **내보내는 이유**: 추천 목록이 이 문턱을 다시 쓴다. 두 곳에 같은 숫자를
+ *   두었더니 곧바로 어긋났다 — 2026-09-03에 추천 천장을 5%로 잡았는데 여기가
+ *   2%라, **줄에 "비싸다"고 적힌 종목이 ⭐를 달고 올라왔다.**
+ */
+export const NEUTRAL_BAND = 0.02;
+
 export function describe(fv: FairValue, name: string): string {
   if (fv.gap === null) {
     return `${name} ${fv.price.toLocaleString('ko-KR')}원 — 적정가를 못 냈다(${fv.missing.join(', ') || '자료 부족'})`;
   }
   const pct = (fv.gap * 100).toFixed(1);
-  const word = fv.gap < -0.02 ? '싸다' : fv.gap > 0.02 ? '비싸다' : '비슷하다';
+  const word = fv.gap < -NEUTRAL_BAND ? '싸다' : fv.gap > NEUTRAL_BAND ? '비싸다' : '비슷하다';
   const bands = [
     fv.chart ? `차트 ${fv.chart.low.toLocaleString('ko-KR')}~${fv.chart.high.toLocaleString('ko-KR')}` : null,
     fv.fundamental ? `재무 ${fv.fundamental.low.toLocaleString('ko-KR')}~${fv.fundamental.high.toLocaleString('ko-KR')}` : null,
