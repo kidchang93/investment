@@ -147,6 +147,25 @@ export const TASKS: TaskSpec[] = [
     command: 'zsh scripts/watch.sh && (cd backend && npx tsx src/scripts/checkAlerts.ts --notify)',
   },
   {
+    /*
+     * ★ **장중 뉴스 감시** (2026-09-03). 슬랙 `stock-briefing`은 하루 두 번
+     *   (08:20·18:15)뿐이라 **장이 도는 6시간 반을 아무도 안 본다.**
+     *
+     * ★ 클라우드 루틴으로는 못 한다 — 최소 간격이 1시간이고, 무엇보다 클라우드는
+     *   이 맥의 계좌·DB를 못 본다. 로컬이라 **보유 종목을 알고** 검색한다.
+     *
+     * ★ 비싸지 않다: KIS 뉴스 제목 조회라 헤드리스 Claude를 안 부른다.
+     *   조용한 회차는 아무것도 보내지 않는다.
+     */
+    name: 'news-watch',
+    label: '장중 뉴스 감시',
+    window: [905, 1520],
+    trading: false,
+    daily: false,
+    everyMinutes: 10,
+    command: 'cd backend && npx tsx src/scripts/newsWatch.ts VTS-ORDINARY',
+  },
+  {
     name: 'auction-close',
     label: '종가 단일가 수집',
     window: [1520, 1525],

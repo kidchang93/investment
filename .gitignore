@@ -19,3 +19,9 @@ backend/.cache/
 .idea/
 .vscode/
 *.tsbuildinfo
+
+# ★ 판단자(헤드리스 Claude)가 조사하며 만드는 임시 스크립트.
+#   2026-09-03에 `_tmpExec.ts`가 커밋 c286660에 섞여 들어갔다 — 내가 `git add -A`를
+#   쓰는데 판단자가 같은 레포에 파일을 만들기 때문이다. 타입 오류가 있는 채로
+#   들어가면 다음 typecheck가 깨진다(실제로 `_tmpQuotes.ts`가 그랬다).
+backend/src/scripts/_tmp*
