@@ -51,6 +51,7 @@ import {
 } from '../kis/rest.js';
 import { getMainNews } from '../naver/finance.js';
 import { escapeMrkdwn, sendSlackBot, slackBotConfigured } from '../notify/slack.js';
+import { crossesGate, gateSignature } from '../trading/judgeGate.js';
 import {
   ASSET_KIND_LABEL, ASSET_KIND_METHOD,
   NEUTRAL_BAND,
@@ -471,17 +472,18 @@ async function main(): Promise<void> {
  *
  * 그래서 문턱을 둔다. 아래 중 하나면 부른다:
  *
- *   ① 적정가가 **문턱을 넘은 종목이 있다** (−7% 이하로 싸거나 +15% 이상 비싸다)
+ *   ① 적정가가 **문턱을 넘은 종목이 있다** — 싸거나(−7% 이하, 보유·후보 둘 다),
+ *      비싸거나(+15% 이상, **보유만**)
  *   ② 그 종목이 **직전 회차 이후 새로 넘었다** — 같은 신호로 다시 부르지 않는다
  *
  * ★ ②가 없으면 문턱을 넘은 종목이 하나라도 있는 한 5분마다 계속 부른다.
  *   신호가 바뀔 때만 부르는 것이 이 게이트의 핵심이다.
+ *
+ * ★ **판정은 `trading/judgeGate.ts`에 있고 시험이 붙어 있다.** 여기 있을 때는
+ *   시험이 없어 2026-09-03에 두 번 무너진 것을 로그를 눈으로 읽고 알았다.
  */
-const CHEAP_GATE = -0.07;
-const RICH_GATE = 0.15;
-
 async function maybeCallJudge(rows: Row[], accountId: string): Promise<void> {
-  const crossed = rows.filter((r) => r.fv.gap !== null && (r.fv.gap <= CHEAP_GATE || r.fv.gap >= RICH_GATE));
+  const crossed = rows.filter((r) => crossesGate({ symbol: r.symbol, gap: r.fv.gap, held: r.held }));
   if (crossed.length === 0) {
     console.log('판단자를 부르지 않는다 — 문턱을 넘은 종목이 없다.');
     return;
@@ -491,7 +493,9 @@ async function maybeCallJudge(rows: Row[], accountId: string): Promise<void> {
    * ★ **같은 신호로 다시 부르지 않는다.** 직전 호출 때 넘어 있던 종목 묶음과
    *   같으면 새 정보가 아니다 — 5분 전과 상황이 같다는 뜻이다.
    */
-  const signature = crossed.map((r) => `${r.symbol}:${(r.fv.gap! * 100).toFixed(0)}`).sort().join(',');
+  const signature = gateSignature(
+    rows.map((r) => ({ symbol: r.symbol, gap: r.fv.gap, held: r.held })),
+  );
   const { rows: last } = await pool.query<{ note: string }>(
     `SELECT note FROM trading_heartbeats
       WHERE name = 'fair-value-judge'
