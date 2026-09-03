@@ -182,6 +182,36 @@ export const TASKS: TaskSpec[] = [
     command: 'cd backend && npx tsx src/scripts/analyzeFairValue.ts VTS-ORDINARY',
   },
   {
+    /*
+     * ★★ **장 끝난 뒤에도 브리핑을 보낸다** (2026-09-03).
+     *
+     * 사용자가 정했다 — *"장 끝난 뒤에도 보낼 수 있게 해둬."*
+     *
+     * 그날 15:58에 *"자동화 자꾸 꺼지는 것 같은데 브리핑이 또 안 와"*라고 물었다.
+     * 자동화는 켜져 있었고 `fair-value` 창(09:05~15:20)이 닫힌 것뿐이었다.
+     * 하루에 두 번 같은 걱정을 했다는 것은 **침묵이 신호가 못 된다**는 뜻이다.
+     *
+     * ── 왜 별도 작업인가 ─────────────────────────────────────────────────
+     *
+     * ★ **장 끝나면 값이 고정된다.** 같은 창을 15:20 너머로 늘리면 5분마다 똑같은
+     *   표가 간다 — 그건 안심이 아니라 소음이고, 소음이 되면 진짜 신호를 놓친다
+     *   (2026-08-24에 시끄러운 경보 때문에 감시를 아예 껐던 적이 있다).
+     *   그래서 **30분 간격**으로 따로 둔다.
+     *
+     * ★ **판단자를 부르지 않는다**(`--no-judge`). 장이 닫혀 주문이 안 나가므로
+     *   부르면 "살 수 없다"는 회차만 쌓인다.
+     *
+     * 20:00까지 본다. 그 뒤로는 `daily-report`(16:00)가 하루를 마무리한다.
+     */
+    name: 'fair-value-after',
+    label: '적정가 분석(장 마감 후)',
+    window: [1521, 2000],
+    trading: false,
+    daily: false,
+    everyMinutes: 30,
+    command: 'cd backend && npx tsx src/scripts/analyzeFairValue.ts VTS-ORDINARY --no-judge',
+  },
+  {
     name: 'auction-close',
     label: '종가 단일가 수집',
     window: [1520, 1525],

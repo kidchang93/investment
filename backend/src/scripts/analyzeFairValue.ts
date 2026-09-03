@@ -530,9 +530,23 @@ async function main(): Promise<void> {
   const now = new Date().toLocaleString('ko-KR', {
     timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false,
   });
-  const header = `💹 *적정가 분석* — ${now}`
+  /*
+   * ★ **장이 닫혔으면 그렇게 적는다** (2026-09-03).
+   *
+   * 마감 후에도 30분마다 보내는데(`fair-value-after`), 값이 고정이라 같은 표가
+   * 반복된다. 그 사실을 안 적으면 **"왜 값이 안 변하지"**를 시장이 조용한
+   * 것으로 읽거나, 브리핑이 고장난 줄로 읽는다.
+   */
+  const clock = Number(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date()).replace(':', ''));
+  const closed = clock >= 1530 || clock < 900;
+
+  const header = `💹 *적정가 분석* — ${now}${closed ? ' · _장 마감 후_' : ''}`
     + `\n_지금 값이 **그 종목의 최근 궤적** 대비 어디쯤인가. 예측이 아니라 기준선이다._`
-    + `\n_🟢 −5% 이하(싸다) · ⚪ 그 사이 · 🔴 +5% 이상(비싸다)_`;
+    + (closed
+      ? '\n_🌙 장이 닫혀 값이 고정입니다 — 다음 갱신은 내일 09:05입니다._'
+      : '\n_🟢 −5% 이하(싸다) · ⚪ 그 사이 · 🔴 +5% 이상(비싸다)_');
   const sent = await sendSlackBot([header, ...lines].join('\n'));
   console.log(sent ? '\nstock-briefing 채널로 보냈다.' : '\n보내지 못했다.');
 
