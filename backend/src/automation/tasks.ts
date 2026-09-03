@@ -112,33 +112,7 @@ export const TASKS: TaskSpec[] = [
     guard: 'deliberate.sh',
     command: 'zsh scripts/deliberate.sh',
   },
-  {
-    /*
-     * ★★ **판단이 주문이 되는 자리.** 2026-09-03에 이것이 하루 한 번(09:00~09:21)
-     *    뿐이라 **그날 판단이 통째로 집행되지 않았다.**
-     *
-     *    판단자가 09:52에 시작해 10:00에 끝났는데, 그때는 이 창이 이미 지났다.
-     *    회차 35가 KB금융 2주 매도를 적었지만 주문은 0건이었다.
-     *
-     * ★ 데몬에는 있었다 — `run_executor`를 **판단자가 끝난 직후** 불렀다.
-     *   스케줄러로 옮기며 그 고리가 빠졌다. "판단만 쌓이고 아무 일도 안 일어나는"
-     *   2026-08-20 이전 상태로 되돌아간 것이다.
-     *
-     * ★ **주기 작업으로 바꿨다.** 창 안에서 5분마다 돈다 — 집행기는 멱등이라
-     *   (회차 `executions` + `clientOrderId`) 낼 것이 없으면 아무 일도 하지 않고,
-     *   판단자가 언제 끝나든 그다음 회차가 집어 간다.
-     */
-    name: 'execute',
-    label: '판단 집행',
-    window: [900, 1520],
-    trading: true,
-    daily: false,
-    everyMinutes: 5,
-    // ★ 주문을 내는 자리다. 두 벌이 뜨면 같은 결정이 두 번 나갈 수 있다.
-    guard: 'executeDeliberation.ts',
-    command: 'cd backend && npx tsx src/scripts/executeDeliberation.ts VTS-ORDINARY --execute',
-  },
-  {
+   {
     /*
      * ★ **매 분 돈다.** 급락에 판단자를 부르면 1~2분이 걸리고 그 지연이 치명적이라
      *   규칙이 즉시 집행한다. 주문은 `clientOrderId`(`stop-{종목}-{날짜}`)로 서버가
