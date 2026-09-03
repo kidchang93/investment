@@ -113,11 +113,27 @@ export const TASKS: TaskSpec[] = [
     command: 'zsh scripts/deliberate.sh',
   },
   {
-    name: 'execute-open',
-    label: '개장 직후 집행',
-    window: [900, 921],
+    /*
+     * ★★ **판단이 주문이 되는 자리.** 2026-09-03에 이것이 하루 한 번(09:00~09:21)
+     *    뿐이라 **그날 판단이 통째로 집행되지 않았다.**
+     *
+     *    판단자가 09:52에 시작해 10:00에 끝났는데, 그때는 이 창이 이미 지났다.
+     *    회차 35가 KB금융 2주 매도를 적었지만 주문은 0건이었다.
+     *
+     * ★ 데몬에는 있었다 — `run_executor`를 **판단자가 끝난 직후** 불렀다.
+     *   스케줄러로 옮기며 그 고리가 빠졌다. "판단만 쌓이고 아무 일도 안 일어나는"
+     *   2026-08-20 이전 상태로 되돌아간 것이다.
+     *
+     * ★ **주기 작업으로 바꿨다.** 창 안에서 5분마다 돈다 — 집행기는 멱등이라
+     *   (회차 `executions` + `clientOrderId`) 낼 것이 없으면 아무 일도 하지 않고,
+     *   판단자가 언제 끝나든 그다음 회차가 집어 간다.
+     */
+    name: 'execute',
+    label: '판단 집행',
+    window: [900, 1520],
     trading: true,
-    daily: true,
+    daily: false,
+    everyMinutes: 5,
     // ★ 주문을 내는 자리다. 두 벌이 뜨면 같은 결정이 두 번 나갈 수 있다.
     guard: 'executeDeliberation.ts',
     command: 'cd backend && npx tsx src/scripts/executeDeliberation.ts VTS-ORDINARY --execute',
@@ -145,6 +161,25 @@ export const TASKS: TaskSpec[] = [
     daily: false,
     everyMinutes: 20,
     command: 'zsh scripts/watch.sh && (cd backend && npx tsx src/scripts/checkAlerts.ts --notify)',
+  },
+  {
+    /*
+     * ★★ **적정가 분석** (2026-09-03). 사용자가 정했다 — *"분석가는 KIS와
+     *    차트분석 및 웹 뉴스 이 세가지를 분석해서 적정가를 슬랙으로 5분마다
+     *    메세지 보내줘"*, 그리고 *"판단자가 그 가격을 보고 매수할지 매도할지
+     *    정해서 집행하는 시퀀스."*
+     *
+     * ★ **Claude를 안 부른다.** 5분마다면 하루 78회라 헤드리스로 돌리면 판단자의
+     *   수십 배가 된다. 적정가는 재무·차트로 **계산**하고 뉴스는 제목을 붙인다 —
+     *   해석은 판단자의 일이고, 여기서 또 하면 같은 판단을 두 번 사는 것이다.
+     */
+    name: 'fair-value',
+    label: '적정가 분석',
+    window: [905, 1520],
+    trading: false,
+    daily: false,
+    everyMinutes: 5,
+    command: 'cd backend && npx tsx src/scripts/analyzeFairValue.ts VTS-ORDINARY',
   },
   {
     /*
