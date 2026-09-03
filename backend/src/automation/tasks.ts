@@ -148,6 +148,29 @@ export const TASKS: TaskSpec[] = [
   },
   {
     /*
+     * ★ **장중 시황 브리핑** (2026-09-03). 사용자가 *"로컬 켜있으면 지속적으로
+     *   브리핑하도록 하자"*고 정했다.
+     *
+     * ★ 아래 `news-watch`와 역할이 다르다 — 그쪽은 "보유 종목에 무슨 일이 났나"
+     *   (있을 때만), 이쪽은 "시장이 지금 어떤가"(매번). 내 종목이 조용해도
+     *   시장은 움직인다.
+     *
+     * ★ 네이버 금융을 그냥 받는다. 비용 0 — Firecrawl 크레딧도 Playwright 브라우저도
+     *   필요 없었다(정적 HTML이다).
+     *
+     * 30분 간격인 이유: 10분이면 하루 39개라 읽히지 않는다. 시황은 그렇게 자주
+     * 바뀌지 않는다 — 급한 것은 `news-watch`와 손절이 따로 본다.
+     */
+    name: 'market-brief',
+    label: '시황 브리핑',
+    window: [905, 1520],
+    trading: false,
+    daily: false,
+    everyMinutes: 30,
+    command: 'cd backend && npx tsx src/scripts/marketBrief.ts VTS-ORDINARY',
+  },
+  {
+    /*
      * ★ **장중 뉴스 감시** (2026-09-03). 슬랙 `stock-briefing`은 하루 두 번
      *   (08:20·18:15)뿐이라 **장이 도는 6시간 반을 아무도 안 본다.**
      *
