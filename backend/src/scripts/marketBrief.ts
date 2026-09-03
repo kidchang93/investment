@@ -1,5 +1,5 @@
 /**
- * **장중 시황 브리핑.** 네이버 금융에서 받아 슬랙으로 보낸다.
+ * **장중 뉴스 브리핑.** 네이버 금융에서 받아 `stock-briefing` 채널에 보낸다.
  *
  * ── 왜 (2026-09-03) ──────────────────────────────────────────────────────
  *
@@ -15,35 +15,43 @@
  *
  * ── 무엇을 담나 ──────────────────────────────────────────────────────────
  *
- *   ① 코스피·코스닥 지수와 등락
- *   ② 우리 계좌 — 총평가·손익·오늘 움직인 보유 종목  ← **로컬이라 할 수 있다**
- *   ③ 거래대금 상위 — 자금이 어디로 몰리나
- *   ④ 주요 뉴스 제목 + 본문 요약
+ *   ① 코스피·코스닥 지수 한 줄 — 뉴스를 읽을 배경이다
+ *   ② 주요 뉴스 제목 + **본문 요약** (KIS에는 제목만 온다)
  *
- * ★ ②가 이 브리핑의 값어치다. 클라우드 루틴은 계좌를 못 봐서 *"시장이 빠졌다"*
- *   까지만 말할 수 있는데, 로컬은 *"그래서 우리가 얼마 잃었다"*를 말한다.
+ * ★ **계좌·거래대금은 빼기로 했다** (2026-09-03, 사용자가 정했다 —
+ *   *"stock-briefing 으로 뉴스만 보내면 될 것 같아"*). 계좌는 화면에서 보고,
+ *   손절·경보는 웹훅으로 따로 간다. **채널마다 성격을 하나로** 두는 편이
+ *   읽힌다 — 브리핑이 시끄러운 날 경보가 그 사이에 묻히면 안 된다.
+ *
+ * ── 어디로 보내나 ────────────────────────────────────────────────────────
+ *
+ * **봇(`briefingbot`)으로 `stock-briefing`에 보낸다** — 웹훅이 아니다.
+ * 그 채널에는 클라우드 Claude가 하루 두 번 쓰는 브리핑이 이미 쌓이고 있어서,
+ * 같은 봇 이름으로 이어 붙는 편이 읽기 좋다.
+ *
+ * 손절·경보는 **웹훅 그대로** 둔다(`sendSlack`). 성격이 다른 것은 채널도 다르다.
  *
  * ── 비용 ─────────────────────────────────────────────────────────────────
  *
- * **0원이다.** 네이버 3페이지 + KIS 잔고 1회. 헤드리스 Claude를 부르지 않는다.
- * Firecrawl·Playwright도 안 쓴다 — 네이버 금융이 정적 HTML이라 필요 없었다.
+ * **0원이다.** 네이버 2페이지가 전부다 — KIS도, 헤드리스 Claude도 안 부른다.
+ * Firecrawl·Playwright도 안 쓴다(네이버 금융이 정적 HTML이라 필요 없었다).
  *
- *   npx tsx src/scripts/marketBrief.ts [계좌id] [--quiet]
+ *   npx tsx src/scripts/marketBrief.ts [--quiet]
  *     --quiet  슬랙으로 안 보내고 화면에만
  */
 
-import { getKisAccount } from '../config.js';
-import { closeDb } from '../db/client.js';
-import { getKisDomesticAccountSnapshot } from '../kis/rest.js';
-import { getIndexQuotes, getMainNews, getTurnoverTop } from '../naver/finance.js';
-import { escapeMrkdwn, sendSlack, won } from '../notify/slack.js';
+/*
+ * ★ **`config.js`를 값 때문이 아니라 `.env`를 읽히려고 들여온다.**
+ *   이 스크립트는 계좌를 안 보므로 config가 필요 없어 보이지만, dotenv를 로드하는
+ *   곳이 거기다. 빼자마자 `BOT_TOKEN`이 안 읽혀 "봇이 설정돼 있지 않다"가 나왔다
+ *   (2026-09-03). 스크립트를 새로 쓸 때 반복하기 쉬운 실수다.
+ */
+import '../config.js';
+import { getIndexQuotes, getMainNews } from '../naver/finance.js';
+import { escapeMrkdwn, sendSlackBot, slackBotConfigured } from '../notify/slack.js';
 
-/** 브리핑에 담을 개수 */
-const NEWS_COUNT = 5;
-const TURNOVER_COUNT = 6;
-
-/** 이만큼 넘게 움직인 보유 종목만 따로 적는다. 조용한 것은 줄이 아깝다 */
-const NOTABLE_MOVE_PCT = 1.5;
+/** 브리핑에 담을 뉴스 개수 */
+const NEWS_COUNT = 6;
 
 function signed(value: number | null, digits = 2): string {
   if (value === null) return '—';
@@ -60,7 +68,6 @@ function kstNow(): string {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const quiet = args.includes('--quiet');
-  const accountId = args.find((a) => !a.startsWith('--')) ?? 'VTS-ORDINARY';
 
   const lines: string[] = [];
   const plain: string[] = [];
@@ -82,48 +89,7 @@ async function main(): Promise<void> {
     plain.push(`지수 실패: ${(error as Error).message.slice(0, 80)}`);
   }
 
-  // ── ② 우리 계좌 ── **로컬이라 할 수 있는 것**
-  const account = getKisAccount(accountId);
-  if (account) {
-    try {
-      const snapshot = await getKisDomesticAccountSnapshot(account);
-      const pnl = snapshot.positions.reduce((sum, p) => sum + (p.unrealizedPnl ?? 0), 0);
-      lines.push(
-        `\n💼 *내 계좌* ${won(snapshot.totalEvaluation ?? 0)}`
-        + `  ·  평가손익 ${pnl >= 0 ? '+' : ''}${won(pnl)}`,
-      );
-      plain.push(`계좌 ${won(snapshot.totalEvaluation ?? 0)} · 손익 ${won(pnl)}`);
-
-      const movers = snapshot.positions
-        .filter((p) => Math.abs(p.unrealizedPnlRate ?? 0) >= NOTABLE_MOVE_PCT)
-        .sort((a, b) => (b.unrealizedPnlRate ?? 0) - (a.unrealizedPnlRate ?? 0));
-      for (const p of movers) {
-        const row = `   ${p.name} ${signed(p.unrealizedPnlRate ?? null)}% (${won(p.unrealizedPnl ?? 0)})`;
-        lines.push(row);
-        plain.push(row);
-      }
-    } catch (error) {
-      lines.push('\n💼 _계좌를 못 읽었습니다_');
-      plain.push(`계좌 실패: ${(error as Error).message.slice(0, 80)}`);
-    }
-  }
-
-  // ── ③ 거래대금 상위 ──
-  try {
-    const top = await getTurnoverTop(TURNOVER_COUNT);
-    if (top.length > 0) {
-      lines.push('\n💰 *거래대금 상위*');
-      const row = top
-        .map((t) => `${escapeMrkdwn(t.name)} ${signed(t.changeRate, 1)}%`)
-        .join(' · ');
-      lines.push(`   ${row}`);
-      plain.push(`거래대금 상위: ${top.map((t) => t.name).join(', ')}`);
-    }
-  } catch (error) {
-    plain.push(`거래대금 실패: ${(error as Error).message.slice(0, 80)}`);
-  }
-
-  // ── ④ 주요 뉴스 ──
+  // ── ② 주요 뉴스 ──
   try {
     const news = await getMainNews(NEWS_COUNT);
     if (news.length > 0) {
@@ -139,21 +105,24 @@ async function main(): Promise<void> {
     plain.push(`뉴스 실패: ${(error as Error).message.slice(0, 80)}`);
   }
 
-  console.log(`시황 브리핑 ${kstNow()}`);
+  console.log(`뉴스 브리핑 ${kstNow()}`);
   for (const line of plain) console.log(`  ${line}`);
 
   if (quiet) {
     console.log('\n(--quiet — 슬랙으로 보내지 않았다)');
     return;
   }
-  const header = `📊 *시황 브리핑* — ${kstNow()}`;
-  const sent = await sendSlack([header, ...lines].join('\n'));
-  console.log(sent ? '\n슬랙으로 보냈다.' : '\n슬랙이 설정돼 있지 않다 (SLACK_WEBHOOK_URL).');
+  if (!slackBotConfigured()) {
+    console.log('\n봇이 설정돼 있지 않다 — BOT_TOKEN(xoxb-)과 SLACK_BRIEFING_CHANNEL(C…)이 필요하다.');
+    return;
+  }
+  const header = `📰 *장중 뉴스* — ${kstNow()}`;
+  const sent = await sendSlackBot([header, ...lines].join('\n'));
+  console.log(sent ? '\nstock-briefing 채널로 보냈다.' : '\n보내지 못했다 (위 오류 참고).');
 }
 
-main()
-  .catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  })
-  .finally(() => closeDb());
+// ★ DB를 안 쓴다 — 네이버 3페이지가 전부다. `closeDb`가 필요 없다.
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

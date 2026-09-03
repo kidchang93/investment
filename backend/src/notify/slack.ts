@@ -93,3 +93,76 @@ export function signedWon(n: number): string {
 export function escapeMrkdwn(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+
+// ── 봇으로 특정 채널에 보내기 (2026-09-03) ──────────────────────────────
+//
+// 사용자가 정했다 — *"봇이 브리핑 하게 해야될 것 같아. stock-briefing 으로
+// 뉴스만 보내면 될 것 같아."*
+//
+// ★ **웹훅과 무엇이 다른가.** 웹훅은 URL 하나에 **채널이 박혀 있다** — 만들 때
+//   정한 곳으로만 간다. 봇 토큰(`chat:write`)은 채널을 골라 보낼 수 있고,
+//   보내는 주체가 `briefingbot`으로 찍힌다. `stock-briefing`에 이미 그 봇이
+//   하루 두 번 브리핑을 쓰고 있으므로 **같은 이름으로 이어진다.**
+//
+// ★ 손절·경보는 **웹훅 그대로** 둔다. 알림 경로를 하나로 합치면 브리핑이
+//   시끄러운 날 경보가 그 사이에 묻힌다 — 성격이 다른 것은 채널도 달라야 한다.
+
+const BOT_TOKEN_ENV = 'BOT_TOKEN';
+const BRIEFING_CHANNEL_ENV = 'SLACK_BRIEFING_CHANNEL';
+
+/** 봇으로 보낼 수 있나. 토큰과 채널이 둘 다 있어야 한다 */
+export function slackBotConfigured(): boolean {
+  return botToken() !== null && briefingChannel() !== null;
+}
+
+function botToken(): string | null {
+  const raw = (process.env[BOT_TOKEN_ENV] ?? '').trim().replace(/^["']|["']$/g, '');
+  // `xoxb-`가 봇 토큰이다. `xapp-`(앱 레벨)은 채널에 못 쓴다.
+  return raw.startsWith('xoxb-') ? raw : null;
+}
+
+function briefingChannel(): string | null {
+  const raw = (process.env[BRIEFING_CHANNEL_ENV] ?? '').trim().replace(/^["']|["']$/g, '');
+  // 채널 ID는 C(공개)·G(비공개)·D(DM)로 시작한다. 이름(`#stock-briefing`)은 API가 안 받는다.
+  return /^[CGD][A-Z0-9]{6,}$/.test(raw) ? raw : null;
+}
+
+/**
+ * 봇으로 브리핑 채널에 보낸다.
+ *
+ * @returns 슬랙이 받았으면 true. 설정이 없거나 실패하면 false — **던지지 않는다.**
+ *   (`sendSlack`과 같은 원칙: 알림은 전달 수단이지 판정이 아니다)
+ */
+export async function sendSlackBot(text: string): Promise<boolean> {
+  const token = botToken();
+  const channel = briefingChannel();
+  if (!token || !channel) return false;
+  if (!text.trim()) return false;
+  try {
+    const res = await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json; charset=utf-8',
+      },
+      body: JSON.stringify({
+        channel,
+        text,
+        // 링크 미리보기를 끈다 — 뉴스 5건이면 화면이 미리보기로 뒤덮인다.
+        unfurl_links: false,
+        unfurl_media: false,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const body = (await res.json()) as { ok?: boolean; error?: string };
+    if (!body.ok) {
+      // ★ 토큰은 로그에 안 찍는다. 오류 코드만 남긴다.
+      console.log(`슬랙 봇 전송 실패: ${body.error ?? `HTTP ${res.status}`}`);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.log(`슬랙 봇 전송 실패: ${(error as Error).message.slice(0, 80)}`);
+    return false;
+  }
+}
