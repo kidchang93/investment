@@ -36,6 +36,8 @@
  *   npx tsx src/scripts/analyzeFairValue.ts [계좌id] [--quiet] [--symbols 005930,000660]
  */
 
+import { spawn } from 'node:child_process';
+
 import '../config.js';
 
 import type { FinancialSnapshot } from '@invest/shared';
@@ -246,6 +248,69 @@ async function main(): Promise<void> {
   const header = `💹 *적정가 분석* — ${now}\n_지금 값이 그 종목의 차트·재무 궤적 대비 어디쯤인가. 🟢 −5% 이하 · 🔴 +5% 이상_`;
   const sent = await sendSlackBot([header, ...lines].join('\n'));
   console.log(sent ? '\nstock-briefing 채널로 보냈다.' : '\n보내지 못했다.');
+
+  if (!args.includes('--no-judge')) await maybeCallJudge(rows, accountId);
+}
+
+/**
+ * ★★ **분석 뒤에 판단자를 부른다** — 다만 **부를 이유가 있을 때만.**
+ *
+ * 사용자가 정했다 — *"분석가가 메세지 보낸 후 판단자를 바로 부르면 돼."*
+ * 그런데 5분마다 무조건 부르면 **하루 78회**다. 빠른 회차가 2~3분이어도
+ * 장중 내내 헤드리스 Claude가 도는 것이고, 대부분은 **5분 전과 같은 상황**이라
+ * 같은 판단을 되풀이해 산다.
+ *
+ * 그래서 문턱을 둔다. 아래 중 하나면 부른다:
+ *
+ *   ① 적정가가 **문턱을 넘은 종목이 있다** (−7% 이하로 싸거나 +15% 이상 비싸다)
+ *   ② 그 종목이 **직전 회차 이후 새로 넘었다** — 같은 신호로 다시 부르지 않는다
+ *
+ * ★ ②가 없으면 문턱을 넘은 종목이 하나라도 있는 한 5분마다 계속 부른다.
+ *   신호가 바뀔 때만 부르는 것이 이 게이트의 핵심이다.
+ */
+const CHEAP_GATE = -0.07;
+const RICH_GATE = 0.15;
+
+async function maybeCallJudge(rows: Row[], accountId: string): Promise<void> {
+  const crossed = rows.filter((r) => r.fv.gap !== null && (r.fv.gap <= CHEAP_GATE || r.fv.gap >= RICH_GATE));
+  if (crossed.length === 0) {
+    console.log('판단자를 부르지 않는다 — 문턱을 넘은 종목이 없다.');
+    return;
+  }
+
+  /*
+   * ★ **같은 신호로 다시 부르지 않는다.** 직전 호출 때 넘어 있던 종목 묶음과
+   *   같으면 새 정보가 아니다 — 5분 전과 상황이 같다는 뜻이다.
+   */
+  const signature = crossed.map((r) => `${r.symbol}:${(r.fv.gap! * 100).toFixed(0)}`).sort().join(',');
+  const { rows: last } = await pool.query<{ note: string }>(
+    `SELECT note FROM trading_heartbeats
+      WHERE name = 'fair-value-judge'
+        AND (ran_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date
+      ORDER BY id DESC LIMIT 1`,
+  );
+  if (last[0]?.note === signature) {
+    console.log(`판단자를 부르지 않는다 — 직전과 같은 신호(${crossed.length}종목).`);
+    return;
+  }
+
+  console.log(`★ 판단자를 부른다 — 문턱을 넘은 ${crossed.length}종목: ${crossed.map((r) => r.name).join(', ')}`);
+  await pool.query(
+    `INSERT INTO trading_heartbeats (name, status, note) VALUES ('fair-value-judge', 'ok', $1)`,
+    [signature],
+  );
+
+  /*
+   * ★ 백그라운드로 띄우고 **기다리지 않는다.** 이 스크립트는 5분마다 도는데
+   *   판단자는 2~3분 걸린다 — 기다리면 다음 분석이 밀린다.
+   *   중복은 스케줄러의 `guard`(pgrep)와 `deliberate.sh`가 막는다.
+   */
+  const child = spawn('zsh', ['scripts/deliberate.sh', '--quick', accountId], {
+    cwd: process.cwd().endsWith('backend') ? '..' : '.',
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
 }
 
 main()

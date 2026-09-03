@@ -31,7 +31,24 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
-ACCOUNT="${1:-VTS-ORDINARY}"
+# ★ `--quick`이면 **가벼운 프롬프트**를 쓴다 (2026-09-03).
+#
+#   정식 회차는 후보 300종목을 훑고 웹을 뒤져 **13분**이 걸린다(09:47→10:00 실측).
+#   5분마다 도는 자리에는 못 쓴다. 빠른 회차는 분석가가 낸 적정가 표 하나만 보고
+#   2~3분에 끝낸다 — 조사를 안 하는 것이 그 회차의 전부다.
+QUICK=0
+ARGS=()
+for a in "$@"; do
+  if [[ "$a" == "--quick" ]]; then QUICK=1; else ARGS+=("$a"); fi
+done
+ACCOUNT="${ARGS[1]:-VTS-ORDINARY}"
+if [[ $QUICK -eq 1 ]]; then
+  PROMPT_FILE="prompts/deliberate-quick.md"
+  LOG_SUFFIX="quick"
+else
+  PROMPT_FILE="prompts/deliberate.md"
+  LOG_SUFFIX=""
+fi
 LOG_DIR=".cron-logs"
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/deliberate-$(date '+%Y%m%d').log"
@@ -49,7 +66,7 @@ if ! docker exec kis-postgres pg_isready -U kis >/dev/null 2>&1; then
   exit 1
 fi
 
-log "판단자 소집 · 계좌 $ACCOUNT"
+log "판단자 소집 · 계좌 $ACCOUNT${LOG_SUFFIX:+ · $LOG_SUFFIX}"
 
 # ★ **소집 전 회차 수를 세어 둔다.** 아래에서 "정말 한 회차가 남았나"를 이것으로
 #   가린다 — `claude -p`의 종료 코드만 보면 **아무것도 안 하고 끝나도 성공**이다.
@@ -68,7 +85,7 @@ BEFORE=${BEFORE:-0}
 # ★ 허용 도구를 좁힌다. 판단에 필요한 것만 준다 —
 #   Bash(상태 수집·기록)·Read·Grep·Glob·WebSearch·WebFetch.
 #   Write/Edit는 주지 않는다. 판단자가 코드를 고칠 일이 없다.
-claude -p "$(cat prompts/deliberate.md)
+claude -p "$(cat "$PROMPT_FILE")
 
 계좌 id는 **$ACCOUNT** 입니다. 지금 시각은 $(date '+%Y-%m-%d %H:%M') KST 입니다." \
   --allowedTools "Bash,Read,Grep,Glob,WebSearch,WebFetch" \
