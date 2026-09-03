@@ -95,12 +95,25 @@ export const TASKS: TaskSpec[] = [
   {
     name: 'auction-open',
     label: '시가 단일가 수집',
-    window: [830, 835],
+    window: [830, 850],
     trading: false,
     daily: true,
     background: true,
     guard: 'measureAuctionSlippage.ts --open',
     command: 'cd backend && npx tsx src/scripts/measureAuctionSlippage.ts --open',
+    /*
+     * ★★ **창이 5분이라 이틀 연속 놓쳤다** (2026-09-03·04에 고쳤다).
+     *
+     * 백엔드는 **사람이 켤 때만 뜬다**(2026-08-25 사용자 결정, 자동 시작 금지).
+     * 그런데 이 창이 08:30~08:35뿐이라 **그 5분 안에 켜야만** 돌았다. 이틀 다
+     * 08:43에 켜서 이틀 다 놓쳤고, `daily-report`가 알려 주기 전에는 그 사실도
+     * 몰랐다.
+     *
+     * 스크립트 자체는 **08:30~09:00**을 수집한다(문서 참조). 창을 08:50까지
+     * 늘리면 늦게 켜도 남은 구간은 건진다 — 표본이 짧아질 뿐 0보다 낫다.
+     *
+     * ★ 08:50을 넘겨 켜면 남은 시간이 10분 미만이라 그때는 그냥 넘긴다.
+     */
   },
   {
     /*
