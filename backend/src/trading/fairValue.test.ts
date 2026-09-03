@@ -12,7 +12,10 @@
 import assert from 'node:assert/strict';
 import { describe as suite, it } from 'node:test';
 
-import { chartBand, combine, describe, fundamentalBand, type Bar } from './fairValue.js';
+import {
+  chartBand, classifyAsset, combine, describe, fundamentalBand,
+  type Bar,
+} from './fairValue.js';
 
 /** 값이 `base` 둘레에서 `swing` 폭으로 오르내리는 봉을 만든다 */
 function bars(count: number, base: number, swing = 0.05): Bar[] {
@@ -91,25 +94,25 @@ suite('합치기', () => {
   const band = (mid: number) => ({ low: mid * 0.9, mid, high: mid * 1.1, basis: 'x' });
 
   it('두 축의 중앙값 평균 대비로 gap을 낸다', () => {
-    const fv = combine('005930', 110, band(100), band(100), []);
+    const fv = combine('005930', 'stock', 110, band(100), band(100), []);
     assert.ok(fv.gap !== null);
     assert.ok(Math.abs(fv.gap - 0.1) < 1e-9, `gap=${fv.gap}`);
   });
 
   it('축이 하나뿐이면 그것으로 낸다', () => {
-    const fv = combine('005930', 90, band(100), null, ['재무 없음']);
+    const fv = combine('005930', 'stock', 90, band(100), null, ['재무 없음']);
     assert.ok(fv.gap !== null);
     assert.ok(Math.abs(fv.gap + 0.1) < 1e-9);
   });
 
   it('★★ 축이 하나도 없으면 gap이 null이다 — 0으로 채우지 않는다', () => {
-    const fv = combine('005930', 100, null, null, ['차트 없음', '재무 없음']);
+    const fv = combine('005930', 'stock', 100, null, null, ['차트 없음', '재무 없음']);
     assert.equal(fv.gap, null, '"적정가와 같다"와 "모른다"는 다른 사실이다');
     assert.deepEqual(fv.missing, ['차트 없음', '재무 없음']);
   });
 
   it('현재가가 0이면 gap을 못 낸다', () => {
-    assert.equal(combine('005930', 0, band(100), null, []).gap, null);
+    assert.equal(combine('005930', 'stock', 0, band(100), null, []).gap, null);
   });
 });
 
@@ -117,14 +120,46 @@ suite('사람이 읽을 문장', () => {
   const band = (mid: number) => ({ low: mid * 0.9, mid, high: mid * 1.1, basis: 'x' });
 
   it('싸다·비싸다를 말로도 적는다 — 부호만 보면 반대로 읽는다', () => {
-    assert.match(describe(combine('A', 90, band(100), null, []), '가'), /싸다/);
-    assert.match(describe(combine('A', 110, band(100), null, []), '가'), /비싸다/);
-    assert.match(describe(combine('A', 100, band(100), null, []), '가'), /비슷하다/);
+    assert.match(describe(combine('A', 'stock', 90, band(100), null, []), '가'), /싸다/);
+    assert.match(describe(combine('A', 'stock', 110, band(100), null, []), '가'), /비싸다/);
+    assert.match(describe(combine('A', 'stock', 100, band(100), null, []), '가'), /비슷하다/);
   });
 
   it('못 냈으면 사유를 적는다 — 조용히 빠지면 "괜찮은가 보다"로 읽힌다', () => {
-    const text = describe(combine('A', 100, null, null, ['재무 없음']), '가');
+    const text = describe(combine('A', 'stock', 100, null, null, ['재무 없음']), '가');
     assert.match(text, /못 냈다/);
     assert.match(text, /재무 없음/);
+  });
+});
+
+suite('종목 갈래 — 갈래마다 적정가의 뜻이 다르다', () => {
+  it('개별 주식은 stock이다', () => {
+    assert.equal(classifyAsset('KB금융', 'stock'), 'stock');
+    assert.equal(classifyAsset('삼성전자', undefined), 'stock');
+  });
+
+  it('광범위 지수 ETF를 가른다', () => {
+    assert.equal(classifyAsset('KODEX 200', 'etf'), 'indexEtf');
+    assert.equal(classifyAsset('TIGER 미국S&P500', 'etf'), 'indexEtf');
+    assert.equal(classifyAsset('KODEX 코스닥150', 'etf'), 'indexEtf');
+  });
+
+  it('★ 레버리지·인버스를 지수보다 먼저 본다 — 지수 이름을 달고 온다', () => {
+    // "KODEX 200선물인버스2X"는 200이 들어 있어 지수로 샐 수 있다.
+    assert.equal(classifyAsset('KODEX 200선물인버스2X', 'etf'), 'leveraged');
+    assert.equal(classifyAsset('KODEX 레버리지', 'etf'), 'leveraged');
+    assert.equal(classifyAsset('KODEX 인버스', 'etf'), 'leveraged');
+    assert.equal(classifyAsset('TIGER SK하이닉스단일종목레버리지', 'etf'), 'leveraged');
+  });
+
+  it('원자재·실물은 재무가 성립하지 않는다', () => {
+    assert.equal(classifyAsset('ACE KRX금현물', 'etf'), 'commodityEtf');
+    assert.equal(classifyAsset('TIGER 원유선물Enhanced(H)', 'etf'), 'commodityEtf');
+  });
+
+  it('나머지 ETF는 섹터·테마다', () => {
+    assert.equal(classifyAsset('PLUS 고배당주', 'etf'), 'sectorEtf');
+    assert.equal(classifyAsset('TIGER 리츠부동산인프라', 'etf'), 'sectorEtf');
+    assert.equal(classifyAsset('TIGER K방산&우주', 'etf'), 'sectorEtf');
   });
 });

@@ -34,6 +34,66 @@
  * ★ 순수 계산이라 DB도 네트워크도 안 탄다 — 시험에 그대로 태울 수 있다.
  */
 
+/**
+ * ── 종목 갈래 ────────────────────────────────────────────────────────────
+ *
+ * 사용자가 짚었다 (2026-09-03) — *"적정가 분석 시 여러 종목별로 카테고리 나눠서
+ * 적정가 산정해줘. 지금은 무슨 기준으로 한지 모르겠어."*
+ *
+ * 맞다. 그전에는 **ETF와 개별주식을 같은 방식으로** 쟀다. 그래서 KODEX 200에
+ * "재무 없음"이 붙고, 금 ETF에 PBR을 물으려 하고, 결과만 보면 무엇을 근거로
+ * 했는지 알 수 없었다.
+ *
+ * ★ **갈래마다 적정가의 뜻이 다르다.** 개별주식은 "회사 가치 대비"이고 지수
+ *   ETF는 "그 지수의 최근 궤적 대비"다. 같은 −10%라도 뜻이 다르다.
+ */
+export type AssetKind =
+  /** 개별 주식 — 재무 배수가 뜻을 갖는다 */
+  | 'stock'
+  /** 광범위 지수 ETF — 재무가 없다. 궤적 대비로만 잰다 */
+  | 'indexEtf'
+  /** 섹터·테마 ETF (고배당·리츠 등) — 지수 ETF와 같은 방식이되 기초자산이 좁다 */
+  | 'sectorEtf'
+  /** 원자재·실물 (금·원유) — 재무가 아예 성립하지 않는다 */
+  | 'commodityEtf'
+  /** 레버리지·인버스 — 변동성 끌림이 있어 장기 궤적 비교 자체가 위험하다 */
+  | 'leveraged';
+
+export const ASSET_KIND_LABEL: Record<AssetKind, string> = {
+  stock: '개별주식',
+  indexEtf: '지수 ETF',
+  sectorEtf: '섹터·테마 ETF',
+  commodityEtf: '원자재·실물',
+  leveraged: '레버리지·인버스',
+};
+
+/** 갈래마다 **무엇으로 적정가를 내는지** — 사람이 읽을 한 줄 */
+export const ASSET_KIND_METHOD: Record<AssetKind, string> = {
+  stock: '차트(6개월 분포) + 재무(BPS·EPS × 그 종목 과거 배수)',
+  indexEtf: '차트(6개월 분포)만 — 지수에는 재무가 없다',
+  sectorEtf: '차트(6개월 분포)만 — 기초자산이 여럿이라 재무를 합칠 수 없다',
+  commodityEtf: '차트(6개월 분포)만 — 실물은 재무가 성립하지 않는다',
+  leveraged: '차트만 · ★ 변동성 끌림 때문에 이 값을 믿지 말 것',
+};
+
+/**
+ * 종목을 갈래로 나눈다. **이름과 자산유형으로만** 판정한다 — 기초자산 구성
+ * 데이터가 이 레포에 없다.
+ *
+ * ★ 어림이라는 것을 알고 쓴다. `universe.ts`가 레버리지를 이름으로 거르는 것과
+ *   같은 방식이고, 같은 한계를 갖는다(이름에 표시가 없는 것은 못 거른다).
+ */
+export function classifyAsset(name: string, assetType: string | undefined): AssetKind {
+  if (assetType !== 'etf' && assetType !== 'etn') return 'stock';
+  // ★ 레버리지·인버스를 **가장 먼저** 본다. "KODEX 200선물인버스2X"는 지수 이름을
+  //   달고 있어서 지수 ETF로 새기 쉽다.
+  if (/레버리지|인버스|단일종목|\dX/.test(name)) return 'leveraged';
+  if (/금현물|골드|은현물|실버|원유|WTI|천연가스|구리|농산물|커피|옥수수|콩/.test(name)) return 'commodityEtf';
+  // 광범위 지수 — 나라·시장 전체를 담는 것
+  if (/200$|200[^선물]|코스닥150|KRX100|S&P\s?500|나스닥100|다우존스|MSCI|코스피/.test(name)) return 'indexEtf';
+  return 'sectorEtf';
+}
+
 /** 하루 봉 하나. 저장소·KIS 어느 쪽에서 와도 이 모양이면 된다 */
 export interface Bar {
   tradingDay: string;
@@ -61,6 +121,8 @@ export interface Band {
 
 export interface FairValue {
   symbol: string;
+  /** 어느 갈래인가. **적정가의 뜻이 갈래마다 다르다** */
+  kind: AssetKind;
   price: number;
   /** ① 차트 축 */
   chart: Band | null;
@@ -187,6 +249,7 @@ export function fundamentalBand(
  */
 export function combine(
   symbol: string,
+  kind: AssetKind,
   price: number,
   chart: Band | null,
   fundamental: Band | null,
@@ -194,7 +257,7 @@ export function combine(
 ): FairValue {
   const mids = [chart?.mid, fundamental?.mid].filter((v): v is number => typeof v === 'number' && v > 0);
   const gap = mids.length > 0 && price > 0 ? price / mean(mids) - 1 : null;
-  return { symbol, price, chart, fundamental, gap, missing };
+  return { symbol, kind, price, chart, fundamental, gap, missing };
 }
 
 /**

@@ -50,8 +50,9 @@ import { getDomesticQuotes, getFinancials, getKisDomesticAccountSnapshot } from 
 import { getMainNews } from '../naver/finance.js';
 import { escapeMrkdwn, sendSlackBot, slackBotConfigured } from '../notify/slack.js';
 import {
-  chartBand, combine, describe, fundamentalBand,
-  type Bar, type FairValue,
+  ASSET_KIND_LABEL, ASSET_KIND_METHOD,
+  chartBand, classifyAsset, combine, describe, fundamentalBand,
+  type AssetKind, type Bar, type FairValue,
 } from '../trading/fairValue.js';
 
 /** 한 회차에 볼 종목 수 상한. 보유 + 인자로 준 것 */
@@ -181,6 +182,7 @@ async function main(): Promise<void> {
   for (const symbol of targets) {
     const instrument = await getKoreanInstrumentBySymbol(symbol);
     const name = instrument?.name ?? symbol;
+    const kind = classifyAsset(name, instrument?.assetType);
     const price = quotes.get(symbol) ?? 0;
     const missing: string[] = [];
     if (price <= 0) missing.push('현재가 없음');
@@ -192,17 +194,26 @@ async function main(): Promise<void> {
     const chart = chartBand(bars);
     if (!chart) missing.push(`차트(봉 ${bars.length})`);
 
-    // ── ① 재무 ──
-    const fins = await cachedFinancials(symbol);
-    const latest = fins[0];
-    const fundamental = latest
-      ? fundamentalBand(
-        { bps: latest.bps, eps: latest.eps, roe: latest.roe },
-        pastMultiples(bars, latest.bps),
-        pastMultiples(bars, latest.eps),
-      )
-      : null;
-    if (!fundamental) missing.push(latest ? '재무 배수 부족' : '재무 없음');
+    /*
+     * ── ① 재무 — **개별 주식에만 묻는다** ──
+     *
+     * ★ ETF에 BPS·PER은 뜻이 없다. 그전에는 전 종목에 물어 KODEX 200에
+     *   "재무 없음"이 붙었는데, 그건 **빠진 것이 아니라 애초에 없는 것**이다.
+     *   둘을 섞으면 판단자가 "자료가 모자란다"로 읽는다.
+     */
+    let fundamental = null;
+    if (kind === 'stock') {
+      const fins = await cachedFinancials(symbol);
+      const latest = fins[0];
+      fundamental = latest
+        ? fundamentalBand(
+          { bps: latest.bps, eps: latest.eps, roe: latest.roe },
+          pastMultiples(bars, latest.bps),
+          pastMultiples(bars, latest.eps),
+        )
+        : null;
+      if (!fundamental) missing.push(latest ? '재무 배수 부족' : '재무 없음');
+    }
 
     // ── ③ 이 종목 뉴스 ──
     const hit = news
@@ -210,7 +221,7 @@ async function main(): Promise<void> {
       .slice(0, 2)
       .map((n) => n.title);
 
-    const fv = combine(symbol, price, chart, fundamental, missing);
+    const fv = combine(symbol, kind, price, chart, fundamental, missing);
     rows.push({ symbol, name, fv, news: hit });
 
     await pool.query(
@@ -223,17 +234,32 @@ async function main(): Promise<void> {
     );
   }
 
-  // ── 출력 ──
-  rows.sort((a, b) => (a.fv.gap ?? 99) - (b.fv.gap ?? 99));
+  /*
+   * ── 출력 — **갈래로 묶는다** ──
+   *
+   * 사용자가 짚었다 (2026-09-03) — *"지금은 무슨 기준으로 한지 모르겠어."*
+   * 한 줄로 죽 늘어놓으면 KODEX 200과 KB금융이 같은 잣대로 재진 것처럼 보인다.
+   * 갈래마다 **무엇으로 냈는지를 머리에 적어** 그 오해를 없앤다.
+   */
+  const ORDER: AssetKind[] = ['stock', 'indexEtf', 'sectorEtf', 'commodityEtf', 'leveraged'];
   const lines: string[] = [];
-  for (const r of rows) {
-    const text = describe(r.fv, r.name);
-    console.log(`  ${text}`);
-    const mark = r.fv.gap === null ? '·' : r.fv.gap < -0.05 ? '🟢' : r.fv.gap > 0.05 ? '🔴' : '⚪';
-    lines.push(`${mark} ${escapeMrkdwn(text)}`);
-    for (const n of r.news) {
-      console.log(`      · ${n}`);
-      lines.push(`     _${escapeMrkdwn(n)}_`);
+  for (const kind of ORDER) {
+    const group = rows.filter((r) => r.fv.kind === kind);
+    if (group.length === 0) continue;
+    group.sort((a, b) => (a.fv.gap ?? 99) - (b.fv.gap ?? 99));
+
+    console.log(`\n[${ASSET_KIND_LABEL[kind]}] ${ASSET_KIND_METHOD[kind]}`);
+    lines.push(`\n*${ASSET_KIND_LABEL[kind]}*  _${escapeMrkdwn(ASSET_KIND_METHOD[kind])}_`);
+
+    for (const r of group) {
+      const text = describe(r.fv, r.name);
+      console.log(`  ${text}`);
+      const mark = r.fv.gap === null ? '·' : r.fv.gap < -0.05 ? '🟢' : r.fv.gap > 0.05 ? '🔴' : '⚪';
+      lines.push(`${mark} ${escapeMrkdwn(text)}`);
+      for (const n of r.news) {
+        console.log(`      · ${n}`);
+        lines.push(`     _${escapeMrkdwn(n)}_`);
+      }
     }
   }
 
@@ -245,7 +271,9 @@ async function main(): Promise<void> {
   const now = new Date().toLocaleString('ko-KR', {
     timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false,
   });
-  const header = `💹 *적정가 분석* — ${now}\n_지금 값이 그 종목의 차트·재무 궤적 대비 어디쯤인가. 🟢 −5% 이하 · 🔴 +5% 이상_`;
+  const header = `💹 *적정가 분석* — ${now}`
+    + `\n_지금 값이 **그 종목의 최근 궤적** 대비 어디쯤인가. 예측이 아니라 기준선이다._`
+    + `\n_🟢 −5% 이하(싸다) · ⚪ 그 사이 · 🔴 +5% 이상(비싸다)_`;
   const sent = await sendSlackBot([header, ...lines].join('\n'));
   console.log(sent ? '\nstock-briefing 채널로 보냈다.' : '\n보내지 못했다.');
 
