@@ -96,10 +96,30 @@ async function kisPost(
   /*
    * 주문은 재시도하지 않는다. 중복 접수 위험이 조회 실패보다 훨씬 크다.
    *
+   * ── ★★ 예외 하나: 초당 한도(2026-09-04) ────────────────────────────────
+   *
+   * 그날 미체결 정정을 시험하다 이것으로 실패했다:
+   *
+   *   → 정정: 적정가 10,756원 안이다 — 현재가 9,180원로 붙인다
+   *     ✗ 실패 (500): "초당 거래건수를 초과하였습니다." EGW00201
+   *
+   * ★ **한도 거부는 "답을 못 받은 것"이 아니라 "안 받았다"**이다. 서버가
+   *   `rt_cd=1`로 명시적으로 거절했으므로 **접수되지 않은 것이 확실**하다.
+   *   재시도해도 중복이 되지 않는다 — 2026-08-14 사고(타임아웃 뒤 재전송으로
+   *   같은 주문이 두 번 체결)와는 성격이 다르다. 그때는 서버가 큐에 두고 계속
+   *   처리하고 있었고, 보내는 쪽이 그것을 알 방법이 없었다.
+   *
+   * ★ **모의는 초당 1건**이다(실전 18건, 아래 표 참고). 여기에 여러 프로세스가
+   *   각자 큐를 갖고 동시에 두들긴다 — `scheduleKisCall`은 **한 프로세스 안에서만**
+   *   줄을 세우므로 손절 감시·적정가 분석·미체결 정리가 서로를 모른다. 그래서
+   *   모의 환경에서는 이 충돌이 드물지 않다.
+   *
+   * ★ 그래도 **한 번만** 다시 보낸다. 계속 두드리면 더 오래 막힌다.
+   *
    * 줄은 `config.env` 것에 선다 — 주문은 `config.restBase`에 고정이고
    * (CLAUDE.md 7번) 위에서 `orderServerMismatch`가 이미 짝을 확인했다.
    */
-  return scheduleKisCall(config.env, async () => {
+  const send = (): Promise<Record<string, unknown>> => scheduleKisCall(config.env, async () => {
     const res = await fetch(config.restBase + path, {
       method: 'POST',
       // ★ 무한 대기는 큐 전체를 막는다. 중복 접수는 `clientOrderId`가 막는다.
@@ -123,6 +143,14 @@ async function kisPost(
     }
     return (await res.json()) as Record<string, unknown>;
   });
+
+  try {
+    return await send();
+  } catch (error) {
+    if (!isRateLimitedError(error)) throw error;
+    await delay(KIS_RATE_LIMIT_BACKOFF_MS);
+    return send();
+  }
 }
 
 /**

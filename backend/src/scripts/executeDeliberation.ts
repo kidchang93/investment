@@ -146,7 +146,30 @@ async function main(): Promise<void> {
   }
 
   const rounds = await getDeliberations({ accountId: account.id, limit: 20 });
-  const round = roundId ? rounds.find((r) => r.id === roundId) : rounds[0];
+
+  /*
+   * ★★ **최신 회차가 아니라 "낼 것이 남은" 회차를 집는다** (2026-09-04).
+   *
+   * 전에는 `rounds[0]`이었다. 그날 이렇게 어긋났다:
+   *
+   *   09:15  회차 57 (scheduled)   결정 3건  ← 정식 회차가 발굴에 성공
+   *   09:16  회차 58 (fair-value)  결정 0건  ← 분석가가 빠른 회차를 끼워 넣음
+   *   09:16:18  집행기 → 58을 집음 → "낼 것 0"
+   *
+   * `deliberate.sh`가 판단자를 부르고 **그 뒤에** 집행기를 부르는데, 그 틈에
+   * 분석가가 빠른 회차를 소집하면 최신 회차가 바뀐다. **경합이다.** 어제 고친
+   * 정렬 문제(`started_at` → `id`)와는 원인이 다르다.
+   *
+   * ★ 오늘 회차만 본다. 어제 판단으로 오늘 주문을 내지 않는 규칙은 그대로다.
+   * ★ **여러 회차에 남아 있으면 최신 것부터 하나**를 집는다. 한 번에 다 내면
+   *   같은 종목을 여러 번 살 수 있다 — 5분 뒤 다음 집행기가 나머지를 잇는다.
+   */
+  const todayForPick = todayKst();
+  const round = roundId
+    ? rounds.find((r) => r.id === roundId)
+    : rounds.find((r) => r.tradingDay === todayForPick
+      && r.decisions.some((d) => d.action !== 'hold' && !alreadyDone(r.executions, d)))
+      ?? rounds[0];
   if (!round) {
     console.log('집행할 회차가 없다.');
     return;
