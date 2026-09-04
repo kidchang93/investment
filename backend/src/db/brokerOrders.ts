@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { pool } from './client.js';
 import type { BrokerOrderRecord, OrderSide, OrderType } from '@invest/shared';
-import type { SubmittedQuantity } from '../trading/layers.js';
+import type { Layer, SubmittedQuantity } from '../trading/layers.js';
 
 /**
  * 실계좌 주문 전송 감사 기록.
@@ -422,6 +422,36 @@ export async function getLastBuySubmittedAt(
  * @returns 실제로 바뀐 행 수. 0이면 그 주문번호가 우리 기록에 없다 —
  *          사람이 HTS로 낸 주문이거나 우리가 기록에 실패한 것이다.
  */
+/**
+ * **원주문의 층을 찾는다.** 정정·취소가 그것을 이어받게 하려고 있다.
+ *
+ * ── 왜 (2026-09-04) ──────────────────────────────────────────────────────
+ *
+ * 미체결 정정이 처음으로 끝까지 돌던 날, 체결된 뒤에 이렇게 나왔다:
+ *
+ *   ★ 층을 몰라 안 넣은 체결 1건: 005935 삼성전자우 (주문번호 0000011123)
+ *
+ * **정정하면 새 주문번호가 생기는데 그 주문에는 층이 없었다.** 원주문
+ * `0000009123`에는 `bet`이 적혀 있었지만 `manageOpenOrders`도 정정 라우트도
+ * 층을 넘기지 않았다. 그 결과 935만원어치가 장부 밖에 남아 유망주 층이
+ * **0%로 보였다**(실제 10.2%).
+ *
+ * ★ **호출부가 층을 알 필요가 없게 한다.** 미체결 정리는 값만 보고 정정하는
+ *   규칙이라 층을 알 이유가 없다 — 서버가 원주문에서 이어받는 것이 맞다.
+ *
+ * ★ 같은 병이 전에도 있었다: 층 모르는 체결 82건이 장부 밖에 쌓여 있었다.
+ */
+export async function layerOfOrder(orderNo: string): Promise<Layer | null> {
+  const { rows } = await pool.query<{ layer: string | null }>(
+    `SELECT layer FROM trading_broker_orders
+      WHERE order_no = $1 AND layer IS NOT NULL
+      ORDER BY id DESC LIMIT 1`,
+    [orderNo],
+  );
+  const value = rows[0]?.layer;
+  return value === 'etf' || value === 'short' || value === 'bet' ? value : null;
+}
+
 export async function applyOrderFill(
   accountId: string,
   orderNo: string,

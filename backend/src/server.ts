@@ -59,7 +59,7 @@ import {
   completeClaimedOrder,
   getOrderByClientOrderId,
 } from './db/brokerOrders.js';
-import { ensureBrokerOrderSchema, getBrokerOrderRecords, recordBrokerOrderAttempt } from './db/brokerOrders.js';
+import { ensureBrokerOrderSchema, getBrokerOrderRecords, layerOfOrder, recordBrokerOrderAttempt } from './db/brokerOrders.js';
 import {
   getAutoTraderState,
   resumeAutoTraders,
@@ -1419,8 +1419,20 @@ async function main(): Promise<void> {
 
   app.post<{ Body: Partial<AmendLiveOrderRequest> }>('/api/broker/kis/orders/amend', async (req, reply) => {
     const { accountId, action, orderNo, orderBranchNo, orderTypeCode, quantity, limitPrice, quantityAll } = req.body;
+    /*
+     * ★★ **원주문의 층을 이어받는다** (2026-09-04).
+     *
+     * 정정하면 새 주문번호가 생기는데 그 주문에 층이 없어, 체결이 장부 밖에
+     * 남았다 — 삼성전자우 935만원이 그렇게 빠져 유망주 층이 0%로 보였다.
+     * 미체결 정리는 값만 보고 정정하는 규칙이라 층을 알 이유가 없다.
+     * **서버가 원주문에서 이어받는 것이 맞다.**
+     */
+    const inheritedLayer = typeof orderNo === 'string' && orderNo.length > 0
+      ? await layerOfOrder(orderNo)
+      : null;
     const auditBase = {
       accountId: accountId ?? '(미지정)',
+      layer: inheritedLayer ?? undefined,
       // action이 잘못 와도 임의로 cancel로 적으면 기록이 사실과 달라진다. amend로 두고
       // 아래 검증에서 'action 오류'로 차단된 사실을 blockers에 남긴다.
       action: action === 'amend' || action === 'cancel' ? action : ('amend' as const),
