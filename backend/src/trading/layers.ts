@@ -155,6 +155,75 @@ export function resolveSellLayer(
   };
 }
 
+/** 그 주문에 대해 **여기까지 장부에 반영했다**는 표시. 증권사가 말한 누적값이다. */
+export interface RecordedFill {
+  /** 반영을 마친 누적 체결수량 */
+  quantity: number;
+  /** 그 수량까지의 누적 평균 체결단가 */
+  price: number;
+}
+
+/** note에 찍은 도장. `누적:538@4071` — 증권사 기준 누적 체결수량과 평균단가. */
+const FILL_STAMP = /누적:([0-9.]+)@([0-9.]+)/;
+
+export function stampFill(quantity: number, price: number): string {
+  return `누적:${quantity}@${price}`;
+}
+
+/**
+ * 주문번호 → 이미 장부에 반영한 누적 체결. **증분만 넣으려고 있다.**
+ *
+ * ★ 도장이 있으면 그것이 곧 선언이라 뒤 행이 이긴다(`ORDER BY id`).
+ * ★ 도장이 없는 옛 행(2026-09-07 이전)은 행의 수량·금액을 더해 누적을 되짚는다 —
+ *   그 시절엔 주문 하나에 행이 하나뿐이었으니 결과가 같다.
+ */
+export function foldRecordedFills(
+  rows: Array<{ note: string; quantity: string; price: string }>,
+): Map<string, RecordedFill> {
+  const found = new Map<string, RecordedFill>();
+  for (const row of rows) {
+    const orderNo = row.note.replace(/^orderNo:/, '').split(' ')[0];
+    if (!orderNo) continue;
+    const stamped = FILL_STAMP.exec(row.note);
+    if (stamped) {
+      const quantity = Number(stamped[1]);
+      const price = Number(stamped[2]);
+      if (quantity > 0 && Number.isFinite(price)) {
+        found.set(orderNo, { quantity, price });
+        continue;
+      }
+    }
+    const prev = found.get(orderNo);
+    const rowQuantity = Number(row.quantity);
+    const rowPrice = Number(row.price);
+    const quantity = (prev?.quantity ?? 0) + rowQuantity;
+    const notional = (prev ? prev.quantity * prev.price : 0) + rowQuantity * rowPrice;
+    found.set(orderNo, { quantity, price: quantity > 0 ? notional / quantity : rowPrice });
+  }
+  return found;
+}
+
+/**
+ * **새로 붙은 만큼과 그 단가.** 누적에서 이미 반영한 것을 뺀다.
+ *
+ * ★ 단가는 금액 차로 낸다 — `(누적수량×누적평균 − 반영수량×반영평균) / 증분`.
+ *   누적평균을 그대로 쓰면 먼저 붙은 체결의 단가가 증분에 섞여 원가가 어긋나고,
+ *   원가가 어긋나면 실현손익이 조용히 틀린다.
+ */
+export function fillDelta(
+  filledQuantity: number,
+  filledPrice: number,
+  recorded: RecordedFill | undefined,
+): { quantity: number; price: number } | null {
+  const quantity = filledQuantity - (recorded?.quantity ?? 0);
+  // 수량은 주 단위라 1e-6이면 "늘지 않았다"다. 줄어드는 일(취소)은 되돌리지 않는다.
+  if (!(quantity > 1e-6)) return null;
+  if (!recorded) return { quantity, price: filledPrice };
+  const price = (filledQuantity * filledPrice - recorded.quantity * recorded.price) / quantity;
+  // 값이 망가지면(도장이 옛 행에서 되짚은 근사일 때) 누적평균으로 되돌아간다.
+  return { quantity, price: Number.isFinite(price) && price > 0 ? price : filledPrice };
+}
+
 /**
  * 체결일(`YYYYMMDD`)을 장부에 적을 시각으로. 형식이 아니면 `null`(그러면 지금 시각).
  *

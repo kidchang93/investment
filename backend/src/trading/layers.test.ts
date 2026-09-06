@@ -18,6 +18,9 @@ import {
   resolveSellLayer,
   tradeStampFor,
   summarizeLayers,
+  fillDelta,
+  foldRecordedFills,
+  stampFill,
   type Layer,
   type LayerPosition,
 } from './layers.js';
@@ -331,5 +334,62 @@ describe('체결일 도장 — 기록한 날이 아니라 판 날', () => {
   it('있을 수 없는 달·일은 적지 않는다 — DB가 던지느니 now()가 낫다', () => {
     assert.equal(tradeStampFor('20261301'), null);
     assert.equal(tradeStampFor('20260800'), null);
+  });
+});
+
+describe('층 장부 — 부분체결의 나머지', () => {
+  /*
+   * 9/3에 538주를 주문해 마감 정리 때는 157주만 붙어 있었고, 9/4에 전량 체결이
+   * 확인됐는데 장부는 157주에 멈춰 있었다. 잔고와 381주가 어긋났다.
+   */
+  it('도장이 있으면 그것이 곧 누적이다 — 뒤 행이 이긴다', () => {
+    const found = foldRecordedFills([
+      { note: 'orderNo:0000026102 20260903 누적:157@4072', quantity: '157', price: '4072' },
+      { note: 'orderNo:0000026102 20260903 누적:538@4071', quantity: '381', price: '4070.6' },
+    ]);
+    assert.deepEqual(found.get('0000026102'), { quantity: 538, price: 4071 });
+  });
+
+  it('도장 없는 옛 행은 수량·금액을 더해 누적을 되짚는다', () => {
+    const found = foldRecordedFills([
+      { note: 'orderNo:0000026102 20260903', quantity: '157', price: '4072' },
+    ]);
+    assert.deepEqual(found.get('0000026102'), { quantity: 157, price: 4072 });
+  });
+
+  it('처음 보는 주문은 누적을 그대로 넣는다', () => {
+    assert.deepEqual(fillDelta(538, 4071, undefined), { quantity: 538, price: 4071 });
+  });
+
+  it('뒤늦게 붙은 만큼만 넣고, 그 단가는 금액 차로 낸다', () => {
+    // 157주 @4072를 이미 넣었고 증권사 누적이 538주 @4071이면 새로 붙은 것은
+    // 381주, 그 단가는 (538×4071 − 157×4072) / 381 이다.
+    const delta = fillDelta(538, 4071, { quantity: 157, price: 4072 });
+    assert.equal(delta?.quantity, 381);
+    assert.ok(Math.abs((delta?.price ?? 0) - (538 * 4071 - 157 * 4072) / 381) < 1e-9);
+    // 먼저 붙은 것이 비쌌으니 나머지는 누적평균보다 싸야 한다.
+    assert.ok((delta?.price ?? 0) < 4071);
+  });
+
+  it('늘지 않았으면 넣지 않는다 — 같은 체결을 두 번 넣지 않는다', () => {
+    assert.equal(fillDelta(538, 4071, { quantity: 538, price: 4071 }), null);
+  });
+
+  it('누적이 줄어도 되돌리지 않는다', () => {
+    assert.equal(fillDelta(300, 4071, { quantity: 538, price: 4071 }), null);
+  });
+
+  it('금액 차가 망가지면 누적평균으로 되돌아간다', () => {
+    // 옛 행에서 되짚은 근사가 실제보다 비싸면 증분 단가가 음수로 나올 수 있다.
+    assert.deepEqual(fillDelta(200, 1000, { quantity: 100, price: 5000 }), {
+      quantity: 100, price: 1000,
+    });
+  });
+
+  it('찍은 도장은 그대로 다시 읽힌다', () => {
+    const note = `orderNo:0000026102 20260903 ${stampFill(538, 4071)}`;
+    assert.deepEqual(foldRecordedFills([{ note, quantity: '381', price: '4070' }]).get('0000026102'), {
+      quantity: 538, price: 4071,
+    });
   });
 });

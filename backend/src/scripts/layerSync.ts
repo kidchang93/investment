@@ -23,8 +23,24 @@
  *   npx tsx src/scripts/layerSync.ts [계좌id] [--layer etf] [--days 3] [--apply]
  *
  * ★ **기본이 미리보기다.** `--apply`가 있어야 쓴다.
- * ★ 같은 체결을 두 번 넣지 않는다 — 이미 기록된 주문번호는 건너뛴다.
- *   (주문 기록 되채움은 예외다 — 부분체결이 늘어날 수 있어 매번 덮는다.)
+ * ★ 같은 체결을 두 번 넣지 않는다 — **주문번호마다 이미 넣은 만큼을 빼고 나머지만**
+ *   넣는다. 주문번호째로 건너뛰면 부분체결의 나머지가 영영 안 들어간다(아래).
+ *
+ * ── ★ 부분체결의 나머지가 장부 밖에 남았다 (2026-09-07) ──────────────────
+ *
+ * 9/7 아침 잔고 대조가 잡았다: 329200 장부 2,319주 · 증권사 2,700주 (+381주).
+ *
+ *   09-03 11:41  주문 538주      →  15:30 마감 정리 때 **157주만** 체결돼 있었다
+ *   09-04 15:41  체결 538주 확인  →  주문 기록은 538로 덮였는데 **장부는 157 그대로**
+ *
+ * `alreadyRecorded`가 주문번호 하나를 통째로 "했다/안 했다"로만 봤기 때문이다.
+ * 한 번 넣은 주문은 뒤에 얼마가 더 붙든 다시 보지 않았다 — 마감 정리가 장중
+ * 미체결을 만나면 **반드시** 생기는 일이고, 그 차액은 아무 경로로도 안 들어온다.
+ *
+ * ★ 그래서 "얼마까지 반영했나"를 note에 도장으로 남긴다: `누적:538@4071`.
+ *   증권사가 말한 그 시점의 누적 체결수량과 평균단가다. 다음 회차는 그 차이만
+ *   넣고, **증분의 단가는 금액 차로 되돌려 낸다** — 누적평균을 그대로 쓰면
+ *   먼저 붙은 체결의 단가가 뒤늦은 증분에 섞인다.
  *
  * ★★ **`--layer`를 안 주면 층 없는 체결은 넣지 않는다**(2026-08-22 바뀜).
  *    예전에는 기본값 ETF로 조용히 들어갔고, 데몬은 인자 없이 부른다 —
@@ -37,7 +53,10 @@ import { applyOrderFill } from '../db/brokerOrders.js';
 import { closeDb, pool } from '../db/client.js';
 import { ensureLayerSchema, recordLayerTrade } from '../db/layers.js';
 import { getKisDomesticExecutions } from '../kis/rest.js';
-import { LAYER_LABELS, resolveFillLayer, type Layer } from '../trading/layers.js';
+import {
+  LAYER_LABELS, fillDelta, foldRecordedFills, resolveFillLayer, stampFill,
+  type Layer, type RecordedFill,
+} from '../trading/layers.js';
 
 const won = (n: number): string => Math.round(n).toLocaleString('ko-KR');
 
@@ -57,13 +76,15 @@ async function layerByOrderNo(accountId: string): Promise<Map<string, Layer>> {
   return new Map(rows.map((r) => [r.order_no, r.layer as Layer]));
 }
 
-async function alreadyRecorded(accountId: string): Promise<Set<string>> {
+async function recordedByOrderNo(accountId: string): Promise<Map<string, RecordedFill>> {
   await ensureLayerSchema();
-  const { rows } = await pool.query<{ note: string }>(
-    `SELECT note FROM trading_layer_trades WHERE account_id = $1 AND note LIKE 'orderNo:%'`,
+  const { rows } = await pool.query<{ note: string; quantity: string; price: string }>(
+    `SELECT note, quantity::text, price::text FROM trading_layer_trades
+      WHERE account_id = $1 AND note LIKE 'orderNo:%'
+      ORDER BY id`,
     [accountId],
   );
-  return new Set(rows.map((r) => r.note.replace(/^orderNo:/, '').split(' ')[0]));
+  return foldRecordedFills(rows);
 }
 
 async function main(): Promise<void> {
@@ -90,14 +111,14 @@ async function main(): Promise<void> {
     console.log(`체결 내역을 못 받았다: ${snapshot.message ?? '사유 없음'}`);
     return;
   }
-  const done = await alreadyRecorded(accountId);
+  const done = await recordedByOrderNo(accountId);
   const layerOf = await layerByOrderNo(accountId);
 
   // 체결 수량이 0인 것은 주문만 있고 체결이 없는 것이다 — 장부에 넣지 않는다.
   const filled = snapshot.executions.filter((e) => e.filledQuantity > 0);
   console.log(
     `체결 내역 ${snapshot.executions.length}건 중 체결 있는 것 ${filled.length}건`
-    + ` · 이미 장부에 든 것 ${done.size}건`
+    + ` · 이미 장부에 든 주문 ${done.size}건`
     + ` · 주문에 층이 적힌 것 ${layerOf.size}건`
     + `${requestedLayer ? ` (없으면 ${LAYER_LABELS[requestedLayer]}로 넣는다)` : ' (없으면 넣지 않는다 — --layer로 정해 준다)'}`,
   );
@@ -117,10 +138,17 @@ async function main(): Promise<void> {
       if (touched > 0) refilled += touched;
     }
 
-    if (done.has(e.orderNo)) continue;
+    /*
+     * ★ **주문번호로 통째로 건너뛰지 않는다.** 이미 넣은 누적을 빼고 남은 것만
+     *   넣는다 — 마감 정리가 장중 미체결을 만나면 나머지가 다음 날 붙는다.
+     */
+    const delta = fillDelta(e.filledQuantity, price, done.get(e.orderNo));
+    if (!delta) continue;
+    const partial = done.has(e.orderNo);
     const decision = resolveFillLayer(layerOf.get(e.orderNo), requestedLayer);
     const head = `  ${e.orderDate} ${e.side === 'buy' ? '매수' : '매도'} ${e.symbol} ${e.name}`
-      + ` ${e.filledQuantity}주 @ ${won(price)}원`;
+      + ` ${delta.quantity}주 @ ${won(delta.price)}원`
+      + (partial ? ` (누적 ${e.filledQuantity}주 중 뒤늦게 붙은 만큼)` : '');
     if (decision.kind === 'skip') {
       // ★ 조용히 넘기지 않는다. 빠진 것은 잔고 대조가 잡지만, 잘못 들어간 것은 아무도 못 잡는다.
       console.log(`${head} → ★ 건너뛴다 (주문번호 ${e.orderNo})`);
@@ -140,11 +168,12 @@ async function main(): Promise<void> {
         layer: decision.layer,
         symbol: e.symbol,
         side: e.side,
-        quantity: e.filledQuantity,
-        price,
+        quantity: delta.quantity,
+        price: delta.price,
         fee: 0,
       },
-      `orderNo:${e.orderNo} ${e.orderDate}`,
+      // ★ 도장을 남긴다 — 다음 회차가 "여기까지 반영했다"를 읽는 유일한 근거다.
+      `orderNo:${e.orderNo} ${e.orderDate} ${stampFill(e.filledQuantity, price)}`,
       // ★ **체결한 날로 적는다.** 기록한 날로 적으면 하루 늦게 메울 때 어긋난다.
       e.orderDate,
     );
