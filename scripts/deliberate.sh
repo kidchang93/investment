@@ -36,13 +36,28 @@ cd "$(dirname "$0")/.." || exit 1
 #   정식 회차는 후보 300종목을 훑고 웹을 뒤져 **13분**이 걸린다(09:47→10:00 실측).
 #   5분마다 도는 자리에는 못 쓴다. 빠른 회차는 분석가가 낸 적정가 표 하나만 보고
 #   2~3분에 끝낸다 — 조사를 안 하는 것이 그 회차의 전부다.
+#
+# ★★ `--close`면 **종가 판단자**다 (2026-09-07). 사용자가 정했다 —
+#    *"장이 끝나고 종가 매매 방식을 도입해보는 것도 좋을 것 같아. 시장 상황을
+#    분석해서 종가에 사서 다음날 매도하는 전략을 펼쳐봐야될 것 같아."*
+#
+#    같은 뼈대(분석가 → 판단자 → 집행)를 쓰되 보는 지평이 **하룻밤**이라
+#    판단 기준이 통째로 다르다. 그래서 프롬프트를 따로 둔다.
 QUICK=0
+CLOSE=0
 ARGS=()
 for a in "$@"; do
-  if [[ "$a" == "--quick" ]]; then QUICK=1; else ARGS+=("$a"); fi
+  case "$a" in
+    --quick) QUICK=1 ;;
+    --close) CLOSE=1 ;;
+    *) ARGS+=("$a") ;;
+  esac
 done
 ACCOUNT="${ARGS[1]:-VTS-ORDINARY}"
-if [[ $QUICK -eq 1 ]]; then
+if [[ $CLOSE -eq 1 ]]; then
+  PROMPT_FILE="prompts/deliberate-close.md"
+  LOG_SUFFIX="close"
+elif [[ $QUICK -eq 1 ]]; then
   PROMPT_FILE="prompts/deliberate-quick.md"
   LOG_SUFFIX="quick"
 else
@@ -115,8 +130,11 @@ log "판단자 소집 · 계좌 $ACCOUNT${LOG_SUFFIX:+ · $LOG_SUFFIX}"
 #   끼어드는 쪽이 세 배 가까이 많다.
 if [[ $QUICK -eq 1 ]]; then
   ROUND_FILTER="AND trigger = 'fair-value'"
+elif [[ $CLOSE -eq 1 ]]; then
+  ROUND_FILTER="AND trigger = 'close'"
 else
-  ROUND_FILTER="AND trigger <> 'fair-value'"
+  # 정식 회차는 빠른 회차도 종가 회차도 자기 것으로 세지 않는다.
+  ROUND_FILTER="AND trigger NOT IN ('fair-value','close')"
 fi
 count_rounds() {
   docker exec kis-postgres psql -U kis -d kis -tAc \
@@ -176,6 +194,19 @@ log "판단자 회차 끝 (오늘 $BEFORE → $AFTER)"
 #
 # ★ 집행기는 멱등이다(회차 `executions` + `clientOrderId`). 낼 것이 없으면
 #   아무 일도 하지 않는다.
+#
+# ★★ **종가 회차는 여기서 집행하지 않는다** (2026-09-07). 장 마감 동시호가 창이
+#    **15:20~15:30**이라 그 전에 내면 정규장 주문으로 즉시 체결된다 — 그러면
+#    "종가에 산다"가 아니라 "15:1x에 산다"가 되고, 21년 측정이 말한 자리가 아니다.
+#
+#    판단은 15:00~15:15에 하고(10~15분 걸린다) 집행은 `close-execute` 작업이
+#    15:21에 **그 회차 id를 찍어** 부른다. id를 찍는 것은 그 사이 빠른 회차가
+#    끼어들어 "최신 회차"가 바뀔 수 있기 때문이다.
+if [[ $CLOSE -eq 1 ]]; then
+  log "종가 회차는 여기서 집행하지 않는다 — 15:21에 close-execute가 낸다"
+  exit 0
+fi
+
 log "집행기 시작"
 (cd backend && npx tsx src/scripts/executeDeliberation.ts "$ACCOUNT" --execute) >> "$LOG" 2>&1
 exec_code=$?

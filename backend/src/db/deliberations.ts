@@ -34,8 +34,24 @@
 
 import { pool } from './client.js';
 
-/** 이 회차가 왜 열렸나 */
-export type DeliberationTrigger = 'scheduled' | 'event' | 'manual';
+/**
+ * 이 회차가 왜 열렸나.
+ *
+ * ★ `fair-value`와 `close`는 **한동안 타입에 없었다** (2026-09-07에 넣음).
+ *   `fair-value`(적정가 표를 보는 5분 주기 빠른 회차)는 2026-09-03부터 실제로
+ *   쓰이고 있었고 오늘까지 59건이 쌓였는데, 열 자체가 `text`라 조용히 들어갔다.
+ *   타입이 실제와 어긋나 있으면 `trigger`로 회차를 가르는 코드가 컴파일 단계에서
+ *   막힌다 — `exitOvernight`가 `'close'`를 비교하려다 그렇게 걸렸다.
+ *
+ * | 값 | 누가 남기나 |
+ * |---|---|
+ * | `scheduled` | 하루 한 번 도는 정식 발굴 회차 (`deliberate.sh`) |
+ * | `fair-value` | 적정가 5분 주기 빠른 회차 (`deliberate.sh --quick`) |
+ * | `close` | 종가 매매 회차 (`deliberate.sh --close`) — 다음날 아침 청산이 이 표시로 찾는다 |
+ * | `event` | 사건이 열게 한 회차 |
+ * | `manual` | 사람이 부른 회차 |
+ */
+export type DeliberationTrigger = 'scheduled' | 'event' | 'manual' | 'fair-value' | 'close';
 
 export interface DeliberationDecision {
   symbol: string;

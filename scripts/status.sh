@@ -27,10 +27,44 @@ print -r -- "════ 시스템 상태 · $(date '+%Y-%m-%d %H:%M:%S %a') �
 
 # ── 프로세스 ──────────────────────────────────────────────────────────
 head_ "돌고 있는 것"
-if pgrep -f "daemon.sh __loop" >/dev/null 2>&1; then
-  ok "데몬       pid $(pgrep -f 'daemon.sh __loop' | head -1)  (평일 08:12 / 장중 20분 / 15:40)"
+#
+# ★★ **스케줄러는 백엔드 안에 있다** (2026-09-07에 이 판정을 고쳤다).
+#
+#    전에는 `daemon.sh __loop` 프로세스를 찾아 없으면 *"멈춤 — zsh scripts/daemon.sh
+#    start"*라고 안내했다. 그런데 스케줄러는 **백엔드로 옮겨졌고**, `daemon.sh`는
+#    맨 위에 *"이 파일을 다시 띄우지 마라"*고 적힌 채 이력용으로만 남아 있다.
+#
+#    2026-09-07 아침에 이 안내를 그대로 따라 `daemon.sh start`를 했고, 두 스케줄러가
+#    **같은 작업을 두 번** 불렀다 — `premarket` 08:40:26에 두 번, `watch`가 2초
+#    차이로 두 번. 손절은 `noHeartbeat`라 두 번 나가도 기록에 안 남는다
+#    (`clientOrderId`가 막았지만 그건 마지막 방어선이다).
+#
+# ★ 이제 백엔드에 물어본다. `ticking`이 그 답이다.
+auto_json=$(curl -s --max-time 3 http://localhost:4000/api/automation/status 2>/dev/null)
+if [[ -n "$auto_json" ]]; then
+  auto_line=$(print -r -- "$auto_json" | python3 -c "
+import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print('?|백엔드가 자동화 상태를 안 준다'); raise SystemExit
+s = d.get('settings', {})
+state = 'on' if d.get('ticking') else 'off'
+print(f\"{state}|틱 {d.get('now','?')} · 자동화 {'켜짐' if s.get('enabled') else '꺼짐'}\"
+      f\" · 매매 {'켜짐' if s.get('tradingEnabled') else '꺼짐'} · 작업 {len(d.get('tasks',[]))}개\")
+" 2>/dev/null)
+  if [[ "${auto_line%%|*}" == "on" ]]; then
+    ok "스케줄러   백엔드 안에서 돈다 — ${auto_line#*|}"
+  else
+    bad "스케줄러   안 돈다 — ${auto_line#*|} · 화면(:4000)「목표」탭에서 켠다"
+  fi
 else
-  bad "데몬       멈춤 — zsh scripts/daemon.sh start"
+  bad "스케줄러   상태를 못 읽었다 — 백엔드가 떠 있나 확인한다"
+fi
+# ★ 옛 데몬이 함께 돌면 모든 작업이 두 번 나간다. 크게 알린다.
+if pgrep -f "daemon.sh __loop" >/dev/null 2>&1; then
+  bad "★★ 옛 데몬이 함께 돌고 있다 (pid $(pgrep -f 'daemon.sh __loop' | head -1)) — 모든 작업이 두 번 나간다"
+  bad "   멈춘다: zsh scripts/daemon.sh stop"
 fi
 if pgrep -f "tsx watch src/server.ts" >/dev/null 2>&1; then
   ok "백엔드     pid $(pgrep -f 'tsx watch src/server.ts' | head -1)  :4000"
