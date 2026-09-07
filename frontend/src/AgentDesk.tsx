@@ -200,15 +200,20 @@ interface Round {
 // ★ 화면이 자기 시간표를 들고 있지 않는다. 창·주기·상태는 전부 서버가 주는
 //   `tasks`에서 읽는다 — 여기 박아 두면 `tasks.ts`를 고친 날 조용히 틀린 말을 한다.
 
-const ROSTER: Array<{ id: string; task: string; name: string; job: string }> = [
-  { id: 'analyst', task: 'fair-value', name: '분석가', job: '적정가를 계산해 슬랙으로 보낸다' },
-  { id: 'judge', task: 'deliberate', name: '판단자', job: '후보를 훑고 오늘 살 것을 정한다' },
-  { id: 'closeJudge', task: 'close-judge', name: '종가 판단자', job: '밤사이 오를 것을 종가에 산다' },
-  { id: 'executor', task: 'close-execute', name: '집행기', job: '정한 것을 주문으로 옮긴다' },
-  { id: 'closer', task: 'overnight-exit', name: '청산꾼', job: '어제 산 것을 아침에 판다' },
-  { id: 'guard', task: 'stop-loss', name: '파수꾼', job: '손절선을 매 분 지킨다' },
-  { id: 'sweeper', task: 'open-orders', name: '정리꾼', job: '안 붙는 주문을 손본다' },
+type Room = 'think' | 'act';
+
+const ROSTER: Array<{ id: string; task: string; name: string; job: string; room: Room }> = [
+  { id: 'analyst', task: 'fair-value', name: '분석가', job: '적정가를 계산해 슬랙으로 보낸다', room: 'think' },
+  { id: 'judge', task: 'deliberate', name: '판단자', job: '후보를 훑고 오늘 살 것을 정한다', room: 'think' },
+  { id: 'closeJudge', task: 'close-judge', name: '종가 판단자', job: '밤사이 오를 것을 종가에 산다', room: 'think' },
+  { id: 'executor', task: 'close-execute', name: '집행기', job: '정한 것을 주문으로 옮긴다', room: 'act' },
+  { id: 'closer', task: 'overnight-exit', name: '청산꾼', job: '어제 산 것을 아침에 판다', room: 'act' },
+  { id: 'guard', task: 'stop-loss', name: '파수꾼', job: '손절선을 매 분 지킨다', room: 'act' },
+  { id: 'sweeper', task: 'open-orders', name: '정리꾼', job: '안 붙는 주문을 손본다', room: 'act' },
 ];
+
+/** 방 이름. **판단과 집행을 가른 것이 이 시스템의 뼈대**라 공간도 그렇게 나눈다. */
+const ROOM_LABEL: Record<Room, string> = { think: '판단실', act: '집행·감시실' };
 
 /*
  * ★ `loading`을 따로 둔다. 처음에는 상태를 못 받은 동안 `off`로 그렸는데,
@@ -366,6 +371,10 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
       */}
       <div className="agent-office" data-off={status && (!status.ticking || !status.settings.enabled) ? '' : undefined}>
         <div className="agent-office__wall">
+          {/* 벽 장식 — 참조한 픽셀 사무실처럼 책장·시계·액자를 건다 */}
+          <span className="agent-office__decor" aria-hidden="true">
+            <i data-kind="shelf" /><i data-kind="clock" /><i data-kind="frame" />
+          </span>
           <span className="agent-office__board">
             {status ? `KST ${status.now}` : '· · ·'}
             <b data-on={status?.settings.enabled ? '' : undefined}>자동화</b>
@@ -376,31 +385,45 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
           </span>
         </div>
 
-        <div className="agent-office__floor">
-          {ROSTER.map((member) => {
-            const task = taskByName.get(member.task);
-            const stance: Stance = status ? stanceOf(task, status) : 'loading';
-            return (
-              <div className="agent-seat" data-stance={stance} key={member.id} title={member.job}>
-                {/* 일하는 중일 때만 말풍선이 뜬다 — 늘 떠 있으면 읽지 않게 된다. */}
-                {stance === 'running' && <span className="agent-seat__bubble">일하는 중</span>}
-                <div className="agent-seat__figure">
-                  <PixelSprite id={member.id} size={6} />
-                  <span className="agent-seat__monitor" aria-hidden="true" />
-                </div>
-                <div className="agent-seat__desk" aria-hidden="true" />
-                <h3>{member.name}</h3>
-                <p className="agent-seat__when">
-                  {task ? `${clock(task.window[0])}–${clock(task.window[1])}` : '작업 없음'}
-                </p>
-                <p className="agent-seat__stance">
-                  <i aria-hidden="true" />
-                  {STANCE_LABEL[stance]}
-                  {task?.lastRunAt ? ` · ${task.lastRunAt}` : ''}
-                </p>
+        <div className="agent-office__rooms">
+          {(['think', 'act'] as const).map((room) => (
+            <section className="agent-room" data-room={room} key={room}>
+              <h4 className="agent-room__label">{ROOM_LABEL[room]}</h4>
+              <div className="agent-room__floor">
+                {ROSTER.filter((m) => m.room === room).map((member) => {
+                  const task = taskByName.get(member.task);
+                  const stance: Stance = status ? stanceOf(task, status) : 'loading';
+                  return (
+                    <div className="agent-seat" data-stance={stance} key={member.id} title={member.job}>
+                      {/* 일하는 중일 때만 말풍선이 뜬다 — 늘 떠 있으면 읽지 않게 된다. */}
+                      {stance === 'running' && <span className="agent-seat__bubble">일하는 중</span>}
+                      {/*
+                        ★ 탑다운이라 **책상이 캐릭터 뒤(위)에 있다.** 모니터가 책상 위에
+                          놓이고 캐릭터는 그 앞에 앉아 화면을 본다.
+                      */}
+                      <div className="agent-seat__station" aria-hidden="true">
+                        <span className="agent-seat__monitor" />
+                        <span className="agent-seat__desk" />
+                      </div>
+                      <div className="agent-seat__figure">
+                        <PixelSprite id={member.id} size={6} />
+                        <span className="agent-seat__chair" aria-hidden="true" />
+                      </div>
+                      <h3>{member.name}</h3>
+                      <p className="agent-seat__stance">
+                        <i aria-hidden="true" />
+                        {STANCE_LABEL[stance]}
+                        {task?.lastRunAt ? ` · ${task.lastRunAt}` : ''}
+                      </p>
+                      <p className="agent-seat__when">
+                        {task ? `${clock(task.window[0])}–${clock(task.window[1])}` : '작업 없음'}
+                      </p>
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
+            </section>
+          ))}
         </div>
       </div>
 

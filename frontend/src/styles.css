@@ -7465,83 +7465,137 @@ span.sample-badge {
 .agent-desk__head p { margin: 0; color: var(--muted, #8b95a5); font-size: .8rem; font-variant-numeric: tabular-nums; }
 .agent-desk__error { margin: .6rem 0 0; color: var(--up, #e5484d); font-size: .82rem; }
 
-/* ── 사무실 ──
-   긴 트레이딩 데스크 하나에 일곱이 앉는다. 책상이 캐릭터 하반신을 덮어
-   앉은 것처럼 보이고, 모니터 불빛과 말풍선이 지금 무엇을 하는지 말한다. */
+/* ── 사무실 (탑다운) ──
+   pixel-agents-hq/pixel-agents의 오피스 뷰를 본떴다 — 벽에 시계·책장·액자를 걸고,
+   바닥은 격자 타일이며, 책상 위 모니터 앞에 캐릭터가 앉는다. 방은 이 시스템의
+   뼈대대로 **판단실**과 **집행·감시실**로 가른다. */
 .agent-office {
   margin-top: .9rem;
   border: 1px solid var(--border, #242b38);
   border-radius: 10px;
   overflow: hidden;
-  /* 위는 벽, 아래는 바닥. 경계가 책상 뒤 벽선이 된다. */
-  background:
-    linear-gradient(180deg, #121926 0%, #101722 52%, #0c1119 52%, #080c12 100%);
+  background: #0a0e15;
 }
 .agent-office[data-off] { filter: grayscale(.75) brightness(.7); }
 
-/* 벽 — 전광판과 시계가 걸린 자리 */
+/* ── 벽 ── */
 .agent-office__wall {
+  position: relative;
   display: flex; align-items: center; justify-content: space-between; gap: .8rem;
   padding: .45rem .7rem;
-  border-bottom: 1px solid rgba(148, 163, 184, .1);
-  background: rgba(0, 0, 0, .25);
+  min-height: 46px;
+  border-bottom: 3px solid #05070b;
+  background: linear-gradient(180deg, #1a2740 0%, #162134 70%, #121a29 100%);
   font-size: .72rem; font-variant-numeric: tabular-nums;
 }
-.agent-office__board { display: flex; align-items: center; gap: .45rem; color: var(--muted, #8b95a5); }
+/* 벽에 건 것들 — 가운데에 책장·시계·액자 */
+.agent-office__decor {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 22px; opacity: .95;
+}
+.agent-office__decor i { display: block; }
+.agent-office__decor i[data-kind="shelf"] {
+  width: 46px; height: 16px; background: #6b4a2f;
+  border-bottom: 3px solid #4a3320;
+  /* 책들 */
+  box-shadow: inset 3px -3px 0 0 #c05a4a, inset 9px -3px 0 0 #d8b25a,
+              inset 15px -3px 0 0 #4a8ec0, inset 21px -3px 0 0 #6fae63,
+              inset 27px -3px 0 0 #c05a4a, inset 33px -3px 0 0 #8a6fc0;
+}
+.agent-office__decor i[data-kind="clock"] {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #e8ecf2; border: 2px solid #98a3b5;
+  box-shadow: inset 0 -5px 0 -4px #2b3444, inset 4px 0 0 -3px #2b3444;
+}
+.agent-office__decor i[data-kind="frame"] {
+  width: 22px; height: 16px; background: #2a4d6e;
+  border: 2px solid #8a6a45;
+  box-shadow: inset 0 -6px 0 0 #3f7a52;
+}
+.agent-office__board { display: flex; align-items: center; gap: .45rem; color: var(--muted, #8b95a5); z-index: 1; }
 .agent-office__board b {
   font-weight: 600; font-size: .66rem; padding: .08rem .35rem; border-radius: 3px;
   background: rgba(148, 163, 184, .14); color: var(--faint, #788497);
 }
 .agent-office__board b[data-on] { background: rgba(34, 197, 94, .18); color: var(--green, #22c55e); }
-.agent-office__tape { color: var(--faint, #788497); }
+.agent-office__tape { color: var(--faint, #788497); z-index: 1; }
 
-/* 바닥 — 자리들이 나란히 선다 */
-.agent-office__floor {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  padding: 1.5rem .5rem .7rem;
+/* ── 방 두 개 ── */
+.agent-office__rooms { display: grid; grid-template-columns: 3fr 4fr; }
+.agent-room { position: relative; padding: 1.5rem .6rem .8rem; }
+/* 방 사이 벽 */
+.agent-room + .agent-room { border-left: 3px solid #05070b; }
+/* 바닥 — 24px 격자 타일. 방마다 색이 다르다. */
+.agent-room[data-room="think"] {
+  background:
+    repeating-linear-gradient(0deg, rgba(255,255,255,.028) 0 1px, transparent 1px 24px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.028) 0 1px, transparent 1px 24px),
+    #121a17;
 }
+.agent-room[data-room="act"] {
+  background:
+    repeating-linear-gradient(0deg, rgba(255,255,255,.028) 0 1px, transparent 1px 24px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.028) 0 1px, transparent 1px 24px),
+    #101625;
+}
+.agent-room__label {
+  position: absolute; top: .35rem; left: .6rem; margin: 0;
+  font-size: .62rem; letter-spacing: .08em; color: var(--faint, #788497);
+  text-transform: none;
+}
+/* 구석의 화분 */
+.agent-room::after {
+  content: ''; position: absolute; right: 8px; top: 6px;
+  width: 12px; height: 14px;
+  background: #3f7a52;
+  box-shadow: 0 12px 0 -2px #7a5535, -4px -3px 0 -3px #3f7a52, 4px -3px 0 -3px #3f7a52;
+  border-radius: 40% 40% 0 0;
+  opacity: .8;
+}
+.agent-room__floor {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: .5rem;
+}
+
+/* ── 자리 ── */
 .agent-seat { position: relative; text-align: center; }
-.agent-seat h3 { margin: .45rem 0 .1rem; font-size: .78rem; }
-.agent-seat__when { margin: 0; font-size: .66rem; color: var(--faint, #788497); font-variant-numeric: tabular-nums; }
+.agent-seat h3 { margin: .3rem 0 .1rem; font-size: .76rem; }
+.agent-seat__when { margin: .1rem 0 0; font-size: .64rem; color: var(--faint, #788497); font-variant-numeric: tabular-nums; }
 .agent-seat__stance {
-  margin: .2rem 0 0; font-size: .66rem; font-variant-numeric: tabular-nums;
+  margin: 0; font-size: .66rem; font-variant-numeric: tabular-nums;
   display: flex; align-items: center; justify-content: center; gap: .25rem;
 }
 .agent-seat__stance i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 
-/* 캐릭터와 모니터가 책상 위에 나란히 */
-.agent-seat__figure {
-  position: relative; display: flex; align-items: flex-end; justify-content: center; gap: 4px;
-  /*
-   * 아래를 책상이 덮어 앉은 것처럼 보인다. ★ 처음에 -14px로 잡았더니 상체까지
-   * 잠겨 머리만 떠 있었고, -11px도 어깨선까지 올라와 옷이 거의 안 보였다.
-   * 캐릭터가 12칸×6px이므로 **아래 한 칸(다리)만** 덮는다.
-   */
-  margin-bottom: -7px;
-}
-.agent-sprite { image-rendering: pixelated; display: block; }
-/* 모니터 — 책상 위에 놓여 캐릭터 쪽을 향한다 */
+/* 책상 자리 — 모니터가 책상 위에 놓인다 (탑다운이라 캐릭터 뒤) */
+.agent-seat__station { display: grid; justify-items: center; }
 .agent-seat__monitor {
-  width: 20px; height: 15px; margin-bottom: 9px;
-  border: 2px solid #39445a; border-radius: 2px;
-  background: #10161f;
-  /* 스탠드: 목 → 받침 */
-  box-shadow: 0 2px 0 -1px #39445a, 0 4px 0 -2px #39445a, 0 5px 0 -1px #2a3444;
+  width: 22px; height: 16px; margin-bottom: 1px;
+  border: 2px solid #39445a; border-radius: 2px; background: #10161f;
 }
-
-/*
- * 책상 — 조각들이 이어져 하나의 긴 상판으로 보인다.
- * 위 2px 밝은 선이 상판 모서리, 아래 어두운 띠가 앞면이라 두께가 생긴다.
- */
 .agent-seat__desk {
-  position: relative; z-index: 2; height: 26px;
-  background:
-    linear-gradient(180deg, #4a5871 0%, #3a4658 18%, #2b3444 19%, #212936 62%, #171d27 62%, #141a23 100%);
-  border-top: 2px solid #5a6b88;
+  width: 52px; height: 11px;
+  background: linear-gradient(180deg, #7a5535 0%, #6b4a2f 55%, #4a3320 55%, #3d2a1a 100%);
+  border-radius: 2px;
 }
-.agent-seat:first-child .agent-seat__desk { border-top-left-radius: 3px; }
-.agent-seat:last-child .agent-seat__desk { border-top-right-radius: 3px; }
+/*
+ * 캐릭터는 책상 앞에 앉는다. 의자 등받이가 뒤로 살짝 보인다.
+ * ★ `-6px`로 겹쳤더니 책상이 머리(왕관·모자)를 덮었다 — 탑다운이라 책상이
+ *   캐릭터 **뒤**에 있지만, 화면에서는 위쪽이라 겹치면 앞으로 읽힌다.
+ */
+.agent-seat__figure { position: relative; display: inline-block; margin-top: 3px; }
+.agent-sprite { image-rendering: pixelated; display: block; position: relative; z-index: 1; }
+/*
+ * 의자. ★ **캐릭터 뒤에 둔다**(`z-index: 0`) — 앞에 두면 몸통을 덮어 옷 색이
+ *   사라진다. 등받이가 어깨 양옆으로만 비어져 나오는 것이 앉은 모습이다.
+ */
+.agent-seat__chair {
+  position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%);
+  z-index: 0;
+  width: 32px; height: 14px; border-radius: 4px;
+  background: #2f3a4c; box-shadow: 0 4px 0 -2px #232c3a;
+}
 
 /* 자세 — 모니터 불빛이 먼저 말한다 */
 .agent-seat[data-stance="running"] .agent-seat__monitor { background: var(--green, #22c55e); animation: agent-screen .8s steps(2, end) infinite; }
@@ -7551,19 +7605,20 @@ span.sample-badge {
 .agent-seat[data-stance="waiting"] .agent-seat__stance { color: var(--focus, #f5c451); }
 .agent-seat[data-stance="done"] .agent-seat__monitor { background: #1b2430; }
 .agent-seat[data-stance="done"] .agent-seat__stance { color: var(--muted, #8b95a5); }
-/* 창이 닫히면 자리를 비운다 — 캐릭터만 흐려지고 책상은 남는다 */
-.agent-seat[data-stance="closed"] .agent-seat__figure { opacity: .28; }
+/* 창이 닫히면 자리를 비운다 — 캐릭터만 사라지고 책상·의자는 남는다 */
+.agent-seat[data-stance="closed"] .agent-sprite { opacity: .22; }
 .agent-seat[data-stance="closed"] .agent-seat__stance { color: var(--faint, #788497); }
-.agent-seat[data-stance="off"] .agent-seat__figure { opacity: .2; filter: grayscale(1); }
+.agent-seat[data-stance="off"] .agent-sprite { opacity: .16; filter: grayscale(1); }
 .agent-seat[data-stance="off"] .agent-seat__stance { color: var(--faint, #788497); }
-/* 아직 물어보지 않은 상태 — 꺼진 것처럼 보이면 안 된다. 자리는 밝게 두고 화면만 어둡다. */
-.agent-seat[data-stance="loading"] .agent-seat__figure { opacity: .7; }
+/* 아직 물어보지 않은 상태 — 꺼진 것처럼 보이면 안 된다. */
+.agent-seat[data-stance="loading"] .agent-sprite { opacity: .7; }
 .agent-seat[data-stance="loading"] .agent-seat__monitor { background: #1b2430; }
 .agent-seat[data-stance="loading"] .agent-seat__stance { color: var(--faint, #788497); }
 
 /* 말풍선 — 일하는 중일 때만 */
 .agent-seat__bubble {
-  position: absolute; top: -6px; left: 50%; transform: translateX(-50%);
+  position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
+  z-index: 3;
   padding: .1rem .4rem; border-radius: 8px; white-space: nowrap;
   background: var(--green, #22c55e); color: #06210f;
   font-size: .62rem; font-weight: 700;
@@ -7582,12 +7637,8 @@ span.sample-badge {
   .agent-seat .agent-sprite, .agent-seat__monitor, .agent-seat__bubble { animation: none !important; }
 }
 @media (max-width: 860px) {
-  .agent-office__floor { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 1.2rem; }
-  .agent-seat:nth-child(4) .agent-seat__desk { border-top-right-radius: 3px; }
-  .agent-seat:nth-child(5) .agent-seat__desk { border-top-left-radius: 3px; }
-}
-@media (max-width: 520px) {
-  .agent-office__floor { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .agent-office__rooms { grid-template-columns: 1fr; }
+  .agent-room + .agent-room { border-left: 0; border-top: 3px solid #05070b; }
 }
 
 /* ── 판단 기록 ── */
