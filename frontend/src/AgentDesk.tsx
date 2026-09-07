@@ -237,18 +237,54 @@ interface Round {
 
 type Room = 'think' | 'act';
 
-const ROSTER: Array<{ id: string; task: string; name: string; job: string; room: Room }> = [
-  { id: 'analyst', task: 'fair-value', name: '분석가', job: '적정가를 계산해 슬랙으로 보낸다', room: 'think' },
-  { id: 'judge', task: 'deliberate', name: '판단자', job: '후보를 훑고 오늘 살 것을 정한다', room: 'think' },
-  { id: 'closeJudge', task: 'close-judge', name: '종가 판단자', job: '밤사이 오를 것을 종가에 산다', room: 'think' },
-  { id: 'executor', task: 'close-execute', name: '집행기', job: '정한 것을 주문으로 옮긴다', room: 'act' },
-  { id: 'closer', task: 'overnight-exit', name: '청산꾼', job: '어제 산 것을 아침에 판다', room: 'act' },
-  { id: 'guard', task: 'stop-loss', name: '파수꾼', job: '손절선을 매 분 지킨다', room: 'act' },
-  { id: 'sweeper', task: 'open-orders', name: '정리꾼', job: '안 붙는 주문을 손본다', room: 'act' },
+/**
+ * 자리와 가구는 **격자 좌표**로 놓는다 — `[열, 행]`, 열은 방마다 다르고 행은 6이다.
+ * 한 줄로 늘어놓지 않는 이유는 그것이 사무실이 아니라 목록이기 때문이다.
+ */
+interface Spot { col: number; row: number; }
+
+const ROSTER: Array<{
+  id: string; task: string; name: string; job: string; room: Room; at: Spot;
+}> = [
+  { id: 'analyst', task: 'fair-value', name: '분석가', job: '적정가를 계산해 슬랙으로 보낸다', room: 'think', at: { col: 1, row: 1 } },
+  { id: 'judge', task: 'deliberate', name: '판단자', job: '후보를 훑고 오늘 살 것을 정한다', room: 'think', at: { col: 3, row: 1 } },
+  { id: 'closeJudge', task: 'close-judge', name: '종가 판단자', job: '밤사이 오를 것을 종가에 산다', room: 'think', at: { col: 1, row: 4 } },
+  { id: 'executor', task: 'close-execute', name: '집행기', job: '정한 것을 주문으로 옮긴다', room: 'act', at: { col: 1, row: 1 } },
+  { id: 'closer', task: 'overnight-exit', name: '청산꾼', job: '어제 산 것을 아침에 판다', room: 'act', at: { col: 3, row: 1 } },
+  { id: 'guard', task: 'stop-loss', name: '파수꾼', job: '손절선을 매 분 지킨다', room: 'act', at: { col: 1, row: 4 } },
+  { id: 'sweeper', task: 'open-orders', name: '정리꾼', job: '안 붙는 주문을 손본다', room: 'act', at: { col: 3, row: 4 } },
 ];
 
 /** 방 이름. **판단과 집행을 가른 것이 이 시스템의 뼈대**라 공간도 그렇게 나눈다. */
 const ROOM_LABEL: Record<Room, string> = { think: '판단실', act: '집행·감시실' };
+
+/**
+ * 방마다 격자 열 수. 행은 8이고 한 자리가 **2열 × 4행**을 쓴다 —
+ * ★ 처음 3행으로 잡았더니 이름·상태가 아래 자리 캐릭터 위로 겹쳤다.
+ *   자리 하나의 실제 높이가 책상 12 + 모니터 16 + 캐릭터 72 + 글자 42 ≈ 145px다.
+ */
+const ROOM_COLS: Record<Room, number> = { think: 5, act: 6 };
+
+/**
+ * 사람이 앉지 않는 것들 — 회의 테이블·소파·화분·카펫·서류함·정수기·화이트보드.
+ *
+ * ★ **자리와 겹치지 않는 칸에만 둔다.** 자리는 1~4열을 쓰므로 가구는 5열(판단실)·
+ *   5~6열(집행실)과 자리가 비는 칸으로 간다. 겹치면 이름이 소파에 파묻힌다.
+ * ★ 카펫이 목록 맨 앞이라 가장 아래에 깔린다.
+ */
+const PROPS: Array<{ room: Room; kind: string; col: number; row: number; w?: number; h?: number; label?: string }> = [
+  // 판단실 — 오른쪽 열이 회의·보드 자리
+  { room: 'think', kind: 'meeting', col: 3, row: 4, w: 2, h: 2, label: '회의' },
+  { room: 'think', kind: 'board', col: 5, row: 1, w: 1, h: 2, label: '' },
+  { room: 'think', kind: 'cabinet', col: 5, row: 3 },
+  { room: 'think', kind: 'plant', col: 5, row: 5 },
+  // 집행·감시실 — 오른쪽 두 열이 휴게 코너
+  { room: 'act', kind: 'coffee', col: 5, row: 1 },
+  { room: 'act', kind: 'water', col: 6, row: 1 },
+  { room: 'act', kind: 'sofa', col: 5, row: 4, w: 2, h: 2, label: '휴게' },
+  { room: 'act', kind: 'plant', col: 5, row: 6 },
+  { room: 'act', kind: 'plant', col: 6, row: 6 },
+];
 
 /*
  * ★ `loading`을 따로 둔다. 처음에는 상태를 못 받은 동안 `off`로 그렸는데,
@@ -447,7 +483,25 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
           {(['think', 'act'] as const).map((room) => (
             <section className="agent-room" data-room={room} key={room}>
               <h4 className="agent-room__label">{ROOM_LABEL[room]}</h4>
-              <div className="agent-room__floor">
+              <div
+                className="agent-room__floor"
+                style={{ ['--cols' as string]: String(ROOM_COLS[room]) }}
+              >
+                {/* 가구가 먼저 깔린다 — 자리보다 뒤에 있어야 캐릭터를 가리지 않는다 */}
+                {PROPS.filter((f) => f.room === room).map((f, i) => (
+                  <div
+                    aria-hidden="true"
+                    className="office-prop"
+                    data-prop={f.kind}
+                    key={`${f.kind}-${i}`}
+                    style={{
+                      gridColumn: `${f.col} / span ${f.w ?? 1}`,
+                      gridRow: `${f.row} / span ${f.h ?? 1}`,
+                    }}
+                  >
+                    {f.label && <span>{f.label}</span>}
+                  </div>
+                ))}
                 {ROSTER.filter((m) => m.room === room).map((member, index) => {
                   const task = taskByName.get(member.task);
                   const stance: Stance = status ? stanceOf(task, status) : 'loading';
@@ -460,8 +514,12 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
                       data-doing={doing?.activity}
                       data-arriving={arriving ? '' : undefined}
                       key={member.id}
-                      style={{ ['--seat-order' as string]: String(index) }}
-                      title={member.job}
+                      style={{
+                        ['--seat-order' as string]: String(index),
+                        gridColumn: `${member.at.col} / span 2`,
+                        gridRow: `${member.at.row} / span 3`,
+                      }}
+                      title={`${member.job}${task ? ` · ${clock(task.window[0])}–${clock(task.window[1])}` : ''}`}
                     >
                       {/*
                         말풍선은 **하는 일이 있을 때만** 뜬다. 활동 표시가 오면 그
@@ -488,8 +546,8 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
                       <div className="agent-seat__figure">
                         {/* 두 프레임을 겹쳐 두고 걷는 동안만 번갈아 보인다 */}
                         <span className="agent-seat__walker">
-                          <PixelSprite id={member.id} size={6} />
-                          <PixelSprite id={member.id} size={6} frame={1} />
+                          <PixelSprite id={member.id} size={5} />
+                          <PixelSprite id={member.id} size={5} frame={1} />
                         </span>
                         <span className="agent-seat__chair" aria-hidden="true" />
                       </div>
@@ -498,9 +556,6 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
                         <i aria-hidden="true" />
                         {STANCE_LABEL[stance]}
                         {task?.lastRunAt ? ` · ${task.lastRunAt}` : ''}
-                      </p>
-                      <p className="agent-seat__when">
-                        {task ? `${clock(task.window[0])}–${clock(task.window[1])}` : '작업 없음'}
                       </p>
                     </div>
                   );

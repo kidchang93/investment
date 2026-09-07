@@ -7521,7 +7521,7 @@ span.sample-badge {
 .agent-office__tape { color: var(--faint, #788497); z-index: 1; }
 
 /* ── 방 두 개 ── */
-.agent-office__rooms { display: grid; grid-template-columns: 3fr 4fr; }
+.agent-office__rooms { display: grid; grid-template-columns: 5fr 6fr; }
 .agent-room { position: relative; padding: 2.1rem .6rem .8rem; }
 /* 방 사이 벽 */
 .agent-room + .agent-room { border-left: 3px solid #05070b; }
@@ -7552,14 +7552,19 @@ span.sample-badge {
   border-radius: 40% 40% 0 0;
   opacity: .8;
 }
+/*
+ * 방 바닥은 **격자**다. 자리와 가구가 좌표로 놓인다 — 한 줄로 늘어놓으면
+ * 사무실이 아니라 목록이 된다(2026-09-07 사용자 지적).
+ */
 .agent-room__floor {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-  gap: .5rem;
+  grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));
+  grid-template-rows: repeat(6, 46px);
+  gap: 2px;
 }
 
 /* ── 자리 ── */
-.agent-seat { position: relative; text-align: center; }
+.agent-seat { position: relative; text-align: center; align-self: start; }
 .agent-seat h3 { margin: .3rem 0 .1rem; font-size: .76rem; }
 .agent-seat__when { margin: .1rem 0 0; font-size: .64rem; color: var(--faint, #788497); font-variant-numeric: tabular-nums; }
 .agent-seat__stance {
@@ -7800,4 +7805,86 @@ span.sample-badge {
   .agent-seat__walker, .agent-seat__icon,
   .agent-seat[data-arriving] .agent-sprite { animation: none !important; }
   .agent-seat[data-arriving] .agent-seat__chair { opacity: 1; animation: none; }
+}
+
+/* ── 가구 ────────────────────────────────────────────────────────────────
+   사람이 앉지 않는 것들. 자리보다 **먼저** 그려 캐릭터를 가리지 않는다.
+   전부 CSS 박스라 이미지가 없다 — 픽셀 캐릭터와 같은 결로 각지게 둔다. */
+.office-prop {
+  position: relative; align-self: center; justify-self: center;
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: .58rem; color: rgba(229, 231, 235, .55);
+  pointer-events: none;
+}
+.office-prop span { position: relative; z-index: 1; letter-spacing: .02em; }
+
+/* 카펫 — 바닥에 깔리는 것이라 가장 아래 */
+.office-prop[data-prop="rug"] {
+  border-radius: 4px;
+  background:
+    repeating-linear-gradient(45deg, rgba(120, 90, 160, .10) 0 6px, transparent 6px 12px),
+    rgba(120, 90, 160, .07);
+  border: 1px solid rgba(148, 163, 184, .10);
+}
+/* 회의 테이블 — 의자 넷이 둘러앉는다 */
+.office-prop[data-prop="meeting"]::before {
+  content: ''; position: absolute; inset: 18% 8%;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #7a5535 0%, #6b4a2f 60%, #4a3320 100%);
+  box-shadow:
+    -9px -8px 0 -5px #2f3a4c, 9px -8px 0 -5px #2f3a4c,
+    -9px  8px 0 -5px #2f3a4c, 9px  8px 0 -5px #2f3a4c;
+}
+/* 소파 — 등받이와 방석 */
+.office-prop[data-prop="sofa"]::before {
+  content: ''; position: absolute; left: 12%; right: 12%; top: 26%; bottom: 22%;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #7b3f52 0%, #6a3547 55%, #522937 100%);
+  box-shadow: 0 -6px 0 -2px #8d4a60;
+}
+/* 화분 — 잎과 화분 */
+.office-prop[data-prop="plant"]::before {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: 12px; height: 13px; transform: translate(-50%, -60%);
+  border-radius: 45% 45% 0 0;
+  background: #3f7a52;
+  box-shadow: -5px -2px 0 -3px #3f7a52, 5px -2px 0 -3px #3f7a52, 0 12px 0 -1px #7a5535;
+}
+/* 커피머신 */
+.office-prop[data-prop="coffee"]::before {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: 14px; height: 18px; transform: translate(-50%, -50%);
+  border-radius: 2px; background: #2b3444;
+  box-shadow: inset 0 5px 0 0 #4a5871, inset 0 -4px 0 0 #1b2330, 0 0 0 1px #39445a;
+}
+/* 정수기 */
+.office-prop[data-prop="water"]::before {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: 11px; height: 20px; transform: translate(-50%, -50%);
+  border-radius: 2px; background: #2b3444;
+  box-shadow: inset 0 6px 0 0 #4a8ec0, 0 0 0 1px #39445a;
+}
+/* 서류함 — 서랍 셋 */
+.office-prop[data-prop="cabinet"]::before {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: 22px; height: 20px; transform: translate(-50%, -50%);
+  border-radius: 2px; background: #3a4657;
+  box-shadow: inset 0 -7px 0 -6px #1b2330, inset 0 0 0 1px #4a5871,
+              inset 0 7px 0 -6px #1b2330;
+}
+/* 화이트보드 — 벽에 붙은 판 */
+.office-prop[data-prop="board"]::before {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: 30px; height: 20px; transform: translate(-50%, -50%);
+  border-radius: 2px; background: #dfe4ea;
+  box-shadow: 0 0 0 2px #8a6a45,
+              inset 4px 4px 0 -3px #4a8ec0, inset 4px 10px 0 -3px #c05a4a;
+}
+
+/* 좁아지면 격자를 줄이되 자리는 겹치지 않게 두 열로 접는다 */
+@media (max-width: 700px) {
+  .agent-room__floor { grid-template-rows: repeat(6, 42px); }
+  .office-prop[data-prop="board"], .office-prop[data-prop="cabinet"],
+  .office-prop[data-prop="water"], .office-prop[data-prop="coffee"] { display: none; }
 }
