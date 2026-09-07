@@ -179,6 +179,17 @@ export function Automation(): JSX.Element {
       )}
       {error && <p className="automation__note automation__note--warn">{error}</p>}
 
+      {/*
+        ★ **표를 접는다** (2026-09-07). 작업 17줄이 펼쳐져 있어 메인 화면의
+          사무실을 아래로 밀었다. 스위치와 경고는 접지 않는다 — 그것이 이 카드가
+          답해야 하는 질문("지금 이게 돌고 있나")이고, 접으면 안 보게 된다.
+          **지금 도는 것이 있으면** 자동으로 펼친다 — 무슨 일이 벌어지는 중일 때는
+          닫아 두지 않는다.
+      */}
+      <details className="automation__detail" open={tasks.some((t) => t.running)}>
+        <summary>
+          시간표와 실행 상태 <em>작업 {tasks.length}개</em>
+        </summary>
       <ol className="automation__tasks">
         {tasks.map((task) => {
           const state = task.running
@@ -216,6 +227,7 @@ export function Automation(): JSX.Element {
           );
         })}
       </ol>
+      </details>
 
       {recent.length > 0 && (
         <details className="automation__recent">

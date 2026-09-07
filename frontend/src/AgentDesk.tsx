@@ -443,16 +443,38 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
   const today = rounds?.filter((r) => r.tradingDay === todayKst()) ?? [];
   const decidedToday = today.reduce((sum, r) => sum + r.decisions.length, 0);
 
+  /*
+   * 첫 화면의 한 문장. **오늘 무슨 일이 있었나**를 사람 말로 적는다 —
+   * 상태를 나열하면 읽는 쪽이 조합해야 한다.
+   */
+  const tradesToday = today.flatMap((r) => r.decisions).filter((d) => d.action === 'buy' || d.action === 'sell');
+  const equity = rounds?.[0]?.equity;
+  let headline: string;
+  if (!status || rounds === null) {
+    headline = '상태를 읽는 중입니다';
+  } else if (!status.settings.enabled) {
+    headline = '자동화가 꺼져 있습니다 — 손절도 돌지 않습니다';
+  } else if (tradesToday.length > 0) {
+    const first = tradesToday[0];
+    const more = tradesToday.length > 1 ? ` 외 ${tradesToday.length - 1}건` : '';
+    headline = `오늘 ${first.name} ${first.quantity}주를 ${ACTION_LABEL[first.action]}했습니다${more}`
+      + (equity ? ` · 총자산 ${won(equity)}` : '');
+  } else {
+    headline = `오늘은 아직 사고판 것이 없습니다 · 판단 ${today.length}번`
+      + (equity ? ` · 총자산 ${won(equity)}` : '');
+  }
+
   return (
     <section className="agent-desk" aria-label="에이전트 데스크">
       <header className="agent-desk__head">
         <h2>에이전트 데스크</h2>
-        <p>
-          {status
-            ? `${status.now} · 자동화 ${status.settings.enabled ? '켜짐' : '꺼짐'} · 매매 ${status.settings.tradingEnabled ? '켜짐' : '꺼짐'}`
-            : '상태를 읽는 중입니다'}
-          {rounds ? ` · 오늘 회차 ${today.length}건 · 결정 ${decidedToday}건` : ''}
-        </p>
+        {/*
+          ★ **상태를 나열하지 않고 한 문장으로 말한다** (2026-09-07). 전에는
+            `14:29 · 자동화 켜짐 · 매매 켜짐 · 오늘 회차 10건 · 결정 1건`이라
+            읽는 사람이 그것을 조합해야 했다. 첫 화면이 답해야 하는 질문은
+            **"오늘 무슨 일이 있었나"** 하나다.
+        */}
+        <p className="agent-desk__lede">{headline}</p>
       </header>
 
       {error && <p className="agent-desk__error">{error}</p>}
@@ -594,7 +616,34 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
               {dayLabel(group.day)}
               <em>회차 {group.rounds.length}건</em>
             </h4>
-            {group.rounds.map((round) => {
+            {/*
+              ★ **결정이 없는 회차는 묶는다** (2026-09-07). 「적정가 반응 · 결정 없음」이
+                하루에 아홉 줄씩 쌓여 정작 **무엇을 샀는지가 그 사이에 묻혔다.**
+                빈 회차도 기록이지만(판단자가 안 돈 것과 안 산 것은 다르다) 첫 화면에서
+                아홉 번 읽을 이유는 없다 — 한 줄로 접고 눌러서 편다.
+            */}
+            {group.rounds.filter((r) => r.decisions.length === 0).length > 1 && (
+              <details className="agent-quiet">
+                <summary>
+                  결정 없이 끝난 회차 {group.rounds.filter((r) => r.decisions.length === 0).length}번
+                  <em>눌러서 봅니다</em>
+                </summary>
+                <ul>
+                  {group.rounds.filter((r) => r.decisions.length === 0).map((r) => (
+                    <li key={r.id}>
+                      <span>{timeOf(r.recordedAt)}</span>
+                      <b>{TRIGGER_LABEL[r.trigger] ?? r.trigger}</b>
+                      {r.findings[0]?.summary ?? '기록만 남았습니다'}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {/* 결정이 있는 회차만 펼쳐 둔다 — 나머지는 위 접힌 줄에 있다 */}
+            {group.rounds
+              .filter((r) => r.decisions.length > 0
+                || group.rounds.filter((x) => x.decisions.length === 0).length <= 1)
+              .map((round) => {
           const open = openRound === round.id;
           return (
             <article className="agent-round" data-open={open ? '' : undefined} key={round.id}>

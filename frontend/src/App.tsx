@@ -466,11 +466,6 @@ const TERMINAL_TAB_GROUPS: Array<{ label: string; options: TerminalTabOption[] }
     ],
   },
   {
-    label: '커뮤니티',
-    options: [
-    ],
-  },
-  {
     label: '도구',
     options: [
       { key: 'fees', label: '수수료', title: '증권사 비용 계산' },
@@ -4140,7 +4135,7 @@ export function App(): JSX.Element {
       <div className={`app__body app__body--${activePage}`}>
         <main className={`chart-panel chart-panel--${activePage}`}>
           {activePage !== 'portfolio' ? (
-          <div className="chart-commandbar">
+          <div className="chart-commandbar" data-hidden={activePage === 'goal' ? '' : undefined}>
             {/*
               여기 있던 종목명·국가·시장 표기를 뺐다. 90px 아래 시세 헤더가 같은
               것을 더 크게, 가격 옆에서 보여주고 있어 같은 말이 두 번 나왔다.

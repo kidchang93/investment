@@ -7330,6 +7330,11 @@ span.sample-badge {
 
 /* 목표 화면에서는 종목 검색이 필요 없다 — 자리만 차지한다. */
 .symbol-search[data-hidden] { display: none; }
+/*
+ * 목표(메인) 화면에는 종목 검색줄이 필요 없다. 검색만 숨겼더니 **빈 바가 90px**
+ * 남아 사무실이 그만큼 아래로 밀렸다 — 줄 전체를 접는다.
+ */
+.chart-commandbar[data-hidden] { display: none; }
 .dash__account {
   max-width: 1080px;
   margin: 16px auto 0;
@@ -7462,7 +7467,7 @@ span.sample-badge {
 }
 .agent-desk__head { display: flex; align-items: baseline; gap: .8rem; flex-wrap: wrap; }
 .agent-desk__head h2 { margin: 0; font-size: 1.15rem; letter-spacing: .01em; }
-.agent-desk__head p { margin: 0; color: var(--muted, #8b95a5); font-size: .8rem; font-variant-numeric: tabular-nums; }
+.agent-desk__head p { margin: 0; font-size: .86rem; font-variant-numeric: tabular-nums; }
 .agent-desk__error { margin: .6rem 0 0; color: var(--up, #e5484d); font-size: .82rem; }
 
 /* ── 사무실 (탑다운) ──
@@ -7888,3 +7893,43 @@ span.sample-badge {
   .office-prop[data-prop="board"], .office-prop[data-prop="cabinet"],
   .office-prop[data-prop="water"], .office-prop[data-prop="coffee"] { display: none; }
 }
+
+/* 자동화 시간표는 접어 둔다 — 메인 화면의 주인공은 사무실이다. */
+.automation__detail { margin-top: .8rem; }
+.automation__detail > summary {
+  cursor: pointer; list-style: none;
+  padding: .4rem .6rem; border-radius: 7px;
+  background: var(--panel-2, #151b26);
+  border: 1px solid var(--border-soft, rgba(148, 163, 184, .14));
+  font-size: .8rem; color: var(--muted, #8b95a5);
+  display: flex; align-items: baseline; gap: .5rem;
+}
+.automation__detail > summary::-webkit-details-marker { display: none; }
+.automation__detail > summary::before { content: '▸'; font-size: .7rem; }
+.automation__detail[open] > summary::before { content: '▾'; }
+.automation__detail > summary:hover { border-color: rgba(148, 163, 184, .3); }
+.automation__detail > summary em { font-style: normal; font-size: .72rem; color: var(--faint, #788497); }
+.automation__detail[open] > summary { margin-bottom: .5rem; }
+
+/* 첫 화면의 한 문장 — 상태 나열이 아니라 오늘 무슨 일이 있었나. */
+.agent-desk__lede { margin: 0; font-size: .86rem; color: var(--text, #e5e7eb); }
+
+/* 결정 없이 끝난 회차 — 한 줄로 접는다. 빈 회차도 기록이지만 아홉 번 읽을 일은 아니다. */
+.agent-quiet { margin: .3rem 0 .1rem; }
+.agent-quiet > summary {
+  cursor: pointer; list-style: none;
+  padding: .3rem .1rem; font-size: .76rem; color: var(--faint, #788497);
+  display: flex; align-items: baseline; gap: .45rem;
+}
+.agent-quiet > summary::-webkit-details-marker { display: none; }
+.agent-quiet > summary::before { content: '▸'; font-size: .66rem; }
+.agent-quiet[open] > summary::before { content: '▾'; }
+.agent-quiet > summary:hover { color: var(--muted, #8b95a5); }
+.agent-quiet > summary em { font-style: normal; font-size: .7rem; opacity: .7; }
+.agent-quiet ul { margin: 0 0 .4rem; padding-left: 1rem; display: grid; gap: .25rem; }
+.agent-quiet li {
+  font-size: .74rem; color: var(--faint, #788497); line-height: 1.45;
+  display: grid; grid-template-columns: auto auto 1fr; gap: .45rem; align-items: baseline;
+}
+.agent-quiet li span { font-variant-numeric: tabular-nums; }
+.agent-quiet li b { font-weight: 500; opacity: .8; }
