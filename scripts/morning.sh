@@ -12,7 +12,8 @@
 #   *"백엔드는 자동으로 켜지 말고 내가 기동하라고 할 때만 기동해줘"*
 #
 # 그래서 지금은 **백엔드 하나**다. 스케줄러는 그 안에 있고(`automation/`),
-# 화면도 그 안에서 낸다(`frontend/dist`). `scripts/daemon.sh`는 더 쓰지 않는다.
+# 화면도 그 안에서 낸다(`frontend/dist`). 옛 터미널 데몬은 2026-09-07에 지웠다 —
+# 함께 돌면 모든 작업이 두 번 나간다(`docs/OPERATIONS.md`).
 #
 # ★ **자동 시작은 걸지 않는다.** 사용자가 늘 Claude Code를 켜고 시작하므로
 #   그 자리에서 말하면 된다(`docs/USER_DECISIONS.md`). `.zshrc`·launchd·로그인

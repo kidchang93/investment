@@ -1805,16 +1805,7 @@ export interface CreateOrderResponse {
 
 /* ── 자동매매 ─────────────────────────────────────────────────────────── */
 
-/** 자동매매 실행 모드. `dry_run`은 주문을 만들되 KIS로 보내지 않는다. */
-export type AutoTraderMode = 'dry_run' | 'live';
 
-/** 자동매매 상태. `stopped` 외에는 러너가 살아 있다. */
-export type AutoTraderStatus =
-  | 'stopped'
-  | 'running'
-  | 'target_reached'
-  | 'stopped_out'
-  | 'error';
 
 /**
  * 전략을 한 번 재고 남긴 것.
@@ -1858,101 +1849,8 @@ export interface StrategySignal {
   reason: string;
 }
 
-export interface AutoTraderConfig {
-  accountId: string;
-  mode: AutoTraderMode;
-  /** 전략 키. 지금은 'ma_cross' 하나 */
-  strategy: string;
-  /** 목표 평가금액. 도달하면 정지한다 */
-  targetEquity: number;
-  /** 이 금액 아래로 내려가면 정지한다 */
-  stopEquity: number;
-  /** 러너를 깨우는 주기(초) */
-  intervalSeconds: number;
-  /** 한 번에 들고 갈 종목 수 */
-  maxPositions: number;
-  /**
-   * 장후 시간외 종가(15:40~16:00)에 **남은 포지션을 정리**할지. 기본은 끔.
-   *
-   * ── 왜 매도만인가 ────────────────────────────────────────────────────────
-   *
-   * 그 시간대에는 모든 체결이 **종가 하나**라 값이 안 움직인다. 이동평균이
-   * 나란히 평평해져 교차가 영원히 안 나므로 **전략은 신호를 낼 수 없다.**
-   * 그래서 매수는 의미가 없고, 의미가 있는 것은 정규장에 못 판 것을 종가로
-   * 내보내는 길뿐이다.
-   *
-   * ★ **이 경로는 아직 확인되지 않은 주문구분을 쓴다**(`kis/orderDivisions.ts`의
-   * `AFTER_HOURS_CLOSE_CANDIDATE`). 접수되는지 거절되는지는 실제 주문 한 건으로만
-   * 알 수 있고, 회차 기록이 그 사실을 함께 적는다.
-   */
-  afterHoursExit?: boolean;
-  /**
-   * 최소 보유 시간(분). 산 지 이만큼 지나지 않았으면 **매도 신호가 나도 그 회차에는
-   * 팔지 않는다.** `0`이면 끈 것이고 기본값이다.
-   *
-   * ── 근거는 손익이 아니라 배관이다 ────────────────────────────────────────
-   *
-   * 2026-08-01 측정(1분봉 축·15종목·연속 15거래일)에서 최소 보유는 **손실을 줄이지만
-   * 우위를 만들지 않았다.** 비용을 0으로 놓으면 개선이 사라지고 이익 종목이 오히려
-   * 줄었다(7→3 · 6→3 · 10→5). 덜 잃는 법이지 이기는 법이 아니다 — 수익 기능으로
-   * 읽히게 적으면 안 된다.
-   *
-   * 실제 근거는 **일일 주문 한도**다. 같은 측정에서 종목 하나당 하루 주문 수
-   * (왕복이라 1회전에 2건):
-   *
-   *   최소 보유    이동평균 교차   변동성 돌파   평균 회귀
-   *   없음            12.4건        49.7건       11.0건
-   *   60분             5.0건         7.6건        5.3건
-   *   120분            3.6건         4.3건        3.7건
-   *
-   * 일일 건수 한도는 **계좌 전체 합산 20건**이다(`maxPositions=3`이면 3배가 나간다).
-   * 지금 구조로는 **매수가 한도를 먼저 먹으면 그날 못 판다** — 시뮬에서 매도
-   * 65~2,219회가 막혔다. 리스크 룰은 손실을 줄이려고 있는데 여기서는 출구를 잠근다.
-   *
-   * ── 왜 리스크 룰이 아니라 여기 있나 ──────────────────────────────────────
-   *
-   * 리스크 룰에 넣으면 **수동 매도까지 막힌다.** 이건 자동매매가 자기 신호를
-   * 보류하는 것이지 주문을 금지하는 것이 아니다. 판단도 러너가 한다 — 전략이
-   * 알면 두 곳에서 같은 판단을 하게 되고 한쪽만 고치면 조용히 어긋난다.
-   *
-   * ── 위험 ────────────────────────────────────────────────────────────────
-   *
-   * 값이 급락해도 이 시간 동안은 자동매매가 팔지 않는다. 지금 손절은 없다.
-   */
-  minHoldMinutes: number;
-}
 
-/** 러너가 한 번 돌 때마다 남기는 기록. 왜 샀고 왜 안 샀는지가 다 남는다. */
-export interface AutoTraderRun {
-  id: number;
-  createdAt: number;
-  status: AutoTraderStatus;
-  /** 이번 회차에 무엇을 했는지 한 줄 */
-  message: string;
-  /** 주문을 냈다면 그 내용 */
-  instrumentId?: string;
-  side?: OrderSide;
-  quantity?: number;
-  price?: number;
-  /** 이번 회차 시점의 평가금액 */
-  equity?: number;
-}
 
-export interface AutoTraderState {
-  config: AutoTraderConfig;
-  status: AutoTraderStatus;
-  /** 시작 시점 평가금액. 수익률 계산 기준 */
-  startEquity?: number;
-  /** 마지막으로 확인한 평가금액 */
-  currentEquity?: number;
-  startedAt?: number;
-  stoppedAt?: number;
-  /** 정지했다면 그 이유 */
-  stopReason?: string;
-  recentRuns: AutoTraderRun[];
-  /** 서버 상한을 넘겨 더 오래된 기록이 남아 있는지. 화면이 "이게 전부"라고 말하지 않게 한다. */
-  recentRunsHasMore: boolean;
-}
 
 /**
  * 국내 주식 매도에 붙는 세금 비율 (증권거래세 + 농어촌특별세).

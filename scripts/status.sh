@@ -12,7 +12,7 @@
 # 셋 다 **물어보지 않으면 모르는 것**이었다. 그래서 한 명령으로 묶는다.
 #
 # ★ **읽기만 한다.** 아무것도 고치지 않고 주문도 내지 않는다.
-#   환경을 세우는 것은 `morning.sh`, 자동 실행은 `daemon.sh`다.
+#   환경을 세우는 것은 `morning.sh`, 자동 실행은 **백엔드 안의 스케줄러**다.
 #
 # 쓰는 법:  zsh scripts/status.sh
 
@@ -64,7 +64,7 @@ fi
 # ★ 옛 데몬이 함께 돌면 모든 작업이 두 번 나간다. 크게 알린다.
 if pgrep -f "daemon.sh __loop" >/dev/null 2>&1; then
   bad "★★ 옛 데몬이 함께 돌고 있다 (pid $(pgrep -f 'daemon.sh __loop' | head -1)) — 모든 작업이 두 번 나간다"
-  bad "   멈춘다: zsh scripts/daemon.sh stop"
+  bad "   그 파일은 2026-09-07에 지웠다 — 되살린 것이면 kill 한다"
 fi
 if pgrep -f "tsx watch src/server.ts" >/dev/null 2>&1; then
   ok "백엔드     pid $(pgrep -f 'tsx watch src/server.ts' | head -1)  :4000"

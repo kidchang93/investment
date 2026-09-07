@@ -65,7 +65,7 @@ zsh scripts/status.sh
 
 | 보이는 것 | 제안 |
 |---|---|
-| 데몬 멈춤 | `zsh scripts/daemon.sh start` |
+| 스케줄러 안 돎 | 화면(:4000)「목표」탭에서 켠다. 백엔드 자체가 죽었으면 `zsh scripts/morning.sh` |
 | 백엔드·DB 죽음 | `zsh scripts/morning.sh` |
 | 비중 이탈 | `npx tsx src/scripts/rebalance.ts`로 계획부터 본다 |
 | 장부·잔고 불일치 | 오늘 주문 기록을 열어 손으로 낸 것이 있는지 본다 |
@@ -80,7 +80,11 @@ zsh scripts/status.sh
 
 ## 관련
 
-- `scripts/daemon.sh` — 상주 스케줄러 (start/status/stop)
+- **스케줄러는 백엔드 안에 있다** (`backend/src/automation/`). 켜고 끄는 것은
+  화면(:4000)「목표」탭이고, 상태는 `GET /api/automation/status`가 준다.
+  ★ 옛 터미널 데몬(`scripts/daemon.sh`)은 **2026-09-07에 지웠다** — 남아 있으니
+    이 문서가 `daemon.sh start`를 권했고, 그대로 따르자 두 스케줄러가 같은 작업을
+    두 번 불렀다(`premarket` 두 번, `watch` 2초 차이로 두 번). 되살리지 말 것.
 - `scripts/morning.sh` — 환경을 **세운다** (이 스킬은 보기만 한다)
 - `scripts/rebalance.ts` — 비중 복원 (멱등 키라 재시도해도 안전)
 - `backend/src/scripts/layerReport.ts` — 3층 성과 단독 실행

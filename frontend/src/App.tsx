@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addWatchlistItem,
-  fetchAutoTraderState,
-  fetchAutoTraderStrategies,
-  startAutoTrader,
-  stopAutoTrader,
   cancelKisReservedOrder,
   placeKisReservedOrder,
   createWatchlist,
@@ -33,7 +29,6 @@ import {
   fetchOrderBook,
   fetchMarketMovers,
   fetchScreening,
-  fetchSignalScores,
   fetchTradeMarks,
   fetchInstrumentQuotes,
   fetchTerminalInstruments,
@@ -53,14 +48,11 @@ import { Dashboard } from './Dashboard';
 import { PortfolioLayers } from './PortfolioLayers';
 import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } from './Chart';
 import {
-  CANDLE_AXIS_LABELS,
   krSellTaxRate,
   KR_KONEX_SELL_TAX_RATE,
   KR_SELL_TAX_RATE,
 } from '@invest/shared';
 import type {
-  AutoTraderMode,
-  AutoTraderState,
   BrokerAccountRef,
   ChartTradeMark,
   BrokerAccountSnapshot,
@@ -90,8 +82,6 @@ import type {
   ScreeningResult,
   ScreeningRow,
   ScreeningVerdict,
-  SignalScoreSummary,
-  StrategyListResponse,
   PriceSign,
   Quote,
   Theme,
@@ -133,17 +123,6 @@ type LayoutPreset = 'balanced' | 'chart' | 'reading';
  */
 type AppPage = 'goal' | 'terminal' | 'market' | 'portfolio';
 
-/**
- * ★ **자동매매 패널을 화면에서 내린다 (2026-08-18).**
- *
- * 러너는 2026-08-05에 영구 정지했고 판단은 에이전트·스크립트가 한다. 화면에
- * 시작 버튼이 남아 있으면 실수로 켜지고, 켜지면 **검증 안 된 규칙으로 실제
- * 주문이 나간다** — 21년 데이터로 비용을 넘는 신호가 0건이었다.
- *
- * 지우지 않고 플래그로 막는 이유: 서버 코드(`trading/autoTrader.ts`)와 API는
- * 그대로 살아 있어서, 규칙이 검증되면 이 값만 되돌리면 된다.
- */
-const SHOW_AUTO_TRADER_PANEL = false;
 type SidePanelTab = 'order' | 'watch' | 'discover';
 type TerminalTab =
   | 'overview'
@@ -155,16 +134,12 @@ type TerminalTab =
   | 'ranking'
   | 'screening'
   | 'themes'
-  | 'fees'
-  | 'lounge'
-  | 'chat'
-  | 'simulation';
+  | 'fees';
 type NewsFilter = 'all' | 'macro' | 'stocks' | 'commodities' | 'crypto' | 'policy';
 type MacroFilter = 'all' | 'energy' | 'metals' | 'agriculture' | 'rates' | 'fx' | 'indices' | 'crypto';
 type CalendarRegionFilter = 'all' | 'domestic' | 'global';
 type CalendarImpactFilter = 'all' | '최고' | '높음' | '보통';
 type FeeMarket = 'kospi' | 'kosdaq' | 'kr_etf' | 'konex' | 'us_stock' | 'kospi200_future' | 'kospi200_option';
-type ChatPanelMode = 'compact' | 'wide';
 
 interface PriceSnapshot {
   price: number;
@@ -246,31 +221,8 @@ interface HeatmapItem {
   weight: number;
 }
 
-interface LoungePost {
-  id: string;
-  author: string;
-  title: string;
-  body: string;
-  tag: string;
-  replies: number;
-  likes: number;
-}
 
-interface ChatMessage {
-  id: string;
-  author: string;
-  message: string;
-  time: string;
-  tone: 'normal' | 'alert' | 'macro';
-}
 
-interface SimulationPosition {
-  instrumentId: string;
-  symbol: string;
-  name: string;
-  quantity: number;
-  averagePrice: number;
-}
 
 const RANGE_OPTIONS: Array<{ key: RangeKey; label: string; days?: number }> = [
   { key: '1M', label: '1개월', days: 31 },
@@ -479,95 +431,11 @@ function Term({ children }: { children: string }): JSX.Element {
   );
 }
 
-const AUTO_TRADER_STATUS_LABEL: Record<string, string> = {
-  stopped: '멈춤',
-  running: '돌고 있음',
-  target_reached: '목표 도달로 정지',
-  stopped_out: '중단선 도달로 정지',
-  error: '오류로 정지',
-};
 
-/*
- * 회차 기록 한 줄에 붙는 짧은 상태 이름. 위 라벨과 다른 말을 쓴다 — 위는 러너
- * 전체가 지금 어떤 상태인지이고, 여기는 **그 회차 하나가 어떻게 끝났는지**다.
- * `정지: …` 회차에 `멈춤`이라고 적으면 지금도 멈춰 있다는 뜻으로 읽힌다.
- */
-const AUTO_RUN_STATUS_LABEL: Record<string, string> = {
-  stopped: '정지',
-  target_reached: '목표 도달',
-  stopped_out: '중단선',
-  error: '오류',
-};
 
-/**
- * 러너가 **지금도 도는지**를 회차 기록으로 판단한다.
- *
- * 상태값(`running`)으로는 알 수 없다. 그건 서버가 마지막으로 그렇게 적어 둔
- * 값이라, 회차가 멎어도 누가 정지시키기 전까지 계속 `running`이다. 실제로 도는지는
- * **마지막 회차가 언제였는지**로만 드러난다.
- *
- * ── 늦었다고 말하는 문턱 (2026-08-03 장중 실측으로 고쳤다) ───────────────────
- *
- * 처음에는 여유를 30초로 뒀다가 **실측에 반박당했다.** 기록 시각은 회차가
- * 시작한 때가 아니라 **끝나고 적힌 때**라, 회차 수행 시간만큼 간격이 흔들린다.
- * 주기 60초로 돌린 모의계좌에서 잰 실제 간격은 이랬다.
- *
- *   09:12:27 → 09:13:26(59초) → 09:14:27(61초) → 09:15:40(73초)
- *            → 09:16:27(47초) → 09:17:54(**87초**)
- *
- * 모의 서버가 초당 1회라 후보 8종목 시세만 9초가 걸리고, 그 길이가 회차마다
- * 다르다. 여기에 이 화면이 10초에 한 번만 묻는 것이 더해져 **표시값은 실제보다
- * 최대 10초 더 길게** 보인다. 30초로 두면 87 + 10 = 97초가 헛경보가 된다.
- *
- * 그래서 45초로 잡는다. 헛경보는 이 줄 전체를 못 믿게 만드는데, 그러면 정작
- * 러너가 멎었을 때 아무도 안 본다.
- */
-const RUNNER_PULSE_GRACE_SECONDS = 45;
 
-interface RunnerPulse {
-  /** 마지막 회차 이후 지난 초 */
-  sinceSeconds: number;
-  /** 다음 회차까지 남은 초. 이미 지났으면 0 */
-  untilSeconds: number;
-  /** 주기 + 여유를 넘겼다. 러너가 멎었거나 회차가 걸려 있다는 뜻 */
-  overdue: boolean;
-}
 
-function runnerPulse(
-  lastRunAt: number | undefined,
-  intervalSeconds: number,
-  nowMs: number,
-): RunnerPulse | null {
-  if (lastRunAt === undefined || !Number.isFinite(intervalSeconds) || intervalSeconds <= 0) return null;
-  const since = Math.max(0, Math.round((nowMs - lastRunAt) / 1000));
-  return {
-    sinceSeconds: since,
-    untilSeconds: Math.max(0, intervalSeconds - since),
-    overdue: since > intervalSeconds + RUNNER_PULSE_GRACE_SECONDS,
-  };
-}
 
-/*
- * 자동매매 최소 보유 시간 선택지.
- *
- * 선택지를 동등하게 늘어놓지 않는다(`docs/CODE_STYLE.md`) — `<option>`에는 툴팁이
- * 붙지 않으므로 아는 것을 라벨 글 자체에 넣는다. 60·120분을 권하는 근거는 손익이
- * 아니라 일일 주문 한도이고, 그 실측은 select 아래 설명에 적는다.
- *
- * 재지 않은 값(30분·240분 등)은 넣지 않는다. 넣으면 잰 값과 나란히 놓여 같은
- * 근거가 있는 것처럼 읽힌다.
- */
-const MIN_HOLD_OPTIONS: Array<{ minutes: number; label: string }> = [
-  { minutes: 0, label: '끄기 — 신호가 나면 바로 팝니다' },
-  { minutes: 60, label: '60분 — 하루 주문 수가 한도 안으로 들어옵니다' },
-  { minutes: 120, label: '120분 — 주문 수를 더 줄입니다' },
-];
-
-/** 최소 보유 설정값을 화면 말로. 끈 것과 켠 것을 다르게 적는다. */
-function formatMinHold(minutes: number | undefined): string {
-  if (minutes === undefined) return '조회 대기';
-  return minutes > 0 ? `${minutes}분` : '끔';
-}
 
 const SIDE_PANEL_TITLE: Record<SidePanelTab, string> = {
   order: '주문',
@@ -620,8 +488,6 @@ const TERMINAL_TAB_GROUPS: Array<{ label: string; options: TerminalTabOption[] }
   {
     label: '커뮤니티',
     options: [
-      { key: 'lounge', label: '라운지', title: '커뮤니티 화면 구성 미리보기' },
-      { key: 'chat', label: '채팅', title: '채팅 화면 구성 미리보기' },
     ],
   },
   {
@@ -629,7 +495,6 @@ const TERMINAL_TAB_GROUPS: Array<{ label: string; options: TerminalTabOption[] }
     options: [
       { key: 'fees', label: '수수료', title: '증권사 비용 계산' },
       { key: 'screening', label: '스크리닝', title: '자동매매 후보 거르기' },
-      { key: 'simulation', label: '모의투자', title: '모의계좌로 연습 매매' },
     ],
   },
 ];
@@ -689,10 +554,6 @@ const FEE_MARKET_OPTIONS: Array<{ key: FeeMarket; label: string; taxRate: number
   { key: 'kospi200_option', label: 'KOSPI200 옵션', taxRate: 0, unit: 'KRW' },
 ];
 
-const CHAT_PANEL_MODE_OPTIONS: Array<{ key: ChatPanelMode; label: string }> = [
-  { key: 'compact', label: '좁게' },
-  { key: 'wide', label: '넓게' },
-];
 
 const FALLBACK_TERMINAL_NEWS: TerminalNewsCard[] = [
   {
@@ -822,49 +683,7 @@ const HEATMAP_ITEMS: HeatmapItem[] = [
 /** 히트맵 종목의 시세 조회용 id. 전부 KOSPI다. */
 const HEATMAP_INSTRUMENT_IDS = HEATMAP_ITEMS.map((item) => `KR:KOSPI:${item.symbol}`);
 
-const LOUNGE_POSTS: LoungePost[] = [
-  {
-    id: 'lounge-1',
-    author: 'macro-note',
-    title: 'CPI 전 야간선물 베이시스 체크',
-    body: 'KOSPI200 야간선물과 환율 움직임이 엇갈릴 때는 개장 전 현물 괴리를 먼저 봅니다.',
-    tag: '야간선물',
-    replies: 8,
-    likes: 24,
-  },
-  {
-    id: 'lounge-2',
-    author: 'oil-watch',
-    title: 'WTI 하락 때 정유·항공 반응 분리',
-    body: '원유 단기 급락은 비용주보다 수요 둔화 신호로 읽히는 구간이 있습니다.',
-    tag: '원자재',
-    replies: 5,
-    likes: 19,
-  },
-  {
-    id: 'lounge-3',
-    author: 'semi-cycle',
-    title: '삼닉 쏠림이 과열인지 확인하는 방법',
-    body: '반도체 거래대금 비중이 커질 때는 방산·전력기기 같은 2순위 테마의 상대강도도 같이 봅니다.',
-    tag: '테마',
-    replies: 11,
-    likes: 31,
-  },
-];
 
-/*
- * 채팅 피드.
- *
- * 지어낸 메시지다. 라운지 게시글에는 표시를 붙였는데 여기만 빠져 있었다 —
- * 사용자명도 시각도 고정이라 언제 열어도 08:41이 최신으로 뜬다. `실시간
- * 채팅`이라는 제목 아래 그렇게 놓이면 지금 오가는 대화로 읽힌다.
- */
-const CHAT_MESSAGES: ChatMessage[] = [
-  { id: 'chat-1', author: 'open-watch', message: '개장 전 환율이 먼저 튀면 야간 환산가 괴리를 같이 보세요.', time: '08:41', tone: 'macro' },
-  { id: 'chat-2', author: 'semi-bid', message: '삼전 GDR 프리미엄은 둔한데 KOSPI200 야간선물은 강합니다.', time: '08:43', tone: 'normal' },
-  { id: 'chat-3', author: 'risk-alert', message: 'CPI 발표 전후 뉴스 링크는 출처 확인 후 공유합니다.', time: '08:44', tone: 'alert' },
-  { id: 'chat-4', author: 'oil-desk', message: 'WTI 하락은 정유보다 항공/운송 쪽 반응도 같이 체크 중입니다.', time: '08:45', tone: 'normal' },
-];
 
 /*
  * 증권사 수수료율.
@@ -1615,8 +1434,6 @@ function readStoredString(key: string, fallback: string): string {
 /** 탐색 패널을 처음 열 때 보여줄 카테고리. 주문할 수 있는 국내 종목이 나온다. */
 const DEFAULT_DISCOVER_CATEGORY = 'kr-major';
 
-/** 모의투자 시드머니. 손익은 이 값을 기준으로 잰다. */
-const SIMULATION_SEED_CASH = 1_000_000;
 
 function readStoredBoolean(key: string, fallback: boolean): boolean {
   const value = window.localStorage.getItem(`${STORAGE_PREFIX}${key}`);
@@ -1625,21 +1442,6 @@ function readStoredBoolean(key: string, fallback: boolean): boolean {
   return fallback;
 }
 
-/**
- * 저장된 숫자. 없으면 fallback.
- *
- * `Number(localStorage.getItem(...))`로 쓰면 안 된다. 키가 없을 때
- * `getItem`은 null을 주고 `Number(null)`은 NaN이 아니라 **0**이다.
- * 그래서 `Number.isFinite(value) && value >= 0` 같은 검사를 통과해 버린다.
- * 모의투자 시드머니가 그랬다 — 처음 여는 사람은 현금 0에 손익 -100만원으로
- * 시작했고, 살 돈이 없어 아무것도 못 했다.
- */
-function readStoredNumber(key: string, fallback: number, isValid: (value: number) => boolean): number {
-  const raw = window.localStorage.getItem(`${STORAGE_PREFIX}${key}`);
-  if (raw === null || raw.trim() === '') return fallback;
-  const value = Number(raw);
-  return Number.isFinite(value) && isValid(value) ? value : fallback;
-}
 
 function writeStoredValue(key: string, value: string | boolean): void {
   window.localStorage.setItem(`${STORAGE_PREFIX}${key}`, String(value));
@@ -1678,30 +1480,7 @@ function writeStoredJson(key: string, value: unknown): void {
   window.localStorage.setItem(`${STORAGE_PREFIX}${key}`, JSON.stringify(value));
 }
 
-function isSimulationPosition(value: unknown): value is SimulationPosition {
-  if (!value || typeof value !== 'object') return false;
-  const item = value as Record<string, unknown>;
-  return (
-    typeof item.instrumentId === 'string' &&
-    typeof item.symbol === 'string' &&
-    typeof item.name === 'string' &&
-    typeof item.quantity === 'number' &&
-    Number.isFinite(item.quantity) &&
-    typeof item.averagePrice === 'number' &&
-    Number.isFinite(item.averagePrice)
-  );
-}
 
-function readStoredSimulationPositions(): SimulationPosition[] {
-  const value = window.localStorage.getItem(`${STORAGE_PREFIX}simulationPositions`);
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) ? parsed.filter(isSimulationPosition) : [];
-  } catch {
-    return [];
-  }
-}
 
 function areStringArraysEqual(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((item, index) => item === b[index]);
@@ -1954,25 +1733,6 @@ function tradeTimestampMs(trade: Trade | undefined): number | null {
   return new Date(y, m - 1, d, hh, mm, ss).getTime();
 }
 
-/**
- * 로그용 시각. 오늘이면 시각만, 다른 날이면 날짜까지.
- *
- * 실행 로그는 하루를 넘겨 쌓이는데 `11:58:34`만 적으면 어제 것과 오늘 것이
- * 똑같아 보인다. 오늘 것에까지 날짜를 붙이면 대부분의 줄이 같은 날짜를
- * 반복하므로, 넘어간 줄에만 붙인다.
- */
-function formatLogTime(ms: number, nowMs: number): string {
-  const at = new Date(ms);
-  const now = new Date(nowMs);
-  const sameDay =
-    at.getFullYear() === now.getFullYear() &&
-    at.getMonth() === now.getMonth() &&
-    at.getDate() === now.getDate();
-  if (sameDay) return formatClock(ms);
-  const month = String(at.getMonth() + 1).padStart(2, '0');
-  const day = String(at.getDate()).padStart(2, '0');
-  return `${month}-${day} ${formatClock(ms)}`;
-}
 
 function formatCandleDate(seconds: number, withTime: boolean): string {
   return new Intl.DateTimeFormat('ko-KR', {
@@ -2736,7 +2496,6 @@ export function App(): JSX.Element {
   const [calendarRegionFilter, setCalendarRegionFilter] = useState<CalendarRegionFilter>('all');
   const [calendarImpactFilter, setCalendarImpactFilter] = useState<CalendarImpactFilter>('all');
   const [feeMarket, setFeeMarket] = useState<FeeMarket>('kospi');
-  const [chatPanelMode, setChatPanelMode] = useState<ChatPanelMode>('compact');
   const [feeAmount, setFeeAmount] = useState('1000000');
   const [feeExpectedReturn, setFeeExpectedReturn] = useState('5');
   const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>(() =>
@@ -2845,7 +2604,6 @@ export function App(): JSX.Element {
    * 오류 상태는 null이라 화면이 "확인하는 중입니다"라고 적는다 — 실패한 것도,
    * 기다리는 것도 아니고 **아예 시작을 못 한 것**이다. 백엔드를 내리고 실측했다.
    */
-  const [kisAccountsError, setKisAccountsError] = useState<string | null>(null);
   const [kisAccountError, setKisAccountError] = useState<string | null>(null);
   const [kisExecutionError, setKisExecutionError] = useState<string | null>(null);
   const [kisTradeProfitError, setKisTradeProfitError] = useState<string | null>(null);
@@ -2880,15 +2638,11 @@ export function App(): JSX.Element {
    * 자동매매. 러너는 서버에 살고 화면은 상태를 받아 보여줄 뿐이다.
    * 돌고 있는 동안에는 주기적으로 다시 받아 실행 기록이 쌓이는 걸 보여준다.
    */
-  const [autoTrader, setAutoTrader] = useState<AutoTraderState | null>(null);
   /** 상태를 못 받아온 사유. 게이트(liveOrderGateError)와 같은 방식이다. */
-  const [autoTraderError, setAutoTraderError] = useState<string | null>(null);
   /*
    * 신호 채점 성적. 백테스트는 과거를 말하고 이 값은 실제로 낸 신호가 어땠는지를
    * 말한다. 아직 채점된 게 없으면 빈 배열이고, 그걸 0%로 채우지 않는다.
    */
-  const [signalScores, setSignalScores] = useState<SignalScoreSummary[] | null>(null);
-  const [signalScoresError, setSignalScoresError] = useState<string | null>(null);
   /*
    * 전략 목록과 **자동매매가 실제로 도는 축**. 축을 여기 박아 두지 않는다 —
    * 러너가 축을 바꾸면 화면만 조용히 틀린 말을 하게 된다. 서버가 준 것만 쓴다.
@@ -2896,19 +2650,6 @@ export function App(): JSX.Element {
    * 조회 실패를 빈 배열로 바꾸지 않는다. 판정문이 사라진 채로 시작 버튼이 살아
    * 있으면 무엇이 확인된 전략인지 모르는 채 켜게 된다.
    */
-  const [autoStrategies, setAutoStrategies] = useState<StrategyListResponse | null>(null);
-  const [autoStrategiesError, setAutoStrategiesError] = useState<string | null>(null);
-  const [autoStrategy, setAutoStrategy] = useState('ma_cross');
-  const [autoMode, setAutoMode] = useState<AutoTraderMode>('dry_run');
-  const [autoTarget, setAutoTarget] = useState('100000');
-  const [autoStop, setAutoStop] = useState('40000');
-  /*
-   * 최소 보유 시간(분). 기본은 `0`(끔)이라 지금 동작을 바꾸지 않는다 — 매도를
-   * 미루는 설정이라 기본으로 켜면 위험하다.
-   */
-  const [autoMinHold, setAutoMinHold] = useState('0');
-  const [autoMessage, setAutoMessage] = useState<string | null>(null);
-  const [isAutoSubmitting, setIsAutoSubmitting] = useState(false);
   const [isLiveOrderSubmitting, setIsLiveOrderSubmitting] = useState(false);
   const [liveOrderMessage, setLiveOrderMessage] = useState<string | null>(null);
   /** 정정 중인 주문 id와 새 단가. 취소는 입력이 필요 없다. */
@@ -2921,11 +2662,6 @@ export function App(): JSX.Element {
   const [orderTimeInForce, setOrderTimeInForce] = useState<OrderTimeInForce>('day');
   const [orderQuantity, setOrderQuantity] = useState('1');
   const [orderLimitPrice, setOrderLimitPrice] = useState('');
-  const [simulationCash, setSimulationCash] = useState(() =>
-    readStoredNumber('simulationCash', SIMULATION_SEED_CASH, (value) => value >= 0),
-  );
-  const [simulationPositions, setSimulationPositions] = useState<SimulationPosition[]>(readStoredSimulationPositions);
-  const [simulationQuantity, setSimulationQuantity] = useState('1');
   const [error, setError] = useState<string | null>(null);
 
   /*
@@ -2988,42 +2724,6 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('terminalTab', terminalTab), [terminalTab]);
   useEffect(() => writeStoredValue('sidePanelTab', sidePanelTab), [sidePanelTab]);
 
-  useEffect(() => {
-    fetchAutoTraderStrategies()
-      .then((list) => {
-        setAutoStrategies(list);
-        setAutoStrategiesError(null);
-      })
-      .catch((e) => setAutoStrategiesError(toErrorMessage(e)));
-  }, []);
-
-  /*
-   * 조회 실패를 `멈춤`으로 바꾸지 않는다.
-   *
-   * 예전에는 `.catch(() => setAutoTrader(null))`이었고 화면은
-   * `autoTrader?.status ?? 'stopped'`를 읽었다. 그래서 상태 조회가 502로
-   * 떨어지면 카드가 `멈춤`이라고 적고 시작 버튼까지 켜졌다 — 실제로 돌고
-   * 있는데도 멈춘 것으로 보인다. 502를 흉내 내 브라우저에서 재현했다.
-   * 예약주문·주문기록이 이미 쓰는 방식대로, 받아 둔 값은 그대로 두고
-   * 모른다는 사실을 따로 들고 있는다.
-   */
-  useEffect(() => {
-    if (activePage !== 'portfolio' || !kisAccountId) return;
-    let disposed = false;
-    fetchSignalScores(kisAccountId)
-      .then((rows) => {
-        if (disposed) return;
-        setSignalScores(rows);
-        setSignalScoresError(null);
-      })
-      // 못 받은 것을 빈 성적표로 바꾸지 않는다 — 없는 것과 못 받은 것은 다르다.
-      .catch((e) => {
-        if (!disposed) setSignalScoresError(toErrorMessage(e));
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [activePage, kisAccountId]);
 
   /*
    * ★ **선택한 종목에서 우리가 사고판 자리.** 차트에 화살표로 찍는다(2026-08-24).
@@ -3053,28 +2753,6 @@ export function App(): JSX.Element {
     };
   }, [selectedInstrument?.providerSymbol, selectedInstrument?.country, kisAccountId]);
 
-  const refreshAutoTrader = useCallback(() => {
-    if (!kisAccountId) return;
-    fetchAutoTraderState(kisAccountId)
-      .then((state) => {
-        setAutoTrader(state);
-        setAutoTraderError(null);
-      })
-      .catch((e) => setAutoTraderError(toErrorMessage(e)));
-  }, [kisAccountId]);
-
-  useEffect(() => {
-    if (activePage !== 'portfolio') return undefined;
-    refreshAutoTrader();
-    /*
-     * 돌고 있을 때만 주기 조회한다. 멈춰 있으면 기록이 늘지 않으므로
-     * 계속 물어볼 이유가 없다.
-     */
-    if (autoTrader?.status !== 'running') return undefined;
-    const timer = window.setInterval(refreshAutoTrader, 10000);
-    return () => window.clearInterval(timer);
-  }, [activePage, autoTrader?.status, refreshAutoTrader]);
-
   /*
    * 주문 패널이 실제로 열려 있는지. 매수가능금액·매도가능수량·미체결처럼
    * KIS를 때리는 조회를 여기에 묶는다. 예전엔 전용 화면(`trade`)이 조건이었는데
@@ -3084,8 +2762,6 @@ export function App(): JSX.Element {
   const isOrderPanelOpen = activePage === 'market' && sidePanelTab === 'order';
   useEffect(() => writeStoredValue('activeSavedWatchlistId', activeSavedWatchlistId), [activeSavedWatchlistId]);
   useEffect(() => writeStoredJson('recentInstruments', recentInstruments), [recentInstruments]);
-  useEffect(() => writeStoredValue('simulationCash', String(simulationCash)), [simulationCash]);
-  useEffect(() => writeStoredJson('simulationPositions', simulationPositions), [simulationPositions]);
   useEffect(() => setHoveredChartReadout(null), [range, selectedInstrument?.id, timeframe]);
 
   useEffect(() => {
@@ -3231,11 +2907,18 @@ export function App(): JSX.Element {
       .then((accounts) => {
         setKisAccounts(accounts);
         setKisAccountId((current) => current ?? accounts.find((a) => a.primary)?.id ?? accounts[0]?.id ?? null);
-        setKisAccountsError(null);
       })
       .catch((e) => {
-        // 전역 배너는 8초 뒤 걷힌다. 뒤따르는 조회들이 왜 안 도는지는 남아야 한다.
-        setKisAccountsError(toErrorMessage(e));
+        /*
+         * ★ 여기서 **오래 남는 사유를 따로 들고 있었다**(`kisAccountsError`) —
+         *   전역 배너는 8초 뒤 걷히는데 뒤따르는 조회들이 왜 안 도는지는 남아야
+         *   해서였다. 그런데 그 값을 읽는 자리가 **자동매매 패널 하나뿐**이었고,
+         *   2026-09-07에 러너를 걷어내면서 함께 사라졌다.
+         *
+         *   지금은 전역 배너만 남는다. 계좌 조회가 막혔을 때 그 사유를 오래
+         *   보여줄 자리가 필요하면 그때 다시 세운다 — 쓰는 곳 없이 값만 들고
+         *   있으면 "표시되고 있다"는 착각만 남는다.
+         */
         setError(toErrorMessage(e));
       });
   }, []);
@@ -4030,13 +3713,6 @@ export function App(): JSX.Element {
    * 세 곳이 각자 `!liveOrderGate ? '확인 중'`이라 실패해도 셋 다 기다리는
    * 문구를 계속 띄웠다.
    */
-  /**
-   * 계좌 목록을 못 불러와 **조회가 시작조차 못 한** 상태의 한 마디.
-   * 계좌 id를 전제로 하는 카드들이 "확인하는 중"이라고 적지 않게 한다.
-   */
-  const accountsBlockedLabel = kisAccountsError !== null && kisAccountId === null
-    ? `계좌 목록을 불러오지 못해 조회할 수 없습니다 — ${kisAccountsError}`
-    : null;
   const gateUnknownLabel = liveOrderGateError ? '확인 실패' : '확인 중';
   /*
    * 값은 있는데 **마지막 조회가 실패한** 상태.
@@ -4052,23 +3728,6 @@ export function App(): JSX.Element {
    * 이쪽은 값을 남긴다 — 게이트는 열려 있다는 사실 자체가 경고이기 때문이다.
    */
   const isGateStale = liveOrderGate !== null && liveOrderGateError !== null;
-  /*
-   * 자동매매 상태도 같은 두 가지로 모른다. 게이트와 같은 말을 쓴다.
-   *
-   * 받아 둔 값이 있어도 마지막 조회가 실패했으면 `아는` 것이 아니다. 2초 전
-   * 값으로 `멈춤`이라고 단정하면, 그 사이 돌기 시작한 경우를 멈춘 것으로
-   * 읽는다. 성공하면 error가 지워지므로 일시적 실패는 저절로 낫는다.
-   */
-  const autoTraderUnknownLabel = autoTraderError ? '확인 실패' : '확인 중';
-  const isAutoTraderKnown = autoTrader !== null && autoTraderError === null;
-  /*
-   * 돌고 있을 때만 잰다. 멈춘 러너에 "마지막 회차 3시간 전"이라고 적으면 늦은
-   * 것처럼 읽히는데, 멈춘 러너는 회차를 안 도는 게 맞는 동작이다.
-   */
-  const autoRunnerPulse =
-    autoTrader?.status === 'running'
-      ? runnerPulse(autoTrader.recentRuns[0]?.createdAt, autoTrader.config.intervalSeconds, nowMs)
-      : null;
   /*
    * `실계좌`를 앞에 붙인다.
    *
@@ -4392,28 +4051,6 @@ export function App(): JSX.Element {
   }, [feeAmountNumber, feeExpectedReturnNumber, feeMarket, feeMarketOption.taxRate]);
   const bestFeeRow = feeRows[0];
   const worstFeeRow = feeRows[feeRows.length - 1];
-  const simulationQuantityNumber = Number(simulationQuantity);
-  const simulationMarketValue = useMemo(
-    () =>
-      simulationPositions.reduce((total, position) => {
-        const instrument =
-          [...terminalItems, ...recentInstruments, ...watchlist, ...categoryItems].find(
-            (item) => item.id === position.instrumentId,
-          );
-        const positionSnapshot = instrument ? getSnapshotForInstrument(instrument) : undefined;
-        return total + position.quantity * (positionSnapshot?.price ?? position.averagePrice);
-      }, 0),
-    [categoryItems, quotesByCode, recentInstruments, simulationPositions, stream.trades, terminalItems, watchlist],
-  );
-  const simulationCostBasis = simulationPositions.reduce(
-    (total, position) => total + position.quantity * position.averagePrice,
-    0,
-  );
-  const simulationEquity = simulationCash + simulationMarketValue;
-  const simulationPnl = simulationEquity - SIMULATION_SEED_CASH;
-  const simulationSelectedPosition = selectedInstrument
-    ? simulationPositions.find((position) => position.instrumentId === selectedInstrument.id)
-    : undefined;
   const watchlistSummary = useMemo(
     () => summarizeInstrumentMoves(watchlist, getSnapshotForInstrument),
     [quotesByCode, stream.trades, watchlist],
@@ -5026,97 +4663,10 @@ export function App(): JSX.Element {
    * 그 이유는 리스크 룰에 있는데 화면이 다른 카드라 연결짓기 어렵다.
    * 시작 버튼 옆에서 바로 보이게 한다.
    */
-  /**
-   * 차단 사유에서 그 설정 칸으로 데려간다. 스크롤과 포커스를 함께 준다 —
-   * 포커스만 주면 카드가 화면 밖일 때 보이지 않는 곳으로 커서가 간다.
-   *
-   * `behavior: 'smooth'`는 쓰지 않는다. 이 페이지의 스크롤 컨테이너
-   * (`.chart-panel--portfolio`)에서는 아예 움직이지 않았다 — 브라우저 설정이나
-   * CSS scroll-behavior 문제가 아니라(둘 다 기본값) 그냥 안 먹었다.
-   * 즉시 스크롤은 scrollTop 0 → 1021로 정상 동작한다.
-   */
-  const focusRiskField = useCallback((fieldId: string): void => {
-    const field = document.getElementById(fieldId);
-    if (!field) return;
-    field.scrollIntoView({ block: 'center' });
-    field.focus({ preventScroll: true });
-  }, []);
 
-  const selectedAutoStrategy = autoStrategies?.strategies.find((item) => item.key === autoStrategy);
 
-  const autoTraderBlockers = useMemo(() => {
-    /*
-     * `아래에서 허용하세요`라고만 적었더니 갈 곳을 찾아야 했다. 리스크 룰
-     * 카드는 534px 아래라 화면 밖이고, 그 안에 필드가 열 개다. 어느 칸인지
-     * 이름으로 말하고, 바로 그 칸으로 데려갈 수 있게 id를 함께 넘긴다.
-     */
-    const blockers: Array<{ text: string; fieldId?: string }> = [];
-    if (!riskRules) return blockers;
-    if (!riskRules.enabled) {
-      blockers.push({
-        text: '이 계좌의 실주문이 꺼져 있습니다. 아래 리스크 룰의 `이 계좌 실주문 허용`을 켜세요.',
-        fieldId: 'risk-enabled',
-      });
-    }
-    if (!riskRules.allowMarketOrder) {
-      blockers.push({
-        text:
-          '시장가 주문이 막혀 있습니다. 자동매매는 신호가 난 값에 붙어야 해서 시장가로 냅니다 —'
-          + ' 아래 리스크 룰의 `시장가 주문 허용`을 켜세요.',
-        fieldId: 'risk-allow-market-order',
-      });
-    }
-    if (riskRules.symbolAllowlist.length > 0) {
-      blockers.push({
-        // 종목코드 뒤에 `로`를 붙이면 끝자리에 따라 틀린다 — `005930로`가 그랬다.
-        text:
-          `허용 종목이 좁혀져 있습니다 (${riskRules.symbolAllowlist.join(', ')}).`
-          + ' 종목을 알고리즘이 고르게 하려면 아래 리스크 룰의 `허용 종목` 칸을 비우세요.',
-        fieldId: 'risk-symbol-allowlist',
-      });
-    }
-    if (autoMode === 'live' && liveOrderGate && !liveOrderGate.enabled) {
-      // 게이트는 서버 설정이라 화면에서 갈 곳이 없다. 사유만 그대로 옮긴다.
-      blockers.push(...liveOrderGate.blockers.map((text) => ({ text })));
-    }
-    return blockers;
-  }, [autoMode, liveOrderGate, riskRules]);
 
-  async function submitAutoTraderStart(): Promise<void> {
-    if (!kisAccountId) return;
-    setIsAutoSubmitting(true);
-    setAutoMessage(null);
-    try {
-      const state = await startAutoTrader({
-        accountId: kisAccountId,
-        mode: autoMode,
-        strategy: autoStrategy,
-        targetEquity: Number(autoTarget),
-        stopEquity: Number(autoStop),
-        intervalSeconds: 60,
-        maxPositions: 1,
-        minHoldMinutes: Number(autoMinHold),
-      });
-      setAutoTrader(state);
-    } catch (e) {
-      setAutoMessage(toErrorMessage(e));
-    } finally {
-      setIsAutoSubmitting(false);
-    }
-  }
 
-  async function submitAutoTraderStop(): Promise<void> {
-    if (!kisAccountId) return;
-    setIsAutoSubmitting(true);
-    setAutoMessage(null);
-    try {
-      setAutoTrader(await stopAutoTrader(kisAccountId));
-    } catch (e) {
-      setAutoMessage(toErrorMessage(e));
-    } finally {
-      setIsAutoSubmitting(false);
-    }
-  }
 
   /** 쉼표로 구분된 종목코드 입력을 배열로. 서버가 다시 정규화하므로 여기선 느슨하게 자른다. */
   function parseSymbolText(text: string): string[] {
@@ -5239,63 +4789,6 @@ export function App(): JSX.Element {
     }
   }
 
-  function submitSimulationOrder(side: OrderSide): void {
-    if (!selectedInstrument || !snapshot) {
-      setError('모의 주문할 종목과 현재가를 먼저 확인하세요.');
-      return;
-    }
-    if (!Number.isFinite(simulationQuantityNumber) || simulationQuantityNumber <= 0) {
-      setError('수량은 0보다 커야 합니다.');
-      return;
-    }
-
-    const notional = simulationQuantityNumber * snapshot.price;
-    if (side === 'buy') {
-      if (notional > simulationCash) {
-        setError('모의계좌 현금이 부족합니다.');
-        return;
-      }
-      setSimulationCash((cash) => cash - notional);
-      setSimulationPositions((positions) => {
-        const existing = positions.find((position) => position.instrumentId === selectedInstrument.id);
-        if (!existing) {
-          return [
-            ...positions,
-            {
-              instrumentId: selectedInstrument.id,
-              symbol: selectedInstrument.symbol,
-              name: selectedInstrument.name,
-              quantity: simulationQuantityNumber,
-              averagePrice: snapshot.price,
-            },
-          ];
-        }
-        return positions.map((position) => {
-          if (position.instrumentId !== selectedInstrument.id) return position;
-          const nextQuantity = position.quantity + simulationQuantityNumber;
-          const nextAveragePrice =
-            (position.averagePrice * position.quantity + notional) / nextQuantity;
-          return { ...position, quantity: nextQuantity, averagePrice: nextAveragePrice };
-        });
-      });
-      return;
-    }
-
-    if (!simulationSelectedPosition || simulationSelectedPosition.quantity < simulationQuantityNumber) {
-      setError('모의계좌 보유 수량이 부족합니다.');
-      return;
-    }
-    setSimulationCash((cash) => cash + notional);
-    setSimulationPositions((positions) =>
-      positions
-        .map((position) =>
-          position.instrumentId === selectedInstrument.id
-            ? { ...position, quantity: position.quantity - simulationQuantityNumber }
-            : position,
-        )
-        .filter((position) => position.quantity > 0),
-    );
-  }
 
   return (
     <div className={`app${isFocusMode ? ' is-focus-mode' : ''}`}>
@@ -5935,7 +5428,6 @@ export function App(): JSX.Element {
                     <button disabled type="button">알림 대기</button>
                     <button disabled type="button">음성 읽기</button>
                     <button disabled type="button">공유 링크</button>
-                    <button onClick={() => setTerminalTab('chat')} type="button">채팅 보기</button>
                     <small>알림·음성·공유는 아직 연결되지 않았습니다</small>
                   </div>
                   <div className="terminal-filterbar" role="tablist" aria-label="뉴스 필터">
@@ -6773,204 +6265,8 @@ export function App(): JSX.Element {
                 </section>
               )}
 
-              {terminalTab === 'lounge' && (
-                <section className="terminal-page terminal-page--lounge" aria-label="라운지">
-                  <div className="terminal-page__header">
-                    <div>
-                      <span>커뮤니티 화면 구성 · 읽기 전용</span>
-                      <strong>라운지</strong>
-                    </div>
-                    <SampleBadge note="실제 게시글이 아닙니다. 화면 구성을 보여주려고 넣어 둔 글입니다." />
-                  </div>
-                  <div className="terminal-lounge-layout">
-                    <section className="terminal-panel">
-                      <div className="terminal-panel__header">
-                        <strong>새 글</strong>
-                        <span>로그인 기능 대기</span>
-                      </div>
-                      <p>커뮤니티 기능은 계정·신고·관리 도구가 붙은 뒤 쓰기 기능을 열고, 현재는 읽기 전용 피드 구조만 제공합니다.</p>
-                    </section>
-                    <div className="terminal-lounge-posts">
-                      {LOUNGE_POSTS.map((post) => (
-                        <article key={post.id}>
-                          <span>{post.tag} · @{post.author}</span>
-                          <strong>{post.title}</strong>
-                          <p>{post.body}</p>
-                          <em>댓글 {post.replies} · 좋아요 {post.likes}</em>
-                        </article>
-                      ))}
-                    </div>
-                  </div>
-                </section>
-              )}
 
-              {terminalTab === 'chat' && (
-                <section className="terminal-page terminal-page--chat" aria-label="채팅 화면">
-                  <div className="terminal-page__header">
-                    <div>
-                      <span>읽기 전용 · 인증·신고 도구 연동 전</span>
-                      <strong>채팅 화면</strong>
-                    </div>
-                    <SampleBadge note="실제 대화가 아닙니다. 화면 구성을 보여주려고 넣어 둔 메시지라 시각도 고정입니다." />
-                  </div>
-                  <div className="terminal-filterbar" role="tablist" aria-label="채팅 폭 조절">
-                    {CHAT_PANEL_MODE_OPTIONS.map((option) => (
-                      <button
-                        aria-selected={chatPanelMode === option.key}
-                        key={option.key}
-                        onClick={() => setChatPanelMode(option.key)}
-                        role="tab"
-                        type="button"
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="terminal-chat-layout" data-mode={chatPanelMode}>
-                    <section className="terminal-panel">
-                      <div className="terminal-panel__header">
-                        <strong>운영 상태</strong>
-                        <span>모더레이션 대기</span>
-                      </div>
-                      <p>채팅은 알림, 신고, 금칙어, 계정 제한이 모두 준비된 뒤 쓰기 기능을 엽니다. 현재는 라이브 룸 화면 구조와 읽기 피드만 제공합니다.</p>
-                    </section>
-                    <div className="terminal-chat-feed">
-                      {CHAT_MESSAGES.map((message) => (
-                        <article data-tone={message.tone} key={message.id}>
-                          <span>{message.time} · @{message.author}</span>
-                          <strong>{message.message}</strong>
-                        </article>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="terminal-chat-composer">
-                    <input disabled placeholder="로그인과 운영 정책 연동 후 메시지를 보낼 수 있습니다" />
-                    <button disabled type="button">전송</button>
-                  </div>
-                </section>
-              )}
 
-              {terminalTab === 'simulation' && (
-                <section className="terminal-page terminal-page--simulation" aria-label="모의투자">
-                  <div className="terminal-page__header">
-                    <div>
-                      <span>실계좌 주문 전 연습</span>
-                      <strong>모의투자</strong>
-                    </div>
-                    <small>{formatSignedPrice(Math.round(simulationPnl))} pt</small>
-                  </div>
-                  <div className="terminal-sim-metrics">
-                    <div>
-                      <span><Term>총 평가</Term></span>
-                      <strong>{formatPrice(Math.round(simulationEquity))} pt</strong>
-                    </div>
-                    <div>
-                      <span>현금</span>
-                      <strong>{formatPrice(Math.round(simulationCash))} pt</strong>
-                    </div>
-                    <div>
-                      <span>평가금액</span>
-                      <strong>{formatPrice(Math.round(simulationMarketValue))} pt</strong>
-                    </div>
-                    <div>
-                      <span>투자원금</span>
-                      <strong>{formatPrice(Math.round(simulationCostBasis))} pt</strong>
-                    </div>
-                    <div>
-                      <span>평가손익</span>
-                      <strong data-tone={feeImpactTone(simulationPnl)}>{formatSignedPrice(Math.round(simulationPnl))} pt</strong>
-                    </div>
-                  </div>
-                  <div className="terminal-simulation-grid">
-                    <section className="terminal-panel">
-                      <div className="terminal-panel__header">
-                        <strong>모의 주문</strong>
-                        <span>{selectedInstrument?.name ?? '종목 선택 대기'}</span>
-                      </div>
-                      <div className="terminal-sim-ticket">
-                        <label>
-                          <span>수량</span>
-                          <input
-                            inputMode="decimal"
-                            onChange={(event) => setSimulationQuantity(event.target.value)}
-                            value={simulationQuantity}
-                          />
-                        </label>
-                        <div>
-                          <span>현재가</span>
-                          <strong>{snapshot ? formatCurrencyPrice(snapshot.price, selectedCurrency) : '-'}</strong>
-                        </div>
-                        <div>
-                          <span>보유</span>
-                          <strong>{simulationSelectedPosition ? formatPrice(simulationSelectedPosition.quantity) : '0'}</strong>
-                        </div>
-                        <button onClick={() => submitSimulationOrder('buy')} type="button">모의 매수</button>
-                        <button onClick={() => submitSimulationOrder('sell')} type="button">모의 매도</button>
-                        <button
-                          onClick={() => {
-                            setSimulationCash(1_000_000);
-                            setSimulationPositions([]);
-                          }}
-                          type="button"
-                        >
-                          초기화
-                        </button>
-                      </div>
-                    </section>
-                    <section className="terminal-panel">
-                      <div className="terminal-panel__header">
-                        <strong>보유 포지션</strong>
-                        <span>{simulationPositions.length}개</span>
-                      </div>
-                      <div className="terminal-sim-positions">
-                        {simulationPositions.map((position) => {
-                          const instrument =
-                            [...terminalItems, ...recentInstruments, ...watchlist, ...categoryItems].find(
-                              (item) => item.id === position.instrumentId,
-                            );
-                          const positionSnapshot = instrument ? getSnapshotForInstrument(instrument) : undefined;
-                          const currentPrice = positionSnapshot?.price ?? position.averagePrice;
-                          const pnl = (currentPrice - position.averagePrice) * position.quantity;
-                          return (
-                            <button
-                              data-tone={feeImpactTone(pnl)}
-                              key={position.instrumentId}
-                              onClick={() => instrument && selectInstrument(instrument)}
-                              type="button"
-                            >
-                              <span>{position.symbol}</span>
-                              <strong>{position.name}</strong>
-                              <em>{formatPrice(position.quantity)}주 · {formatPrice(Math.round(position.averagePrice))}</em>
-                              <small>{formatSignedPrice(Math.round(pnl))} pt</small>
-                            </button>
-                          );
-                        })}
-                        {simulationPositions.length === 0 && <p>모의 매수하면 포지션이 표시됩니다</p>}
-                      </div>
-                    </section>
-                  </div>
-                  {/*
-                    예전엔 `리더보드`에 지어낸 참가자 넷이 있었고 내 실제 손익이
-                    그 사이에 #0으로 끼어 있었다. 이 모의투자는 서버 없이
-                    localStorage만 쓰는 도구라 다른 참가자가 있을 수 없다 —
-                    실데이터로 바꿀 길이 없는 순위표였다. 내 기록만 남긴다.
-                  */}
-                  <section className="terminal-panel">
-                    <div className="terminal-panel__header">
-                      <strong>내 모의 성적</strong>
-                      <span>이 브라우저에만 저장됩니다</span>
-                    </div>
-                    <div className="terminal-leaderboard">
-                      <div>
-                        <span aria-hidden="true">·</span>
-                        <strong>내 기록</strong>
-                        <em>{formatSignedPrice(Math.round(simulationPnl))} pt</em>
-                        <small>{simulationPositions.length}개 보유</small>
-                      </div>
-                    </div>
-                  </section>
-                </section>
-              )}
             </section>
           )}
 
@@ -7779,429 +7075,6 @@ export function App(): JSX.Element {
                 )}
               </section>
 
-              {SHOW_AUTO_TRADER_PANEL && (
-              <section className="portfolio-card portfolio-card--wide" aria-label="자동매매">
-                <div className="portfolio-card__header">
-                  <div>
-                    <strong>자동매매</strong>
-                    <span>
-                      규칙대로 사고팔다가 목표나 중단선에 닿으면 스스로 멈춥니다 · 수익을 보장하지 않습니다
-                    </span>
-                  </div>
-                  <div className="portfolio-card__actions">
-                    {/*
-                      상태를 모르는 것과 멈춘 것을 구별한다. 예전에는 둘 다
-                      `멈춤`이라 조회가 실패해도 멈춘 것처럼 보였다.
-                    */}
-                    <em className="auto-trader__status" data-status={isAutoTraderKnown ? autoTrader.status : 'unknown'}>
-                      {isAutoTraderKnown ? AUTO_TRADER_STATUS_LABEL[autoTrader.status] : autoTraderUnknownLabel}
-                    </em>
-                  </div>
-                </div>
-
-                <div className="auto-trader">
-                  <label className="auto-trader__field">
-                    <span>전략</span>
-                    <select
-                      disabled={autoTrader?.status === 'running'}
-                      onChange={(event) => setAutoStrategy(event.target.value)}
-                      value={autoStrategy}
-                    >
-                      {(autoStrategies?.strategies ?? []).map((item) => (
-                        <option key={item.key} value={item.key}>
-                          {item.label}
-                          {/*
-                            `<option>`에는 툴팁을 붙일 수 없어 라벨 글 자체로 밝힌다.
-                            드롭다운이 세 전략을 동등한 선택지로 늘어놓고 있었는데,
-                            하나는 8종목 표본에서 확정으로 잃는다.
-                          */}
-                          {item.verdict === 'no_edge' ? ' — 백테스트에서 우위 없음' : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  {/*
-                    고른 전략에 대해 무엇이 확인됐는지. 숫자만 적으면 시점이 없어
-                    오해되고, **어느 봉으로 쟀는지가 빠지면 아예 다른 것을 말하게 된다.**
-                    예전에는 이 자리가 문장 하나였고 전부 일봉으로 잰 값이었는데
-                    자동매매는 1분봉으로 돈다 — 평균 회귀의 `승률 70.8%`(일봉)가
-                    실제 도는 축에서는 19.6%다. 축마다 갈라 적고, 실제로 쓰는 봉을
-                    맨 위에 둔다(순서는 서버가 정한다).
-                  */}
-                  {selectedAutoStrategy && autoStrategies && (
-                    <div className="auto-trader__verdicts">
-                      {selectedAutoStrategy.measurements.map((measurement) => {
-                        const isRunnerAxis = measurement.axis === autoStrategies.runnerAxis;
-                        return (
-                          <p
-                            className="auto-trader__verdict"
-                            data-axis={isRunnerAxis ? 'runner' : 'other'}
-                            data-verdict={selectedAutoStrategy.verdict}
-                            key={measurement.axis}
-                          >
-                            <strong className="auto-trader__verdict-axis">
-                              {CANDLE_AXIS_LABELS[measurement.axis]}
-                              {isRunnerAxis
-                                ? ' · 자동매매가 실제로 보는 봉입니다'
-                                : ' · 자동매매는 이 봉으로 돌지 않습니다'}
-                            </strong>
-                            <span className="auto-trader__verdict-sample">
-                              {measurement.measuredOn} 측정 · {measurement.sample}
-                            </span>
-                            <span>{measurement.result}</span>
-                          </p>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/*
-                    받아 오지 못한 것과 확인된 게 없는 것은 다르다. 빈 배열로
-                    바꾸면 판정문이 사라진 자리가 `아는 것이 없다`로 읽힌다.
-                  */}
-                  {!autoStrategies && (
-                    <p className="auto-trader__verdict" data-axis="missing">
-                      {autoStrategiesError
-                        ? `전략 목록을 불러오지 못해 무엇이 확인된 전략인지 표시할 수 없습니다 — ${autoStrategiesError}`
-                        : '전략 목록을 불러오는 중입니다'}
-                    </p>
-                  )}
-
-                  <label className="auto-trader__field">
-                    <span>실행 방식</span>
-                    <select
-                      disabled={autoTrader?.status === 'running'}
-                      onChange={(event) => setAutoMode(event.target.value as AutoTraderMode)}
-                      value={autoMode}
-                    >
-                      <option value="dry_run">연습 — 주문을 만들되 보내지 않음</option>
-                      <option value="live">실제 — 실계좌로 주문을 보냄</option>
-                    </select>
-                  </label>
-
-                  <label className="auto-trader__field">
-                    <span>목표 금액 (닿으면 정지)</span>
-                    <input
-                      disabled={autoTrader?.status === 'running'}
-                      inputMode="numeric"
-                      onChange={(event) => setAutoTarget(event.target.value)}
-                      value={autoTarget}
-                    />
-                  </label>
-
-                  <label className="auto-trader__field">
-                    <span>중단 금액 (내려가면 정지)</span>
-                    <input
-                      disabled={autoTrader?.status === 'running'}
-                      inputMode="numeric"
-                      onChange={(event) => setAutoStop(event.target.value)}
-                      value={autoStop}
-                    />
-                  </label>
-
-                  <label className="auto-trader__field">
-                    <span>최소 보유 시간 (매도만)</span>
-                    <select
-                      disabled={autoTrader?.status === 'running'}
-                      onChange={(event) => setAutoMinHold(event.target.value)}
-                      value={autoMinHold}
-                    >
-                      {MIN_HOLD_OPTIONS.map((option) => (
-                        <option key={option.minutes} value={String(option.minutes)}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  {/*
-                    왜 이 설정이 있는지를 고르기 전에 적는다. 근거가 손익이 아니라
-                    일일 주문 한도라서, 수익 기능처럼 읽히면 안 된다. 측정값에는
-                    시점과 조건을 함께 적는다(`docs/CODE_STYLE.md`).
-
-                    위험도 같은 자리에 적는다 — 매도를 미루는 기능이고 지금 손절이
-                    없다는 사실과 함께 읽혀야 한다.
-                  */}
-                  <div className="auto-trader__min-hold" data-on={Number(autoMinHold) > 0}>
-                    <strong>산 지 정한 시간이 안 지났으면 매도 신호가 나도 그 회차에는 팔지 않습니다</strong>
-                    <p>
-                      자동매매가 자기 신호를 미루는 것입니다. 매수는 미루지 않고, 수동 주문과 예약주문도
-                      막지 않습니다.
-                    </p>
-                    <p>
-                      왜 거는가 — 손익이 아니라 일일 주문 한도 때문입니다. 2026-08-01 측정(1분봉 ·
-                      15종목 · 연속 15거래일 · 왕복 비용 0.43%)에서 종목 하나가 하루에 내는 주문 수는
-                      최소 보유가 없을 때 이동평균 교차 12.4건 · 변동성 돌파 49.7건 · 평균 회귀 11.0건,
-                      60분이면 5.0 · 7.6 · 5.3건, 120분이면 3.6 · 4.3 · 3.7건이었습니다. 일일 건수
-                      한도는 매수·매도를 가리지 않고 계좌 전체를 합쳐 셉니다
-                      {riskRules
-                        ? ` (지금 이 계좌 ${riskRules.dailyOrderCountLimit.toLocaleString('ko-KR')}건).`
-                        : ' (아래 리스크 룰의 일일 건수 한도).'}{' '}
-                      매수가 한도를 먼저 쓰면 그날은 팔 수 없습니다.
-                    </p>
-                    <p>
-                      덜 잃는 법이지 이기는 법이 아닙니다. 같은 측정에서 비용을 0으로 놓으면 개선이
-                      사라지고 이익 종목 수가 오히려 줄었습니다 (전략별로 7→3 · 6→3 · 10→5종목).
-                    </p>
-                    <p className="auto-trader__min-hold-risk">
-                      위험 — 값이 급락해도 정한 시간 동안은 자동매매가 팔지 않습니다. 지금 손절은
-                      없습니다. 반대로 러너를 켜기 전부터 들고 있던 종목처럼 매수 기록이 없으면 미루지
-                      않고 그대로 팝니다.
-                    </p>
-                  </div>
-
-                  <div className="auto-trader__actions">
-                    {autoTrader?.status === 'running' ? (
-                      <button
-                        className="auto-trader__stop"
-                        disabled={isAutoSubmitting}
-                        onClick={() => void submitAutoTraderStop()}
-                        type="button"
-                      >
-                        {isAutoSubmitting ? '처리 중' : '정지'}
-                      </button>
-                    ) : (
-                      /*
-                        연습인지 실제인지가 버튼 색으로 보여야 한다. 매수 버튼 색을
-                        그대로 쓰면 연습 모드인데도 실계좌 주문처럼 보인다.
-                      */
-                      <button
-                        className="auto-trader__start"
-                        data-mode={autoMode}
-                        /*
-                          지금 돌고 있는지 모를 때는 시작을 막는다. 조회가
-                          실패한 것을 `멈춤`으로 읽고 또 시작하면 같은 계좌에
-                          두 번 걸린다. 모르면 막힌 쪽에 둔다.
-
-                          고른 전략을 모를 때도 막는다. 목록 조회가 실패하면
-                          드롭다운이 비고 판정문도 사라지는데, `autoStrategy`는
-                          초기값(`ma_cross`)이라 그대로 눌리고 있었다 — 무엇이
-                          걸리는지도, 그 전략에 대해 무엇이 확인됐는지도 모르는
-                          채로 실계좌 매매가 시작된다.
-                        */
-                        disabled={isAutoSubmitting || !isAutoTraderKnown || !selectedAutoStrategy}
-                        onClick={() => void submitAutoTraderStart()}
-                        type="button"
-                      >
-                        {isAutoSubmitting ? '처리 중' : autoMode === 'live' ? '실제 매매 시작' : '연습 시작'}
-                      </button>
-                    )}
-                    {!isAutoTraderKnown && (
-                      <em className="auto-trader__unknown">
-                        {autoTraderError
-                          ? `지금 돌고 있는지 확인하지 못해 시작을 막았습니다 — ${autoTraderError}`
-                          : (accountsBlockedLabel ?? '지금 돌고 있는지 확인하는 중입니다')}
-                      </em>
-                    )}
-                    {/* 위 사유가 이미 떠 있으면 겹쳐 적지 않는다. 막은 이유는 하나씩 말한다. */}
-                    {isAutoTraderKnown && !selectedAutoStrategy && (
-                      <em className="auto-trader__unknown">
-                        {autoStrategiesError
-                          ? `어느 전략으로 도는지 확인하지 못해 시작을 막았습니다 — ${autoStrategiesError}`
-                          : '전략 목록을 불러오는 중입니다'}
-                      </em>
-                    )}
-                  </div>
-                </div>
-
-                {autoTrader?.startEquity !== undefined && (
-                  <div className="portfolio-page__metrics portfolio-page__metrics--broker">
-                    <div>
-                      <span>시작 금액</span>
-                      <strong>{formatMoney(autoTrader.startEquity)}</strong>
-                    </div>
-                    <div>
-                      <span>지금 금액</span>
-                      <strong>{formatMoney(autoTrader.currentEquity)}</strong>
-                    </div>
-                    <div>
-                      <span>목표까지</span>
-                      <strong>
-                        {formatMoney(
-                          Math.max(0, autoTrader.config.targetEquity - (autoTrader.currentEquity ?? 0)),
-                        )}
-                      </strong>
-                    </div>
-                    {/*
-                      위 select는 돌고 있는 동안 잠기고 값은 이 화면의 초안이다.
-                      서버를 다시 열거나 다른 화면에서 시작했으면 둘이 다를 수 있으니,
-                      실제로 도는 설정은 서버가 준 값으로 적는다.
-                    */}
-                    <div>
-                      <span>최소 보유</span>
-                      <strong>{formatMinHold(autoTrader.config.minHoldMinutes)}</strong>
-                    </div>
-                  </div>
-                )}
-
-                {/*
-                  막고 있는 설정을 시작 버튼 가까이 적는다. 리스크 룰은 아래 다른
-                  카드에 있어서, 여기서 알려주지 않으면 왜 아무것도 안 사는지
-                  알아내기 어렵다.
-                */}
-                {/*
-                  신호 채점 성적. 백테스트는 과거를 말하고 이 값은 실제로 낸
-                  신호가 어땠는지를 말한다. 아직 채점된 게 없으면 0%로 채우지
-                  않고 없다고 적는다 — 빈 성적표와 0점은 다르다.
-                */}
-                <div className="signal-scores">
-                  <div className="signal-scores__head">
-                    <strong>신호 채점</strong>
-                    <span>낸 신호를 며칠 뒤 값과 견줘 센 성적 · 왕복 비용을 뺀 값</span>
-                  </div>
-                  {signalScoresError ? (
-                    <em className="signal-scores__error">채점 성적을 불러오지 못했습니다 — {signalScoresError}</em>
-                  ) : signalScores === null ? (
-                    <em className="signal-scores__empty">{accountsBlockedLabel ?? '불러오는 중입니다'}</em>
-                  ) : signalScores.length === 0 ? (
-                    <em className="signal-scores__empty">
-                      아직 채점된 신호가 없습니다 · 자동매매가 신호를 낸 뒤 거래일이 지나야 채점됩니다
-                    </em>
-                  ) : (
-                    <div className="signal-scores__rows">
-                      {signalScores.map((row) => (
-                        <div key={row.horizonDays}>
-                          <span>{row.horizonDays}거래일 후</span>
-                          <strong data-tone={row.medianNetReturn > 0 ? 'up' : row.medianNetReturn < 0 ? 'down' : 'flat'}>
-                            {row.medianNetReturn > 0 ? '+' : ''}{row.medianNetReturn.toFixed(2)}%
-                          </strong>
-                          <small>
-                            {row.count}건 · 승률 {(row.winRate * 100).toFixed(0)}% · 평균{' '}
-                            {row.avgNetReturn > 0 ? '+' : ''}{row.avgNetReturn.toFixed(2)}%
-                          </small>
-                        </div>
-                      ))}
-                      {/* 평균과 중앙값이 벌어지면 몇 종목이 성적을 끌고 있다는 뜻이다. */}
-                      <em>가운데 큰 숫자가 중앙값입니다. 평균과 벌어지면 몇 건이 성적을 끌고 있다는 뜻입니다.</em>
-                    </div>
-                  )}
-                </div>
-
-                {autoTrader?.status !== 'running' && autoTraderBlockers.length > 0 && (
-                  <div className="auto-trader__blockers">
-                    <strong>지금 설정으로는 주문이 나가지 않습니다</strong>
-                    <ul>
-                      {autoTraderBlockers.map((blocker) => (
-                        <li key={blocker.text}>
-                          {blocker.text}
-                          {blocker.fieldId && (
-                            <button
-                              /* 막힌 사유마다 하나씩 붙어 이름이 전부 `설정으로 이동`이었다. */
-                              aria-label={`설정으로 이동: ${blocker.text}`}
-                              className="auto-trader__jump"
-                              onClick={() => focusRiskField(blocker.fieldId as string)}
-                              type="button"
-                            >
-                              설정으로 이동
-                            </button>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {autoTrader?.stopReason && <p className="live-order__result">{autoTrader.stopReason}</p>}
-                {autoMessage && <p className="live-order__result">{autoMessage}</p>}
-
-                {/*
-                  회차가 실제로 돌고 있는지를 표 위에 적는다. 아래 기록은 시각이
-                  적혀 있지만 "그래서 지금 살아 있나"를 읽으려면 사람이 현재
-                  시각과 빼야 한다. 러너가 멎은 것과 낼 신호가 없는 것은 화면에서
-                  똑같이 `신호 없음`이 멈춰 있는 모습이라 구분되지 않았다.
-                */}
-                {autoRunnerPulse && (
-                  <p className="auto-run__pulse" data-overdue={autoRunnerPulse.overdue || undefined}>
-                    {/*
-                      주기를 이미 지난 회차에 `다음 회차까지 약 0초`라고 적으면
-                      1초 뒤에 온다는 뜻으로 읽힌다. 위 실측대로 회차 길이가
-                      들쭉날쭉해서 그건 알 수 없는 값이다 — 모르는 것을 숫자로
-                      적지 않고 기다리는 중이라고만 적는다.
-                    */}
-                    {autoRunnerPulse.overdue
-                      ? `마지막 회차가 ${autoRunnerPulse.sinceSeconds}초 전입니다 · 주기 ${autoTrader?.config.intervalSeconds}초를 넘겼습니다`
-                      : autoRunnerPulse.untilSeconds > 0
-                        ? `마지막 회차 ${autoRunnerPulse.sinceSeconds}초 전 · 다음 회차까지 약 ${autoRunnerPulse.untilSeconds}초`
-                        : `마지막 회차 ${autoRunnerPulse.sinceSeconds}초 전 · 다음 회차를 기다리는 중`}
-                  </p>
-                )}
-
-                <div className="portfolio-table portfolio-table--auto-runs">
-                  <div className="portfolio-table__head">
-                    <span>시각</span>
-                    <span>내용</span>
-                  </div>
-                  {/*
-                    예전에는 `.slice(0, 12)`로 잘랐다. 서버는 40건을 보내는데
-                    28건이 말없이 사라지고, 남은 12건이 카드 714px 중 494px을
-                    차지했다. 한 세션이 `시작 → 후보 없음 → 정지` 3줄이라
-                    같은 내용이 계속 쌓이는 것도 이유다. 6줄(최근 두 세션)만
-                    두고 나머지는 접는다 — 버리지는 않는다.
-                  */}
-                  <CollapsibleRows
-                    limit={6}
-                    moreLabel={(hidden) => `이전 기록 ${hidden}건 더 보기`}
-                    rows={(autoTrader?.recentRuns ?? []).map((run, index, runs) => {
-                      /*
-                        `running` 회차에는 표를 안 붙인다. 그게 대부분이라 전부
-                        붙이면 눈에 띄어야 할 오류·정지가 같이 묻힌다.
-                      */
-                      const statusLabel = AUTO_RUN_STATUS_LABEL[run.status];
-                      /*
-                        새 회차가 앞이므로 **시간상 앞선 회차는 다음 칸**이다.
-                        가장 오래된 줄은 비교 대상이 없어 `undefined`인데, 그때는
-                        평가금액을 적지 않는다 — 안 변한 것과 모르는 것은 다르다.
-                      */
-                      const previous = runs[index + 1];
-                      const equityMoved =
-                        run.equity !== undefined &&
-                        previous?.equity !== undefined &&
-                        run.equity !== previous.equity;
-                      return (
-                        <div className="portfolio-table__row" key={run.id}>
-                          <span>{formatLogTime(run.createdAt, nowMs)}</span>
-                          <span>
-                            {statusLabel && (
-                              <em className="auto-run__tag" data-status={run.status}>
-                                {statusLabel}
-                              </em>
-                            )}
-                            {/*
-                              주문을 낸(또는 내려다 막힌) 회차는 사유가 message에
-                              글로 들어 있지만, 수량·값은 필드에만 있고 화면에
-                              전혀 안 나왔다. 실제로 무엇이 얼마에 나갔는지가
-                              러너 기록에서 가장 중요한 한 줄이다.
-                            */}
-                            {run.side && (
-                              <em className="auto-run__tag" data-side={run.side}>
-                                {run.side === 'buy' ? '매수' : '매도'}
-                                {run.quantity !== undefined && ` ${run.quantity.toLocaleString()}주`}
-                                {run.price !== undefined && run.price > 0 && ` · ${formatMoney(run.price)}`}
-                              </em>
-                            )}
-                            {run.message}
-                            {/* 매 회차 같은 값을 적으면 노이즈다. 움직인 회차에만 적는다. */}
-                            {equityMoved && <em className="auto-run__equity">평가 {formatMoney(run.equity)}</em>}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  />
-                  {(autoTrader?.recentRuns ?? []).length === 0 && (
-                    <div className="portfolio-table__empty">
-                      아직 실행한 적이 없습니다 · 시작하면 회차마다 무엇을 했는지 여기에 쌓입니다
-                    </div>
-                  )}
-                  {/* 서버가 40건에서 자른다. 다 보여준 것처럼 두지 않는다. */}
-                  {autoTrader?.recentRunsHasMore && (
-                    <div className="portfolio-table__empty">
-                      더 오래된 기록은 서버에 남아 있습니다 · 여기에는 최근 것만 옵니다
-                    </div>
-                  )}
-                </div>
-              </section>
-              )}
 
               <section className="portfolio-card portfolio-card--wide" aria-label="실주문 리스크 룰">
                 <div className="portfolio-card__header">

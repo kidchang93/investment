@@ -29,7 +29,6 @@ import {
   ensureInstrumentSchema,
   getCategoryInstruments,
   getDefaultWatchlist,
-  getDomesticInstrumentsBySymbols,
   getInstrument,
   getInstrumentCategories,
   getTerminalInstruments,
@@ -44,7 +43,6 @@ import { ensureThemeSchema, getThemeList, getThemeMembers } from './db/themes.js
 import { QuoteCache } from './quoteCache.js';
 import { getThemePulses, THEME_PULSE_MAX_THEMES } from './themes/pulse.js';
 import { createOrderIntent, ensureTradingSchema, getFillByOrderId, getTradingOverview } from './db/trading.js';
-import { ensureAutoTraderSchema, getAutoTraderRuns } from './db/autoTrader.js';
 import { ensureDailySelectionSchema } from './db/dailySelection.js';
 import { getLastBuySubmittedAt } from './db/brokerOrders.js';
 import { checkPositionGuard } from './trading/positionGuard.js';
@@ -60,50 +58,13 @@ import {
   getOrderByClientOrderId,
 } from './db/brokerOrders.js';
 import { ensureBrokerOrderSchema, getBrokerOrderRecords, layerOfOrder, recordBrokerOrderAttempt } from './db/brokerOrders.js';
-import {
-  getAutoTraderState,
-  resumeAutoTraders,
-  startAutoTrader,
-  stopAutoTrader,
-  type AutoTraderDeps,
-} from './trading/autoTrader.js';
-import { listStrategies } from './trading/strategy.js';
 import { isTrUnavailableOnServer } from './kis/errorCodes.js';
 import { shareInflight } from './kis/inflight.js';
-import { pendingBuySymbols, pendingSellQuantities } from './trading/pendingBuys.js';
 
 /**
  * 모의 서버에 없는 기능을 화면에 어떻게 말할지. 두 라우트가 같은 말을 쓴다.
  * **오류가 아니다** — 설정으로 못 고치고 `APP_ENV=prod`에서만 쓸 수 있다.
  */
-/**
- * 러너가 회차마다 쓰는 바깥 세계. **한 벌만 둔다** — 시작 라우트와 부팅 복구가
- * 서로 다른 것을 넘기면 되살아난 러너가 다르게 동작한다.
- */
-const AUTO_TRADER_DEPS: AutoTraderDeps = {
-  loadCandidates: loadAutoTraderCandidates,
-  // 보유 종목은 후보 필터와 무관하게 분봉을 받아야 팔 수 있다.
-  loadHeldInstruments: async (symbols) => [
-    ...(await getDomesticInstrumentsBySymbols(symbols)).values(),
-  ],
-  /*
-   * 접수했지만 아직 안 채워진 매수. **잔량으로 판단한다** — 시간 창으로
-   * 잡으면 그날 체결이 늦을 때 그대로 뚫린다(`pendingBuys.ts`).
-   * 조회 구간을 1일로 두는 것은 오늘 낸 주문만 자리를 먹으면 되기 때문이다.
-   */
-  loadPendingBuySymbols: async (accountId) => {
-    const snapshot = await getKisDomesticExecutions(getKisAccount(accountId) ?? null, 1);
-    return [...pendingBuySymbols(snapshot.executions)];
-  },
-  /*
-   * 매도 주문에 묶인 물량. 같은 조회를 두 번 하는 셈이지만 러너가 회차마다
-   * 한 번씩만 부르고, 두 판정이 같은 스냅샷을 봐야 어긋나지 않는다.
-   */
-  loadPendingSellQuantities: async (accountId) => {
-    const snapshot = await getKisDomesticExecutions(getKisAccount(accountId) ?? null, 1);
-    return pendingSellQuantities(snapshot.executions);
-  },
-};
 
 const TR_UNAVAILABLE_NOTE = '모의투자 서버에는 이 조회 기능이 없습니다 · 실전 계좌에서만 볼 수 있습니다';
 
@@ -134,7 +95,6 @@ const readAccountSnapshot = (account: KisAccountConfig | null): Promise<BrokerAc
  */
 const accountReadBlock = (account: KisAccountConfig | null): string | null =>
   account ? readServerMismatch(account.server ?? config.env, config.env) : null;
-import { loadAutoTraderCandidates } from './trading/universe.js';
 import {
   DEFAULT_SCREENING_LOOKUPS,
   getLastScreening,
@@ -172,7 +132,6 @@ import { WATCHLIST } from './watchlist.js';
 import { INSTRUMENT_QUOTE_BATCH } from '@invest/shared';
 import type {
   AmendLiveOrderRequest,
-  AutoTraderConfig,
   BrokerExecution,
   BrokerPosition,
   BrokerAccountSnapshot,
@@ -313,7 +272,6 @@ async function main(): Promise<void> {
   await ensureTradingSchema();
   await ensureBrokerOrderSchema();
   await ensureRiskRuleSchema();
-  await ensureAutoTraderSchema();
   await ensureDailySelectionSchema();
   await ensureMarketSnapshotSchema();
   /*
@@ -322,19 +280,6 @@ async function main(): Promise<void> {
    * 뒤집었고(20일 기준선 +10.3% → −5.7%), 그걸 없애려면 이 자료가 필요하다.
    */
   startDailySnapshot((message) => app.log.info(message));
-  /*
-   * 프로세스가 죽을 때 돌고 있던 러너를 되살린다. 2026-08-03 장중에 개발 서버가
-   * 내려갔고 보유 8종목이 아무도 안 보는 채로 남았다 — 사람이 알아채기 전까지는
-   * 매도 신호가 나도 나갈 수 없다.
-   *
-   * 서버가 뜨는 것을 막지 않는다. 되살리기가 실패해도 앱 자체는 떠야 사람이
-   * 들어와서 손을 쓸 수 있다.
-   */
-  void resumeAutoTraders(AUTO_TRADER_DEPS)
-    .then((count) => {
-      if (count > 0) app.log.info({ count }, '자동매매 러너를 재시작했습니다');
-    })
-    .catch((err) => app.log.error({ err }, '자동매매 러너 재시작 실패'));
   await ensureSignalScoreSchema();
   await seedDefaultWatchlist(WATCHLIST);
 
@@ -930,116 +875,6 @@ async function main(): Promise<void> {
   );
 
   app.get('/api/broker/kis/live-order-gate', async () => evaluateLiveOrderGate());
-
-  /*
-   * 자동매매.
-   *
-   * 러너는 서버 메모리에 산다. 서버가 재시작되면 멈춘 상태로 시작한다 —
-   * 사람이 모르는 사이에 되살아나 주문을 내는 쪽이 더 위험하다.
-   * 실행 기록만 DB에 남아 재시작 뒤에도 무슨 일이 있었는지 볼 수 있다.
-   */
-  app.get('/api/broker/kis/auto-trader/strategies', async () => listStrategies());
-
-  app.get<{ Querystring: { accountId?: string } }>('/api/broker/kis/auto-trader', async (req, reply) => {
-    const account = resolveAccount(req.query.accountId);
-    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
-    if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
-    const state = getAutoTraderState(account.id);
-    const { runs: recentRuns, hasMore: recentRunsHasMore } = await getAutoTraderRuns(account.id, 40);
-    if (!state) return { status: 'stopped', recentRuns, recentRunsHasMore };
-    return { ...state, recentRuns, recentRunsHasMore };
-  });
-
-  app.post<{ Body: Partial<AutoTraderConfig> }>('/api/broker/kis/auto-trader/start', async (req, reply) => {
-    const account = resolveAccount(req.body.accountId);
-    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
-    if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
-
-    const {
-      mode,
-      strategy,
-      targetEquity,
-      stopEquity,
-      intervalSeconds,
-      maxPositions,
-      minHoldMinutes,
-      afterHoursExit,
-    } = req.body;
-    if (mode !== 'dry_run' && mode !== 'live') {
-      return reply.code(400).send({ message: "mode는 'dry_run' 또는 'live'여야 합니다." });
-    }
-    if (!Number.isFinite(targetEquity) || !Number.isFinite(stopEquity)) {
-      return reply.code(400).send({ message: '목표 금액과 중단 금액이 필요합니다.' });
-    }
-    /*
-     * 최소 보유 시간. 생략하면 0(끔)이라 지금 동작 그대로다.
-     *
-     * 값을 조용히 잘라 맞추지 않는다 — 매도를 미루는 설정이라 480을 보냈는데 390으로
-     * 깎이면 사용자가 건 것과 러너가 도는 것이 갈린다. 상한은 정규장 하루 길이
-     * (09:00~15:30, 390분)로 잡는다. 그보다 길면 그날 안에는 어차피 못 판다.
-     */
-    const minHold = minHoldMinutes === undefined ? 0 : Number(minHoldMinutes);
-    if (!Number.isFinite(minHold) || minHold < 0 || minHold > 390) {
-      return reply
-        .code(400)
-        .send({ message: '최소 보유 시간은 0분부터 390분(정규장 하루 길이) 사이여야 합니다.' });
-    }
-    /*
-     * 실주문 모드는 서버 게이트가 열려 있을 때만 시작할 수 있다. 게이트가 닫힌 채로
-     * 시작하면 매 회차 주문이 거부되며 기록만 쌓인다 — 켜졌다고 착각하기 쉽다.
-     */
-    if (mode === 'live') {
-      const gate = evaluateLiveOrderGate();
-      if (!gate.enabled) {
-        return reply.code(403).send({ message: '실주문이 차단되어 있어 실주문 모드로 시작할 수 없습니다.', gate });
-      }
-    }
-
-    try {
-      const state = await startAutoTrader(
-        {
-          accountId: account.id,
-          mode,
-          strategy: strategy || 'ma_cross',
-          targetEquity: Number(targetEquity),
-          stopEquity: Number(stopEquity),
-          intervalSeconds: Number(intervalSeconds) || 60,
-          /*
-           * **0은 뜻이 있는 값이다 — 매수만 멈추고 매도는 계속한다.**
-           *
-           * `strategy.ts`가 매도 신호를 먼저 만들고 그 뒤에 `maxPositions - 보유`로
-           * 살 자리를 계산한다. 0이면 자리가 없어 새로 사지 않지만 데드크로스
-           * 청산은 그대로 나간다. 러너를 통째로 멈추면 청산도 같이 멈춰
-           * **보유 종목이 아무도 안 보는 채로 남는다.**
-           *
-           * 예전에는 `Number(x) || 1`이라 0이 조용히 1이 됐다. 그러면 "오늘은
-           * 사지 말자"는 판단을 넣을 방법이 없다.
-           */
-          maxPositions: Number.isFinite(Number(maxPositions)) && Number(maxPositions) >= 0
-            ? Math.floor(Number(maxPositions))
-            : 1,
-          minHoldMinutes: Math.floor(minHold),
-          /*
-           * 장후 시간외 청산. **명시적으로 참일 때만 켠다** — 아직 확인되지 않은
-           * 주문구분을 쓰는 경로라 실수로 켜지면 안 된다.
-           */
-          afterHoursExit: afterHoursExit === true,
-        },
-        AUTO_TRADER_DEPS,
-      );
-      return state;
-    } catch (e) {
-      return reply.code(400).send({ message: e instanceof Error ? e.message : String(e) });
-    }
-  });
-
-  app.post<{ Body: { accountId?: string } }>('/api/broker/kis/auto-trader/stop', async (req, reply) => {
-    const account = resolveAccount(req.body.accountId);
-    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
-    if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
-    const state = await stopAutoTrader(account.id, 'stopped', '사용자 정지');
-    return state ?? { status: 'stopped' };
-  });
 
   app.get<{ Querystring: { accountId?: string } }>('/api/broker/kis/risk-rules', async (req, reply) => {
     const account = resolveAccount(req.query.accountId);
