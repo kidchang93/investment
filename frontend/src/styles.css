@@ -17,6 +17,26 @@
   --down: #3b82f6;
   --green: #22c55e;
   --focus: #f5c451;
+
+  /*
+   * ★★ **이 아래 여덟은 한동안 정의되지 않은 채 쓰이고 있었다** (2026-09-07).
+   *
+   * `var(--surface-2, #f1f4f7)`처럼 **폴백만 있고 정의가 없어서**, 다크 화면
+   * 위에 거의 흰색인 카드가 얹혔다 — 자동화 표가 그랬다. 사용자가 정확히
+   * 짚었다: *"까만 화면에 흰색 글씨인데 어떤 것들은 흰색 배경까지 적용되는지
+   * 모르겠는데 UI가 너무 안 좋은데?"*
+   *
+   * 폴백을 지우는 대신 **여기에 다크 값을 정의한다** — 폴백은 그 자리가 무엇을
+   * 뜻하는지 남기는 기록이고, 정의가 있으면 폴백은 쓰이지 않는다.
+   */
+  --fg: #e5e7eb;              /* 글씨. --text와 같은 것을 두 이름으로 부르고 있었다 */
+  --line: #242b38;            /* 테두리. --border와 같다 */
+  --line-soft: rgba(148, 163, 184, 0.14);
+  --surface-2: #151b26;       /* 한 겹 안쪽 표면. --panel-2와 같다 */
+  --accent: #60a5fa;
+  --down-text: #3b82f6;
+  --warn-bg: rgba(245, 196, 81, 0.10);
+  --warn-border: rgba(245, 196, 81, 0.28);
 }
 
 * {
@@ -7381,7 +7401,7 @@ span.sample-badge {
   width: .55rem; height: .55rem; border-radius: 50%;
   background: #9aa5b1;
 }
-.automation__switch[data-on="true"] { border-color: #12805c; color: #12805c; }
+.automation__switch[data-on="true"] { border-color: rgba(34, 197, 94, .5); color: var(--green, #22c55e); }
 .automation__switch[data-on="true"] .automation__dot { background: #12805c; }
 .automation__switch--trade[data-on="true"] { border-color: #b3261e; color: #b3261e; }
 .automation__switch--trade[data-on="true"] .automation__dot { background: #b3261e; }
@@ -7394,7 +7414,7 @@ span.sample-badge {
   background: var(--surface-2, #f1f4f7);
   border-radius: 6px;
 }
-.automation__note--warn { color: #b3261e; background: #fdeceb; }
+.automation__note--warn { color: var(--up, #e5484d); background: rgba(229, 72, 77, .10); }
 .automation__tasks { list-style: none; margin: 0; padding: 0; }
 .automation__task {
   display: grid;
@@ -7413,16 +7433,16 @@ span.sample-badge {
   margin-left: .4rem;
   padding: .05rem .35rem;
   border-radius: 4px;
-  background: #fdeceb;
+  background: rgba(229, 72, 77, .10);
   color: #b3261e;
   font-size: .7rem;
   font-style: normal;
   font-weight: 600;
 }
-.automation__tag--bg { background: #eef1f5; color: #66707a; }
+.automation__tag--bg { background: rgba(148, 163, 184, .14); color: var(--muted, #8b95a5); }
 .automation__task-state { font-size: .8rem; color: var(--muted, #66707a); }
-.automation__task[data-state="도는 중"] .automation__task-state { color: #12805c; font-weight: 600; }
-.automation__task[data-state="오늘 함"] .automation__task-state { color: #12805c; }
+.automation__task[data-state="도는 중"] .automation__task-state { color: var(--green, #22c55e); font-weight: 600; }
+.automation__task[data-state="오늘 함"] .automation__task-state { color: var(--green, #22c55e); }
 .automation__task-last { font-size: .8rem; color: var(--muted, #66707a); font-variant-numeric: tabular-nums; }
 .automation__run {
   padding: .25rem .6rem;
