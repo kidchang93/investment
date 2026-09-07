@@ -39,6 +39,7 @@ import { getKisDomesticAccountSnapshot, getKisDomesticExecutions } from '../kis/
 import { escapeMrkdwn, sendSlack, sendSlackBot, won as slackWon } from '../notify/slack.js';
 import type { Layer } from '../trading/layers.js';
 import { checkStops, type StopRule } from '../trading/stopLoss.js';
+import { markAgentActivity } from '../db/agentActivity.js';
 
 const API_BASE = process.env.INVEST_API_BASE ?? 'http://localhost:4000';
 const won = (n: number): string => Math.round(n).toLocaleString('ko-KR');
@@ -94,6 +95,8 @@ async function stopPricesOf(accountId: string): Promise<Map<string, StopRule>> {
 }
 
 async function main(): Promise<void> {
+  // 화면이 자세를 바꾸는 근거. 실패해도 본 일을 막지 않는다(`db/agentActivity.ts`).
+  await markAgentActivity('guard', 'measuring', '손절선을 확인하는 중').catch(() => {});
   const args = process.argv.slice(2);
   const execute = args.includes('--execute');
   const accountId = args.find((a) => !a.startsWith('--')) ?? 'VTS-ORDINARY';
@@ -241,4 +244,9 @@ async function main(): Promise<void> {
 main().catch((err) => {
   console.error(err);
   process.exit(2);
+});
+
+// 자리로 돌아간다 — 화면의 자세를 되돌린다.
+process.on('beforeExit', () => {
+  void markAgentActivity('guard', 'idle').catch(() => {});
 });

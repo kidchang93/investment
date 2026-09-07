@@ -52,6 +52,7 @@ import {
 import { getMainNews } from '../naver/finance.js';
 import { escapeMrkdwn, sendSlackBot, slackBotConfigured } from '../notify/slack.js';
 import { crossesGate, gateSignature } from '../trading/judgeGate.js';
+import { markAgentActivity } from '../db/agentActivity.js';
 import {
   ASSET_KIND_LABEL, ASSET_KIND_METHOD,
   FALLING_GATE, MOMENTUM_DAYS, NEUTRAL_BAND,
@@ -244,6 +245,8 @@ interface Row {
 }
 
 async function main(): Promise<void> {
+  // 화면이 자세를 바꾸는 근거. 실패해도 본 일을 막지 않는다(`db/agentActivity.ts`).
+  await markAgentActivity('analyst', 'measuring', '적정가를 재는 중').catch(() => {});
   const args = process.argv.slice(2);
   const quiet = args.includes('--quiet');
   const symArg = args.indexOf('--symbols');
@@ -622,4 +625,7 @@ main()
     console.error(error);
     process.exitCode = 1;
   })
-  .finally(() => closeDb());
+  .finally(async () => {
+    await markAgentActivity('analyst', 'idle').catch(() => {});
+    await closeDb();
+  });

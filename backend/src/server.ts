@@ -6,6 +6,7 @@ import {
   startScheduler,
 } from './automation/scheduler.js';
 import { getDeliberations } from './db/deliberations.js';
+import { ensureAgentActivitySchema, getAgentActivities } from './db/agentActivity.js';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
@@ -274,6 +275,7 @@ async function main(): Promise<void> {
   await ensureBrokerOrderSchema();
   await ensureRiskRuleSchema();
   await ensureDailySelectionSchema();
+  await ensureAgentActivitySchema();
   await ensureMarketSnapshotSchema();
   /*
    * 그날의 시장 상태를 그날 찍어 둔다. **러너와 따로 돈다** — 러너가 꺼진 날도
@@ -312,6 +314,12 @@ async function main(): Promise<void> {
    * ★ 무겁다 — 한 회차에 `findings`·`decisions`·`positions`가 통째로 들어 있고
    *   `rationale`은 문단 단위다. 기본 20건으로 끊고 화면이 필요한 만큼만 더 부른다.
    */
+  /*
+   * 에이전트가 **지금** 무엇을 하는지. 하트비트는 "끝났다"를 남기므로 10~15분짜리
+   * 회차가 도는 동안 비어 있다 — 그 사이를 이 표가 채운다(`db/agentActivity.ts`).
+   */
+  app.get('/api/agents/activity', async () => ({ activities: await getAgentActivities() }));
+
   app.get<{ Querystring: { accountId?: string; limit?: string } }>(
     '/api/deliberations',
     async (req, reply) => {

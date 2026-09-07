@@ -38,6 +38,7 @@ import { closeDb } from '../db/client.js';
 import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
 import { getKisDomesticAccountSnapshot, getQuote } from '../kis/rest.js';
 import { resolveSellLayer, type Layer } from '../trading/layers.js';
+import { markAgentActivity } from '../db/agentActivity.js';
 
 const API_BASE = process.env.INVEST_API_BASE ?? 'http://localhost:4000';
 
@@ -75,6 +76,8 @@ async function post(path: string, payload: unknown): Promise<{
 }
 
 async function main(): Promise<void> {
+  // 화면이 자세를 바꾸는 근거. 실패해도 본 일을 막지 않는다(`db/agentActivity.ts`).
+  await markAgentActivity('closer', 'ordering', '어제 산 것을 파는 중').catch(() => {});
   const args = process.argv.slice(2);
   const execute = args.includes('--execute');
   const accountId = args.find((a) => !a.startsWith('--')) ?? 'VTS-ORDINARY';
@@ -204,4 +207,7 @@ main()
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
   })
-  .finally(() => closeDb());
+  .finally(async () => {
+    await markAgentActivity('closer', 'idle').catch(() => {});
+    await closeDb();
+  });

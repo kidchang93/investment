@@ -7522,7 +7522,7 @@ span.sample-badge {
 
 /* ── 방 두 개 ── */
 .agent-office__rooms { display: grid; grid-template-columns: 3fr 4fr; }
-.agent-room { position: relative; padding: 1.5rem .6rem .8rem; }
+.agent-room { position: relative; padding: 2.1rem .6rem .8rem; }
 /* 방 사이 벽 */
 .agent-room + .agent-room { border-left: 3px solid #05070b; }
 /* 바닥 — 24px 격자 타일. 방마다 색이 다르다. */
@@ -7616,12 +7616,21 @@ span.sample-badge {
 .agent-seat[data-stance="loading"] .agent-seat__stance { color: var(--faint, #788497); }
 
 /* 말풍선 — 일하는 중일 때만 */
+/*
+ * 말풍선. ★ **자리 폭을 넘지 않는다** — `nowrap`으로 뒀더니 판단자의 한 마디가
+ *   옆자리 종가 판단자 위까지 뻗었다. 판단자가 적는 설명은 길이가 정해져 있지
+ *   않으므로 두 줄까지 접고 그 뒤는 자른다.
+ */
 .agent-seat__bubble {
-  position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
+  position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
   z-index: 3;
-  padding: .1rem .4rem; border-radius: 8px; white-space: nowrap;
+  max-width: calc(100% - 4px);
+  padding: .12rem .35rem; border-radius: 7px;
   background: var(--green, #22c55e); color: #06210f;
-  font-size: .62rem; font-weight: 700;
+  font-size: .6rem; font-weight: 700; line-height: 1.25;
+  text-align: center;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
   animation: agent-bob 1.6s ease-in-out infinite;
 }
 .agent-seat__bubble::after {
@@ -7724,3 +7733,71 @@ span.sample-badge {
 .agent-open ul { margin: 0; padding-left: 1.1rem; display: grid; gap: .3rem; font-size: .78rem; }
 .agent-open li em { font-style: normal; color: var(--faint, #788497); font-size: .72rem; }
 .agent-open__no { margin-left: .5rem; color: var(--faint, #788497); font-size: .72rem; font-variant-numeric: tabular-nums; }
+
+/* ── 하는 일에 따라 자세가 바뀐다 (2026-09-07) ────────────────────────────
+   참조한 픽셀 사무실이 *"파일을 쓸 때 타이핑하고 검색할 때 읽는다"*고 한 그것.
+   활동은 `trading_agent_activity`가 준다 — 하트비트는 "끝났다"만 남기므로
+   10~15분짜리 회차가 도는 동안 비어 있고, 그 사이를 이 표시가 채운다. */
+
+/* 머리 위 아이콘 */
+/* 머리 위 아이콘 — 말풍선이 가리지 않게 오른쪽 어깨 위에 둔다 */
+.agent-seat__icon {
+  position: absolute; top: 14px; left: calc(50% + 18px);
+  z-index: 3; font-size: 13px; line-height: 1;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .8));
+  animation: agent-bob 1.2s ease-in-out infinite;
+}
+
+/* 활동별 몸짓 — 무엇을 하는지가 움직임으로 먼저 읽힌다 */
+.agent-seat[data-doing] .agent-seat__monitor { background: var(--green, #22c55e); }
+/* 타이핑·주문: 짧고 빠르게 */
+.agent-seat[data-doing="writing"] .agent-seat__walker,
+.agent-seat[data-doing="ordering"] .agent-seat__walker { animation: agent-type .22s steps(2, end) infinite; }
+/* 조사: 좌우로 두리번 */
+.agent-seat[data-doing="researching"] .agent-seat__walker { animation: agent-peek 1.5s ease-in-out infinite; }
+/* 모으기·훑기·재기: 느리게 통통 */
+.agent-seat[data-doing="gathering"] .agent-seat__walker,
+.agent-seat[data-doing="screening"] .agent-seat__walker,
+.agent-seat[data-doing="measuring"] .agent-seat__walker { animation: agent-bob 1.1s steps(2, end) infinite; }
+
+@keyframes agent-type { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+@keyframes agent-peek {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+
+/* ── 걸어 들어와 앉는다 ────────────────────────────────────────────────
+   두 프레임을 겹쳐 두고 걷는 동안만 번갈아 보인다. 자리마다 조금씩 늦게
+   출발해 줄지어 들어온다. */
+.agent-seat__walker { position: relative; display: block; }
+.agent-seat__walker .agent-sprite:nth-child(2) { position: absolute; inset: 0; opacity: 0; }
+
+.agent-seat[data-arriving] .agent-seat__walker {
+  animation: agent-walk-in 1s steps(8, end) both;
+  animation-delay: calc(var(--seat-order, 0) * .12s);
+}
+.agent-seat[data-arriving] .agent-sprite:nth-child(1) {
+  animation: agent-step-a .24s steps(1, end) 4 both;
+  animation-delay: calc(var(--seat-order, 0) * .12s);
+}
+.agent-seat[data-arriving] .agent-sprite:nth-child(2) {
+  animation: agent-step-b .24s steps(1, end) 4 both;
+  animation-delay: calc(var(--seat-order, 0) * .12s);
+}
+/* 걸어 들어오는 동안에는 의자에 아직 앉지 않았다 */
+.agent-seat[data-arriving] .agent-seat__chair { opacity: 0; animation: agent-chair-in .3s ease-out 1s both; }
+
+@keyframes agent-walk-in {
+  from { transform: translateX(-52px); }
+  to   { transform: translateX(0); }
+}
+@keyframes agent-step-a { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes agent-step-b { 0%, 49% { opacity: 0; } 50%, 100% { opacity: 1; } }
+@keyframes agent-chair-in { from { opacity: 0; } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-seat__walker, .agent-seat__icon,
+  .agent-seat[data-arriving] .agent-sprite { animation: none !important; }
+  .agent-seat[data-arriving] .agent-seat__chair { opacity: 1; animation: none; }
+}

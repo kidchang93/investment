@@ -45,6 +45,7 @@ import {
   type DeliberationExecution,
 } from '../db/deliberations.js';
 import { escapeMrkdwn, sendSlackBot, won as slackWon } from '../notify/slack.js';
+import { markAgentActivity } from '../db/agentActivity.js';
 
 const API_BASE = process.env.INVEST_API_BASE ?? 'http://localhost:4000';
 
@@ -132,6 +133,8 @@ function describe(d: DeliberationDecision): string {
 }
 
 async function main(): Promise<void> {
+  // 화면이 자세를 바꾸는 근거. 실패해도 본 일을 막지 않는다(`db/agentActivity.ts`).
+  await markAgentActivity('executor', 'ordering', '판단을 주문으로 옮기는 중').catch(() => {});
   const args = process.argv.slice(2);
   const execute = args.includes('--execute');
   const force = args.includes('--force');
@@ -359,4 +362,9 @@ async function main(): Promise<void> {
 main().catch((err) => {
   console.error(err);
   process.exit(1);
+});
+
+// 자리로 돌아간다 — 화면의 자세를 되돌린다.
+process.on('beforeExit', () => {
+  void markAgentActivity('executor', 'idle').catch(() => {});
 });

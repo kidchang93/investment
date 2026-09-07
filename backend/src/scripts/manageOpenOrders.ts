@@ -41,6 +41,7 @@ import '../config.js';
 import { getKisAccount } from '../config.js';
 import { closeDb, pool } from '../db/client.js';
 import { getDomesticQuotes, getKisDomesticAmendableOrders } from '../kis/rest.js';
+import { markAgentActivity } from '../db/agentActivity.js';
 
 /** 이만큼 지나도 안 붙으면 손댄다 */
 const DEFAULT_STALE_MINUTES = 5;
@@ -116,6 +117,8 @@ async function post(path: string, body: unknown): Promise<{ ok: boolean; message
 }
 
 async function main(): Promise<void> {
+  // 화면이 자세를 바꾸는 근거. 실패해도 본 일을 막지 않는다(`db/agentActivity.ts`).
+  await markAgentActivity('sweeper', 'screening', '미체결을 살피는 중').catch(() => {});
   const args = process.argv.slice(2);
   const execute = args.includes('--execute');
   const minArg = args.indexOf('--minutes');
@@ -214,4 +217,7 @@ main()
     console.error(error);
     process.exitCode = 1;
   })
-  .finally(() => closeDb());
+  .finally(async () => {
+    await markAgentActivity('sweeper', 'idle').catch(() => {});
+    await closeDb();
+  });

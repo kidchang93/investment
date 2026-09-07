@@ -108,10 +108,22 @@ const CHARACTERS: Record<string, Character> = {
   },
 };
 
-function PixelSprite({ id, size = 6 }: { id: string; size?: number }): JSX.Element | null {
+/**
+ * 걷는 프레임. **마지막 줄(다리)만 바꾼다** — 픽셀 캐릭터의 걸음은 다리 두 칸이
+ * 벌어졌다 모였다 하는 것이 전부다. 몸통까지 다시 그리면 두 그림이 미세하게
+ * 어긋나 캐릭터가 떨리는 것처럼 보인다.
+ */
+const WALK_LEGS = '...kk..kk...';
+
+function PixelSprite({ id, size = 6, frame = 0 }: {
+  id: string; size?: number; frame?: 0 | 1;
+}): JSX.Element | null {
   const ch = CHARACTERS[id];
   if (!ch) return null;
   const palette: Record<string, string> = { ...PALETTE, c: ch.coat, a: ch.tool };
+  const pixels = frame === 1
+    ? [...ch.pixels.slice(0, -1), WALK_LEGS]
+    : ch.pixels;
   return (
     <svg
       className="agent-sprite"
@@ -121,7 +133,7 @@ function PixelSprite({ id, size = 6 }: { id: string; size?: number }): JSX.Eleme
       shapeRendering="crispEdges"
       aria-hidden="true"
     >
-      {ch.pixels.flatMap((row, y) =>
+      {pixels.flatMap((row, y) =>
         row.split('').map((glyph, x) => {
           const fill = palette[glyph];
           return fill ? <rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} fill={fill} /> : null;
@@ -165,6 +177,29 @@ interface Decision {
     expectedReturn: number; basis: string;
   };
 }
+
+/**
+ * 에이전트가 **지금** 하는 일. 서버의 `trading_agent_activity`가 준다.
+ * 하트비트는 "끝났다"를 남기므로 10~15분짜리 회차 동안 비어 있고, 그 사이를
+ * 이것이 채운다.
+ */
+interface Activity {
+  agent: string;
+  activity: 'gathering' | 'screening' | 'researching' | 'writing' | 'ordering' | 'measuring' | 'idle';
+  detail: string;
+  updatedAt: number;
+}
+
+/** 활동별 한 마디와 머리 위 아이콘. 참조한 픽셀 사무실이 자세를 가르는 방식이다. */
+const ACTIVITY_FACE: Record<Activity['activity'], { label: string; icon: string }> = {
+  gathering: { label: '자료 모으는 중', icon: '📋' },
+  screening: { label: '후보 훑는 중', icon: '🔎' },
+  researching: { label: '뉴스 찾는 중', icon: '🌐' },
+  writing: { label: '판단 적는 중', icon: '✍️' },
+  ordering: { label: '주문 내는 중', icon: '📮' },
+  measuring: { label: '값 재는 중', icon: '📐' },
+  idle: { label: '자리 지키는 중', icon: '' },
+};
 
 /** 아직 안 붙은 주문. 정리꾼이 5분마다 손보는 대상이다. */
 interface OpenOrder {
@@ -309,10 +344,27 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
   const [status, setStatus] = useState<AutomationStatus | null>(null);
   const [rounds, setRounds] = useState<Round[] | null>(null);
   const [openOrders, setOpenOrders] = useState<OpenOrder[] | null>(null);
+  const [activities, setActivities] = useState<Map<string, Activity>>(new Map());
+  /*
+   * ★ **처음 한 번만 걸어 들어온다.** 참조한 픽셀 사무실이 *"캐릭터가 자기 책상까지
+   *   걸어가 앉는다"*고 한 그 연출이다. 자리마다 조금씩 늦게 출발해 줄지어 들어온다.
+   *   상태가 바뀔 때마다 다시 걷게 하면 5분마다 사무실이 술렁여 읽기가 어렵다.
+   */
+  const [arriving, setArriving] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [openRound, setOpenRound] = useState<number | null>(null);
 
   const load = useCallback(() => {
+    /*
+     * ★ 활동은 **자주 본다**(아래 8초). 30초로 두면 2~3분짜리 빠른 회차가
+     *   통째로 지나가 화면이 그 자세를 한 번도 못 그린다.
+     */
+    fetch(`${API_BASE}/api/agents/activity`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d: { activities: Activity[] }) =>
+        setActivities(new Map(d.activities.map((a) => [a.agent, a]))))
+      .catch(() => setActivities(new Map()));
+
     fetch(`${API_BASE}/api/automation/status`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`상태 조회 실패: ${r.status}`))))
       .then((d: AutomationStatus) => { setStatus(d); setError(null); })
@@ -337,10 +389,16 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
     }
   }, [accountId]);
 
+  // 걸어 들어오는 시간(마지막 자리까지 1.5초)만 지나면 자리에 앉은 것으로 둔다.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setArriving(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   useEffect(() => {
     load();
-    // 판단자 회차가 10~15분이라 그 안에 상태가 바뀐다. 30초면 충분히 따라간다.
-    const timer = window.setInterval(load, 30000);
+    // 판단자 회차가 10~15분이라 그 안에 상태가 바뀐다. 8초면 단계 전환도 따라간다.
+    const timer = window.setInterval(load, 8000);
     return () => window.clearInterval(timer);
   }, [load]);
 
@@ -390,13 +448,35 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
             <section className="agent-room" data-room={room} key={room}>
               <h4 className="agent-room__label">{ROOM_LABEL[room]}</h4>
               <div className="agent-room__floor">
-                {ROSTER.filter((m) => m.room === room).map((member) => {
+                {ROSTER.filter((m) => m.room === room).map((member, index) => {
                   const task = taskByName.get(member.task);
                   const stance: Stance = status ? stanceOf(task, status) : 'loading';
-                  return (
-                    <div className="agent-seat" data-stance={stance} key={member.id} title={member.job}>
-                      {/* 일하는 중일 때만 말풍선이 뜬다 — 늘 떠 있으면 읽지 않게 된다. */}
-                      {stance === 'running' && <span className="agent-seat__bubble">일하는 중</span>}
+                  const act = activities.get(member.id);
+                    const doing = act && act.activity !== 'idle' ? act : null;
+                    return (
+                    <div
+                      className="agent-seat"
+                      data-stance={stance}
+                      data-doing={doing?.activity}
+                      data-arriving={arriving ? '' : undefined}
+                      key={member.id}
+                      style={{ ['--seat-order' as string]: String(index) }}
+                      title={member.job}
+                    >
+                      {/*
+                        말풍선은 **하는 일이 있을 때만** 뜬다. 활동 표시가 오면 그
+                        한 마디를 그대로 쓰고(판단자가 적은 것), 없으면 「일하는 중」.
+                      */}
+                      {(doing || stance === 'running') && (
+                        <span className="agent-seat__bubble">
+                          {doing?.detail || (doing ? ACTIVITY_FACE[doing.activity].label : '일하는 중')}
+                        </span>
+                      )}
+                      {doing && ACTIVITY_FACE[doing.activity].icon && (
+                        <span className="agent-seat__icon" aria-hidden="true">
+                          {ACTIVITY_FACE[doing.activity].icon}
+                        </span>
+                      )}
                       {/*
                         ★ 탑다운이라 **책상이 캐릭터 뒤(위)에 있다.** 모니터가 책상 위에
                           놓이고 캐릭터는 그 앞에 앉아 화면을 본다.
@@ -406,7 +486,11 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
                         <span className="agent-seat__desk" />
                       </div>
                       <div className="agent-seat__figure">
-                        <PixelSprite id={member.id} size={6} />
+                        {/* 두 프레임을 겹쳐 두고 걷는 동안만 번갈아 보인다 */}
+                        <span className="agent-seat__walker">
+                          <PixelSprite id={member.id} size={6} />
+                          <PixelSprite id={member.id} size={6} frame={1} />
+                        </span>
                         <span className="agent-seat__chair" aria-hidden="true" />
                       </div>
                       <h3>{member.name}</h3>

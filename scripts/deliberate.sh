@@ -109,7 +109,21 @@ fi
 echo $$ > "$LOCK_DIR/pid"
 trap 'rm -rf "$LOCK_DIR"' EXIT
 
+#
+# ── 화면의 자세 (2026-09-07) ─────────────────────────────────────────────
+#
+# 사무실 화면이 "지금 무엇을 하는가"로 캐릭터 자세를 바꾼다. 하트비트는
+# **끝났다**를 남기는 것이라 10~15분짜리 회차가 도는 동안 비어 있다 —
+# 그 사이를 이 표시가 채운다(`backend/src/db/agentActivity.ts`).
+#
+# ★ 실패해도 판단을 막지 않는다. 꾸밈이 판단을 멈추면 본말이 뒤집힌다.
+SEAT=$([[ $CLOSE -eq 1 ]] && echo closeJudge || echo judge)
+mark() { (cd backend && npx tsx src/scripts/markActivity.ts "$SEAT" "$1" "${2:-}") >/dev/null 2>&1 || true; }
+# 자리를 떠날 때 반드시 되돌린다 — 안 그러면 화면이 영영 "일하는 중"으로 남는다.
+trap 'mark idle; rm -rf "$LOCK_DIR"' EXIT
+
 log "판단자 소집 · 계좌 $ACCOUNT${LOG_SUFFIX:+ · $LOG_SUFFIX}"
+mark gathering "상태를 모으는 중"
 
 # ★ **소집 전 회차 수를 세어 둔다.** 아래에서 "정말 한 회차가 남았나"를 이것으로
 #   가린다 — `claude -p`의 종료 코드만 보면 **아무것도 안 하고 끝나도 성공**이다.
@@ -207,6 +221,7 @@ if [[ $CLOSE -eq 1 ]]; then
   exit 0
 fi
 
+mark ordering "판단을 주문으로 옮기는 중"
 log "집행기 시작"
 (cd backend && npx tsx src/scripts/executeDeliberation.ts "$ACCOUNT" --execute) >> "$LOG" 2>&1
 exec_code=$?
