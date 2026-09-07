@@ -210,7 +210,13 @@ const ROSTER: Array<{ id: string; task: string; name: string; job: string }> = [
   { id: 'sweeper', task: 'open-orders', name: '정리꾼', job: '안 붙는 주문을 손본다' },
 ];
 
-type Stance = 'running' | 'done' | 'waiting' | 'closed' | 'off';
+/*
+ * ★ `loading`을 따로 둔다. 처음에는 상태를 못 받은 동안 `off`로 그렸는데,
+ *   새로고침 직후 일곱 자리가 전부 회색 **"꺼짐"**으로 보였다 — 자동화가 꺼진
+ *   것과 아직 못 물어본 것은 다른 말이고, 이 화면에서 그것을 헷갈리면
+ *   "안 돌고 있다"는 거짓 신호가 된다.
+ */
+type Stance = 'running' | 'done' | 'waiting' | 'closed' | 'off' | 'loading';
 
 const STANCE_LABEL: Record<Stance, string> = {
   running: '일하는 중',
@@ -218,6 +224,7 @@ const STANCE_LABEL: Record<Stance, string> = {
   waiting: '차례 기다림',
   closed: '창 닫힘',
   off: '꺼짐',
+  loading: '확인 중',
 };
 
 function stanceOf(task: TaskState | undefined, status: AutomationStatus): Stance {
@@ -351,27 +358,50 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
 
       {error && <p className="agent-desk__error">{error}</p>}
 
-      {/* ── 명단 ── */}
-      <div className="agent-desk__roster">
-        {ROSTER.map((member) => {
-          const task = taskByName.get(member.task);
-          const stance = status ? stanceOf(task, status) : 'off';
-          return (
-            <article className="agent-card" data-stance={stance} key={member.id}>
-              <PixelSprite id={member.id} />
-              <h3>{member.name}</h3>
-              <p className="agent-card__job">{member.job}</p>
-              <p className="agent-card__when">
-                {task ? `${clock(task.window[0])}–${clock(task.window[1])}` : '작업 없음'}
-              </p>
-              <p className="agent-card__stance">
-                <i aria-hidden="true" />
-                {STANCE_LABEL[stance]}
-                {task?.lastRunAt ? ` · 마지막 ${task.lastRunAt}` : ''}
-              </p>
-            </article>
-          );
-        })}
+      {/*
+        ── 사무실 ──
+        사용자가 정했다 — *"UI를 각 캐릭터가 회사에서 일하는 것처럼 만들어줘."*
+        긴 트레이딩 데스크 하나에 일곱이 나란히 앉는다. 책상이 캐릭터의 하반신을
+        덮어 앉은 것처럼 보이고, 모니터 불빛이 자세를 말한다.
+      */}
+      <div className="agent-office" data-off={status && (!status.ticking || !status.settings.enabled) ? '' : undefined}>
+        <div className="agent-office__wall">
+          <span className="agent-office__board">
+            {status ? `KST ${status.now}` : '· · ·'}
+            <b data-on={status?.settings.enabled ? '' : undefined}>자동화</b>
+            <b data-on={status?.settings.tradingEnabled ? '' : undefined}>매매</b>
+          </span>
+          <span className="agent-office__tape">
+            오늘 회차 {today.length} · 결정 {decidedToday}
+          </span>
+        </div>
+
+        <div className="agent-office__floor">
+          {ROSTER.map((member) => {
+            const task = taskByName.get(member.task);
+            const stance: Stance = status ? stanceOf(task, status) : 'loading';
+            return (
+              <div className="agent-seat" data-stance={stance} key={member.id} title={member.job}>
+                {/* 일하는 중일 때만 말풍선이 뜬다 — 늘 떠 있으면 읽지 않게 된다. */}
+                {stance === 'running' && <span className="agent-seat__bubble">일하는 중</span>}
+                <div className="agent-seat__figure">
+                  <PixelSprite id={member.id} size={6} />
+                  <span className="agent-seat__monitor" aria-hidden="true" />
+                </div>
+                <div className="agent-seat__desk" aria-hidden="true" />
+                <h3>{member.name}</h3>
+                <p className="agent-seat__when">
+                  {task ? `${clock(task.window[0])}–${clock(task.window[1])}` : '작업 없음'}
+                </p>
+                <p className="agent-seat__stance">
+                  <i aria-hidden="true" />
+                  {STANCE_LABEL[stance]}
+                  {task?.lastRunAt ? ` · ${task.lastRunAt}` : ''}
+                </p>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* ── 지금 나가 있는 주문 ── */}
