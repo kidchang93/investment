@@ -146,7 +146,14 @@ export interface DeliberationRound {
   accountId: string;
   /** KST 거래일 `YYYY-MM-DD` */
   tradingDay: string;
-  /** 회의 시작 시각 (epoch ms) */
+  /**
+   * 회의 시작 시각 (epoch ms).
+   *
+   * ★★ **에이전트가 스스로 적는 값이라 믿을 수 없다.** 순서의 근거로 쓰지 마라
+   *   (아래 `getDeliberations` 주석). 2026-09-07에도 회차 101·102가 **4일 뒤**를
+   *   적었다(`1789085160000` = 09-11 09:06, `tradingDay`는 09-07). 화면이 이 값으로
+   *   정렬하자 순서가 무너졌다 — 표시에는 `recordedAt`을 쓴다.
+   */
   startedAt: number;
   trigger: DeliberationTrigger;
   /** 사건이면 무엇 때문인지. 정기면 빈 문자열 */
@@ -340,7 +347,15 @@ export async function getDeliberations(filter: {
   accountId?: string;
   tradingDay?: string;
   limit?: number;
-}): Promise<Array<DeliberationRound & { id: number }>> {
+}): Promise<Array<DeliberationRound & {
+  id: number;
+  /**
+   * **DB가 찍은 기록 시각**(epoch ms). 에이전트가 건드릴 수 없어 `startedAt`과 달리
+   * 믿을 수 있다 — 화면은 이 값으로 시각을 적는다. `DeliberationRound`에 넣지 않는
+   * 것은 **쓸 때는 없는 값**이기 때문이다(저장 뒤에 생긴다).
+   */
+  recordedAt: number;
+}>> {
   await ensureDeliberationSchema();
   const where: string[] = [];
   const values: unknown[] = [];
@@ -355,7 +370,9 @@ export async function getDeliberations(filter: {
   values.push(Math.min(200, Math.max(1, filter.limit ?? 50)));
 
   const { rows } = await pool.query<Record<string, unknown>>(
-    `SELECT id::text, account_id, trading_day::text, started_at::text, trigger, trigger_reason,
+    `SELECT id::text, account_id, trading_day::text, started_at::text,
+            (extract(epoch from created_at) * 1000)::bigint::text AS recorded_at,
+            trigger, trigger_reason,
             equity, positions, findings, decisions, falsifier, unknowns, sources,
             reference, executions
      FROM trading_deliberations
@@ -369,6 +386,7 @@ export async function getDeliberations(filter: {
     accountId: String(r.account_id),
     tradingDay: String(r.trading_day),
     startedAt: Number(r.started_at),
+    recordedAt: Number(r.recorded_at),
     trigger: String(r.trigger) as DeliberationTrigger,
     triggerReason: String(r.trigger_reason),
     equity: Number(r.equity),

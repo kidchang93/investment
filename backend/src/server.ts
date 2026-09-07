@@ -5,6 +5,7 @@ import {
   setSettings as setAutomationSettings,
   startScheduler,
 } from './automation/scheduler.js';
+import { getDeliberations } from './db/deliberations.js';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
@@ -298,6 +299,28 @@ async function main(): Promise<void> {
    *   감시는 자동화 스위치만으로 돈다.
    */
   app.get('/api/automation/status', async () => getAutomationStatus());
+
+  /*
+   * ★★ **에이전트가 무엇을 판단했는지 화면이 읽는 자리** (2026-09-07).
+   *
+   * 사용자가 정했다 — *"화면 주문은 없이 에이전트가 현재 어떤 분석과 판단을
+   * 했는지 화면으로 모니터링할 수 있게."*
+   *
+   * 그전까지 회차는 **DB에만** 있었다. 무엇을 왜 샀는지 보려면 psql을 열거나
+   * 슬랙을 뒤져야 했고, 그래서 판단의 근거가 사람에게 닿지 않았다.
+   *
+   * ★ 무겁다 — 한 회차에 `findings`·`decisions`·`positions`가 통째로 들어 있고
+   *   `rationale`은 문단 단위다. 기본 20건으로 끊고 화면이 필요한 만큼만 더 부른다.
+   */
+  app.get<{ Querystring: { accountId?: string; limit?: string } }>(
+    '/api/deliberations',
+    async (req, reply) => {
+      const account = resolveAccount(req.query.accountId);
+      if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+      const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+      return { rounds: await getDeliberations({ accountId: account?.id, limit }) };
+    },
+  );
 
   app.post('/api/automation/settings', async (req, reply) => {
     const body = (req.body ?? {}) as { enabled?: unknown; tradingEnabled?: unknown };

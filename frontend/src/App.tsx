@@ -1,23 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addWatchlistItem,
-  cancelKisReservedOrder,
-  placeKisReservedOrder,
   createWatchlist,
   deleteWatchlist,
-  amendKisLiveOrder,
   fetchKisAccounts,
   fetchKisAccountSnapshot,
   fetchKisExecutions,
   fetchKisLiveOrderGate,
-  fetchKisOpenOrders,
   fetchKisOrderLog,
-  fetchKisOrderability,
-  fetchKisReservedOrders,
   fetchKisRiskRules,
-  fetchKisSellability,
   fetchKisTradeProfit,
-  placeKisLiveOrder,
   updateKisRiskRules,
   fetchCategoryInstruments,
   fetchInstrumentCandles,
@@ -26,7 +18,6 @@ import {
   fetchInstrumentFinancials,
   fetchInstrumentNews,
   fetchInstrumentQuote,
-  fetchOrderBook,
   fetchMarketMovers,
   fetchScreening,
   fetchTradeMarks,
@@ -43,12 +34,12 @@ import {
   type FinancialsResult,
 } from './api';
 import { useStream } from './useStream';
+import { AgentDesk } from './AgentDesk';
 import { Automation } from './Automation';
 import { Dashboard } from './Dashboard';
 import { PortfolioLayers } from './PortfolioLayers';
 import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } from './Chart';
 import {
-  krSellTaxRate,
   KR_KONEX_SELL_TAX_RATE,
   KR_SELL_TAX_RATE,
 } from '@invest/shared';
@@ -56,13 +47,9 @@ import type {
   BrokerAccountRef,
   ChartTradeMark,
   BrokerAccountSnapshot,
-  BrokerAmendableOrder,
   BrokerExecutionSnapshot,
   BrokerExecutionStatus,
   BrokerOrderRecord,
-  BrokerOrderability,
-  BrokerReservedOrder,
-  BrokerSellability,
   BrokerTradeProfitSnapshot,
   Candle,
   LiveOrderGate,
@@ -75,10 +62,6 @@ import type {
   KrxSessionKind,
   MarketMoversSnapshot,
   NewsItem,
-  OrderSide,
-  OrderTimeInForce,
-  OrderBook,
-  OrderType,
   ScreeningResult,
   ScreeningRow,
   ScreeningVerdict,
@@ -99,7 +82,6 @@ import {
   krxSessionKind,
   oldestFetchedAt,
   quoteFreshnessState,
-  riskRuleBlockers,
   settledProfitRate,
   settledRealized,
   shouldReplaceQuote,
@@ -123,7 +105,7 @@ type LayoutPreset = 'balanced' | 'chart' | 'reading';
  */
 type AppPage = 'goal' | 'terminal' | 'market' | 'portfolio';
 
-type SidePanelTab = 'order' | 'watch' | 'discover';
+type SidePanelTab = 'watch' | 'discover';
 type TerminalTab =
   | 'overview'
   | 'news'
@@ -393,7 +375,6 @@ const APP_PAGE_OPTIONS: Array<{ key: AppPage; label: string; title: string }> = 
 ];
 
 const SIDE_PANEL_OPTIONS: Array<{ key: SidePanelTab; label: string }> = [
-  { key: 'order', label: '주문' },
   { key: 'watch', label: '관심' },
   { key: 'discover', label: '탐색' },
 ];
@@ -438,7 +419,6 @@ function Term({ children }: { children: string }): JSX.Element {
 
 
 const SIDE_PANEL_TITLE: Record<SidePanelTab, string> = {
-  order: '주문',
   watch: '관심종목',
   discover: '종목 탐색',
 };
@@ -743,8 +723,6 @@ const SEARCH_QUOTE_TARGETS = 10;
 const SCREENING_LOOKUPS = 40;
 const SCREENING_MAX_QUOTE_CALLS = Math.ceil(SCREENING_LOOKUPS / INSTRUMENT_QUOTE_BATCH.chunk);
 const RECENT_INSTRUMENT_LIMIT = 8;
-// 매수가능 조회는 실계좌 API라 지정가를 타이핑하는 동안 매 글자마다 호출하지 않는다.
-const ORDERABILITY_DEBOUNCE_MS = 700;
 const ORDERABLE_DOMESTIC_ASSET_TYPES = new Set<Instrument['assetType']>(['stock', 'etf', 'etn']);
 const STORAGE_PREFIX = 'investment-monitor:';
 
@@ -804,24 +782,6 @@ function orderLogSymbolLabel(symbol?: string, requestedInstrumentId?: string): s
   return symbol || '-';
 }
 
-/**
- * 이 종목으로는 주문이 되지 않는다는 안내.
- *
- * 주문 티켓과 예약주문 카드 두 곳에서 쓴다. 티켓만 고쳤더니 예약주문 쪽은
- * 같은 사실이 10px 잔글씨로 버튼 아래에 남아 두 화면이 어긋났다. 한 곳에
- * 묶어 두면 다음에 문구를 고칠 때 같이 따라온다.
- */
-function UnorderableInstrumentNotice({ action, where }: { action: string; where: string }): JSX.Element {
-  return (
-    <div className="order-ticket__unavailable" role="note">
-      <strong>{action}할 수 없는 종목입니다</strong>
-      <span>
-        지수·선물·야간 환산가는 값을 보라고 둔 참고 지표입니다.
-        국내 주식·ETF·ETN 중에서 골라 주세요 — {where}에 있습니다.
-      </span>
-    </div>
-  );
-}
 
 /**
  * 이 숫자는 실제 시세가 아니라는 표시.
@@ -1231,182 +1191,10 @@ function FinancialsPanel({
   );
 }
 
-/**
- * 호가창.
- *
- * 얼마에 낼지 정하는 자리라 주문 폼 바로 위에 둔다. 값을 누르면 지정가로
- * 채워 준다 — 손으로 옮겨 적으면 자릿수를 틀린다.
- *
- * 매도(팔자)를 위, 매수(사자)를 아래에 둔다. 국내 증권사 호가창의 배치라
- * 이 순서를 바꾸면 익숙한 사람이 반대로 읽는다.
- */
-function OrderBookPanel({
-  book,
-  error,
-  nowMs,
-  onPickPrice,
-  visible,
-}: {
-  book: OrderBook | null;
-  error: string | null;
-  nowMs: number;
-  onPickPrice: (price: number) => void;
-  visible: boolean;
-}): JSX.Element | null {
-  if (!visible) return null;
 
-  const asks = book ? [...book.levels].filter((l) => l.askPrice > 0).sort((a, b) => b.step - a.step) : [];
-  const bids = book ? book.levels.filter((l) => l.bidPrice > 0) : [];
-  // 막대 길이는 실제 비율이라야 한다. 이 호가창 안에서 가장 큰 잔량을 100%로 잡는다.
-  const maxQuantity = Math.max(
-    1,
-    ...asks.map((l) => l.askQuantity),
-    ...bids.map((l) => l.bidQuantity),
-  );
 
-  const row = (
-    key: string,
-    side: 'ask' | 'bid',
-    price: number,
-    quantity: number,
-  ): JSX.Element => (
-    <button
-      aria-label={`${formatNumber(price)}원 ${side === 'ask' ? '매도' : '매수'} 잔량 ${formatNumber(quantity)}주 · 지정가로 넣기`}
-      className="order-book__row"
-      data-side={side}
-      key={key}
-      onClick={() => onPickPrice(price)}
-      type="button"
-    >
-      <span className="order-book__bar" style={{ width: `${(quantity / maxQuantity) * 100}%` }} />
-      <em>{formatNumber(price)}</em>
-      <i>{formatNumber(quantity)}</i>
-    </button>
-  );
 
-  return (
-    <section className="order-book" aria-label="호가">
-      <div className="order-book__header">
-        <strong>호가</strong>
-        {book ? (
-          <span>
-            {formatClock(book.fetchedAt)} 기준 · {Math.max(0, Math.round((nowMs - book.fetchedAt) / 1000))}초 전
-          </span>
-        ) : (
-          <span>{error ? '조회 실패' : '조회 중'}</span>
-        )}
-      </div>
 
-      {/*
-        동시호가에는 체결이 없고 예상 체결가만 나온다. 정규장이 시작돼도 KIS는
-        이 값을 지우지 않고 개장 결과를 들고 있어서, 서버가 장운영 구분으로
-        걸러 auction일 때만 채워 보낸다.
-      */}
-      {book?.expected && (
-        <p className="order-book__expected">
-          <strong>동시호가 예상 체결 {formatNumber(book.expected.price)}원</strong>
-          <span data-tone={moveTone(book.expected.sign)}>
-            {formatSignedPrice(book.expected.change)} ({formatRate(book.expected.changeRate)})
-          </span>
-          <small>예상 거래량 {formatNumber(book.expected.volume)}주 · 아직 체결된 값이 아닙니다</small>
-        </p>
-      )}
-
-      {book?.volatilityInterrupted && (
-        <p className="order-book__vi">변동성완화장치(VI)가 걸려 있습니다. 체결이 잠시 멈춥니다.</p>
-      )}
-
-      {error && <p className="order-book__error">호가를 갱신하지 못했습니다 — {error}</p>}
-
-      {book && asks.length + bids.length === 0 && (
-        <p className="order-book__empty">호가에 남은 물량이 없습니다</p>
-      )}
-
-      {book && asks.length + bids.length > 0 && (
-        <div className="order-book__list">
-          {asks.map((l) => row(`ask-${l.step}`, 'ask', l.askPrice, l.askQuantity))}
-          {bids.map((l) => row(`bid-${l.step}`, 'bid', l.bidPrice, l.bidQuantity))}
-        </div>
-      )}
-
-      {book && (
-        <div className="order-book__totals">
-          <span>총 매도 잔량 {formatNumber(book.totalAskQuantity)}</span>
-          <span>총 매수 잔량 {formatNumber(book.totalBidQuantity)}</span>
-        </div>
-      )}
-    </section>
-  );
-}
-
-/*
- * 주문 한 건에 붙는 비용 어림.
- *
- * 예상 주문액이 단가×수량뿐이라, 10주를 사려는 사람이 수수료·세금을 0으로
- * 여기게 된다. 매도는 특히 커서 — 증권거래세가 수수료의 열 배가 넘는다.
- *
- * **요율도 세율도 확인된 값이 아니다.** 이 계좌는 한국투자증권인데, 같은
- * 증권사여도 상품·이벤트·개설 경로에 따라 요율이 다르고 세율은 법으로 바뀐다.
- * 발견>수수료 탭이 쓰는 값을 그대로 가져다 쓰고, 화면에도 어림이라고 적는다.
- * 안 보여 주는 것보다는 낫지만 정확한 값인 척하면 안 된다.
- */
-const KIS_COMMISSION_RATE_ASSUMPTION = 0.00014;
-const KR_INSTITUTION_FEE_RATE_ASSUMPTION = 0.00003;
-
-interface OrderCostEstimate {
-  commission: number;
-  institutionFee: number;
-  /** 매도에만 붙는 증권거래세. 매수는 0 */
-  tax: number;
-  total: number;
-  /** 매수는 총액 + 비용, 매도는 총액 − 비용 */
-  settlement: number;
-  taxRate: number;
-}
-
-/*
- * 세율은 종목이 정한다. 예전에는 `market`(코넥스인가)만 보고 있어서 **ETF에도
- * 0.20%를 물렸다** — 국내 상장 ETF는 매도 거래세가 면제라(종류 무관) 0이 맞다.
- * 판단은 `shared`의 `krSellTaxRate` 한 곳에 있고 백테스트·후보 거르기가 같은 것을 쓴다.
- *
- * ★ 해외지수·채권·원자재·파생형 ETF의 매매차익 15.4%는 여기 없다. 보유기간 과세라
- *   `Min(매매차익, 과표증분)` 구조인데 과표증분을 우리가 모른다 — 넣으면 틀린 값이
- *   된다. 그 종류에 대해서는 이 어림이 **과소계상**이다.
- */
-function estimateOrderCost(
-  notional: number,
-  side: OrderSide,
-  instrument: Instrument | null,
-): OrderCostEstimate | null {
-  if (!Number.isFinite(notional) || notional <= 0) return null;
-  const taxRate = side === 'sell' ? krSellTaxRate(instrument) : 0;
-  const commission = notional * KIS_COMMISSION_RATE_ASSUMPTION;
-  const institutionFee = notional * KR_INSTITUTION_FEE_RATE_ASSUMPTION;
-  const tax = notional * taxRate;
-  const total = commission + institutionFee + tax;
-  return {
-    commission,
-    institutionFee,
-    tax,
-    total,
-    settlement: side === 'buy' ? notional + total : notional - total,
-    taxRate,
-  };
-}
-
-/**
- * 비용 상자의 거래세 줄.
- *
- * **0원일 때 왜 0인지 함께 적는다.** `+ 거래세 0`만 두면 아직 안 계산한 것처럼
- * 보인다 — 국내 상장 ETF는 매도 거래세가 면제라 정말로 0이다.
- * 이 함수가 도는 자리는 국내 주문 가능 종목뿐이라(`isOrderableDomesticInstrument`)
- * 매도인데 세율이 0인 경우는 ETF 하나다.
- */
-function orderTaxNote(side: OrderSide, cost: OrderCostEstimate): string {
-  if (side === 'buy') return ' · 매수에는 거래세가 없습니다';
-  if (cost.taxRate === 0) return ' · ETF는 매도 거래세가 면제입니다';
-  return ` + 거래세 ${formatNumber(Math.round(cost.tax))}`;
-}
 
 /** 국내 현금 주문이 성립하는 종목인지. 지수·선물·야간 프록시는 매수가능 조회 대상이 아니다. */
 function isOrderableDomesticInstrument(instrument: Instrument | null): boolean {
@@ -1926,11 +1714,6 @@ function formatElapsed(ms: number): string {
   return `${Math.floor(hours / 24)}일 전`;
 }
 
-/** 브로커 통보의 HHMMSS를 'HH:MM:SS'로. 형식이 아니면 null이라 호출부가 대체값을 쓴다. */
-function formatBrokerClock(time: string | undefined): string | null {
-  if (!time || !/^\d{6}$/.test(time)) return null;
-  return `${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4, 6)}`;
-}
 
 /** 브로커가 내려주는 YYYYMMDD·HHMMSS를 화면용 'MM-DD HH:MM'으로. */
 function formatBrokerOrderTime(date: string, time?: string): string {
@@ -2508,22 +2291,6 @@ export function App(): JSX.Element {
   const [kisAccountSnapshot, setKisAccountSnapshot] = useState<BrokerAccountSnapshot | null>(null);
   const [usdKrwRate, setUsdKrwRate] = useState<ExchangeRate | null>(null);
   const [isKisAccountRefreshing, setIsKisAccountRefreshing] = useState(false);
-  const [kisOrderability, setKisOrderability] = useState<BrokerOrderability | null>(null);
-  const [isKisOrderabilityLoading, setIsKisOrderabilityLoading] = useState(false);
-  const [kisSellability, setKisSellability] = useState<BrokerSellability | null>(null);
-  const [isKisSellabilityLoading, setIsKisSellabilityLoading] = useState(false);
-  const [kisOpenOrders, setKisOpenOrders] = useState<BrokerAmendableOrder[]>([]);
-  const [isKisOpenOrdersRefreshing, setIsKisOpenOrdersRefreshing] = useState(false);
-  /*
-   * 호가 10단계와 동시호가 예상 체결.
-   *
-   * 얼마에 낼지 정하는 자리에 잔량이 없으면 값을 짐작으로 넣게 된다. 현재가만
-   * 보고 지정가를 넣으면 그 값에 물량이 있는지 알 수 없다.
-   *
-   * 조회 실패를 빈 호가로 바꾸지 않는다 — 사유를 따로 들고 있는다.
-   */
-  const [orderBook, setOrderBook] = useState<OrderBook | null>(null);
-  const [orderBookError, setOrderBookError] = useState<string | null>(null);
   const [financials, setFinancials] = useState<FinancialsResult | null>(null);
   const [screening, setScreening] = useState<ScreeningResult | null>(null);
   const [marketMovers, setMarketMovers] = useState<MarketMoversSnapshot | null>(null);
@@ -2549,29 +2316,6 @@ export function App(): JSX.Element {
   const [themePulses, setThemePulses] = useState<ThemePulseBatch | null>(null);
   const [themePulseError, setThemePulseError] = useState<string | null>(null);
   const [themePulseLoading, setThemePulseLoading] = useState(false);
-  const [kisReservedOrders, setKisReservedOrders] = useState<BrokerReservedOrder[]>([]);
-  /*
-   * 언제 받아온 값인지. 잔고 카드만 `갱신 07:27:39`를 적고 나머지는 아무것도
-   * 적지 않았다. 그래서 새로고침을 눌러도 내용이 같으면 화면이 한 픽셀도
-   * 바뀌지 않는다 — 실제로 눌러 보고 카드 innerHTML이 그대로인 걸 확인했다.
-   * 눌린 건지 아닌지 알 방법이 없다. 서버가 주는 값이 있으면 그것을 쓰고
-   * (체결내역), 없으면 받은 시각을 적는다.
-   */
-  const [kisOpenOrdersUpdatedAt, setKisOpenOrdersUpdatedAt] = useState<number | null>(null);
-  const [kisReservedOrdersUpdatedAt, setKisReservedOrdersUpdatedAt] = useState<number | null>(null);
-  /*
-   * 이 환경에 그 조회 기능이 없을 때의 안내. **오류 상태가 아니다.**
-   * 모의 서버에는 예약주문·정정취소가능주문 TR이 없어(`EGW02006`) 늘 실패하는데,
-   * 예전에는 그것이 502로 올라와 화면 위쪽에 빨간 배너로 하루 종일 떠 있었다.
-   * 그러면 정작 진짜 장애가 났을 때 구별되지 않는다.
-   */
-  const [kisOpenOrdersUnavailable, setKisOpenOrdersUnavailable] = useState<string | null>(null);
-  const [kisReservedOrdersUnavailable, setKisReservedOrdersUnavailable] = useState<string | null>(null);
-  const [isReservedCancelling, setIsReservedCancelling] = useState(false);
-  const [reservedSide, setReservedSide] = useState<OrderSide>('buy');
-  const [reservedQuantity, setReservedQuantity] = useState('1');
-  const [reservedPrice, setReservedPrice] = useState('');
-  const [reservedCancelMessage, setReservedCancelMessage] = useState<string | null>(null);
   const [kisOrderLog, setKisOrderLog] = useState<BrokerOrderRecord[]>([]);
   const [kisOrderLogUpdatedAt, setKisOrderLogUpdatedAt] = useState<number | null>(null);
   /** 서버 상한을 넘겨 더 오래된 기록이 남아 있는지. */
@@ -2614,25 +2358,6 @@ export function App(): JSX.Element {
   const [liveOrderGate, setLiveOrderGate] = useState<LiveOrderGate | null>(null);
   /** 게이트 조회가 실패했을 때의 사유. null이 `아직 안 옴`과 `못 받음`을 겸하지 않게 한다. */
   const [liveOrderGateError, setLiveOrderGateError] = useState<string | null>(null);
-  /* 주문 확인 단계를 보여주는 중인지. 실제 증권사 주문 화면과 같은 흐름이다. */
-  const [liveOrderConfirming, setLiveOrderConfirming] = useState(false);
-  /*
-   * 실계좌로 나가는 다른 두 자리도 한 번 확인받는다.
-   *
-   * 매수·매도만 `주문 확인` 단계가 있었고, 예약주문 등록과 정정·취소는 누르는
-   * 즉시 전송됐다. 단가를 한 자리 잘못 치고 `확정`을 누르면 그대로 나간다.
-   * 실계좌로 나가는 자리는 다 같은 대접을 받아야 한다.
-   *
-   * 정정·취소는 줄 안에서 확인하므로 어느 주문의 무슨 동작인지 키로 들고 있는다.
-   */
-  const [reservedConfirming, setReservedConfirming] = useState(false);
-  const [amendConfirmKey, setAmendConfirmKey] = useState<string | null>(null);
-  /*
-   * 이번 주문의 멱등성 키. 확인 단계에 들어갈 때 한 번 만들고 그동안 유지한다.
-   * 전송 버튼을 두 번 누르거나 네트워크가 끊겨 재시도해도 서버가 같은 키를 보고
-   * 한 주문만 접수한다.
-   */
-  const [liveOrderKey, setLiveOrderKey] = useState<string | null>(null);
 
   /*
    * 자동매매. 러너는 서버에 살고 화면은 상태를 받아 보여줄 뿐이다.
@@ -2643,25 +2368,8 @@ export function App(): JSX.Element {
    * 신호 채점 성적. 백테스트는 과거를 말하고 이 값은 실제로 낸 신호가 어땠는지를
    * 말한다. 아직 채점된 게 없으면 빈 배열이고, 그걸 0%로 채우지 않는다.
    */
-  /*
-   * 전략 목록과 **자동매매가 실제로 도는 축**. 축을 여기 박아 두지 않는다 —
-   * 러너가 축을 바꾸면 화면만 조용히 틀린 말을 하게 된다. 서버가 준 것만 쓴다.
-   *
-   * 조회 실패를 빈 배열로 바꾸지 않는다. 판정문이 사라진 채로 시작 버튼이 살아
-   * 있으면 무엇이 확인된 전략인지 모르는 채 켜게 된다.
-   */
-  const [isLiveOrderSubmitting, setIsLiveOrderSubmitting] = useState(false);
-  const [liveOrderMessage, setLiveOrderMessage] = useState<string | null>(null);
-  /** 정정 중인 주문 id와 새 단가. 취소는 입력이 필요 없다. */
-  const [amendingOrderId, setAmendingOrderId] = useState<string | null>(null);
-  const [amendPrice, setAmendPrice] = useState('');
   const [kisExecutionSnapshot, setKisExecutionSnapshot] = useState<BrokerExecutionSnapshot | null>(null);
   const [isKisExecutionRefreshing, setIsKisExecutionRefreshing] = useState(false);
-  const [orderSide, setOrderSide] = useState<OrderSide>('buy');
-  const [orderType, setOrderType] = useState<OrderType>('market');
-  const [orderTimeInForce, setOrderTimeInForce] = useState<OrderTimeInForce>('day');
-  const [orderQuantity, setOrderQuantity] = useState('1');
-  const [orderLimitPrice, setOrderLimitPrice] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   /*
@@ -2753,13 +2461,6 @@ export function App(): JSX.Element {
     };
   }, [selectedInstrument?.providerSymbol, selectedInstrument?.country, kisAccountId]);
 
-  /*
-   * 주문 패널이 실제로 열려 있는지. 매수가능금액·매도가능수량·미체결처럼
-   * KIS를 때리는 조회를 여기에 묶는다. 예전엔 전용 화면(`trade`)이 조건이었는데
-   * 주문이 종목 화면의 오른쪽 탭으로 들어왔다. 차트만 보는 동안에도 계좌 조회가
-   * 나가면 KIS 호출 제한을 그냥 태운다.
-   */
-  const isOrderPanelOpen = activePage === 'market' && sidePanelTab === 'order';
   useEffect(() => writeStoredValue('activeSavedWatchlistId', activeSavedWatchlistId), [activeSavedWatchlistId]);
   useEffect(() => writeStoredJson('recentInstruments', recentInstruments), [recentInstruments]);
   useEffect(() => setHoveredChartReadout(null), [range, selectedInstrument?.id, timeframe]);
@@ -2960,134 +2661,10 @@ export function App(): JSX.Element {
   }, [activePage, refreshKisExecutions]);
 
   // 매수가능금액은 종목·단가에 따라 달라지므로 매수 탭에서 국내 주문 가능 종목일 때만 조회한다.
-  useEffect(() => {
-    const instrument = selectedInstrument;
-    const limitPrice = Number(orderLimitPrice);
-    const needsLimitPrice = orderType === 'limit' && (!Number.isFinite(limitPrice) || limitPrice <= 0);
-    if (
-      !instrument ||
-      !isOrderPanelOpen ||
-      orderSide !== 'buy' ||
-      needsLimitPrice ||
-      !isOrderableDomesticInstrument(instrument)
-    ) {
-      setKisOrderability(null);
-      setIsKisOrderabilityLoading(false);
-      return;
-    }
-
-    let disposed = false;
-    setIsKisOrderabilityLoading(true);
-    const timer = window.setTimeout(() => {
-      fetchKisOrderability(
-        instrument.id,
-        orderType,
-        orderType === 'limit' ? limitPrice : undefined,
-        kisAccountId ?? undefined,
-      )
-        .then((result) => {
-          if (!disposed) setKisOrderability(result);
-        })
-        .catch(() => {
-          if (!disposed) setKisOrderability(null);
-        })
-        .finally(() => {
-          if (!disposed) setIsKisOrderabilityLoading(false);
-        });
-    }, ORDERABILITY_DEBOUNCE_MS);
-
-    return () => {
-      disposed = true;
-      window.clearTimeout(timer);
-    };
-  }, [isOrderPanelOpen, kisAccountId, orderLimitPrice, orderSide, orderType, selectedInstrument]);
 
   // 매도가능수량은 종목만 있으면 되지만 매도 탭에서만 의미가 있다.
-  useEffect(() => {
-    const instrument = selectedInstrument;
-    if (!instrument || !isOrderPanelOpen || orderSide !== 'sell' || !isOrderableDomesticInstrument(instrument)) {
-      setKisSellability(null);
-      setIsKisSellabilityLoading(false);
-      return;
-    }
 
-    let disposed = false;
-    setIsKisSellabilityLoading(true);
-    const timer = window.setTimeout(() => {
-      fetchKisSellability(instrument.id, kisAccountId ?? undefined)
-        .then((result) => {
-          if (!disposed) setKisSellability(result);
-        })
-        .catch(() => {
-          if (!disposed) setKisSellability(null);
-        })
-        .finally(() => {
-          if (!disposed) setIsKisSellabilityLoading(false);
-        });
-    }, ORDERABILITY_DEBOUNCE_MS);
 
-    return () => {
-      disposed = true;
-      window.clearTimeout(timer);
-    };
-  }, [isOrderPanelOpen, kisAccountId, orderSide, selectedInstrument]);
-
-  /*
-   * 실패를 빈 배열로 바꾸지 않는다.
-   *
-   * 예전에는 `.catch(() => set…([]))`이라 백엔드가 죽으면 화면이
-   * `예약주문이 없습니다` · `실계좌 주문 시도 없음` · `아직 체결되지 않은
-   * 주문이 없습니다`로 바뀌었다. 못 받아온 것과 없는 것은 전혀 다른데
-   * 화면은 후자로 말했다 — 다음 개장일에 나갈 예약주문을 취소된 것으로
-   * 읽을 수 있다. 받아 둔 값은 그대로 두고 오류만 띄운다(체결내역이 쓰는 방식).
-   */
-  const refreshKisOpenOrders = useCallback((): void => {
-    setIsKisOpenOrdersRefreshing(true);
-    fetchKisOpenOrders(kisAccountId ?? undefined)
-      .then((snapshot) => {
-        setKisOpenOrders(snapshot.items);
-        setKisOpenOrdersUnavailable(snapshot.unavailable ?? null);
-        setKisOpenOrdersUpdatedAt(Date.now());
-      })
-      .catch((e) => setError(toErrorMessage(e)))
-      .finally(() => setIsKisOpenOrdersRefreshing(false));
-  }, [kisAccountId]);
-
-  /*
-   * 호가는 주문 패널이 열려 있는 동안, 보고 있는 종목 하나만 받는다.
-   * 종목당 KIS 호출이 1회 더 늘어나므로 관심목록 전체에는 붙이지 않는다.
-   * 3초 간격은 호가가 움직이는 속도와 호출 제한 사이에서 잡은 값이다.
-   */
-  const ORDER_BOOK_REFRESH_MS = 3_000;
-  useEffect(() => {
-    const instrument = selectedInstrument;
-    if (!isOrderPanelOpen || !instrument || !isOrderableDomesticInstrument(instrument)) {
-      setOrderBook(null);
-      setOrderBookError(null);
-      return undefined;
-    }
-    let disposed = false;
-    const load = (): void => {
-      fetchOrderBook(instrument.id)
-        .then((book) => {
-          if (disposed) return;
-          setOrderBook(book);
-          setOrderBookError(null);
-        })
-        .catch((e) => {
-          if (disposed) return;
-          // 받아 둔 호가는 그대로 두고 사유만 띄운다. 빈 호가로 바꾸면 물량이
-          // 없는 것처럼 보인다.
-          setOrderBookError(toErrorMessage(e));
-        });
-    };
-    load();
-    const timer = window.setInterval(load, ORDER_BOOK_REFRESH_MS);
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-    };
-  }, [isOrderPanelOpen, selectedInstrument]);
 
   /*
    * 재무 지표는 하단 독의 재무 탭을 열었을 때만 받는다.
@@ -3180,27 +2757,6 @@ export function App(): JSX.Element {
     };
   }, [activePage, terminalTab, moversDirection]);
 
-  // 미체결 주문은 매매 화면에서 계좌를 바꿀 때마다 다시 받는다.
-  useEffect(() => {
-    if (!isOrderPanelOpen) return;
-    refreshKisOpenOrders();
-  }, [isOrderPanelOpen, refreshKisOpenOrders]);
-
-  const refreshKisReservedOrders = useCallback((): void => {
-    fetchKisReservedOrders(kisAccountId ?? undefined)
-      .then((snapshot) => {
-        setKisReservedOrders(snapshot.items);
-        setKisReservedOrdersUnavailable(snapshot.unavailable ?? null);
-        setKisReservedOrdersUpdatedAt(Date.now());
-      })
-      .catch((e) => setError(toErrorMessage(e)));
-  }, [kisAccountId]);
-
-  // 예약주문은 포트폴리오에서만 쓴다.
-  useEffect(() => {
-    if (activePage !== 'portfolio') return;
-    refreshKisReservedOrders();
-  }, [activePage, refreshKisReservedOrders]);
 
   // 기간별 매매손익은 포트폴리오에서 계좌·구간별로 받는다.
   useEffect(() => {
@@ -3224,12 +2780,12 @@ export function App(): JSX.Element {
   /*
    * 리스크 룰은 서버 DB 조회라 KIS 호출이 없다. 계좌별로 받는다.
    *
-   * 예전엔 포트폴리오 화면에서만 받았다. 그런데 주문 티켓은 종목 화면에 있어서,
-   * 주문을 내려는 자리에서는 룰을 손에 쥐고 있지 않았다 — 그래서 시장가가
-   * 막혀 있는데도 화면이 그 사실을 모른 채 `주문하기`를 열어 뒀다.
+   * 한동안 종목 화면의 주문 티켓에서도 받았다. 2026-09-07에 **화면 주문을
+   * 걷어내면서** 그 자리가 사라졌다 — 주문은 에이전트가 내고 룰은 서버가 본다.
+   * 여기서는 포트폴리오의 「리스크 룰」 카드가 보여 줄 값만 받는다.
    */
   useEffect(() => {
-    if (activePage !== 'portfolio' && !isOrderPanelOpen) return;
+    if (activePage !== 'portfolio') return;
     let disposed = false;
     fetchKisRiskRules(kisAccountId ?? undefined)
       .then((rules) => {
@@ -3247,7 +2803,7 @@ export function App(): JSX.Element {
     return () => {
       disposed = true;
     };
-  }, [activePage, isOrderPanelOpen, kisAccountId]);
+  }, [activePage, kisAccountId]);
 
   /*
    * 탭이 12개라 좁은 폭에서는 가로로 스크롤된다. 스크롤 위치는 0으로 돌아오는데
@@ -3275,11 +2831,11 @@ export function App(): JSX.Element {
       .catch((e) => setError(toErrorMessage(e)));
   }, [kisAccountId]);
 
-  // 주문 로그는 DB 조회라 KIS 호출이 없다. 매매·포트폴리오 양쪽에서 본다.
+  // 주문 로그는 DB 조회라 KIS 호출이 없다. 화면 주문을 없앤 뒤로는 포트폴리오에서만 본다.
   useEffect(() => {
-    if (activePage !== 'portfolio' && !isOrderPanelOpen) return;
+    if (activePage !== 'portfolio') return;
     refreshKisOrderLog();
-  }, [activePage, isOrderPanelOpen, refreshKisOrderLog]);
+  }, [activePage, refreshKisOrderLog]);
 
   /*
    * 실주문 게이트는 서버 설정이라 KIS 호출이 없다.
@@ -4309,207 +3865,8 @@ export function App(): JSX.Element {
   const bottomDockTabLabel = BOTTOM_DOCK_TAB_LABEL[bottomDockTab];
   const bottomDockModeLabel =
     BOTTOM_DOCK_MODE_OPTIONS.find((option) => option.key === bottomDockMode)?.label ?? bottomDockMode;
-  const orderQuantityNumber = Number(orderQuantity);
 
-  /*
-   * 지금 낼 수 있는 최대 수량. 매수는 실계좌 현금 기준, 매도는 보유 기준이다.
-   * 토스증권도 매수 가능 금액과 판매 가능 수량을 따로 주는데, 우리는 그 값을
-   * 받아 놓고 화면에 숫자로만 적어 둬서 몇 주인지는 사람이 계산해야 했다.
-   */
-  const maxOrderQuantity = useMemo(() => {
-    if (orderSide === 'sell') return kisSellability?.sellableQuantity;
-    return kisOrderability?.cashBuyQuantity;
-  }, [kisOrderability, kisSellability, orderSide]);
-  const orderLimitPriceNumber = Number(orderLimitPrice);
-  const orderEstimatedPrice = snapshot?.price;
-  const orderEffectivePrice =
-    orderType === 'limit' && Number.isFinite(orderLimitPriceNumber) && orderLimitPriceNumber > 0
-      ? orderLimitPriceNumber
-      : orderEstimatedPrice;
-  const orderEstimatedNotional =
-    Number.isFinite(orderQuantityNumber) && orderEffectivePrice !== undefined
-      ? orderQuantityNumber * orderEffectivePrice
-      : undefined;
-  /*
-   * 비용은 국내 원화 종목에만 어림한다. 해외주식은 요율 체계가 아예 달라서
-   * 국내 값을 갖다 대면 틀린 숫자를 보여 주게 된다 — 그럴 바엔 안 보여 준다.
-   */
-  const orderCost = useMemo(
-    () =>
-      selectedInstrument && isOrderableDomesticInstrument(selectedInstrument)
-        ? estimateOrderCost(orderEstimatedNotional ?? 0, orderSide, selectedInstrument)
-        : null,
-    [orderEstimatedNotional, orderSide, selectedInstrument],
-  );
-  const orderEffectivePriceKrw = formatConvertedKrw(orderEffectivePrice, selectedInstrument?.currency, usdKrwRate);
-  const orderEstimatedNotionalKrw = formatConvertedKrw(
-    orderEstimatedNotional,
-    selectedInstrument?.currency,
-    usdKrwRate,
-  );
-  // 실계좌 한도는 paper 주문을 막지 않는다. 실주문 게이트를 대비한 참고 경고로만 노출한다.
-  const orderLiveNotices = useMemo(() => {
-    const notices: string[] = [];
-    if (orderSide === 'buy') {
-      if (!kisOrderability?.configured || orderEstimatedNotional === undefined) return notices;
-      if (kisOrderability.cashBuyAmount !== undefined && orderEstimatedNotional > kisOrderability.cashBuyAmount) {
-        /*
-         * 위 칸의 이름(`실계좌 매수가능`)을 그대로 쓴다 — 같은 숫자를
-         * `미수 없는 매수금액`이라 부르고 있어 다른 값처럼 읽혔고, `미수`는
-         * 초보자가 모르는 말이다. 금액은 괄호로 뺀다. 통화에 따라 끝 글자가
-         * 달라져(`원`/`$…`) 조사를 붙이면 틀린다 — 실제로 `49,751원를`였다.
-         */
-        notices.push(
-          `실계좌 매수가능 금액을 초과합니다 (${formatMoney(kisOrderability.cashBuyAmount, kisOrderability.currency)}).`,
-        );
-      }
-      if (kisOrderability.cashBuyQuantity !== undefined && orderQuantityNumber > kisOrderability.cashBuyQuantity) {
-        // 0주일 때 `최대 0주까지 매수할 수 있습니다`가 되어 살 수 있다는 말처럼 읽혔다.
-        notices.push(
-          kisOrderability.cashBuyQuantity > 0
-            ? `실계좌 기준 최대 ${formatNumber(kisOrderability.cashBuyQuantity)}주까지 매수할 수 있습니다.`
-            : '실계좌 예수금으로는 1주도 살 수 없습니다.',
-        );
-      }
-      return notices;
-    }
 
-    if (!kisSellability?.configured) return notices;
-    const sellable = kisSellability.sellableQuantity;
-    if (sellable !== undefined && orderQuantityNumber > sellable) {
-      // 매수 쪽 `최대 0주까지…`와 같은 문제. 0이면 사실만 적지 말고 못 판다고 적는다.
-      notices.push(
-        sellable > 0
-          ? `실계좌 매도가능수량은 ${formatNumber(sellable)}주입니다.`
-          : '실계좌에 보유한 수량이 없어 매도할 수 없습니다.',
-      );
-    }
-    return notices;
-  }, [kisOrderability, kisSellability, orderEstimatedNotional, orderQuantityNumber, orderSide]);
-  /**
-   * 실주문 전송 조건. 서버 게이트와 같은 항목을 프런트에서도 막는다.
-   * paper 주문 확인 체크(`orderAcknowledged`)와는 무관하다.
-   */
-  const liveOrderBlockers = useMemo(() => {
-    const blockers: string[] = [...(liveOrderGate?.blockers ?? [])];
-    if (!liveOrderGate) {
-      blockers.push(
-        liveOrderGateError
-          ? `실주문을 보낼 수 있는지 확인하지 못했습니다. 확인 전에는 주문이 나가지 않습니다 (${liveOrderGateError})`
-          : '실주문을 보낼 수 있는지 확인하는 중입니다.',
-      );
-    }
-    if (!isOrderableDomesticInstrument(selectedInstrument)) blockers.push('국내 주식·ETF·ETN만 주문할 수 있습니다.');
-    if (!Number.isFinite(orderQuantityNumber) || orderQuantityNumber <= 0) blockers.push('수량은 0보다 커야 합니다.');
-    if (orderType === 'limit' && (!Number.isFinite(orderLimitPriceNumber) || orderLimitPriceNumber <= 0)) {
-      blockers.push('지정가 주문은 단가가 필요합니다.');
-    }
-
-    /*
-     * 리스크 룰도 여기서 미리 본다.
-     *
-     * 예전에는 자동매매 패널만 룰을 검사했고 수동 주문 티켓은 보지 않았다.
-     * 그래서 시장가가 막혀 있고 허용 종목이 005930뿐인데도 SK하이닉스 시장가
-     * 주문에 `매수 주문하기`가 열려 있었고, 확인 화면은 `확인하면 그대로
-     * 접수됩니다`라고 말했다. 눌러서 서버가 거절해야 알았다.
-     */
-    blockers.push(
-      ...riskRuleBlockers({
-        rules: riskRules,
-        error: riskRulesError,
-        symbol: selectedInstrument?.providerSymbol,
-        orderType,
-        quantity: orderQuantityNumber,
-        // 시장가는 단가가 없으므로 서버와 같이 현재가로 금액을 어림한다.
-        price: orderType === 'limit' ? orderLimitPriceNumber : (snapshot?.price ?? 0),
-      }),
-    );
-    return blockers;
-  }, [
-    liveOrderGate,
-    liveOrderGateError,
-    orderLimitPriceNumber,
-    orderQuantityNumber,
-    orderType,
-    riskRules,
-    riskRulesError,
-    selectedInstrument,
-    snapshot?.price,
-  ]);
-  const liveOrderCanSubmit = liveOrderBlockers.length === 0 && !isLiveOrderSubmitting;
-
-  /*
-   * 정정·취소가 막힌 사유.
-   *
-   * 게이트만 본다. **리스크 룰은 일부러 보지 않는다** — 서버도 이 경로에서는
-   * checkRiskRules를 부르지 않는다(server.ts의 amend 라우트는 게이트만 본다).
-   * 이유가 있다. 취소는 위험을 줄이는 동작인데 `허용 종목이 아닙니다`로 막으면,
-   * 룰을 좁힌 뒤에 남아 있는 주문을 영영 못 거둔다. 같은 결함처럼 보인다고
-   * 수동 주문·예약주문과 똑같이 맞추면 안 되는 자리다.
-   *
-   * 예전에는 이 버튼들이 게이트가 닫혀 있어도 그냥 눌렸다. 눌러야 403을 들었다.
-   */
-  const amendCancelBlockers = useMemo(() => {
-    const blockers: string[] = [...(liveOrderGate?.blockers ?? [])];
-    if (!liveOrderGate) {
-      blockers.push(
-        liveOrderGateError
-          ? `실주문을 보낼 수 있는지 확인하지 못했습니다 (${liveOrderGateError})`
-          : '실주문을 보낼 수 있는지 확인하는 중입니다.',
-      );
-    }
-    return blockers;
-  }, [liveOrderGate, liveOrderGateError]);
-  const amendCancelBlockedReason = amendCancelBlockers.join('\n') || undefined;
-
-  /** 예약주문 등록 버튼이 잠긴 이유. 화면에 그대로 보여준다. */
-  const reservedOrderBlockers = useMemo(() => {
-    /*
-     * 예약주문도 실주문이다. 그런데 여기는 게이트도 리스크 룰도 보지 않고
-     * 수량·단가만 봤다 — 서버는 둘 다 검사하는데(server.ts의 예약주문 등록
-     * 라우트가 evaluateLiveOrderGate와 checkRiskRules를 부른다) 화면만 몰랐다.
-     * 수동 주문 티켓과 같은 결함이 한 자리 더 있었다.
-     *
-     * 거래 시간은 빼고 본다. 예약주문은 장 밖에서 내는 것이라 서버도
-     * `skipSessionCheck: true`로 부른다.
-     */
-    const blockers: string[] = [...(liveOrderGate?.blockers ?? [])];
-    if (!liveOrderGate) {
-      blockers.push(
-        liveOrderGateError
-          ? `실주문을 보낼 수 있는지 확인하지 못했습니다 (${liveOrderGateError})`
-          : '실주문을 보낼 수 있는지 확인하는 중입니다.',
-      );
-    }
-    if (!selectedInstrument) blockers.push('차트에서 종목을 먼저 선택하세요.');
-    else if (!isOrderableDomesticInstrument(selectedInstrument)) {
-      blockers.push('국내 주식·ETF·ETN만 예약주문할 수 있습니다.');
-    }
-    const quantity = Number(reservedQuantity);
-    const price = Number(reservedPrice);
-    if (!Number.isFinite(quantity) || quantity <= 0) blockers.push('수량은 0보다 커야 합니다.');
-    if (!Number.isFinite(price) || price <= 0) blockers.push('지정가를 입력하세요.');
-    blockers.push(
-      ...riskRuleBlockers({
-        rules: riskRules,
-        error: riskRulesError,
-        symbol: selectedInstrument?.providerSymbol,
-        // 예약주문은 지정가만 받는다.
-        orderType: 'limit',
-        quantity,
-        price,
-      }),
-    );
-    return blockers;
-  }, [
-    liveOrderGate,
-    liveOrderGateError,
-    reservedPrice,
-    reservedQuantity,
-    riskRules,
-    riskRulesError,
-    selectedInstrument,
-  ]);
   const kisAccountPositionCount = kisAccountSnapshot?.positions.length ?? 0;
   const kisExecutionCount = kisExecutionSnapshot?.executions.length ?? 0;
   const kisOpenExecutionCount =
@@ -4621,40 +3978,6 @@ export function App(): JSX.Element {
     setShowComparePanel(false);
   }
 
-  /**
-   * 실계좌 주문 전송. paper 주문과 완전히 다른 경로다.
-   * 게이트는 서버가 최종 판정하고, 여기서는 같은 조건을 먼저 걸러 오발주를 줄인다.
-   */
-  async function submitLiveOrder(): Promise<void> {
-    if (!selectedInstrument || !kisAccountId || !liveOrderCanSubmit) return;
-    setIsLiveOrderSubmitting(true);
-    setLiveOrderMessage(null);
-    try {
-      const result = await placeKisLiveOrder({
-        accountId: kisAccountId,
-        instrumentId: selectedInstrument.id,
-        side: orderSide,
-        orderType,
-        quantity: orderQuantityNumber,
-        limitPrice: orderType === 'limit' ? orderLimitPriceNumber : undefined,
-        clientOrderId: liveOrderKey ?? undefined,
-      });
-      setLiveOrderMessage(
-        `접수됨 · 주문번호 ${result.orderNo || '-'} (지점 ${result.orderBranchNo || '-'}) · ${result.message}`,
-      );
-      // 접수 직후 확인 단계를 닫고 키도 버린다. 다음 주문은 새 키로 나간다.
-      setLiveOrderConfirming(false);
-      setLiveOrderKey(null);
-      refreshKisOpenOrders();
-      refreshKisOrderLog();
-      refreshKisAccountSnapshot();
-      refreshKisExecutions();
-    } catch (e) {
-      setLiveOrderMessage(String(e instanceof Error ? e.message : e));
-    } finally {
-      setIsLiveOrderSubmitting(false);
-    }
-  }
 
   /*
    * 자동매매가 지금 설정으로 실제로 주문을 낼 수 있는지.
@@ -4700,94 +4023,8 @@ export function App(): JSX.Element {
     }
   }
 
-  async function submitReservedOrder(): Promise<void> {
-    if (!selectedInstrument) return;
-    const quantity = Number(reservedQuantity);
-    const limitPrice = Number(reservedPrice);
-    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(limitPrice) || limitPrice <= 0) {
-      setReservedCancelMessage('수량과 지정가를 확인하세요.');
-      return;
-    }
 
-    setIsReservedCancelling(true);
-    setReservedCancelMessage(null);
-    try {
-      const result = await placeKisReservedOrder({
-        accountId: kisAccountId ?? '',
-        instrumentId: selectedInstrument.id,
-        side: reservedSide,
-        quantity,
-        limitPrice,
-      });
-      // 목록 조회가 못 잡아도 취소하려면 순번이 필요하다. 응답값을 화면에 남긴다.
-      setReservedCancelMessage(
-        `등록됨 · 예약주문순번 ${result.reservationSeq || '(응답에 없음)'} · ${result.message}` +
-          ' — 이 순번을 메모해 두세요. 취소에 필요합니다.',
-      );
-      refreshKisReservedOrders();
-      refreshKisOrderLog();
-    } catch (e) {
-      setReservedCancelMessage(String(e instanceof Error ? e.message : e));
-    } finally {
-      setIsReservedCancelling(false);
-    }
-  }
 
-  async function cancelReservedOrder(order: BrokerReservedOrder): Promise<void> {
-    setIsReservedCancelling(true);
-    setReservedCancelMessage(null);
-    try {
-      const result = await cancelKisReservedOrder({
-        accountId: kisAccountId ?? '',
-        reservationSeq: order.reservationSeq,
-        reservationOrderDate: order.orderDate,
-      });
-      setReservedCancelMessage(
-        result.processed
-          ? `취소됨 · ${result.message}`
-          : `접수됐지만 정상처리 여부가 확인되지 않았습니다 · ${result.message}`,
-      );
-      refreshKisReservedOrders();
-      refreshKisOrderLog();
-    } catch (e) {
-      setReservedCancelMessage(
-        `${String(e instanceof Error ? e.message : e)} — 실패하면 KIS 앱에서 직접 취소하세요.`,
-      );
-    } finally {
-      setIsReservedCancelling(false);
-    }
-  }
-
-  async function submitAmendOrCancel(order: BrokerAmendableOrder, action: 'amend' | 'cancel'): Promise<void> {
-    const newPrice = Number(amendPrice);
-    if (action === 'amend' && (!Number.isFinite(newPrice) || newPrice <= 0)) {
-      setLiveOrderMessage('정정할 새 단가를 입력하세요.');
-      return;
-    }
-
-    setIsLiveOrderSubmitting(true);
-    setLiveOrderMessage(null);
-    try {
-      const result = await amendKisLiveOrder({
-        accountId: kisAccountId ?? '',
-        action,
-        orderNo: order.orderNo,
-        orderBranchNo: order.orderBranchNo,
-        orderTypeCode: order.orderTypeCode,
-        limitPrice: action === 'amend' ? newPrice : undefined,
-        quantityAll: true,
-      });
-      setLiveOrderMessage(`${action === 'amend' ? '정정' : '취소'} 접수됨 · ${result.message}`);
-      setAmendingOrderId(null);
-      setAmendPrice('');
-      refreshKisOpenOrders();
-      refreshKisOrderLog();
-    } catch (e) {
-      setLiveOrderMessage(String(e instanceof Error ? e.message : e));
-    } finally {
-      setIsLiveOrderSubmitting(false);
-    }
-  }
 
 
   return (
@@ -6743,6 +5980,12 @@ export function App(): JSX.Element {
                 아무도 몰랐고, 그 사이 5거래일이 통째로 빠졌다.
               */}
               <Automation />
+              {/*
+                ★ **에이전트 데스크를 잔고보다 위에 둔다** (2026-09-07). 스위치가
+                "돌고 있나"에 답하면, 그다음 질문은 "그래서 무엇을 정했나"다.
+                잔고는 그 결과이므로 뒤에 온다.
+              */}
+              <AgentDesk accountId={kisAccountId} />
               <Dashboard accountId={kisAccountId} />
             </>
           )}
@@ -7291,185 +6534,6 @@ export function App(): JSX.Element {
                   </div>
                 )}
               </section>
-
-              <section className="portfolio-card portfolio-card--wide" aria-label="KIS 실계좌 예약주문">
-                <div className="portfolio-card__header">
-                  <div>
-                    <strong>실계좌 예약주문</strong>
-                    <span>
-                      {kisReservedOrdersUnavailable !== null
-                        ? '조회할 수 없음'
-                        : `${kisReservedOrders.length}건 · 최근 30일 · 취소하지 않으면 다음 개장일에 주문이 나갑니다`}
-                      {kisReservedOrdersUpdatedAt !== null && ` · 갱신 ${formatClock(kisReservedOrdersUpdatedAt)}`}
-                    </span>
-                  </div>
-                  <div className="portfolio-card__actions">
-                    <button
-                      aria-label="예약주문 새로고침"
-                      className="portfolio-card__refresh"
-                      onClick={refreshKisReservedOrders}
-                      type="button"
-                    >
-                      새로고침
-                    </button>
-                  </div>
-                </div>
-                {!isOrderableDomesticInstrument(selectedInstrument) && (
-                  <UnorderableInstrumentNotice action="예약주문" where="종목 화면의 관심·탐색 탭" />
-                )}
-                <div className="risk-rules">
-                  <label className="risk-rules__wide">
-                    <span>종목 (차트에서 선택한 종목)</span>
-                    <input
-                      readOnly
-                      type="text"
-                      value={
-                        !selectedInstrument
-                          ? '차트에서 종목을 먼저 선택하세요'
-                          : isOrderableDomesticInstrument(selectedInstrument)
-                            ? `${selectedInstrument.symbol} · ${selectedInstrument.name}`
-                            : `${selectedInstrument.name} — 주문 대상이 아닙니다 (국내 주식·ETF·ETN만)`
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>방향</span>
-                    <select onChange={(event) => setReservedSide(event.target.value as OrderSide)} value={reservedSide}>
-                      <option value="buy">매수</option>
-                      <option value="sell">매도</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>수량</span>
-                    <input
-                      min="1"
-                      onChange={(event) => setReservedQuantity(event.target.value)}
-                      step="1"
-                      type="number"
-                      value={reservedQuantity}
-                    />
-                  </label>
-                  <label>
-                    <span>지정가 (예약주문은 지정가만)</span>
-                    <input
-                      min="1"
-                      onChange={(event) => setReservedPrice(event.target.value)}
-                      placeholder={snapshot ? formatPrice(snapshot.price) : '현재가 대기'}
-                      step="1"
-                      type="number"
-                      value={reservedPrice}
-                    />
-                  </label>
-                  <label className="risk-rules__toggle">
-                    {/*
-                      매수·매도처럼 한 번 확인받는다. 예전에는 누르는 즉시
-                      전송돼서, 단가를 한 자리 잘못 치면 그대로 나갔다.
-                    */}
-                    <button
-                      className="live-order__submit"
-                      /*
-                       * 차단 사유가 있으면 잠근다. 예전에는 종목 조건만 봐서, 지정가가
-                       * 비어 있어도 눌렸다. submitReservedOrder가 막아 주긴 했지만
-                       * 눌러 봐야 아래 이미 적힌 말을 다시 들었다. 주문 티켓은 같은
-                       * 상황에서 잠기는데 여기만 달랐다.
-                       */
-                      disabled={reservedOrderBlockers.length > 0 || isReservedCancelling}
-                      onClick={() => setReservedConfirming(true)}
-                      title={
-                        reservedOrderBlockers.length > 0 ? reservedOrderBlockers.join('\n') : undefined
-                      }
-                      type="button"
-                    >
-                      {isReservedCancelling ? '처리 중' : '예약주문 등록'}
-                    </button>
-                  </label>
-                </div>
-                {reservedConfirming && (
-                  <div className="live-order__confirm live-order__confirm--card">
-                    <p>
-                      <strong>{selectedInstrument?.name ?? '-'}</strong>
-                      <span>
-                        {reservedSide === 'buy' ? '매수' : '매도'} {formatNumber(Number(reservedQuantity))}주 ·
-                        {' 지정가 '}{formatMoney(Number(reservedPrice), selectedInstrument?.currency)}
-                      </span>
-                      <em>
-                        {kisAccounts.find((account) => account.id === kisAccountId)?.label ?? kisAccountId}
-                        {' · 다음 개장일에 나갑니다'}
-                      </em>
-                    </p>
-                    <div className="live-order__confirm-actions">
-                      <button onClick={() => setReservedConfirming(false)} type="button">
-                        취소
-                      </button>
-                      <button
-                        className="live-order__submit"
-                        disabled={reservedOrderBlockers.length > 0 || isReservedCancelling}
-                        onClick={() => {
-                          setReservedConfirming(false);
-                          void submitReservedOrder();
-                        }}
-                        type="button"
-                      >
-                        {isReservedCancelling ? '전송 중' : '예약주문 확인'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {/* 버튼이 왜 잠겼는지 보이지 않으면 사용자가 원인을 추측해야 한다. */}
-                {reservedOrderBlockers.length > 0 && (
-                  <div className="live-order__messages live-order__messages--card">
-                    {reservedOrderBlockers.map((blocker) => (
-                      <em key={blocker}>{blocker}</em>
-                    ))}
-                  </div>
-                )}
-                {/*
-                  **없는 것과 못 본 것을 가른다.** 모의 서버에는 이 조회 TR이
-                  아예 없어서(`EGW02006`) 목록이 늘 비는데, 그것을 `예약주문이
-                  없습니다`로 적으면 "확인했더니 없더라"로 읽힌다 — 확인 자체를
-                  못 했다. 예전에는 502가 화면 위 빨간 배너로 올라왔다.
-                */}
-                {kisReservedOrdersUnavailable !== null ? (
-                  <div className="portfolio-table__empty">{kisReservedOrdersUnavailable}</div>
-                ) : kisReservedOrders.length === 0 ? (
-                  <div className="portfolio-table__empty">예약주문이 없습니다 · 아래에서 등록하면 다음 개장일에 주문이 나갑니다</div>
-                ) : (
-                  <div className="portfolio-table portfolio-table--reserved">
-                    <div className="portfolio-table__head">
-                      <span>주문일자</span>
-                      <span>종목</span>
-                      <span>방향</span>
-                      <span>수량</span>
-                      <span>단가</span>
-                      <span>상태·취소</span>
-                    </div>
-                    <CollapsibleRows rows={kisReservedOrders.map((order) => (
-                      <div className="portfolio-table__row" key={order.id}>
-                        <span>{formatBrokerOrderTime(order.orderDate)}</span>
-                        <strong>{order.name || order.symbol}</strong>
-                        <span>{order.side === 'buy' ? '매수' : '매도'}</span>
-                        <span>{formatNumber(order.orderQuantity)}</span>
-                        <span>{formatMoney(order.orderPrice, order.currency)}</span>
-                        <span className="live-order__actions">
-                          <em data-status={order.canceled ? 'canceled' : 'open'}>
-                            {order.canceled ? '취소됨' : order.statusLabel || '예약'}
-                          </em>
-                          {!order.canceled && (
-                            <button
-                              disabled={isReservedCancelling}
-                              onClick={() => void cancelReservedOrder(order)}
-                              type="button"
-                            >
-                              취소
-                            </button>
-                          )}
-                        </span>
-                      </div>
-                    ))} />
-                  </div>
-                )}
-                {reservedCancelMessage && <p className="live-order__result">{reservedCancelMessage}</p>}
-              </section>
             </section>
           )}
         </main>
@@ -7485,13 +6549,9 @@ export function App(): JSX.Element {
             <div>
               <strong>{SIDE_PANEL_TITLE[sidePanelTab]}</strong>
               <span>
-                {sidePanelTab === 'order'
-                  ? selectedInstrument
-                    ? `${selectedInstrument.symbol} · ${selectedInstrument.name}`
-                    : '종목 미선택'
-                  : sidePanelTab === 'watch'
-                    ? `${activeSavedWatchlist?.name ?? '기본'} · ${watchlist.length}`
-                    : `${visibleCategoryItems.length}개 후보`}
+                {sidePanelTab === 'watch'
+                  ? `${activeSavedWatchlist?.name ?? '기본'} · ${watchlist.length}`
+                  : `${visibleCategoryItems.length}개 후보`}
               </span>
             </div>
             <button
@@ -7517,511 +6577,6 @@ export function App(): JSX.Element {
               </button>
             ))}
           </div>
-          {sidePanelTab === 'order' && <section className="order-ticket" aria-label="매매 주문 티켓">
-            {/*
-              예전엔 여기에 `주문 티켓`과 종목명이 또 있었다. 패널 헤더가 이미
-              같은 걸 보여주고 있어 좁은 폭에서 자리만 차지하다 세로로 눌렸다.
-              계좌 선택만 남긴다.
-            */}
-            {/*
-              계좌가 두 종류다. KIS에 연결한 실계좌와, 앱 안에만 있는 연습용
-              모의계좌. 예전엔 이 둘을 한 줄에 붙여 `KIS 21  KIS 23  모의계좌`로
-              보여서 KIS 계좌가 모의계좌인 것처럼 읽혔다. 어느 계좌로 나가는
-              주문인지가 이 화면에서 가장 중요하므로 줄을 갈라 이름표를 붙인다.
-            */}
-            <div className="order-ticket__header">
-              <div className="order-ticket__account">
-                <span className="order-ticket__account-label">실계좌</span>
-                <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
-              </div>
-            </div>
-            {/*
-              종목 자체가 주문 대상이 아니면 폼을 채우기 전에 알려야 한다.
-              이전에는 이 사실이 `국내 주식·ETF·ETN만 주문할 수 있습니다`라는
-              10px 잔글씨로 버튼 74px 아래에 있었다. 그 위로는 수량도 입력되고
-              `예상 주문액`까지 계산돼서, 다 채우고 눌러 봐야 안 되는 걸 알았다.
-              다른 차단 사유(게이트, 수량 0)는 고치면 되는 것이지만 이건 종목을
-              바꾸는 수밖에 없어서, 할 일까지 함께 적는다.
-            */}
-            {!isOrderableDomesticInstrument(selectedInstrument) && (
-              <UnorderableInstrumentNotice action="주문" where="위 관심·탐색 탭" />
-            )}
-            <OrderBookPanel
-              book={orderBook}
-              error={orderBookError}
-              nowMs={nowMs}
-              onPickPrice={(price) => {
-                setOrderType('limit');
-                setOrderLimitPrice(String(price));
-              }}
-              visible={isOrderableDomesticInstrument(selectedInstrument)}
-            />
-            <div className="order-ticket__body">
-              <div className="order-ticket__controls">
-                <div className="order-ticket__segments" role="tablist" aria-label="매수 매도">
-                  <button
-                    aria-selected={orderSide === 'buy'}
-                    data-side="buy"
-                    onClick={() => setOrderSide('buy')}
-                    role="tab"
-                    type="button"
-                  >
-                    매수
-                  </button>
-                  <button
-                    aria-selected={orderSide === 'sell'}
-                    data-side="sell"
-                    onClick={() => setOrderSide('sell')}
-                    role="tab"
-                    type="button"
-                  >
-                    매도
-                  </button>
-                </div>
-                <select
-                  aria-label="주문 유형"
-                  onChange={(event) => setOrderType(event.target.value as OrderType)}
-                  value={orderType}
-                >
-                  {/* option 안에는 툴팁을 붙일 수 없어 선택지 글 자체로 뜻을 밝힌다. */}
-                  <option value="market">시장가 — 지금 값에 바로</option>
-                  <option value="limit">지정가 — 값을 정해서</option>
-                </select>
-                <select
-                  aria-label="주문 유효기간"
-                  onChange={(event) => setOrderTimeInForce(event.target.value as OrderTimeInForce)}
-                  value={orderTimeInForce}
-                >
-                  <option value="day">오늘 안에</option>
-                  <option value="ioc">즉시, 안 되면 취소</option>
-                </select>
-                {/*
-                  토스증권 주문 API도 `cashBuyingPower`(현금 매수 가능 금액)와
-                  `sellableQuantity`(판매 가능 수량)를 따로 준다. 우리도 같은 값을
-                  받고 있으면서 화면에는 숫자로만 적어 뒀는데, 5만원으로 몇 주를
-                  살 수 있는지 사람이 나눗셈해야 했다. 한 번에 채워 준다.
-                */}
-                <label className="order-ticket__quantity">
-                  <span>수량</span>
-                  <div>
-                    <input
-                      min="0"
-                      onChange={(event) => setOrderQuantity(event.target.value)}
-                      step="1"
-                      type="number"
-                      value={orderQuantity}
-                    />
-                    <button
-                      disabled={maxOrderQuantity === undefined || maxOrderQuantity <= 0}
-                      onClick={() => setOrderQuantity(String(maxOrderQuantity ?? 0))}
-                      title={
-                        maxOrderQuantity === undefined
-                          ? '가능 수량을 조회하지 못했습니다'
-                          : maxOrderQuantity <= 0
-                            ? orderSide === 'buy'
-                              ? '예수금으로 한 주도 살 수 없습니다'
-                              : '팔 수 있는 수량이 없습니다'
-                            : `${formatNumber(maxOrderQuantity)}주`
-                      }
-                      type="button"
-                    >
-                      최대
-                    </button>
-                  </div>
-                </label>
-                <label>
-                  <span><Term>지정가</Term></span>
-                  <input
-                    disabled={orderType !== 'limit'}
-                    min="0"
-                    onChange={(event) => setOrderLimitPrice(event.target.value)}
-                    placeholder={snapshot ? formatPrice(snapshot.price) : '현재가 대기'}
-                    step="1"
-                    type="number"
-                    value={orderLimitPrice}
-                  />
-                </label>
-              </div>
-              <div className="order-ticket__summary">
-                <div>
-                  <span>예상 단가</span>
-                  <strong>{formatMoney(orderEffectivePrice, selectedInstrument?.currency)}</strong>
-                  {orderEffectivePriceKrw && <small>{orderEffectivePriceKrw}</small>}
-                </div>
-                <div>
-                  <span>예상 주문액</span>
-                  <strong>{formatMoney(orderEstimatedNotional, selectedInstrument?.currency)}</strong>
-                  {orderEstimatedNotionalKrw && <small>{orderEstimatedNotionalKrw}</small>}
-                </div>
-                {/*
-                  비용을 빼놓으면 총액만 보고 수수료·세금을 0으로 여기게 된다.
-                  매도는 특히 커서 증권거래세가 수수료의 열 배가 넘는다.
-                  요율·세율은 확인된 값이 아니라 어림이라고 함께 적는다.
-                */}
-                {orderCost && (
-                  <div className="order-ticket__cost">
-                    <span>예상 비용 (어림)</span>
-                    <strong>{formatMoney(Math.round(orderCost.total), selectedInstrument?.currency)}</strong>
-                    <small>
-                      수수료 {formatNumber(Math.round(orderCost.commission))}
-                      {' + 유관기관 '}{formatNumber(Math.round(orderCost.institutionFee))}
-                      {orderTaxNote(orderSide, orderCost)}
-                    </small>
-                    <small>
-                      {orderSide === 'buy' ? '내야 할 돈 약 ' : '받을 돈 약 '}
-                      {formatMoney(Math.round(orderCost.settlement), selectedInstrument?.currency)}
-                    </small>
-                    <em>
-                      확인된 요율이 아닙니다 — 수수료 {(KIS_COMMISSION_RATE_ASSUMPTION * 100).toFixed(3)}%
-                      {' · 유관기관 '}{(KR_INSTITUTION_FEE_RATE_ASSUMPTION * 100).toFixed(3)}%
-                      {orderSide === 'sell'
-                        && ` · 거래세 ${(orderCost.taxRate * 100).toFixed(3)}%`
-                          + (orderCost.taxRate === 0 ? '(ETF는 면제)' : '')}
-                      로 잡은 값이라 실제 청구액과 다를 수 있습니다.
-                    </em>
-                  </div>
-                )}
-                <div data-account="live">
-                  <span>{orderSide === 'buy' ? '실계좌 매수가능' : '실계좌 매도가능'}</span>
-                  {orderSide === 'buy' ? (
-                    <>
-                      <strong>
-                        {isKisOrderabilityLoading
-                          ? '조회 중'
-                          : kisOrderability?.configured
-                            ? formatMoney(kisOrderability.cashBuyAmount, kisOrderability.currency)
-                            : '-'}
-                      </strong>
-                      {kisOrderability?.configured && kisOrderability.cashBuyQuantity !== undefined && (
-                        <small>최대 {formatNumber(kisOrderability.cashBuyQuantity)}주</small>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <strong>
-                        {isKisSellabilityLoading
-                          ? '조회 중'
-                          : kisSellability?.configured
-                            ? `${formatNumber(kisSellability.sellableQuantity)}주`
-                            : '-'}
-                      </strong>
-                      {kisSellability?.configured && kisSellability.holdingQuantity !== undefined && (
-                        <small>보유 {formatNumber(kisSellability.holdingQuantity)}주</small>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-{/*
-              위 상자에서 수량·가격을 넣는데 전송 버튼은 `실계좌 주문`이라는 다른
-              제목의 상자에 있었다. 모의계좌를 걷어낼 때 남은 자국인데, 폼과 버튼이
-              갈라져 있으니 어디서 주문이 나가는지 알기 어려웠다. 한 상자로 합치고
-              제목 대신 어디로 나가는 주문인지만 적는다.
-            */}
-            <div className="live-order" aria-label="주문 전송">
-              <div className="live-order__header">
-                <strong>이 주문은 실계좌로 나갑니다</strong>
-                <em data-open={liveOrderGate?.enabled ? 'true' : 'false'}>
-                  {liveOrderGate ? (liveOrderGate.enabled ? '주문 가능' : '주문 잠김') : gateUnknownLabel}
-                </em>
-                <span>{liveOrderGate?.isProdEnv ? '실전 서버' : '모의 서버'}</span>
-              </div>
-              {/*
-                예전엔 `실주문 전송`을 그대로 받아치는 문구 입력이 있었다. 클라이언트가
-                아는 상수를 클라이언트가 다시 적는 거라 오발주를 막는 힘은 없었고,
-                증권사 화면에서 볼 수 없는 모양이었다. 실제 주문 화면이 하는 대로
-                주문 내용을 보여주고 한 번 확인받는다.
-              */}
-              <div className="live-order__body">
-                {liveOrderConfirming ? (
-                  <div className="live-order__confirm">
-                    <p>
-                      <strong>{selectedInstrument?.name ?? '-'}</strong>
-                      <span>
-                        {formatNumber(orderQuantityNumber)}주 ·{' '}
-                        {orderType === 'market'
-                          ? '시장가'
-                          : `지정가 ${formatCurrencyPrice(orderLimitPriceNumber, selectedCurrency)}`}
-                      </span>
-                      {/* 주문이 실제로 나가는 계좌를 적는다. */}
-                      <em>{kisAccounts.find((account) => account.id === kisAccountId)?.label ?? kisAccountId}</em>
-                    </p>
-                    <div className="live-order__confirm-actions">
-                      <button
-                        onClick={() => {
-                          setLiveOrderConfirming(false);
-                          setLiveOrderKey(null);
-                        }}
-                        type="button"
-                      >
-                        취소
-                      </button>
-                      <button
-                        className="live-order__submit"
-                        data-side={orderSide}
-                        disabled={!liveOrderCanSubmit}
-                        onClick={() => void submitLiveOrder()}
-                        type="button"
-                      >
-                        {isLiveOrderSubmitting ? '전송 중' : '주문 확인'}
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    className="live-order__submit"
-                    data-side={orderSide}
-                    disabled={liveOrderBlockers.length > 0}
-                    onClick={() => {
-                      setLiveOrderKey(crypto.randomUUID());
-                      setLiveOrderConfirming(true);
-                    }}
-                    /* 잠긴 버튼은 이유를 손에 쥐여준다. 눌리지 않는 이유가 화면 어딘가에만
-                       적혀 있으면 버튼과 설명을 연결짓지 못한다. */
-                    title={liveOrderBlockers.length > 0 ? liveOrderBlockers.join('\n') : undefined}
-                    type="button"
-                  >
-                    {/*
-                      위 탭에도 `매수`/`매도`가 있어 같은 말이 한 패널에 두 번
-                      나왔다. 위는 방향을 고르는 것이고 여기는 주문을 내는 것이라
-                      동사를 붙여 구분한다.
-                    */}
-                    {orderSide === 'buy' ? '매수 주문하기' : '매도 주문하기'}
-                  </button>
-                )}
-              </div>
-              <div className="live-order__messages">
-                {liveOrderBlockers.length === 0 ? (
-                  <em data-tone="warn">실계좌 주문입니다. 확인하면 그대로 접수됩니다.</em>
-                ) : (
-                  liveOrderBlockers.map((blocker) => <em key={blocker}>{blocker}</em>)
-                )}
-                {/*
-                  미수 없는 매수금액·매도가능수량 안내. 주문을 막지는 않는다 —
-                  미수를 쓰면 넘겨서도 주문할 수 있어서 차단 조건으로 쓰면 틀린다.
-                  예전엔 연습 주문 쪽에 붙어 있었는데 실계좌 제약이라 여기로 옮겼다.
-                */}
-                {orderLiveNotices.map((notice) => (
-                  <em data-tone="live" key={notice}>
-                    {notice}
-                  </em>
-                ))}
-              </div>
-              {liveOrderMessage && <p className="live-order__result">{liveOrderMessage}</p>}
-            </div>
-
-            <div className="live-order__open" aria-label="실시간 주문·체결 통보">
-              <div className="live-order__header">
-                <strong>주문 진행 알림</strong>
-                <span>
-                  {stream.orderNotices.length > 0
-                    ? `${stream.orderNotices.length}건 · 낸 주문이 접수·체결되는 과정이 실시간으로 들어옵니다`
-                    : '낸 주문이 접수·체결되는 과정이 여기에 실시간으로 들어옵니다 (HTS ID 설정 필요)'}
-                </span>
-              </div>
-              {stream.orderNotices.length === 0 ? (
-                <div className="portfolio-table__empty">받은 통보가 없습니다 · 주문을 내면 접수·체결이 여기에 실시간으로 쌓입니다</div>
-              ) : (
-                <div className="portfolio-table portfolio-table--notices">
-                  <div className="portfolio-table__head">
-                    <span>시각</span>
-                    <span>종목</span>
-                    <span>구분</span>
-                    <span>수량·단가</span>
-                    <span>주문번호</span>
-                    <span>상태</span>
-                  </div>
-                  {/* 헤더가 `N건`이라고 세어 놓고 20건만 그리면 숫자와 화면이 어긋난다. */}
-                  <CollapsibleRows
-                    moreLabel={(hidden) => `이전 통보 ${hidden}건 더 보기`}
-                    rows={stream.orderNotices.map((notice) => (
-                      <div className="portfolio-table__row" key={`${notice.orderNo}-${notice.receivedAt}`}>
-                        <span>{formatBrokerClock(notice.time) ?? formatClock(notice.receivedAt)}</span>
-                        <strong>{notice.name || notice.symbol}</strong>
-                        <span>{notice.side === 'buy' ? '매수' : '매도'}</span>
-                        <span>
-                          {formatNumber(notice.quantity)}주 · {formatMoney(notice.price)}
-                        </span>
-                        <span>{notice.orderNo}</span>
-                        <em data-status={notice.rejected ? 'rejected' : notice.kind === 'filled' ? 'filled' : 'open'}>
-                          {notice.rejected ? '거부' : notice.kind === 'filled' ? '체결' : '접수'}
-                        </em>
-                      </div>
-                    ))}
-                  />
-                </div>
-              )}
-            </div>
-
-            <div className="live-order__open" aria-label="실계좌 미체결 주문">
-              <div className="live-order__header">
-                {/* `안 팔린`이라고 적으면 매수 주문이 빠진다. 미체결은 사고파는 양쪽 다 해당한다. */}
-                <strong>체결을 기다리는 주문</strong>
-                <span>
-                  {kisOpenOrdersUnavailable !== null
-                    ? '조회할 수 없음'
-                    : `${kisOpenOrders.length}건 · 값을 고치거나 취소할 수 있습니다`}
-                  {kisOpenOrdersUpdatedAt !== null && ` · 갱신 ${formatClock(kisOpenOrdersUpdatedAt)}`}
-                </span>
-                <button
-                  aria-label={isKisOpenOrdersRefreshing ? '미체결 주문 조회 중' : '미체결 주문 새로고침'}
-                  disabled={isKisOpenOrdersRefreshing}
-                  onClick={refreshKisOpenOrders}
-                  type="button"
-                >
-                  {isKisOpenOrdersRefreshing ? '조회 중' : '새로고침'}
-                </button>
-              </div>
-              {/*
-                정정·취소가 왜 잠겼는지 화면에 적는다. 버튼 title만으로는 마우스를
-                올려야 보이고, 키보드로 오면 영영 못 본다.
-              */}
-              {kisOpenOrders.length > 0 && amendCancelBlockers.length > 0 && (
-                <div className="live-order__messages live-order__messages--card">
-                  {amendCancelBlockers.map((blocker) => (
-                    <em key={blocker}>{blocker}</em>
-                  ))}
-                </div>
-              )}
-              {/* 위와 같은 이유. 이 조회도 모의 서버에 없다. */}
-              {kisOpenOrdersUnavailable !== null ? (
-                <div className="portfolio-table__empty">{kisOpenOrdersUnavailable}</div>
-              ) : kisOpenOrders.length === 0 ? (
-                <div className="portfolio-table__empty">아직 체결되지 않은 주문이 없습니다 · 지정가 주문을 내면 여기에서 값을 고치거나 취소할 수 있습니다</div>
-              ) : (
-                <div className="portfolio-table portfolio-table--open-orders">
-                  <div className="portfolio-table__head">
-                    <span>주문번호</span>
-                    <span>종목</span>
-                    <span>구분</span>
-                    <span>가능/주문</span>
-                    <span>주문단가</span>
-                    <span>정정·취소</span>
-                  </div>
-                  {kisOpenOrders.map((order) => (
-                    <div className="portfolio-table__row" key={order.id}>
-                      <span>{order.orderNo}</span>
-                      <strong>{order.name || order.symbol}</strong>
-                      <span>
-                        {order.side === 'buy' ? '매수' : '매도'}
-                        {order.orderTypeLabel ? ` · ${order.orderTypeLabel}` : ''}
-                      </span>
-                      <span>
-                        {formatNumber(order.amendableQuantity)} / {formatNumber(order.orderQuantity)}
-                      </span>
-                      <span>{formatMoney(order.orderPrice, order.currency)}</span>
-                      <span className="live-order__actions">
-                        {amendingOrderId === order.id ? (
-                          <>
-                            <input
-                              aria-label="정정 단가"
-                              min="0"
-                              onChange={(event) => setAmendPrice(event.target.value)}
-                              placeholder="새 단가"
-                              step="1"
-                              type="number"
-                              value={amendPrice}
-                            />
-                            {/*
-                              바로 보내지 않고 무엇이 어떻게 바뀌는지 한 번
-                              보여준다. 단가를 한 자리 잘못 치면 그대로 나갔다.
-                            */}
-                            {amendConfirmKey === `${order.id}:amend` ? (
-                              <>
-                                <em className="live-order__inline-confirm">
-                                  {formatMoney(order.orderPrice, order.currency)} →{' '}
-                                  {formatMoney(Number(amendPrice), order.currency)}
-                                </em>
-                                <button
-                                  className="live-order__submit"
-                                  disabled={isLiveOrderSubmitting || amendCancelBlockers.length > 0}
-                                  onClick={() => {
-                                    setAmendConfirmKey(null);
-                                    void submitAmendOrCancel(order, 'amend');
-                                  }}
-                                  type="button"
-                                >
-                                  정정 확인
-                                </button>
-                                <button onClick={() => setAmendConfirmKey(null)} type="button">
-                                  아니오
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <button
-                                  disabled={isLiveOrderSubmitting || amendCancelBlockers.length > 0}
-                                  onClick={() => setAmendConfirmKey(`${order.id}:amend`)}
-                                  title={amendCancelBlockedReason}
-                                  type="button"
-                                >
-                                  확정
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    setAmendingOrderId(null);
-                                    setAmendConfirmKey(null);
-                                  }}
-                                  type="button"
-                                >
-                                  닫기
-                                </button>
-                              </>
-                            )}
-                          </>
-                        ) : amendConfirmKey === `${order.id}:cancel` ? (
-                          <>
-                            <em className="live-order__inline-confirm">
-                              {formatNumber(order.amendableQuantity)}주 취소
-                            </em>
-                            <button
-                              className="live-order__submit"
-                              disabled={isLiveOrderSubmitting || amendCancelBlockers.length > 0}
-                              onClick={() => {
-                                setAmendConfirmKey(null);
-                                void submitAmendOrCancel(order, 'cancel');
-                              }}
-                              type="button"
-                            >
-                              취소 확인
-                            </button>
-                            <button onClick={() => setAmendConfirmKey(null)} type="button">
-                              아니오
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              disabled={amendCancelBlockers.length > 0}
-                              onClick={() => {
-                                setAmendingOrderId(order.id);
-                                setAmendPrice(String(order.orderPrice || ''));
-                              }}
-                              title={amendCancelBlockedReason}
-                              type="button"
-                            >
-                              정정
-                            </button>
-                            <button
-                              disabled={isLiveOrderSubmitting || amendCancelBlockers.length > 0}
-                              onClick={() => setAmendConfirmKey(`${order.id}:cancel`)}
-                              title={amendCancelBlockedReason}
-                              type="button"
-                            >
-                              취소
-                            </button>
-                          </>
-                        )}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-          </section>}
           {/*
             시세가 하나도 안 들어온 상태에서는 다섯 칸이 전부 `0`과 `-`였다.
             72px를 써서 아무것도 말하지 않는 셈이라, 그럴 땐 한 줄로 줄인다.

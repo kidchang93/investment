@@ -1,0 +1,496 @@
+/**
+ * **에이전트 데스크 — 지금 누가 무엇을 보고 무엇을 정했나.**
+ *
+ * ── 왜 생겼나 (2026-09-07) ───────────────────────────────────────────────
+ *
+ * 사용자가 정했다 — *"화면 주문은 없이 에이전트가 현재 어떤 분석과 판단을
+ * 했는지 화면으로 모니터링할 수 있게 세팅하는 게 좋을 것 같아. 하나의 증권사처럼
+ * View를 꾸며주면 좋겠어. 캐릭터 만들어서 pixel 에이전트처럼."*
+ *
+ * 그전까지 판단은 **DB에만** 있었다. 무엇을 왜 샀는지 보려면 psql을 열거나 슬랙을
+ * 뒤져야 했고, 그래서 근거가 사람에게 닿지 않았다. 자동화 카드(`Automation.tsx`)는
+ * *"무엇이 언제 도는가"*를 답하지만 *"그래서 무엇을 정했나"*는 답하지 않는다.
+ *
+ * ★ **주문 버튼이 없다.** 이 화면은 보는 곳이다 — 사람이 끼어들 자리는 자동화
+ *   스위치(위 카드)뿐이고, 주문은 에이전트가 낸다.
+ */
+
+import { useCallback, useEffect, useState } from 'react';
+
+import { API_BASE } from './config';
+
+// ── 픽셀 캐릭터 ──────────────────────────────────────────────────────────
+//
+// 12×12 격자. 한 글자가 한 픽셀이고 `PALETTE`가 색을 정한다. `.`은 투명이다.
+// SVG `<rect>`로 그리므로 확대해도 뭉개지지 않는다(`shapeRendering="crispEdges"`).
+
+const PALETTE: Record<string, string> = {
+  k: '#080b11', // 외곽선
+  s: '#f0cba8', // 피부
+  e: '#141a24', // 눈
+  w: '#e5e7eb', // 흰색
+  d: '#1b2330', // 옷 그늘
+};
+
+/** 역할색은 캐릭터마다 다르다. `c`(옷)와 `a`(도구)에 들어간다. */
+interface Character {
+  pixels: string[];
+  /** 옷 */
+  coat: string;
+  /** 손에 든 것 */
+  tool: string;
+}
+
+/** 공통 몸통에 머리 위·손의 도구만 바꾼 것들. 한 줄에 12칸이다. */
+const CHARACTERS: Record<string, Character> = {
+  // 분석가 — 돋보기로 값을 들여다본다
+  analyst: {
+    coat: '#22d3ee', tool: '#7dd3fc',
+    pixels: [
+      '....aaaa....', '...a....a...', '...a....a...', '....aaaa....',
+      '.....kk.....', '...kkssskk..', '..ksseessk..', '..kssssssk..',
+      '...kssssk...', '..kcccccck..', '.kcccwwcccck', '..kk....kk..',
+    ],
+  },
+  // 판단자 — 하루 한 번 발굴한다. 왕관을 쓴다
+  judge: {
+    coat: '#f5c451', tool: '#fde68a',
+    pixels: [
+      '..a..aa..a..', '..a.aaaa.a..', '..aaaaaaaa..', '...aaaaaa...',
+      '.....kk.....', '...kkssskk..', '..ksseessk..', '..kssssssk..',
+      '...kssssk...', '..kcccccck..', '.kcccwwcccck', '..kk....kk..',
+    ],
+  },
+  // 종가 판단자 — 장이 닫힐 무렵에만 나온다. 달을 인다
+  closeJudge: {
+    coat: '#a78bfa', tool: '#c4b5fd',
+    pixels: [
+      '....aaa.....', '...aa.aa....', '..aa...aa...', '...aa.aa....',
+      '.....kk.....', '...kkssskk..', '..ksseessk..', '..kssssssk..',
+      '...kssssk...', '..kcccccck..', '.kcccwwcccck', '..kk....kk..',
+    ],
+  },
+  // 집행기 — 정한 것을 주문으로 옮긴다. 도장을 든다
+  executor: {
+    coat: '#22c55e', tool: '#86efac',
+    pixels: [
+      '...aaaaaa...', '...a....a...', '....aaaa....', '.....aa.....',
+      '.....kk.....', '...kkssskk..', '..ksseessk..', '..kssssssk..',
+      '...kssssk...', '..kcccccck..', '.kcccwwcccck', '..kk....kk..',
+    ],
+  },
+  // 파수꾼 — 손절선을 매 분 지킨다. 방패를 든다
+  guard: {
+    coat: '#e5484d', tool: '#fca5a5',
+    pixels: [
+      '...aaaaaa...', '...aaaaaa...', '...aaaaaa...', '....aaaa....',
+      '.....aa.....', '...kkssskk..', '..ksseessk..', '..kssssssk..',
+      '...kssssk...', '..kcccccck..', '.kcccwwcccck', '..kk....kk..',
+    ],
+  },
+  // 정리꾼 — 안 붙는 주문을 5분마다 손본다. 빗자루를 든다
+  sweeper: {
+    coat: '#3b82f6', tool: '#93c5fd',
+    pixels: [
+      '......a.....', '.....a......', '....a.......', '...aaa......',
+      '..aaaaa.....', '...kkssskk..', '..ksseessk..', '..kssssssk..',
+      '...kssssk...', '..kcccccck..', '.kcccwwcccck', '..kk....kk..',
+    ],
+  },
+  // 청산꾼 — 어제 산 것을 아침에 판다. 해를 인다
+  closer: {
+    coat: '#fb923c', tool: '#fdba74',
+    pixels: [
+      '..a..a..a...', '...a.a.a....', '....aaa.....', '...aaaaa....',
+      '....aaa.....', '...kkssskk..', '..ksseessk..', '..kssssssk..',
+      '...kssssk...', '..kcccccck..', '.kcccwwcccck', '..kk....kk..',
+    ],
+  },
+};
+
+function PixelSprite({ id, size = 6 }: { id: string; size?: number }): JSX.Element | null {
+  const ch = CHARACTERS[id];
+  if (!ch) return null;
+  const palette: Record<string, string> = { ...PALETTE, c: ch.coat, a: ch.tool };
+  return (
+    <svg
+      className="agent-sprite"
+      viewBox="0 0 12 12"
+      width={12 * size}
+      height={12 * size}
+      shapeRendering="crispEdges"
+      aria-hidden="true"
+    >
+      {ch.pixels.flatMap((row, y) =>
+        row.split('').map((glyph, x) => {
+          const fill = palette[glyph];
+          return fill ? <rect key={`${x}-${y}`} x={x} y={y} width={1} height={1} fill={fill} /> : null;
+        }),
+      )}
+    </svg>
+  );
+}
+
+// ── 서버가 주는 것 ───────────────────────────────────────────────────────
+
+interface TaskState {
+  name: string;
+  label: string;
+  window: [number, number];
+  trading: boolean;
+  daily: boolean;
+  doneToday: boolean;
+  lastRunAt: string | null;
+  running: boolean;
+  inWindow: boolean;
+}
+
+interface AutomationStatus {
+  settings: { enabled: boolean; tradingEnabled: boolean };
+  ticking: boolean;
+  now: string;
+  tasks: TaskState[];
+}
+
+interface Decision {
+  symbol: string;
+  name: string;
+  action: 'buy' | 'sell' | 'hold' | 'amend' | 'cancel';
+  quantity: number;
+  rationale: string;
+  limitPrice?: number;
+  layer?: 'etf' | 'short' | 'bet';
+  plan?: {
+    targetPrice: number; stopPrice: number; horizonDays: number;
+    expectedReturn: number; basis: string;
+  };
+}
+
+/** 아직 안 붙은 주문. 정리꾼이 5분마다 손보는 대상이다. */
+interface OpenOrder {
+  orderNo: string;
+  symbol: string;
+  name: string;
+  side: string;
+  quantity: number;
+  filledQuantity?: number;
+  remainingQuantity?: number;
+  price?: number;
+}
+
+interface Round {
+  id: number;
+  tradingDay: string;
+  /** 에이전트가 스스로 적는 값이라 **믿지 않는다**. 아래 `groupByDay` 참고 */
+  startedAt: number;
+  /** DB가 찍은 기록 시각. 에이전트가 못 건드리므로 시각 표시는 이것을 쓴다 */
+  recordedAt: number;
+  trigger: string;
+  triggerReason: string;
+  equity: number;
+  findings: Array<{ agent: string; summary: string }>;
+  decisions: Decision[];
+  falsifier: string;
+  unknowns: string[];
+  executions: Array<{ symbol: string; action: string; quantity: number; orderNo: string; blockedBy?: string[] }>;
+}
+
+// ── 에이전트 명단 ────────────────────────────────────────────────────────
+//
+// ★ 화면이 자기 시간표를 들고 있지 않는다. 창·주기·상태는 전부 서버가 주는
+//   `tasks`에서 읽는다 — 여기 박아 두면 `tasks.ts`를 고친 날 조용히 틀린 말을 한다.
+
+const ROSTER: Array<{ id: string; task: string; name: string; job: string }> = [
+  { id: 'analyst', task: 'fair-value', name: '분석가', job: '적정가를 계산해 슬랙으로 보낸다' },
+  { id: 'judge', task: 'deliberate', name: '판단자', job: '후보를 훑고 오늘 살 것을 정한다' },
+  { id: 'closeJudge', task: 'close-judge', name: '종가 판단자', job: '밤사이 오를 것을 종가에 산다' },
+  { id: 'executor', task: 'close-execute', name: '집행기', job: '정한 것을 주문으로 옮긴다' },
+  { id: 'closer', task: 'overnight-exit', name: '청산꾼', job: '어제 산 것을 아침에 판다' },
+  { id: 'guard', task: 'stop-loss', name: '파수꾼', job: '손절선을 매 분 지킨다' },
+  { id: 'sweeper', task: 'open-orders', name: '정리꾼', job: '안 붙는 주문을 손본다' },
+];
+
+type Stance = 'running' | 'done' | 'waiting' | 'closed' | 'off';
+
+const STANCE_LABEL: Record<Stance, string> = {
+  running: '일하는 중',
+  done: '오늘 마침',
+  waiting: '차례 기다림',
+  closed: '창 닫힘',
+  off: '꺼짐',
+};
+
+function stanceOf(task: TaskState | undefined, status: AutomationStatus): Stance {
+  if (!task) return 'off';
+  if (!status.ticking || !status.settings.enabled) return 'off';
+  if (task.trading && !status.settings.tradingEnabled) return 'off';
+  if (task.running) return 'running';
+  if (task.daily && task.doneToday) return 'done';
+  if (task.inWindow) return 'waiting';
+  return 'closed';
+}
+
+const clock = (hhmm: number): string =>
+  `${String(Math.floor(hhmm / 100)).padStart(2, '0')}:${String(hhmm % 100).padStart(2, '0')}`;
+
+const won = (n: number): string => `${Math.round(n).toLocaleString('ko-KR')}원`;
+
+const TRIGGER_LABEL: Record<string, string> = {
+  scheduled: '발굴 회차',
+  'fair-value': '적정가 반응',
+  close: '종가 회차',
+  event: '사건',
+  manual: '사람이 부름',
+};
+
+const ACTION_LABEL: Record<string, string> = {
+  buy: '매수', sell: '매도', hold: '보유', amend: '정정', cancel: '취소',
+};
+
+const LAYER_LABEL: Record<string, string> = { etf: 'ETF', short: '단기', bet: '유망주' };
+
+function timeOf(ms: number): string {
+  return new Intl.DateTimeFormat('ko-KR', {
+    timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date(ms));
+}
+
+/** KST 오늘 `YYYY-MM-DD`. 회차의 `tradingDay`와 같은 축이다. */
+function todayKst(): string {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' }).format(new Date());
+}
+
+/** `2026-09-07` → `9월 7일 (월)`. 오늘이면 `오늘`. */
+function dayLabel(tradingDay: string): string {
+  if (tradingDay === todayKst()) return '오늘';
+  const [y, m, d] = tradingDay.split('-').map(Number);
+  const weekday = ['일', '월', '화', '수', '목', '금', '토'][new Date(y, m - 1, d).getDay()];
+  return `${m}월 ${d}일 (${weekday})`;
+}
+
+/**
+ * 날짜별로 묶는다. **묶음 안에서 다시 정렬하지 않는다.**
+ *
+ * ★★ **서버가 준 순서를 그대로 쓴다**(`id` 내림차순). 처음에는 `startedAt`으로
+ *    정렬했는데 순서가 무너졌다 — 그 값은 **에이전트가 스스로 적는 것**이라
+ *    믿을 수 없다. 2026-09-07에 회차 101·102가 **4일 뒤**를 적었고
+ *    (`1789085160000` = 09-11 09:06, `tradingDay`는 09-07), 화면에서 09:13이
+ *    10:02보다 위에 올라앉았다.
+ *
+ *    서버는 2026-09-03에 같은 사고를 겪고 이미 `id`로 정렬하도록 고쳐 뒀다
+ *    (그때는 집행기가 미래 시각 회차를 보고 "낼 것 없음"으로 끝냈다).
+ *    **화면이 다시 정렬하면 그 방어가 그대로 풀린다.**
+ */
+function groupByDay(rounds: Round[]): Array<{ day: string; rounds: Round[] }> {
+  const byDay = new Map<string, Round[]>();
+  for (const r of rounds) {
+    const list = byDay.get(r.tradingDay) ?? [];
+    list.push(r);
+    byDay.set(r.tradingDay, list);
+  }
+  return [...byDay.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([day, list]) => ({ day, rounds: list }));
+}
+
+export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Element {
+  const [status, setStatus] = useState<AutomationStatus | null>(null);
+  const [rounds, setRounds] = useState<Round[] | null>(null);
+  const [openOrders, setOpenOrders] = useState<OpenOrder[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [openRound, setOpenRound] = useState<number | null>(null);
+
+  const load = useCallback(() => {
+    fetch(`${API_BASE}/api/automation/status`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`상태 조회 실패: ${r.status}`))))
+      .then((d: AutomationStatus) => { setStatus(d); setError(null); })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+
+    const query = accountId ? `?accountId=${encodeURIComponent(accountId)}&limit=12` : '?limit=12';
+    fetch(`${API_BASE}/api/deliberations${query}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`판단 기록 조회 실패: ${r.status}`))))
+      .then((d: { rounds: Round[] }) => setRounds(d.rounds))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+
+    /*
+     * ★ 미체결은 **모의 서버에 그 TR이 없다**(`EGW02006`). 실패를 오류로 올리지
+     *   않고 `null`로 둔다 — "없다"와 "못 받았다"는 다른 말이고, 여기서 붉은
+     *   글씨를 띄우면 매일 뜨는 소음이 된다.
+     */
+    if (accountId) {
+      fetch(`${API_BASE}/api/broker/kis/open-orders?accountId=${encodeURIComponent(accountId)}`)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+        .then((d: { items?: OpenOrder[] }) => setOpenOrders(d.items ?? []))
+        .catch(() => setOpenOrders(null));
+    }
+  }, [accountId]);
+
+  useEffect(() => {
+    load();
+    // 판단자 회차가 10~15분이라 그 안에 상태가 바뀐다. 30초면 충분히 따라간다.
+    const timer = window.setInterval(load, 30000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
+  const taskByName = new Map((status?.tasks ?? []).map((t) => [t.name, t]));
+  const grouped = rounds ? groupByDay(rounds) : [];
+  const today = rounds?.filter((r) => r.tradingDay === todayKst()) ?? [];
+  const decidedToday = today.reduce((sum, r) => sum + r.decisions.length, 0);
+
+  return (
+    <section className="agent-desk" aria-label="에이전트 데스크">
+      <header className="agent-desk__head">
+        <h2>에이전트 데스크</h2>
+        <p>
+          {status
+            ? `${status.now} · 자동화 ${status.settings.enabled ? '켜짐' : '꺼짐'} · 매매 ${status.settings.tradingEnabled ? '켜짐' : '꺼짐'}`
+            : '상태를 읽는 중입니다'}
+          {rounds ? ` · 오늘 회차 ${today.length}건 · 결정 ${decidedToday}건` : ''}
+        </p>
+      </header>
+
+      {error && <p className="agent-desk__error">{error}</p>}
+
+      {/* ── 명단 ── */}
+      <div className="agent-desk__roster">
+        {ROSTER.map((member) => {
+          const task = taskByName.get(member.task);
+          const stance = status ? stanceOf(task, status) : 'off';
+          return (
+            <article className="agent-card" data-stance={stance} key={member.id}>
+              <PixelSprite id={member.id} />
+              <h3>{member.name}</h3>
+              <p className="agent-card__job">{member.job}</p>
+              <p className="agent-card__when">
+                {task ? `${clock(task.window[0])}–${clock(task.window[1])}` : '작업 없음'}
+              </p>
+              <p className="agent-card__stance">
+                <i aria-hidden="true" />
+                {STANCE_LABEL[stance]}
+                {task?.lastRunAt ? ` · 마지막 ${task.lastRunAt}` : ''}
+              </p>
+            </article>
+          );
+        })}
+      </div>
+
+      {/* ── 지금 나가 있는 주문 ── */}
+      {openOrders !== null && openOrders.length > 0 && (
+        <div className="agent-open">
+          <h3>지금 나가 있는 주문 <em>정리꾼이 5분마다 본다</em></h3>
+          <ul>
+            {openOrders.map((o) => (
+              <li key={o.orderNo}>
+                <b>{ACTION_LABEL[o.side] ?? o.side}</b> {o.name} <em>{o.symbol}</em>
+                {' '}{o.quantity}주 중 {o.filledQuantity ?? 0}주 체결
+                {o.price ? ` · 지정가 ${won(o.price)}` : ''}
+                <span className="agent-open__no">주문번호 {o.orderNo}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* ── 판단 기록 ── */}
+      <div className="agent-desk__log">
+        <h3>무엇을 정했나</h3>
+        {rounds === null && <p className="agent-desk__empty">판단 기록을 읽는 중입니다</p>}
+        {rounds?.length === 0 && <p className="agent-desk__empty">아직 회차가 없습니다</p>}
+        {grouped.map((group) => (
+          <div className="agent-day" key={group.day}>
+            <h4 className="agent-day__label" data-today={group.day === todayKst() ? '' : undefined}>
+              {dayLabel(group.day)}
+              <em>회차 {group.rounds.length}건</em>
+            </h4>
+            {group.rounds.map((round) => {
+          const open = openRound === round.id;
+          return (
+            <article className="agent-round" data-open={open ? '' : undefined} key={round.id}>
+              <button
+                aria-expanded={open}
+                className="agent-round__head"
+                onClick={() => setOpenRound(open ? null : round.id)}
+                type="button"
+              >
+                <span className="agent-round__time">{timeOf(round.recordedAt)}</span>
+                <span className="agent-round__trigger" data-trigger={round.trigger}>
+                  {TRIGGER_LABEL[round.trigger] ?? round.trigger}
+                </span>
+                <span className="agent-round__gist">
+                  {round.decisions.length === 0
+                    ? '결정 없음'
+                    : round.decisions
+                      .map((d) => `${ACTION_LABEL[d.action] ?? d.action} ${d.name} ${d.quantity}주`)
+                      .join(' · ')}
+                </span>
+                <span className="agent-round__equity">{won(round.equity)}</span>
+              </button>
+
+              {open && (
+                <div className="agent-round__body">
+                  {round.decisions.map((d) => (
+                    <div className="agent-decision" data-action={d.action} key={`${d.symbol}-${d.action}`}>
+                      <h4>
+                        {ACTION_LABEL[d.action] ?? d.action} {d.name} <em>{d.symbol}</em>
+                        {d.layer && <span className="agent-decision__layer">{LAYER_LABEL[d.layer]}</span>}
+                      </h4>
+                      <p className="agent-decision__nums">
+                        {d.quantity}주
+                        {d.limitPrice ? ` · 지정가 ${won(d.limitPrice)}` : ''}
+                        {d.plan ? ` · 목표 ${won(d.plan.targetPrice)} / 손절 ${won(d.plan.stopPrice)}` : ''}
+                        {d.plan ? ` · ${d.plan.horizonDays}거래일 · 기대 ${(d.plan.expectedReturn * 100).toFixed(2)}%` : ''}
+                      </p>
+                      <p className="agent-decision__why">{d.rationale}</p>
+                      {d.plan?.basis && <p className="agent-decision__basis">근거: {d.plan.basis}</p>}
+                    </div>
+                  ))}
+
+                  {round.findings.length > 0 && (
+                    <div className="agent-findings">
+                      <h4>본 것</h4>
+                      <ul>
+                        {round.findings.map((f, i) => (
+                          <li key={`${f.agent}-${i}`}><b>{f.agent}</b> {f.summary}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {round.falsifier && (
+                    <p className="agent-falsifier">
+                      <b>이것이 사실이면 틀린 판단이다</b> — {round.falsifier}
+                    </p>
+                  )}
+
+                  {round.unknowns.length > 0 && (
+                    <div className="agent-unknowns">
+                      <h4>그때 몰랐던 것</h4>
+                      <ul>{round.unknowns.map((u, i) => <li key={i}>{u}</li>)}</ul>
+                    </div>
+                  )}
+
+                  {round.executions.length > 0 && (
+                    <div className="agent-executions">
+                      <h4>주문으로 나간 것</h4>
+                      <ul>
+                        {round.executions.map((e, i) => (
+                          <li key={i} data-blocked={e.blockedBy?.length ? '' : undefined}>
+                            {ACTION_LABEL[e.action] ?? e.action} {e.symbol} {e.quantity}주
+                            {e.orderNo ? ` → 주문번호 ${e.orderNo}` : ''}
+                            {e.blockedBy?.length ? ` — 막힘: ${e.blockedBy.join(' · ')}` : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </article>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
