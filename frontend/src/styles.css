@@ -7455,13 +7455,13 @@ span.sample-badge {
    주문 버튼이 없는 화면이다. 사람은 보고, 주문은 에이전트가 낸다. */
 .agent-desk {
   margin: 0 0 1rem;
-  padding: 1rem 1.1rem 1.2rem;
+  padding: 1.1rem 1.2rem 1.3rem;
   background: var(--panel, #101620);
   border: 1px solid var(--border, #242b38);
   border-radius: 12px;
 }
 .agent-desk__head { display: flex; align-items: baseline; gap: .8rem; flex-wrap: wrap; }
-.agent-desk__head h2 { margin: 0; font-size: 1rem; letter-spacing: .02em; }
+.agent-desk__head h2 { margin: 0; font-size: 1.15rem; letter-spacing: .01em; }
 .agent-desk__head p { margin: 0; color: var(--muted, #8b95a5); font-size: .8rem; font-variant-numeric: tabular-nums; }
 .agent-desk__error { margin: .6rem 0 0; color: var(--up, #e5484d); font-size: .82rem; }
 
@@ -7522,7 +7522,7 @@ span.sample-badge {
 
 /* ── 방 두 개 ── */
 .agent-office__rooms { display: grid; grid-template-columns: 5fr 6fr; }
-.agent-room { position: relative; padding: 2.1rem .6rem .8rem; }
+.agent-room { position: relative; padding: 2.1rem .8rem 1rem; }
 /* 방 사이 벽 */
 .agent-room + .agent-room { border-left: 3px solid #05070b; }
 /* 바닥 — 24px 격자 타일. 방마다 색이 다르다. */
@@ -7559,7 +7559,7 @@ span.sample-badge {
 .agent-room__floor {
   display: grid;
   grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));
-  grid-template-rows: repeat(6, 46px);
+  grid-template-rows: repeat(6, 58px);
   gap: 2px;
 }
 
@@ -7884,7 +7884,7 @@ span.sample-badge {
 
 /* 좁아지면 격자를 줄이되 자리는 겹치지 않게 두 열로 접는다 */
 @media (max-width: 700px) {
-  .agent-room__floor { grid-template-rows: repeat(6, 42px); }
+  .agent-room__floor { grid-template-rows: repeat(6, 48px); }
   .office-prop[data-prop="board"], .office-prop[data-prop="cabinet"],
   .office-prop[data-prop="water"], .office-prop[data-prop="coffee"] { display: none; }
 }
