@@ -359,12 +359,25 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
-
-// 자리로 돌아간다 — 화면의 자세를 되돌린다.
-process.on('beforeExit', () => {
-  void markAgentActivity('executor', 'idle').catch(() => {});
-});
+/*
+ * ★★ **`beforeExit`에 비동기를 걸지 않는다** (2026-09-07에 겪었다).
+ *
+ * 자리로 돌아가는 표시(`idle`)를 `process.on('beforeExit')`에서 불렀더니
+ * **프로세스가 끝나지 않았다.** `beforeExit`는 이벤트 루프가 빌 때 발생하는데,
+ * 거기서 새 비동기를 예약하면 루프가 다시 차고, 끝나면 또 `beforeExit`가
+ * 발생한다 — 무한 반복이다.
+ *
+ * ★ 그 대가가 컸다. 14:49에 시작한 집행기가 **1시간 36분째 살아 있어**
+ *   `deliberate.sh`가 안 끝났고, `guard`(pgrep)가 15:00 **종가 판단자를 막았다.**
+ *   오늘 첫 종가 매매 회차가 통째로 날아갔다.
+ *
+ * 끝나는 자리는 `finally` 하나뿐이다. 한 번 부르고 기다린다.
+ */
+main()
+  .catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await markAgentActivity('executor', 'idle').catch(() => {});
+  });
