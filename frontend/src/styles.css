@@ -7953,3 +7953,18 @@ span.sample-badge {
 }
 .agent-quiet li span { font-variant-numeric: tabular-nums; }
 .agent-quiet li b { font-weight: 500; opacity: .8; }
+
+/* 오늘 산 것이 아직 장부에 없다 — 사고가 아니라 기다리면 되는 것이다. */
+.layer-pending {
+  margin: .6rem 0 0; padding: .55rem .7rem; border-radius: 8px;
+  font-size: .8rem; line-height: 1.5;
+  background: rgba(96, 165, 250, .08);
+  border: 1px solid rgba(96, 165, 250, .22);
+  color: var(--muted, #8b95a5);
+}
+.layer-pending b { color: var(--accent, #60a5fa); font-weight: 600; }
+/* 경보 등급 셋째 — 해야 할 일이 아니라 알고 있어야 할 것 */
+.dash-alert[data-level="info"], .alert[data-level="info"] {
+  background: rgba(96, 165, 250, .08);
+  border-color: rgba(96, 165, 250, .22);
+}

@@ -107,6 +107,7 @@ export function PortfolioLayers({ accountId }: { accountId: string | null }): JS
   const totalPnl = layers.reduce((sum, l) => sum + l.totalPnl, 0);
   const invested = layers.reduce((sum, l) => sum + l.marketValue, 0);
   const mismatches = snapshot?.mismatches ?? [];
+  const pendingSync = snapshot?.pendingSync ?? [];
 
   return (
     <section className="portfolio-card portfolio-card--wide" aria-label="3층 성과">
@@ -143,6 +144,19 @@ export function PortfolioLayers({ accountId }: { accountId: string | null }): JS
           <b>장부와 증권사 잔고가 {mismatches.length}종목 어긋납니다.</b> 아래 층별 숫자는 그만큼
           사실과 다릅니다 ({mismatches.map((m) => `${m.symbol} 장부 ${m.ledger} vs 증권사 ${m.broker}`).join(' · ')}).
           빠진 체결을 장부에 넣어야 합니다.
+        </p>
+      )}
+      {/*
+        ★ **설명되는 차이는 붉게 알리지 않는다** (2026-09-07). 장중 체결은 마감
+          정리(15:40) 전까지 장부에 없어 반드시 어긋나 보인다 — 그것을 사고처럼
+          적으면 매일 붉은 줄이 하루 종일 뜨고, 진짜 불일치와 구별이 안 된다.
+          감추지도 않는다: 무엇이 언제 들어오는지 알면 기다릴 수 있다.
+      */}
+      {pendingSync.length > 0 && (
+        <p className="layer-pending">
+          <b>오늘 산 {pendingSync.length}종목이 아직 장부에 없습니다.</b> 15:40 마감 정리에서
+          들어옵니다 ({pendingSync.map((m) => `${m.symbol} ${m.broker - m.ledger}주`).join(' · ')}).
+          그때까지 층별 비중이 그만큼 낮게 보입니다.
         </p>
       )}
       {error && <p className="layer-alert" role="alert">{error}</p>}

@@ -1979,6 +1979,12 @@ export interface PortfolioLayersSnapshot {
    * 어긋나면 빠진 체결이 있다는 뜻이고 층별 손익이 그만큼 거짓이다.
    */
   mismatches: PortfolioLedgerMismatch[];
+  /**
+   * 오늘 낸 주문으로 **설명되는** 차이. 장중 체결은 마감 정리(15:40) 전까지
+   * 장부에 없어 반드시 어긋나 보인다 — 그것을 `mismatches`에 섞으면 매일 붉은
+   * 줄이 하루 종일 뜨고, 아예 감추면 사람이 "빠졌다"고 오해한다.
+   */
+  pendingSync: PortfolioLedgerMismatch[];
   /** 현재가를 못 받아 평가액에서 뺀 자리(`층:종목`). 0으로 채우지 않는다 */
   unpriced: string[];
   /** 언제 받은 값인가 (epoch ms) */
@@ -2025,8 +2031,15 @@ export interface AutomationHeartbeat {
 
 /** 지금 사람이 해야 할 일 하나. **없으면 없다고 적는다** */
 export interface TradingAlert {
-  /** `danger`는 돈이 걸린 것, `warn`은 확인이 필요한 것 */
-  level: 'danger' | 'warn';
+  /**
+   * `danger`는 돈이 걸린 것, `warn`은 확인이 필요한 것,
+   * `info`는 **해야 할 일이 아니라 알고 있어야 할 것**(2026-09-07 추가).
+   *
+   * ★ 셋째를 만든 이유: 장중에 체결된 것은 마감 정리 전까지 장부에 없어
+   *   **반드시** 잔고와 어긋나 보인다. 그것을 `danger`로 울리면 진짜 사고와
+   *   구별이 안 되고, 아예 감추면 사람이 "빠졌다"고 오해한다.
+   */
+  level: 'danger' | 'warn' | 'info';
   message: string;
   /** 무엇을 하면 되나 */
   action: string;

@@ -50,7 +50,9 @@ import { getLastBuySubmittedAt } from './db/brokerOrders.js';
 import { checkPositionGuard } from './trading/positionGuard.js';
 import { getLayerPositions, getLayerTradeStats, getRealizedByLayer, getTradeMarks } from './db/layers.js';
 import { pool } from './db/client.js';
-import { LAYER_LABELS, LAYER_TARGETS, reconcile, summarizeLayers } from './trading/layers.js';
+import {
+  LAYER_LABELS, LAYER_TARGETS, explainMismatches, reconcile, summarizeLayers,
+} from './trading/layers.js';
 import { ensureMarketSnapshotSchema } from './db/marketSnapshot.js';
 import { startDailySnapshot } from './trading/dailySnapshot.js';
 import { ensureSignalScoreSchema, getSignalScoreSummary } from './db/signalScores.js';
@@ -59,7 +61,10 @@ import {
   completeClaimedOrder,
   getOrderByClientOrderId,
 } from './db/brokerOrders.js';
-import { ensureBrokerOrderSchema, getBrokerOrderRecords, layerOfOrder, recordBrokerOrderAttempt } from './db/brokerOrders.js';
+import {
+  ensureBrokerOrderSchema, getBrokerOrderRecords, getTodaySubmittedQuantities,
+  layerOfOrder, recordBrokerOrderAttempt,
+} from './db/brokerOrders.js';
 import { isTrUnavailableOnServer } from './kis/errorCodes.js';
 import { shareInflight } from './kis/inflight.js';
 
@@ -441,6 +446,7 @@ async function main(): Promise<void> {
         cash: 0,
         layers: [],
         mismatches: [],
+        pendingSync: [],
         unpriced: [],
         fetchedAt: Date.now(),
         message: readBlock,
@@ -456,6 +462,7 @@ async function main(): Promise<void> {
           cash: 0,
           layers: [],
           mismatches: [],
+        pendingSync: [],
           unpriced: [],
           fetchedAt: Date.now(),
           message: snapshot.message ?? 'KIS 계좌가 설정되지 않았습니다.',
@@ -504,13 +511,24 @@ async function main(): Promise<void> {
       });
 
       const brokerQty = new Map(snapshot.positions.map((p) => [p.symbol, p.quantity]));
+      const explainedLayers = explainMismatches(
+        reconcile(positions, brokerQty),
+        await getTodaySubmittedQuantities(accountId),
+      );
       return {
         configured: true,
         accountId,
         totalAssets,
         cash,
         layers,
-        mismatches: reconcile(positions, brokerQty),
+        /*
+         * ★ **오늘 낸 주문으로 설명되는 차이는 빼고 준다** (2026-09-07).
+         *   장중 체결은 마감 정리(15:40) 전까지 반드시 어긋나 보이는데, 화면이
+         *   그것을 「빠진 체결」로 적으면 매일 붉은 줄이 하루 종일 떠 있는다.
+         *   설명되는 것은 `pendingSync`로 따로 준다 — 감추지 않고 다르게 말한다.
+         */
+        mismatches: explainedLayers.filter((m) => !m.explained),
+        pendingSync: explainedLayers.filter((m) => m.explained),
         unpriced,
         fetchedAt: Date.now(),
       } satisfies PortfolioLayersSnapshot;
@@ -586,12 +604,41 @@ async function main(): Promise<void> {
       // "장부에만 있다"**로 나와 없는 사고를 지어낸다.
       const positions = snapshot ? await getLayerPositions(accountId) : [];
       const brokerQty = new Map((snapshot?.positions ?? []).map((p) => [p.symbol, p.quantity]));
-      const mismatches = snapshot ? reconcile(positions, brokerQty) : [];
+      /*
+       * ★★ **오늘 낸 주문으로 설명되는 차이는 경보가 아니다** (2026-09-07에 붙였다).
+       *
+       * 장부는 체결이 확인된 것만 담고 그 확인은 **마감 정리(15:40)**에서 한다.
+       * 그래서 장중에 체결되면 15:40까지 **반드시** 어긋나 보인다 — 오늘 09:19에
+       * 한국전력 297주를 산 뒤 화면이 종일 붉은 「장부와 잔고가 어긋납니다」를
+       * 이고 있었고, 사용자가 *"장부가 왜 이렇게 어긋나는지"*를 물었다.
+       *
+       * ★ `explainMismatches`는 이미 있었고 **슬랙 경보(`checkAlerts`)와 CLI
+       *   리포트(`layerReport`)는 그것으로 걸러 왔다.** 화면과 이 API만 안 쓰고
+       *   있었다 — 같은 판정을 세 곳에 두면 한 곳이 뒤처진다.
+       *
+       * 설명되는 차이는 **조용히 지나가지 않고** 안내(`info`)로 남긴다. 무엇이
+       * 언제 들어오는지 알면 기다릴 수 있지만, 아무 말이 없으면 빠진 줄 안다.
+       */
+      const explained = snapshot
+        ? explainMismatches(
+          reconcile(positions, brokerQty),
+          await getTodaySubmittedQuantities(accountId),
+        )
+        : [];
+      const mismatches = explained.filter((m) => !m.explained);
+      const pendingSync = explained.filter((m) => m.explained);
       if (mismatches.length > 0) {
         alerts.push({
           level: 'danger',
           message: `장부와 증권사 잔고가 ${mismatches.length}종목 어긋납니다`,
           action: '빠진 체결을 장부에 넣기 전까지 층별 손익을 믿을 수 없습니다.',
+        });
+      }
+      if (pendingSync.length > 0) {
+        alerts.push({
+          level: 'info',
+          message: `오늘 산 ${pendingSync.length}종목이 아직 장부에 없습니다`,
+          action: '15:40 마감 정리에서 들어옵니다. 그때까지 층별 비중이 그만큼 낮게 보입니다.',
         });
       }
 
