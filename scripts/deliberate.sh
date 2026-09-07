@@ -66,6 +66,34 @@ if ! docker exec kis-postgres pg_isready -U kis >/dev/null 2>&1; then
   exit 1
 fi
 
+# ── ★★ 두 벌이 뜨는 것을 여기서 막는다 (2026-09-07) ──────────────────────
+#
+# `analyzeFairValue.ts`의 주석은 *"중복은 스케줄러의 `guard`(pgrep)와
+# `deliberate.sh`가 막는다"*고 적혀 있었지만 **이 스크립트에는 아무 락도 없었다.**
+# 스케줄러의 `guard`는 `deliberate` 작업이 뜰 때만 검사하고, 적정가 분석이
+# `spawn`으로 띄우는 빠른 회차는 그 검사를 거치지 않는다.
+#
+# 그래서 정식 회차(10~15분)가 도는 동안 빠른 회차가 끼어들 수 있었다. 겹치면
+# 헤드리스 Claude가 두 벌이라 비용이 두 배이고, 회차 수로 성패를 가리는 위
+# `count_rounds`가 서로의 행을 보고 오판한다.
+#
+# ★ `mkdir`은 원자적이라 락으로 쓴다. 안에 pid를 적어 **죽은 락은 스스로 걷는다** —
+#   안 걷으면 한 번 죽은 뒤로 판단자가 영영 안 돈다(그쪽이 더 나쁘다).
+LOCK_DIR=".cron-logs/deliberate.lock"
+mkdir -p .cron-logs
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  OWNER=$(cat "$LOCK_DIR/pid" 2>/dev/null || echo '')
+  if [[ -n "$OWNER" ]] && kill -0 "$OWNER" 2>/dev/null; then
+    log "판단자가 이미 돌고 있다 (pid $OWNER) — 이번 회차는 건너뛴다${LOG_SUFFIX:+ · $LOG_SUFFIX}"
+    exit 0
+  fi
+  log "죽은 락을 걷는다 (pid ${OWNER:-없음})"
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR" || { log "락을 잡지 못했다"; exit 1; }
+fi
+echo $$ > "$LOCK_DIR/pid"
+trap 'rm -rf "$LOCK_DIR"' EXIT
+
 log "판단자 소집 · 계좌 $ACCOUNT${LOG_SUFFIX:+ · $LOG_SUFFIX}"
 
 # ★ **소집 전 회차 수를 세어 둔다.** 아래에서 "정말 한 회차가 남았나"를 이것으로
@@ -73,11 +101,29 @@ log "판단자 소집 · 계좌 $ACCOUNT${LOG_SUFFIX:+ · $LOG_SUFFIX}"
 #   2026-08-21에 실제로 그랬다: 판단자가 리서처를 띄웠다가 백그라운드 대기
 #   한도(600초)에 걸려 강제 종료됐는데, 종료 코드가 0이라 데몬이 "오늘 판단자
 #   했다"고 하트비트를 남겼다. **그날 판단이 통째로 사라졌고 아무도 몰랐다.**
+#
+# ★★ **내 종류의 회차만 센다** (2026-09-07). 안 가르면 이 방어가 통째로 무력해진다.
+#
+#   빠른 회차(`--quick`)는 `fair-value` 창에서 **5분마다** 후보가 되고, 정식 회차는
+#   **10~15분**이 걸린다. 즉 정식 회차가 도는 동안 빠른 회차가 두세 번 끼어들고
+#   같은 표에 행을 남긴다. 종류를 안 가리면 **정식 회차가 아무것도 안 남기고 죽어도**
+#   그 사이 빠른 회차가 남긴 행 때문에 `AFTER > BEFORE`가 되어 성공으로 읽힌다.
+#
+#   그러면 데몬이 하트비트를 남기고, `deliberate`는 `daily: true`라 **그날 발굴이
+#   통째로 날아간다.** 위에 적힌 2026-08-21 사고가 정확히 그 모양이었고, 이 함수는
+#   그것을 막으려고 생겼다. 실측: 오늘까지 `fair-value` 59건 · `scheduled` 22건 —
+#   끼어드는 쪽이 세 배 가까이 많다.
+if [[ $QUICK -eq 1 ]]; then
+  ROUND_FILTER="AND trigger = 'fair-value'"
+else
+  ROUND_FILTER="AND trigger <> 'fair-value'"
+fi
 count_rounds() {
   docker exec kis-postgres psql -U kis -d kis -tAc \
     "SELECT count(*) FROM trading_deliberations
       WHERE account_id='$ACCOUNT'
-        AND trading_day = (now() AT TIME ZONE 'Asia/Seoul')::date" 2>/dev/null | tr -d ' '
+        AND trading_day = (now() AT TIME ZONE 'Asia/Seoul')::date
+        $ROUND_FILTER" 2>/dev/null | tr -d ' '
 }
 BEFORE=$(count_rounds)
 BEFORE=${BEFORE:-0}
