@@ -32,7 +32,7 @@
  */
 
 import { getKisAccount } from '../config.js';
-import { getDeliberations } from '../db/deliberations.js';
+import { getLatestStopPrices } from '../db/deliberations.js';
 import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
 import { getLayerPositions } from '../db/layers.js';
 import { getKisDomesticAccountSnapshot, getKisDomesticExecutions } from '../kis/rest.js';
@@ -65,31 +65,34 @@ async function layersOfLedger(accountId: string): Promise<Map<string, Layer | nu
 /**
  * 종목별 **가장 최근에 적힌** 손절가와 그 자리의 층.
  *
- * 회차는 새것부터 오므로 처음 만난 값이 최신이다. 나중 회차가 같은 종목을 다시
- * 사면서 손절을 옮겼으면 그 값이 맞다 — 옛 회차의 값으로 팔면 판단자가 이미
- * 바꾼 약속을 지키는 것이 된다.
+ * 나중 회차가 같은 종목을 다시 사면서 손절을 옮겼으면 그 값이 맞다 — 옛 회차의
+ * 값으로 팔면 판단자가 이미 바꾼 약속을 지키는 것이 된다.
+ *
+ * ★★ **회차 수로 자르지 않는다** (2026-09-08에 고쳤다). 전에는 최근 서른 회차를
+ *    훑었는데, 적정가 빠른 회차가 하루 10~12번 돌아 **서른 회차 ≈ 2.5일**이었다.
+ *    그보다 전에 산 종목은 창 밖으로 밀려 **조용히 감시에서 빠졌다** — 그날 아침
+ *    보유 7 중 감시 1이었고, 삼성전자우 1,002만원이 손절가를 적어 두고도
+ *    무방비였다. 이제 `getLatestStopPrices`가 종목별 최신 하나씩 직접 고른다.
  *
  * ★ **층을 함께 들고 온다**(2026-08-22). 손절 매도가 층 없이 나가면 그 체결을
  *   층으로 되돌릴 수 없다 — `StopRule.layer` 주석에 그날 무슨 일이 있었는지 적었다.
  *   결정에 층이 없으면 층 장부에서 찾고, 그것도 갈리면 비운 채 둔다.
  */
 async function stopPricesOf(accountId: string): Promise<Map<string, StopRule>> {
-  const [rounds, ledger] = await Promise.all([
-    getDeliberations({ accountId, limit: 30 }),
+  const [latest, ledger] = await Promise.all([
+    getLatestStopPrices(accountId),
     layersOfLedger(accountId),
   ]);
   const stops = new Map<string, StopRule>();
-  for (const round of rounds) {
-    for (const d of round.decisions) {
-      if (d.action !== 'buy' || !d.plan) continue;
-      if (stops.has(d.symbol)) continue;
-      if (!Number.isFinite(d.plan.stopPrice) || d.plan.stopPrice <= 0) continue;
-      stops.set(d.symbol, {
-        stop: d.plan.stopPrice,
-        round: round.id,
-        layer: d.layer ?? ledger.get(d.symbol) ?? undefined,
-      });
-    }
+  for (const [symbol, found] of latest) {
+    const decided = found.layer;
+    stops.set(symbol, {
+      stop: found.stop,
+      round: found.round,
+      layer: (decided === 'etf' || decided === 'short' || decided === 'bet')
+        ? decided
+        : ledger.get(symbol) ?? undefined,
+    });
   }
   return stops;
 }

@@ -343,6 +343,58 @@ export async function attachExecutions(
  *    가리킨다. 그러면 문자열 정렬이라 `'9' > '49'`가 되어 8월 6일 회차가 맨 위에
  *    온다. 고친 직후 그대로 겪었다.
  */
+/**
+ * **종목별로 가장 최근에 적힌 손절가.** 회차를 몇 개 읽든 상관없이 정확하다.
+ *
+ * ── 왜 따로 만들었나 (2026-09-08) ────────────────────────────────────────
+ *
+ * 손절 감시는 `getDeliberations({ limit: 30 })`로 최근 서른 회차를 훑어 손절가를
+ * 모았다. 그런데 **적정가 빠른 회차가 하루 10~12번 돈다** — 서른 회차는 곧
+ * **2.5일**이고, 그보다 전에 산 종목은 창 밖으로 밀려 **조용히 감시에서 빠졌다.**
+ *
+ * 실제로 그랬다: 09-08 아침에 보유 7종목 중 **감시 중 1**이었다. 삼성전자우는
+ * 09-04 회차에 `buy` + `stopPrice 177,000`이 분명히 적혀 있었는데도 빠져 있었고,
+ * 1,002만원이 무방비였다. 시간이 갈수록 조용히 넓어지는 구멍이다.
+ *
+ * ★ **회차 수로 자르지 않고 종목별 최신 하나씩** 고른다(`DISTINCT ON`). 같은
+ *   종목을 다시 사면서 손절을 옮겼으면 그 값이 이긴다 — `id` 내림차순이 최신이고,
+ *   `started_at`은 에이전트가 적는 값이라 순서의 근거로 쓰지 않는다(위 주석 참고).
+ *
+ * ★ 이미 판 종목이 섞여 들어와도 무해하다. 부르는 쪽이 **지금 보유한 것**에만
+ *   이 값을 붙인다.
+ */
+export async function getLatestStopPrices(accountId: string): Promise<Map<string, {
+  stop: number;
+  round: number;
+  layer: string | null;
+}>> {
+  await ensureDeliberationSchema();
+  const { rows } = await pool.query<{
+    symbol: string; stop: string; round: string; layer: string | null;
+  }>(
+    `SELECT DISTINCT ON (e->>'symbol')
+            e->>'symbol'                    AS symbol,
+            e->'plan'->>'stopPrice'         AS stop,
+            d.id::text                      AS round,
+            e->>'layer'                     AS layer
+       FROM trading_deliberations d,
+            LATERAL jsonb_array_elements(d.decisions) e
+      WHERE d.account_id = $1
+        AND e->>'action' = 'buy'
+        AND e->'plan'->>'stopPrice' IS NOT NULL
+      ORDER BY e->>'symbol', d.id DESC`,
+    [accountId],
+  );
+  const found = new Map<string, { stop: number; round: number; layer: string | null }>();
+  for (const r of rows) {
+    const stop = Number(r.stop);
+    // 0이나 읽을 수 없는 값은 손절가가 아니다. 넣으면 "0원에 팔아라"가 된다.
+    if (!Number.isFinite(stop) || stop <= 0) continue;
+    found.set(r.symbol, { stop, round: Number(r.round), layer: r.layer });
+  }
+  return found;
+}
+
 export async function getDeliberations(filter: {
   accountId?: string;
   tradingDay?: string;
