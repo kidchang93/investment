@@ -365,16 +365,26 @@ export async function attachExecutions(
  */
 export async function getLatestStopPrices(accountId: string): Promise<Map<string, {
   stop: number;
+  /**
+   * 익절 목표가. **집행하지 않는다** — 판단자가 회차마다 보고 정한다.
+   *
+   * ★ 그런데 2026-09-08까지 **판단자가 이 값을 볼 수 없었다.** 회차 상태의
+   *   보유 목록에는 평단·현재가·손익률만 있어서, 삼성전자우가 익절가 196,000원을
+   *   넘어 198,400원이 됐는데도 그 사실이 아무 데도 안 나왔다. "더 갈 것 같다"고
+   *   판단한 것이 아니라 **넘은 줄 몰랐다.** 그래서 여기서 함께 들고 온다.
+   */
+  target: number | null;
   round: number;
   layer: string | null;
 }>> {
   await ensureDeliberationSchema();
   const { rows } = await pool.query<{
-    symbol: string; stop: string; round: string; layer: string | null;
+    symbol: string; stop: string; target: string | null; round: string; layer: string | null;
   }>(
     `SELECT DISTINCT ON (e->>'symbol')
             e->>'symbol'                    AS symbol,
             e->'plan'->>'stopPrice'         AS stop,
+            e->'plan'->>'targetPrice'       AS target,
             d.id::text                      AS round,
             e->>'layer'                     AS layer
        FROM trading_deliberations d,
@@ -385,12 +395,20 @@ export async function getLatestStopPrices(accountId: string): Promise<Map<string
       ORDER BY e->>'symbol', d.id DESC`,
     [accountId],
   );
-  const found = new Map<string, { stop: number; round: number; layer: string | null }>();
+  const found = new Map<string, {
+    stop: number; target: number | null; round: number; layer: string | null;
+  }>();
   for (const r of rows) {
     const stop = Number(r.stop);
     // 0이나 읽을 수 없는 값은 손절가가 아니다. 넣으면 "0원에 팔아라"가 된다.
     if (!Number.isFinite(stop) || stop <= 0) continue;
-    found.set(r.symbol, { stop, round: Number(r.round), layer: r.layer });
+    const target = Number(r.target);
+    found.set(r.symbol, {
+      stop,
+      target: Number.isFinite(target) && target > 0 ? target : null,
+      round: Number(r.round),
+      layer: r.layer,
+    });
   }
   return found;
 }

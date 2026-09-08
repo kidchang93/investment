@@ -39,6 +39,7 @@ import {
 } from '../kis/rest.js';
 import { LAYER_LABELS } from '../trading/layers.js';
 import { sellableQuantity } from '../trading/positionGuard.js';
+import { getLatestStopPrices } from '../db/deliberations.js';
 
 const accountId = process.argv[2] ?? 'VTS-ORDINARY';
 const account = getKisAccount(accountId);
@@ -125,6 +126,12 @@ console.log(`평가손익 ${won(snapshot.unrealizedPnl)} (${rate(snapshot.unreal
 // 자산증감수익률은 다른 것을 재는 값이라 이름을 갈라 적는다 (전일 총자산 대비).
 console.log(`전일 대비 자산증감 ${rate(snapshot.assetChangeRate)}`);
 
+/*
+ * 종목별로 **가장 최근에 적은** 익절·손절가. 회차 수로 자르지 않으므로 며칠 전에
+ * 산 것도 딸려 온다(`getLatestStopPrices` 주석 참고).
+ */
+const plans = await getLatestStopPrices(accountId);
+
 console.log('\n## 보유');
 if (snapshot.positions.length === 0) {
   console.log('없음 (전액 현금)');
@@ -143,10 +150,32 @@ if (snapshot.positions.length === 0) {
       executionSnapshot === null
         ? '알 수 없음 (주문 조회 실패)'
         : `${sellableQuantity(p.symbol, snapshot.positions, allExecutions)}주`;
+    /*
+     * ★★ **자기가 사기 전에 적은 약속을 함께 보여준다** (2026-09-08).
+     *
+     * 그전에는 평단·현재가·손익률만 있었다. 그래서 삼성전자우가 익절가
+     * 196,000원을 넘어 198,400원이 됐는데도 그 사실이 아무 데도 나오지 않았고,
+     * 그날 회차는 **매도 0건**으로 끝났다. *"더 갈 것 같다"고 판단한 것이 아니라
+     * 넘은 줄 몰랐다.*
+     *
+     * ★ 익절은 여전히 **규칙이 아니라 판단**이다(사용자 결정). 규칙으로 만들면
+     *   "더 갈 수 있다"를 볼 여지가 없어진다 — 그래서 팔지 않고 **알린다.**
+     * ★ 손절은 반대로 규칙이 집행한다. 여기 적는 것은 판단자가 자기 약속을
+     *   되짚기 위한 것이지 그것을 지키라는 뜻이 아니다.
+     */
+    const plan = plans.get(p.symbol);
+    const price = p.currentPrice ?? 0;
+    const planNote = plan
+      ? ` · 내가 적은 값 → 익절 ${plan.target ? won(plan.target) : '없음'}`
+        + `${plan.target && price >= plan.target ? ' ★넘었다' : ''}`
+        + ` / 손절 ${won(plan.stop)}${price <= plan.stop ? ' ★깼다' : ''}`
+        + ` (회차 ${plan.round})`
+      : ' · 내가 적은 값 없음 (익절·손절 둘 다 지킬 약속이 없다)';
     console.log(
       `- ${p.symbol} ${p.name} · ${p.quantity}주 (팔 수 있는 수량 ${sellable})`
       + ` · 평단 ${won(p.averagePrice)} · 현재 ${won(p.currentPrice)}`
-      + ` · 손익 ${won(p.unrealizedPnl)} (${rate(p.unrealizedPnlRate)})`,
+      + ` · 손익 ${won(p.unrealizedPnl)} (${rate(p.unrealizedPnlRate)})`
+      + planNote,
     );
   }
 }
