@@ -87,8 +87,42 @@ const TR_UNAVAILABLE_NOTE = '모의투자 서버에는 이 조회 기능이 없�
  * 조회를 물려받으면 안 된다 — 그 조회가 시작된 뒤 체결이 있었다면 체결 전
  * 잔고로 주문을 내게 되고, 이미 쓴 돈을 또 쓴다.
  */
-const readAccountSnapshot = (account: KisAccountConfig | null): Promise<BrokerAccountSnapshot> =>
-  shareInflight(`account:${account?.id ?? ''}`, () => getKisDomesticAccountSnapshot(account));
+/*
+ * ★★ **겹치는 것만으로는 모자랐다 — 짧게 캐시한다** (2026-09-08).
+ *
+ * `shareInflight`는 **동시에** 날아온 것만 묶는다. 그런데 화면은 카드마다
+ * 시차를 두고 부르므로 앞 조회가 끝난 뒤 다음이 시작되면 그대로 KIS를 또 친다.
+ *
+ * ★ **모의 서버는 초당 1건**이라 이 프로세스의 모든 KIS 호출이 `1,100ms` 간격
+ *   한 줄에 선다(`scheduleKisCall`). 계좌 조회 하나가 3.8초인데 화면이 `layers`와
+ *   `health`를 각각 부르면 큐에서 서로를 기다려 **14~18초**가 된다(실측).
+ *
+ * 5초면 화면 한 번 그리는 동안은 한 번만 친다. 그보다 길게 잡지 않는 것은
+ * 주문 직후 옛 잔고를 보여주지 않기 위해서다 — 주문이 나가면 `dropAccountCache`가
+ * 즉시 버린다.
+ */
+const ACCOUNT_CACHE_MS = 5_000;
+const accountCache = new Map<string, { at: number; snapshot: BrokerAccountSnapshot }>();
+
+/** 주문이 나갔으면 잔고가 바뀐다. 다음 조회는 새로 받는다. */
+function dropAccountCache(accountId: string): void {
+  accountCache.delete(accountId);
+}
+
+const readAccountSnapshot = async (
+  account: KisAccountConfig | null,
+): Promise<BrokerAccountSnapshot> => {
+  const key = account?.id ?? '';
+  const hit = accountCache.get(key);
+  if (hit && Date.now() - hit.at < ACCOUNT_CACHE_MS) return hit.snapshot;
+  const snapshot = await shareInflight(
+    `account:${key}`,
+    () => getKisDomesticAccountSnapshot(account),
+  );
+  // 못 받은 것은 담지 않는다 — 실패를 5초 동안 되풀이해 보여줄 이유가 없다.
+  if (snapshot.configured) accountCache.set(key, { at: Date.now(), snapshot });
+  return snapshot;
+};
 
 /**
  * 이 실행에서 그 계좌를 조회할 수 있나. 못 하면 **왜 못 하는지** 문장으로.
@@ -897,6 +931,8 @@ async function main(): Promise<void> {
           message: `예약주문 · ${result.message}`,
           orderNo: result.reservationSeq,
         });
+        // 주문이 나갔으면 잔고가 바뀐다 — 다음 조회는 새로 받는다.
+        dropAccountCache(account.id);
         req.log.info(
           { accountId: account.id, symbol: instrument.providerSymbol, seq: result.reservationSeq },
           '예약주문 등록',
@@ -942,6 +978,8 @@ async function main(): Promise<void> {
           status: 'submitted',
           message: `예약주문 취소 · ${result.message}`,
         });
+        // 주문이 나갔으면 잔고가 바뀐다 — 다음 조회는 새로 받는다.
+        dropAccountCache(account.id);
         return { accepted: true, ...result };
       } catch (err) {
         const message = String(err instanceof Error ? err.message : err);
@@ -1200,6 +1238,8 @@ async function main(): Promise<void> {
           status: 'submitted',
           message: '계좌 상태를 못 읽어 포지션 관문을 적용하지 않았습니다.',
         });
+        // 주문이 나갔으면 잔고가 바뀐다 — 다음 조회는 새로 받는다.
+        dropAccountCache(account.id);
       }
 
       if (guardState) {
