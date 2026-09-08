@@ -104,9 +104,21 @@ const TR_UNAVAILABLE_NOTE = '모의투자 서버에는 이 조회 기능이 없�
 const ACCOUNT_CACHE_MS = 5_000;
 const accountCache = new Map<string, { at: number; snapshot: BrokerAccountSnapshot }>();
 
-/** 주문이 나갔으면 잔고가 바뀐다. 다음 조회는 새로 받는다. */
+/**
+ * 미체결도 같은 줄에 선다. **5초 캐시 + 겹치면 묶기**로 KIS 호출을 줄인다.
+ *
+ * ★ 화면이 목표 탭을 열 때 이 요청 하나가 **40초**를 기다렸다(2026-09-08 실측).
+ *   조회 자체가 느린 것이 아니라 초당 1건 큐에서 판단자·적정가·손절 뒤에 섰다.
+ * ★ 모의 서버에 이 TR이 없을 때의 `unavailable` 응답도 함께 담는다 — 늘 실패할
+ *   조회를 5초마다 다시 보낼 이유가 없다.
+ */
+const OPEN_ORDERS_CACHE_MS = 5_000;
+const openOrdersCache = new Map<string, { at: number; body: unknown }>();
+
+/** 주문이 나갔으면 잔고와 미체결이 함께 바뀐다. 다음 조회는 새로 받는다. */
 function dropAccountCache(accountId: string): void {
   accountCache.delete(accountId);
+  openOrdersCache.delete(accountId);
 }
 
 const readAccountSnapshot = async (
@@ -783,15 +795,29 @@ async function main(): Promise<void> {
   app.get<{ Querystring: { accountId?: string } }>('/api/broker/kis/open-orders', async (req, reply) => {
     const account = resolveAccount(req.query.accountId);
     if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
+    const cacheKey = account?.id ?? '';
+    const hit = openOrdersCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < OPEN_ORDERS_CACHE_MS) return hit.body;
     try {
-      return { items: await getKisDomesticAmendableOrders(account) };
+      const body = {
+        items: await shareInflight(
+          `open-orders:${cacheKey}`,
+          () => getKisDomesticAmendableOrders(account),
+        ),
+      };
+      openOrdersCache.set(cacheKey, { at: Date.now(), body });
+      return body;
     } catch (err) {
       /*
        * **모의 서버에 없는 기능은 장애가 아니다.** 이 TR은 실전에만 있어
        * `APP_ENV=vts`인 동안 늘 `EGW02006`으로 실패한다. 502로 알리면 화면에
        * 빨간 배너가 하루 종일 뜨고, 정작 진짜 장애가 났을 때 구별되지 않는다.
        */
-      if (isTrUnavailableOnServer(err)) return { items: [], unavailable: TR_UNAVAILABLE_NOTE };
+      if (isTrUnavailableOnServer(err)) {
+        const body = { items: [], unavailable: TR_UNAVAILABLE_NOTE };
+        openOrdersCache.set(cacheKey, { at: Date.now(), body });
+        return body;
+      }
       req.log.warn({ err, accountId: req.query.accountId }, 'KIS 정정취소가능주문 조회 실패');
       return reply.code(502).send({ message: 'KIS 정정취소가능주문을 조회할 수 없습니다.' });
     }

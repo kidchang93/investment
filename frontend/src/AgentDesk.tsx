@@ -412,17 +412,33 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
       .then((d: { rounds: Round[] }) => setRounds(d.rounds))
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
 
-    /*
-     * ★ 미체결은 **모의 서버에 그 TR이 없다**(`EGW02006`). 실패를 오류로 올리지
-     *   않고 `null`로 둔다 — "없다"와 "못 받았다"는 다른 말이고, 여기서 붉은
-     *   글씨를 띄우면 매일 뜨는 소음이 된다.
-     */
-    if (accountId) {
+  }, [accountId]);
+
+  /*
+   * ★★ **미체결은 따로, 훨씬 뜸하게 부른다** (2026-09-08).
+   *
+   * 위 셋은 DB만 읽어 즉답이지만 이것은 **KIS를 친다.** 모의 서버는 초당 1건이라
+   * 이 프로세스의 모든 KIS 호출이 한 줄에 서는데, 8초마다 여기서 하나를 밀어
+   * 넣으면 그 줄이 마르지 않는다 — 목표 탭을 열 때 이 요청 하나가 **40초**를
+   * 기다렸고(실측), 판단자·적정가·손절이 같은 줄에서 함께 밀렸다.
+   *
+   * 미체결은 5분마다 도는 정리꾼이 손보는 대상이라 초 단위로 볼 것이 아니다.
+   *
+   * ★ 실패를 오류로 올리지 않고 `null`로 둔다 — 모의 서버에 그 TR이 없을 수도
+   *   있고(`EGW02006`), "없다"와 "못 받았다"는 다른 말이다.
+   */
+  useEffect(() => {
+    if (!accountId) return undefined;
+    let disposed = false;
+    const pull = (): void => {
       fetch(`${API_BASE}/api/broker/kis/open-orders?accountId=${encodeURIComponent(accountId)}`)
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-        .then((d: { items?: OpenOrder[] }) => setOpenOrders(d.items ?? []))
-        .catch(() => setOpenOrders(null));
-    }
+        .then((d: { items?: OpenOrder[] }) => { if (!disposed) setOpenOrders(d.items ?? []); })
+        .catch(() => { if (!disposed) setOpenOrders(null); });
+    };
+    pull();
+    const timer = window.setInterval(pull, 60_000);
+    return () => { disposed = true; window.clearInterval(timer); };
   }, [accountId]);
 
   // 걸어 들어오는 시간(마지막 자리까지 1.5초)만 지나면 자리에 앉은 것으로 둔다.
