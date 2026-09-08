@@ -95,3 +95,84 @@ describe('손절 판정 — 규칙이 집행하므로 시험으로 덮는다 (20
     assert.equal(r.breaches[0].layer, undefined);
   });
 });
+
+/*
+ * ── 익절가를 넘은 자리 (2026-09-08) ────────────────────────────────────
+ *
+ * 사용자가 정했다 — *"더 수익을 볼 만하다 싶으면 좀 더 보고, 아니다 싶으면 바로
+ * 익절하고 다른 투자처 찾기."* 그래서 **팔지 않고 판단자를 깨운다.**
+ *
+ * 그 전에는 판정 자체가 없었고, 삼성전자우가 익절가를 넘은 회차가 매도 0건으로
+ * 끝났다 — 더 갈 것 같다고 판단한 것이 아니라 넘은 줄 몰랐다.
+ */
+describe('익절가를 넘은 자리', () => {
+  const held = (symbol: string, currentPrice: number) => ([{
+    symbol, name: symbol, quantity: 10, currentPrice,
+  }]);
+
+  it('넘으면 잡고, 얼마나 더 왔는지 함께 준다', () => {
+    const r = checkStops(
+      held('005935', 198_400),
+      new Map([['005935', { stop: 177_000, target: 196_000, round: 57 }]]),
+      [],
+    );
+    assert.equal(r.targetsHit.length, 1);
+    assert.equal(r.targetsHit[0].target, 196_000);
+    assert.ok(Math.abs(r.targetsHit[0].overshootRate - (198_400 / 196_000 - 1)) < 1e-9);
+    // 익절은 파는 목록이 아니다 — 손절만 판다.
+    assert.equal(r.breaches.length, 0);
+  });
+
+  it('목표가에 정확히 닿아도 넘은 것으로 본다', () => {
+    const r = checkStops(
+      held('005935', 196_000),
+      new Map([['005935', { stop: 177_000, target: 196_000, round: 57 }]]),
+      [],
+    );
+    assert.equal(r.targetsHit.length, 1);
+  });
+
+  it('아직 안 닿았으면 조용하다', () => {
+    const r = checkStops(
+      held('015760', 34_100),
+      new Map([['015760', { stop: 30_300, target: 34_900, round: 103 }]]),
+      [],
+    );
+    assert.equal(r.targetsHit.length, 0);
+  });
+
+  it('익절가를 안 적은 자리는 판정하지 않는다', () => {
+    const r = checkStops(
+      held('069500', 999_999),
+      new Map([['069500', { stop: 90_000, round: 1 }]]),
+      [],
+    );
+    assert.equal(r.targetsHit.length, 0, 'ETF처럼 약속이 없는 자리다');
+  });
+
+  it('현재가를 모르면 익절도 판정하지 않는다', () => {
+    const r = checkStops(
+      [{ symbol: '005935', name: '삼성전자우', quantity: 10 }],
+      new Map([['005935', { stop: 177_000, target: 196_000, round: 57 }]]),
+      [],
+    );
+    assert.equal(r.targetsHit.length, 0);
+    assert.deepEqual(r.unknownPrice, ['005935']);
+  });
+
+  it('손절과 익절이 같은 회차에서 갈린다 — 하나는 팔고 하나는 깨운다', () => {
+    const r = checkStops(
+      [
+        { symbol: '005935', name: '삼성전자우', quantity: 10, currentPrice: 198_400 },
+        { symbol: '015760', name: '한국전력', quantity: 10, currentPrice: 30_000 },
+      ],
+      new Map([
+        ['005935', { stop: 177_000, target: 196_000, round: 57 }],
+        ['015760', { stop: 30_300, target: 34_900, round: 103 }],
+      ]),
+      [],
+    );
+    assert.deepEqual(r.targetsHit.map((h) => h.symbol), ['005935']);
+    assert.deepEqual(r.breaches.map((b) => b.symbol), ['015760']);
+  });
+});

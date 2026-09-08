@@ -18,6 +18,14 @@ import type { BrokerExecution } from '@invest/shared';
 export interface StopRule {
   /** 손절가(원) */
   stop: number;
+  /**
+   * 익절 목표가(원). **규칙이 팔지 않는다** — 넘으면 판단자를 부른다.
+   *
+   * ★ 사용자가 정했다(2026-09-08) — *"더 수익을 볼 만하다 싶으면 좀 더 보고,
+   *   아니다 싶으면 바로 익절하고 다른 투자처 찾기."* 규칙으로 팔면 앞의 절반이
+   *   사라지고, 아무도 안 보면 뒤의 절반이 사라진다. 그래서 **팔지 않고 깨운다.**
+   */
+  target?: number | null;
   /** 그 값을 적은 회차. 왜 팔았는지 되짚는 실 */
   round: number;
   /**
@@ -55,6 +63,25 @@ export interface StopCheckResult {
   /** 현재가를 못 읽어 판정하지 못한 종목 */
   unknownPrice: string[];
   breaches: StopBreach[];
+  /**
+   * **익절가를 넘은 자리.** 파는 목록이 아니라 **판단자를 깨울 목록**이다.
+   *
+   * 2026-09-08까지 이 판정이 아예 없었다 — 삼성전자우가 익절가를 넘은 회차가
+   * 매도 0건으로 끝났고, *"더 갈 것 같다"고 판단한 것이 아니라 넘은 줄 몰랐다.*
+   */
+  targetsHit: TargetHit[];
+}
+
+/** 익절가를 넘은 자리. 팔지 말지는 판단자가 정한다. */
+export interface TargetHit {
+  symbol: string;
+  name: string;
+  quantity: number;
+  price: number;
+  target: number;
+  /** 목표가 대비 몇 %를 더 왔나 */
+  overshootRate: number;
+  round: number;
 }
 
 export function checkStops(
@@ -63,6 +90,7 @@ export function checkStops(
   executions: BrokerExecution[],
 ): StopCheckResult {
   const breaches: StopBreach[] = [];
+  const targetsHit: TargetHit[] = [];
   const unknownPrice: string[] = [];
   let watched = 0;
 
@@ -81,6 +109,23 @@ export function checkStops(
       unknownPrice.push(position.symbol);
       continue;
     }
+    /*
+     * ★ **익절은 먼저 보고 팔지 않는다.** 손절과 달리 여기서 끝내지 않고
+     *   계속 내려가 손절 판정도 한다 — 한 종목이 둘 다일 수는 없지만
+     *   (익절가 > 손절가) 판정을 건너뛰는 자리를 만들지 않는다.
+     */
+    if (typeof rule.target === 'number' && rule.target > 0 && price >= rule.target) {
+      targetsHit.push({
+        symbol: position.symbol,
+        name: position.name,
+        quantity: position.quantity,
+        price,
+        target: rule.target,
+        overshootRate: price / rule.target - 1,
+        round: rule.round,
+      });
+    }
+
     if (price > rule.stop) continue;
 
     // 미체결 매도가 이미 있으면 그만큼 뺀다 — 안 그러면 없는 물량을 판다.
@@ -98,5 +143,5 @@ export function checkStops(
     });
   }
 
-  return { watched, unknownPrice, breaches };
+  return { watched, unknownPrice, breaches, targetsHit };
 }

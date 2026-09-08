@@ -31,6 +31,8 @@
  * 장 시간 밖에서는 서버 리스크 룰(09:00~15:30)이 거부한다 — 여기서 또 판정하지 않는다.
  */
 
+import { spawn } from 'node:child_process';
+
 import { getKisAccount } from '../config.js';
 import { getLatestStopPrices } from '../db/deliberations.js';
 import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
@@ -38,11 +40,33 @@ import { getLayerPositions } from '../db/layers.js';
 import { getKisDomesticAccountSnapshot, getKisDomesticExecutions } from '../kis/rest.js';
 import { escapeMrkdwn, sendSlack, sendSlackBot, won as slackWon } from '../notify/slack.js';
 import type { Layer } from '../trading/layers.js';
-import { checkStops, type StopRule } from '../trading/stopLoss.js';
+import { checkStops, type StopRule, type TargetHit } from '../trading/stopLoss.js';
 import { markAgentActivity } from '../db/agentActivity.js';
+import { pool } from '../db/client.js';
 
 const API_BASE = process.env.INVEST_API_BASE ?? 'http://localhost:4000';
 const won = (n: number): string => Math.round(n).toLocaleString('ko-KR');
+
+/** 오늘 이 종목의 익절 돌파로 판단자를 이미 불렀나. */
+async function calledForTargetToday(symbol: string): Promise<boolean> {
+  const { rows } = await pool.query<{ n: string }>(
+    `SELECT count(*)::text AS n FROM trading_heartbeats
+      WHERE name = $1 AND status = 'ok'
+        AND (ran_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date`,
+    [`target-hit-${symbol}`],
+  );
+  return Number(rows[0]?.n ?? 0) > 0;
+}
+
+/** 불렀다는 사실을 남긴다. 사람이 나중에 "왜 그때 깨웠나"를 되짚는 실이다. */
+async function markTargetCall(symbol: string, hit: TargetHit): Promise<void> {
+  await pool.query(
+    `INSERT INTO trading_heartbeats (name, status, note) VALUES ($1, 'ok', $2)`,
+    [`target-hit-${symbol}`,
+      `${hit.name} ${Math.round(hit.price)}원 · 목표 ${Math.round(hit.target)}원`
+      + ` · +${(hit.overshootRate * 100).toFixed(2)}% · 회차 ${hit.round}`],
+  );
+}
 
 /**
  * 종목 → 층. **층 장부가 지금 그 종목을 어디에 두고 있나.**
@@ -88,6 +112,7 @@ async function stopPricesOf(accountId: string): Promise<Map<string, StopRule>> {
     const decided = found.layer;
     stops.set(symbol, {
       stop: found.stop,
+      target: found.target,
       round: found.round,
       layer: (decided === 'etf' || decided === 'short' || decided === 'bet')
         ? decided
@@ -130,12 +155,69 @@ async function main(): Promise<void> {
    *
    *   사람이 부를 때(`--execute` 없음)는 항상 찍는다. 안 그러면 돌았는지 모른다.
    */
-  const worthSaying = breached.length > 0 || result.unknownPrice.length > 0 || !execute;
+  /*
+   * ── ★★ 익절가를 넘으면 **판단자를 깨운다** (2026-09-08) ──────────────────
+   *
+   * 사용자가 정했다 — *"더 수익을 볼 만하다 싶으면 좀 더 보고, 아니다 싶으면
+   * 바로 익절하고 다른 투자처 찾기."*
+   *
+   * ★ **여기서 팔지 않는다.** 규칙이 팔면 "좀 더 본다"가 사라지고, 아무도 안 보면
+   *   "바로 익절한다"가 사라진다. 그래서 **판정만 하고 판단자를 부른다** —
+   *   손절과 정반대의 처리다(손절은 즉시 시장가로 판다).
+   *
+   * ★ **종목마다 하루 한 번만 부른다.** 매 분 도는 자리라 그냥 두면 익절가를
+   *   넘은 종목 하나가 하루 390번 헤드리스 Claude를 띄운다. 하트비트가 그 표시다.
+   *   같은 종목이 그날 다시 넘어도 안 부르지만, 그때는 이미 판단자가 한 번
+   *   보았고 그 판단(팔거나 hold)이 기록에 남아 있다.
+   */
+  if (execute && result.targetsHit.length > 0) {
+    for (const hit of result.targetsHit) {
+      const already = await calledForTargetToday(hit.symbol);
+      if (already) continue;
+      await markTargetCall(hit.symbol, hit);
+      console.log(
+        `  ★ 익절가를 넘었다 — ${hit.symbol} ${hit.name} ${won(hit.price)}원`
+        + ` (목표 ${won(hit.target)} · +${(hit.overshootRate * 100).toFixed(2)}%) → 판단자를 부른다`,
+      );
+      await sendSlack(
+        `:dart: *익절가를 넘었습니다* — ${hit.name} ${won(hit.price)}원`
+        + ` (목표 ${won(hit.target)} · +${(hit.overshootRate * 100).toFixed(2)}%)\n`
+        + '판단자를 불렀습니다. 더 볼지 팔지는 회차 기록에 남습니다.',
+      ).catch(() => undefined);
+      /*
+       * 백그라운드로 띄우고 기다리지 않는다 — 이 스크립트는 매 분 도는데
+       * 판단자는 2~3분 걸린다. 두 벌이 뜨는 것은 `deliberate.sh`의 락이 막는다.
+       */
+      const child = spawn('zsh', ['scripts/deliberate.sh', '--quick', accountId], {
+        cwd: process.cwd().endsWith('backend') ? '..' : '.',
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+    }
+  }
+
+  const worthSaying = breached.length > 0 || result.unknownPrice.length > 0
+    || result.targetsHit.length > 0 || !execute;
   if (worthSaying) {
     console.log(
       `손절 검사 · 보유 ${snapshot.positions.length} · 감시 중 ${result.watched}`
-      + ` · 깬 것 ${breached.length}${execute ? '' : '   [판정만 — 실제로 팔려면 --execute]'}`,
+      + ` · 깬 것 ${breached.length} · 익절가 넘은 것 ${result.targetsHit.length}`
+      + `${execute ? '' : '   [판정만 — 실제로 팔거나 부르려면 --execute]'}`,
     );
+  }
+  /*
+   * ★ 판정 모드에서도 **넘은 것을 보여준다.** 이 자리가 만들어진 이유가
+   *   "넘은 줄 몰랐다"이므로, 사람이 손으로 불렀을 때 조용하면 같은 병이다.
+   */
+  if (!execute) {
+    for (const hit of result.targetsHit) {
+      console.log(
+        `  ★ ${hit.symbol} ${hit.name} 익절가를 넘었다 — ${won(hit.price)}원`
+        + ` (목표 ${won(hit.target)} · +${(hit.overshootRate * 100).toFixed(2)}%)`
+        + ` → --execute면 판단자를 부른다`,
+      );
+    }
   }
   for (const symbol of result.unknownPrice) {
     console.log(`  ? ${symbol} — 현재가를 못 읽어 판정하지 않는다`);
