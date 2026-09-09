@@ -26,6 +26,7 @@ import '../config.js';
 
 import { getKisAccount } from '../config.js';
 import { closeDb, pool } from '../db/client.js';
+import { getLatestStopPrices } from '../db/deliberations.js';
 import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
 import {
   getKisDomesticAccountSnapshot,
@@ -64,7 +65,64 @@ async function main(): Promise<void> {
       ORDER BY symbol, measured_at DESC`,
   );
 
-  console.log('── 적정가 (분석가 계산) ──');
+  /*
+   * ── ⭐ 추천 ─────────────────────────────────────────────────────────────
+   *
+   * ★★ **적정가 표보다 먼저 찍는다.** 표는 155줄이고 후보를 넓히면 900줄이 된다.
+   *    판단자가 그것을 눈으로 훑어 문턱 넘은 것을 골라내야 했고, 회차 542·543이
+   *    연달아 "화면에 ⭐ 추천 섹션이 없다"고 적었다.
+   *
+   * ★ 분석가가 계산한 그 판정을 그대로 읽는다. 여기서 다시 고르면 슬랙에 나간
+   *   값과 판단자가 보는 값이 갈린다(적정가를 DB에서 읽는 것과 같은 이유다).
+   */
+  interface PickRow {
+    symbol: string; standard: string; rule: string; gap: number | null; age_min: number;
+  }
+  /*
+   * ★ **표를 만들지 않는다.** 이 스크립트는 조회 전용이고, 표는 분석가가 만든다.
+   *   분석가가 한 번도 안 돈 계좌에서는 표 자체가 없으므로 그것을 견딘다 —
+   *   없는 표 하나 때문에 계좌도 미체결도 못 보고 죽으면 회차가 통째로 날아간다.
+   */
+  /*
+   * ★★ `null`은 **못 읽었다**이고 `[]`는 **0건**이다. 섞으면 "추천이 없습니다"가
+   *    거짓말이 된다 — 판단자는 그것을 "살 것이 없구나"로 읽고 지나간다.
+   */
+  const picks: PickRow[] | null = await pool.query<PickRow>(
+    `SELECT symbol, standard, rule, gap,
+            EXTRACT(EPOCH FROM (now() - measured_at)) / 60 AS age_min
+       FROM trading_fair_value_picks
+      WHERE measured_at = (
+              SELECT max(measured_at) FROM trading_fair_value_picks
+               WHERE measured_at > now() - interval '2 hours')
+      ORDER BY gap ASC NULLS LAST`,
+  ).then((r) => r.rows).catch(() => null);
+
+  console.log('── ⭐ 추천 (분석가 판정) ──');
+  if (picks === null) {
+    console.log('  ★ 추천을 읽지 못했습니다 — 없다는 뜻이 아닙니다.');
+    console.log('    분석가가 이 계좌에서 한 번도 안 돌았을 수 있습니다. 아래 표로 직접 보세요.');
+  } else if (picks.length === 0) {
+    /*
+     * ★ **"추천 0건"과 "분석가가 안 돌았다"는 다른 사실이다.** 아래 적정가 표가
+     *   비어 있으면 후자다. 이 줄만 보고 "살 것이 없구나"로 읽으면 안 된다.
+     */
+    console.log(rows.length === 0
+      ? '  (분석가가 아직 안 돌았습니다 — 아래 적정가 표도 비어 있습니다)'
+      : '  없음 — 문턱을 넘은 종목이 없습니다. 아래 표에서 직접 고를 이유는 없습니다.');
+  } else {
+    console.log(`  기준: ${picks[0].rule}`);
+    for (const p of picks) {
+      const instrument = await getKoreanInstrumentBySymbol(p.symbol);
+      const stale = p.age_min > STALE_MINUTES ? ` ⚠${Math.round(p.age_min)}분 전` : '';
+      console.log(
+        `  ⭐ [${p.standard}] ${p.symbol} ${instrument?.name ?? p.symbol}`
+        + `${p.gap === null ? '' : ` · ${(p.gap * 100).toFixed(1)}%`}${stale}`,
+      );
+    }
+    console.log('  ★ ⭐는 "사라"가 아닙니다 — 층 상한·매수여력·plan을 세울 수 있는지는 당신이 봅니다.');
+  }
+
+  console.log('\n── 적정가 (분석가 계산) ──');
   if (rows.length === 0) {
     /*
      * ★ **조용히 비워 두지 않는다.** 판단자가 빈 표를 보면 "살 것이 없나 보다"로
@@ -124,6 +182,17 @@ async function main(): Promise<void> {
     } catch {
       console.log('  ★ 매수여력을 못 읽었습니다. 예수금보다 훨씬 작을 수 있으니 크게 사지 마세요.');
     }
+    /*
+     * ★★ **내가 적은 익절·손절을 함께 찍는다** (2026-09-09).
+     *
+     * 그전에는 평단·평가손익만 나와서, 익절가를 넘었는지 판단자가 **여기서 알 수
+     * 없었다.** 회차 542·543이 매 회차 `deliberationState.ts`를 따로 실행해
+     * 확인했다고 적었다 — 회차마다 무는 비용이다.
+     *
+     * `deliberationState`가 쓰는 것과 **같은 함수**를 쓴다. 두 화면이 다른 값을
+     * 보이면 어느 쪽을 믿을지가 새 문제가 된다.
+     */
+    const plans = await getLatestStopPrices(accountId).catch(() => new Map());
     for (const p of snap.positions) {
       if (p.quantity <= 0) continue;
       console.log(
@@ -131,6 +200,14 @@ async function main(): Promise<void> {
         + ` · 평가손익 ${(p.unrealizedPnl ?? 0) >= 0 ? '+' : ''}${won(p.unrealizedPnl ?? 0)}`
         + ` (${(p.unrealizedPnlRate ?? 0).toFixed(2)}%)`,
       );
+      const plan = plans.get(p.symbol);
+      const price = p.currentPrice ?? 0;
+      console.log(plan
+        ? `      · 내가 적은 값 → 익절 ${plan.target ? won(plan.target) : '없음'}`
+          + `${plan.target && price >= plan.target ? ' ★넘었다' : ''}`
+          + ` / 손절 ${won(plan.stop)}${price > 0 && price <= plan.stop ? ' ★깼다' : ''}`
+          + ` (회차 ${plan.round})`
+        : '      · 내가 적은 값 없음 (익절·손절 둘 다 지킬 약속이 없다)');
     }
   } catch (error) {
     console.log(`  ★ 계좌를 못 읽었습니다: ${(error as Error).message.slice(0, 80)}`);

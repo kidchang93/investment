@@ -162,6 +162,31 @@ async function ensureSchema(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS trading_fair_values_time_idx
       ON trading_fair_values (measured_at DESC);
+
+    /*
+     * ★★ **⭐ 추천을 남긴다** (2026-09-09).
+     *
+     * 그전에는 추천을 계산해 **슬랙으로 보내고 버렸다.** 그래서 판단자가 보는
+     * 화면(showFairValues.ts)에는 ⭐가 없었고, 판단자는 155줄짜리 적정가 표를
+     * 눈으로 훑어야 했다. 회차 542·543이 연달아 그것을 적었다 —
+     * "화면이 ⭐ 추천 섹션을 찍지 않는다.".
+     *
+     * 후보를 900종목으로 넓히면 그 표가 900줄이 된다. 남기지 않으면 넓히는 것이
+     * 판단자에게는 **짐만 늘리는 일**이 된다.
+     *
+     * ★ rule을 함께 넣는다. "하위 20%"는 *싸다*가 아니라 *오늘 후보 중 덜
+     *   비싸다*이고, 그 문장이 없으면 판단자가 ⭐를 매수 신호로 읽는다.
+     */
+    CREATE TABLE IF NOT EXISTS trading_fair_value_picks (
+      measured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      symbol      TEXT NOT NULL,
+      standard    TEXT NOT NULL,
+      rule        TEXT NOT NULL DEFAULT '',
+      gap         DOUBLE PRECISION,
+      PRIMARY KEY (measured_at, symbol)
+    );
+    CREATE INDEX IF NOT EXISTS trading_fair_value_picks_time_idx
+      ON trading_fair_value_picks (measured_at DESC);
   `);
 }
 
@@ -468,6 +493,24 @@ async function main(): Promise<void> {
       ? '추세 축 없음'
       : `추세: 시장 60일 ${(marketReturn * 100).toFixed(1)}% 대비 ${(FALLING_GATE * 100).toFixed(0)}%p 이상 빠진 것 제외`,
   ].join(' · ');
+
+  /*
+   * ★ **판단자가 읽을 수 있게 남긴다.** 슬랙은 사람이 보는 것이고, 판단자는
+   *   `showFairValues.ts`를 본다. 한 번 계산한 판정을 두 곳이 같이 쓴다.
+   *
+   *   추천이 0건이면 아무것도 넣지 않는다 — 화면 쪽에서 "적정가 표는 있는데
+   *   추천이 없다"와 "분석가가 안 돌았다"를 그 차이로 가른다.
+   */
+  if (picks.length > 0) {
+    const stamped = new Date();
+    for (const r of picks) {
+      await pool.query(
+        `INSERT INTO trading_fair_value_picks (measured_at, symbol, standard, rule, gap)
+         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (measured_at, symbol) DO NOTHING`,
+        [stamped, r.symbol, standardOf(r.symbol), rule, gapOf(r)],
+      );
+    }
+  }
 
   if (picks.length > 0) {
     const head = `⭐ *추천* — 거래대금 상위 ${CANDIDATE_POOL} 중 개별주식 ${scored.length}종목에서`;
