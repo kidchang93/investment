@@ -20,7 +20,7 @@
  * ★ `analyzeFairValue.ts`와 **같은 표**(`trading_financial_cache`)를 쓴다.
  *   TTL도 그쪽 상수와 맞춰 12시간이다 — 여기서 채운 것을 그쪽이 그대로 읽는다.
  *
- *   npx tsx src/scripts/warmFinancialCache.ts [--limit 150] [--force]
+ *   npx tsx src/scripts/warmFinancialCache.ts [--limit 900] [--force]
  *     `--force`면 아직 안 낡은 것도 다시 받는다.
  */
 
@@ -29,12 +29,31 @@ import '../config.js';
 import { closeDb, pool } from '../db/client.js';
 import { getTopTurnoverInstruments } from '../db/instruments.js';
 import { getFinancials } from '../kis/rest.js';
-import { classifyAsset } from '../trading/fairValue.js';
+import { FINANCIAL_TTL_HOURS, classifyAsset } from '../trading/fairValue.js';
 
-/** 분석가의 후보 풀과 같은 값. 그보다 적게 채우면 분석가가 장중에 마저 받는다 */
-const DEFAULT_LIMIT = 150;
-/** `analyzeFairValue.ts`의 `FINANCIAL_TTL_HOURS`와 같아야 한다 */
-const TTL_HOURS = 12;
+/**
+ * 거래대금 상위 이만큼을 채운다.
+ *
+ * ── 왜 150에서 900으로 넓혔나 (2026-09-09) ───────────────────────────────
+ *
+ * 사용자가 물었다 — *"전체 종목을 스캔하는 게 맞아?"*
+ *
+ * 재보니 국내 개별주식 2,765종목 중 **155종목(5.6%)**만 보고 있었다. 그런데
+ * 그냥 전부로 넓히면 헛돈다. **적정가는 차트·재무 두 축의 평균인데 재무가
+ * 없으면 차트 하나로만 낸다** — 그러면 gap이 곧 "낙폭"이 되고, 판단자는
+ * 무너진 종목의 순위표를 받는다. 실제로 그날 판단자가 그렇게 적었다:
+ * *"코오롱티슈진 −63.5% ... 여전히 '크게 떨어졌다'이지 '싸다'가 아니다."*
+ *
+ * 그러니 **후보를 넓히기 전에 재무부터 채운다.** 이 스크립트가 그 자리다.
+ *
+ * ★ **어디까지 채우나** — 20일 평균 거래대금 10억 이상이 895종목이다. 총자산
+ *   9,600만원에 한 종목 상한 10%(960만원)를 넣으려면 그 정도는 돌아야 한다.
+ *   하루 거래대금 1억짜리에 960만원을 넣으면 그날 거래의 10%가 되어 사고
+ *   파는 값 자체를 우리가 밀어 올린다. 그 아래는 **사도 못 파는 종목**이다.
+ */
+const DEFAULT_LIMIT = 900;
+/** ★ 받는 쪽과 읽는 쪽이 같아야 해서 `trading/fairValue.ts`에 모아 두었다 */
+const TTL_HOURS = FINANCIAL_TTL_HOURS;
 /**
  * 조회 사이 간격(ms). KIS는 **초당** 호출을 센다 — 붙여 쏘면 `EGW00201`이 난다.
  * 개장 전이라 급할 것이 없으니 넉넉히 둔다.
@@ -69,6 +88,12 @@ async function main(): Promise<void> {
   let ok = 0;
   let empty = 0;
   let failed = 0;
+  /*
+   * ★ **얼마나 남았는지 말한다.** 900종목이면 십수 분이 걸린다 — 조용하면
+   *   멎은 것인지 도는 것인지 알 수 없고, 사람은 그때 죽여 버린다.
+   */
+  const startedAt = Date.now();
+  let done = 0;
   for (const inst of todo) {
     try {
       const fins = await getFinancials(inst.symbol, 8);
@@ -92,8 +117,18 @@ async function main(): Promise<void> {
       if (failed <= 3) console.log(`  ${inst.symbol} ${inst.name}: ${(error as Error).message.slice(0, 60)}`);
     }
     await sleep(GAP_MS);
+    done += 1;
+    if (done % 100 === 0 || done === todo.length) {
+      const perItem = (Date.now() - startedAt) / done;
+      const leftMin = Math.round((todo.length - done) * perItem / 60_000);
+      console.log(
+        `  ${done}/${todo.length} · 받음 ${ok} · 재무 없음 ${empty} · 실패 ${failed}`
+        + ` · 종목당 ${(perItem / 1000).toFixed(2)}초 · 남은 시간 약 ${leftMin}분`,
+      );
+    }
   }
-  console.log(`받음 ${ok} · 재무 없음 ${empty} · 실패 ${failed}`);
+  const tookMin = ((Date.now() - startedAt) / 60_000).toFixed(1);
+  console.log(`받음 ${ok} · 재무 없음 ${empty} · 실패 ${failed} · ${tookMin}분 걸렸다`);
 }
 
 main()

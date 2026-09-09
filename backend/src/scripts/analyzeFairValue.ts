@@ -55,7 +55,7 @@ import { crossesGate, gateSignature } from '../trading/judgeGate.js';
 import { markAgentActivity } from '../db/agentActivity.js';
 import {
   ASSET_KIND_LABEL, ASSET_KIND_METHOD,
-  FALLING_GATE, MOMENTUM_DAYS, NEUTRAL_BAND,
+  FALLING_GATE, FINANCIAL_TTL_HOURS, MOMENTUM_DAYS, NEUTRAL_BAND,
   chartBand, classifyAsset, combine, describe, fundamentalBand, isFalling, return60,
   type AssetKind, type Bar, type FairValue,
 } from '../trading/fairValue.js';
@@ -133,11 +133,11 @@ const MIN_CANDIDATES_FOR_RANK = 8;
  */
 const RELATIVE_CEILING = NEUTRAL_BAND;
 
-/**
- * 재무는 분기마다 바뀐다. 5분마다 다시 받을 이유가 없다.
- * ★ 프로세스가 매번 새로 뜨므로 **DB에 캐시한다** — 메모리 캐시는 소용없다.
+/*
+ * ★ 재무 캐시 TTL은 `trading/fairValue.ts`에 있다 — 받는 쪽
+ *   (`warmFinancialCache.ts`)과 같은 값을 써야 해서 한 곳에 모았다.
+ *   프로세스가 매번 새로 뜨므로 **DB에 캐시한다** — 메모리 캐시는 소용없다.
  */
-const FINANCIAL_TTL_HOURS = 12;
 
 async function ensureSchema(): Promise<void> {
   await pool.query(`
