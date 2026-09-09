@@ -77,14 +77,49 @@ describe('손절가 — 종목별 최신 하나', () => {
     assert.equal(found.get('015760')?.stop, 31_500, '판단자가 옮긴 값을 써야 한다');
   });
 
-  it('매수가 아닌 결정은 손절가로 읽지 않는다', async (t) => {
+  it('plan이 없는 결정은 손절가로 읽지 않는다', async (t) => {
     if (!usable) return t.skip('DB에 붙지 못했다');
     await seed('2026-09-05', [
       { symbol: '069500', name: 'KODEX 200', action: 'hold', quantity: 0, rationale: '' },
       { symbol: '069500', name: 'KODEX 200', action: 'sell', quantity: 1, rationale: '' },
     ]);
     const found = await getLatestStopPrices(account);
-    assert.equal(found.has('069500'), false, 'hold·sell에는 지킬 약속이 없다');
+    assert.equal(found.has('069500'), false, '적어 둔 약속이 없다');
+  });
+
+  /**
+   * 2026-09-09까지 `action = 'buy'`만 읽었다. 그래서 판단자가 계속 들고 가기로
+   * 하면서 목표를 올려도 감시는 옛 값을 봤고, 판단자는 **손절을 옮기는 것을
+   * 포기했다**("기록만 남기면 착각을 만든다" — 회차 474).
+   */
+  it('계속 들고 가면서 옮긴 값이 매수 때의 값을 이긴다', async (t) => {
+    if (!usable) return t.skip('DB에 붙지 못했다');
+    await seed('2026-09-07', [buy('010950', 137_000, 'short')]);
+    await seed('2026-09-08', [{
+      symbol: '010950', name: 'S-Oil', action: 'hold', quantity: 0, rationale: '',
+      plan: {
+        targetPrice: 170_000, stopPrice: 145_000,
+        horizonDays: 10, expectedReturn: 0.1, basis: '올려 잡는다',
+      },
+    }]);
+    const found = await getLatestStopPrices(account);
+    assert.equal(found.get('010950')?.stop, 145_000, 'hold로 옮긴 손절가를 써야 한다');
+    assert.equal(found.get('010950')?.target, 170_000, 'hold로 올린 목표가를 써야 한다');
+  });
+
+  /** 절반만 팔고 남긴 수량에도 약속이 필요하다. */
+  it('부분 매도에 적은 약속도 읽는다', async (t) => {
+    if (!usable) return t.skip('DB에 붙지 못했다');
+    await seed('2026-09-09', [{
+      symbol: '034020', name: '두산에너빌리티', action: 'sell', quantity: 25, rationale: '',
+      plan: {
+        targetPrice: 90_000, stopPrice: 72_000,
+        horizonDays: 10, expectedReturn: 0.1, basis: '남은 25주의 약속',
+      },
+    }]);
+    const found = await getLatestStopPrices(account);
+    assert.equal(found.get('034020')?.stop, 72_000);
+    assert.equal(found.get('034020')?.target, 90_000);
   });
 
   it('0이거나 읽을 수 없는 손절가는 넣지 않는다', async (t) => {

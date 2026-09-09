@@ -362,6 +362,27 @@ export async function attachExecutions(
  *
  * ★ 이미 판 종목이 섞여 들어와도 무해하다. 부르는 쪽이 **지금 보유한 것**에만
  *   이 값을 붙인다.
+ *
+ * ── 매수 결정만 읽던 것을 고쳤다 (2026-09-09) ────────────────────────────
+ *
+ * 처음에는 `action = 'buy'`인 결정만 읽었다. "약속은 살 때 적는 것"이라고 본
+ * 것인데, **판단자가 계속 들고 가기로 하면서 목표·손절을 옮기면 그 값이 갈 곳이
+ * 없었다.** 그날 판단자가 직접 그것을 적어 뒀다 — 회차 474의 한국전력 `hold`:
+ *
+ *   *"이 plan은 기록이고, 실제 손절 감시가 읽는 값은 회차 103의 30,300원이다.
+ *     목표가 38,000원은 손절 감시가 읽지 않으므로 다음 회차가 이 rationale을
+ *     읽고 지켜야 한다."*
+ *
+ * 같은 회차의 삼성전자우에는 이렇게 적혀 있었다 — *"손절을 올리고 싶지만 hold의
+ * plan은 손절 감시가 읽지 않으므로 기록만 남기면 착각을 만든다."* 판단자가 손절을
+ * 옮기는 것을 **포기했다.** 그것이 이 조건의 실제 대가였다.
+ *
+ * ★ 이제 **어느 결정이든 `plan`에 손절가를 적었으면 그것이 최신 약속**이다.
+ *   `hold`로 목표를 올리면 다음 감시부터 그 값으로 잰다. 값을 옮기지 않을
+ *   생각이면 `plan`을 비우면 되고, 그러면 직전 값이 그대로 남는다.
+ *
+ * ★ 부분 매도(`sell`)에도 `plan`을 적을 수 있다 — 남은 수량의 약속이다. 전량을
+ *   팔았으면 보유 목록에 없으니 부르는 쪽에서 걸러진다.
  */
 export async function getLatestStopPrices(accountId: string): Promise<Map<string, {
   stop: number;
@@ -390,7 +411,6 @@ export async function getLatestStopPrices(accountId: string): Promise<Map<string
        FROM trading_deliberations d,
             LATERAL jsonb_array_elements(d.decisions) e
       WHERE d.account_id = $1
-        AND e->>'action' = 'buy'
         AND e->'plan'->>'stopPrice' IS NOT NULL
       ORDER BY e->>'symbol', d.id DESC`,
     [accountId],
