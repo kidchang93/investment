@@ -263,6 +263,15 @@ export function fundamentalBand(
 }
 
 /**
+ * 차트 축과 재무 축이 이 배수 이상 어긋나면 **적정가를 못 낸 것으로 본다.**
+ *
+ * 2.0인 이유: 실측 822종목 중 2배 미만이 702개(85.4%)로 대다수이고, 2배 이상인
+ * 120개가 가장 싼 30종목의 3분의 2를 차지했다. 정상 종목을 거의 안 버리면서
+ * 순위를 점령하던 것들을 걷어내는 자리가 여기다.
+ */
+export const AXIS_DIVERGENCE_LIMIT = 2.0;
+
+/**
  * 두 축을 모아 한 종목의 판정을 만든다.
  *
  * ★ **평균 내지 않고 나란히 둔다.** 셋이 갈리면 그 자체가 정보다 — 차트는
@@ -280,6 +289,39 @@ export function combine(
   fundamental: Band | null,
   missing: string[],
 ): FairValue {
+  /*
+   * ★★ **두 축이 크게 어긋나면 적정가를 못 낸 것이다** (2026-09-09).
+   *
+   * 위 주석은 *"차트는 싸다는데 재무는 비싸면 이익이 꺾이는 중일 수 있다"*고
+   * 적어 두고서 **그 둘을 평균 냈다.** 설계 의도와 구현이 어긋나 있었다.
+   *
+   * 후보를 900종목으로 넓히자마자 그 대가가 나왔다. ⭐ 추천 다섯이 전부 무너진
+   * 종목이었고, 다섯 다 두 축이 2.7~6.2배 어긋나 있었다:
+   *
+   *   오가닉티코스메틱  현재가 3,350원 · 차트 2,807원 · 재무 17,500원 (6.2배)
+   *   헝셩그룹          현재가 2,895원 · 차트 2,726원 · 재무 11,458원 (4.2배)
+   *
+   * 차트는 *"이 값이 그 종목의 정상 범위"*라 하고 재무는 *"과거 배수대로면 5배는
+   * 돼야 한다"*고 한다. 그 평균을 적정가라 부르면 **−67% 싸다**가 되고, gap
+   * 순위 맨 위를 차지한다. 실제로 전체의 14.6%(120/822)뿐인 이런 종목이
+   * **가장 싼 30종목 중 20개(67%)**를 차지했다.
+   *
+   * 그것들은 싼 것이 아니라 **과거 배수가 더 이상 성립하지 않는 것**이다. 사업이
+   * 꺾였거나 적자로 돌아섰거나 시장이 그 프리미엄을 걷어갔다. 어느 쪽이든 우리는
+   * **그 종목의 적정가를 모른다** — 모른다고 말하는 것이 평균을 내는 것보다 낫다.
+   *
+   * ★ 축이 **하나뿐인** 종목은 이 검사에 걸리지 않는다. 어긋날 짝이 없기
+   *   때문이다(지수 ETF는 원래 차트 하나로 낸다).
+   */
+  if (chart?.mid && fundamental?.mid && chart.mid > 0 && fundamental.mid > 0) {
+    const ratio = Math.max(chart.mid, fundamental.mid) / Math.min(chart.mid, fundamental.mid);
+    if (ratio >= AXIS_DIVERGENCE_LIMIT) {
+      return {
+        symbol, kind, price, chart, fundamental, gap: null,
+        missing: [...missing, `두 축이 ${ratio.toFixed(1)}배 어긋나 적정가를 못 낸다`],
+      };
+    }
+  }
   const mids = [chart?.mid, fundamental?.mid].filter((v): v is number => typeof v === 'number' && v > 0);
   const gap = mids.length > 0 && price > 0 ? price / mean(mids) - 1 : null;
   return { symbol, kind, price, chart, fundamental, gap, missing };

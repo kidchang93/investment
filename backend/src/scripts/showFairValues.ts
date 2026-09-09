@@ -36,6 +36,14 @@ import {
 
 /** 이보다 오래된 적정가는 낡았다고 알린다. 분석가가 5분마다 도므로 넉넉한 값이다 */
 const STALE_MINUTES = 20;
+/**
+ * 적정가 표에 보일 **후보** 수(보유와 ⭐는 이와 별개로 전부 보인다).
+ *
+ * 후보 풀이 900종목이라 다 찍으면 1,800줄이다. 판단자가 그것을 읽고 나면 판단할
+ * 자리가 남지 않는다. 문턱을 넘은 것은 위 ⭐ 섹션이 이미 골라 놓았으므로, 여기서는
+ * **그 판정이 어디쯤에서 끊겼는지 보이는 만큼**만 있으면 된다.
+ */
+const CANDIDATE_SHOWN = 25;
 
 const won = (n: number): string => `${Math.round(n).toLocaleString('ko-KR')}원`;
 
@@ -132,7 +140,48 @@ async function main(): Promise<void> {
     console.log('  ★ 적정가가 없습니다 — 분석가가 아직 안 돌았습니다.');
     console.log('    이 회차는 적정가 없이 판단해야 하고, 그 사실을 findings에 적으세요.');
   } else {
-    for (const r of rows.sort((a, b) => (a.gap ?? 99) - (b.gap ?? 99))) {
+    /*
+     * ★★ **다 찍지 않는다** (2026-09-09). 후보를 900종목으로 넓히면서 이 표가
+     *    1,800줄(종목당 값 + 근거)이 됐다. 판단자가 그것을 읽고 나면 정작 판단할
+     *    자리가 남지 않는다 — 화면은 판단을 **돕는** 것이지 대신하는 것도,
+     *    묻어 버리는 것도 아니다.
+     *
+     * ★ 무엇을 남기나:
+     *   ① **보유는 전부** — 팔지 말지는 매 회차 물어야 하는 질문이다
+     *   ② **⭐로 뽑힌 것은 전부** — 위 섹션이 이미 이유를 적었고, 여기서는 그
+     *      근거(차트·재무 값)를 본다
+     *   ③ 나머지는 **싼 순으로 CANDIDATE_SHOWN개**까지. 그 아래는 한 줄로 센다
+     *
+     * ★ 잘라낸 것을 **말한다.** 조용히 자르면 판단자는 그것이 전부인 줄 알고
+     *   "후보가 이것뿐이다"라고 적는다 — 30종목 상한을 넘겨 31번째가 조용히
+     *   사라졌던 멀티시세와 같은 병이다.
+     */
+    /*
+     * ★ 보유는 **층 장부**에서 읽는다. 이 표는 계좌 조회보다 **먼저** 찍히므로
+     *   증권사 잔고를 아직 모른다. 장부는 매일 마감에 잔고와 대조되고 어긋나면
+     *   화면이 그것을 말하므로(`pendingSync`), 여기서 쓰기에 충분하다.
+     *   못 읽어도 표가 조금 길어질 뿐이라 조용히 넘어간다.
+     */
+    const held = new Set(await pool.query<{ symbol: string }>(
+      `SELECT DISTINCT symbol FROM trading_layer_positions
+        WHERE account_id = $1 AND quantity > 0`,
+      [accountId],
+    ).then((r) => r.rows.map((x) => x.symbol)).catch(() => []));
+    const starred = new Set((picks ?? []).map((p) => p.symbol));
+    const sorted = rows.sort((a, b) => (a.gap ?? 99) - (b.gap ?? 99));
+    let shownCandidates = 0;
+    let hidden = 0;
+    const visible = sorted.filter((r) => {
+      if (held.has(r.symbol) || starred.has(r.symbol)) return true;
+      if (shownCandidates < CANDIDATE_SHOWN) { shownCandidates += 1; return true; }
+      hidden += 1;
+      return false;
+    });
+    if (hidden > 0) {
+      console.log(`  (보유 ${held.size} · ⭐ ${starred.size} · 그 밖에 싼 순으로 ${shownCandidates}종목을 보입니다`
+        + ` — 문턱 밖 ${hidden}종목은 접었습니다)`);
+    }
+    for (const r of visible) {
       const instrument = await getKoreanInstrumentBySymbol(r.symbol);
       const name = instrument?.name ?? r.symbol;
       const stale = r.age_min > STALE_MINUTES ? ` ⚠${Math.round(r.age_min)}분 전` : '';
