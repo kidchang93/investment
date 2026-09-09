@@ -59,14 +59,14 @@ const buy = (symbol: string, stopPrice: number, layer?: string) => ({
 describe('손절가 — 종목별 최신 하나', () => {
   it('회차가 아무리 쌓여도 옛 매수의 손절가를 찾는다', async (t) => {
     if (!usable) return t.skip('DB에 붙지 못했다');
-    await seed('2026-09-01', [buy('005935', 177_000, 'bet')]);
+    await seed('2026-09-01', [buy('005935', 177_000, 'short')]);
     // 그 뒤로 손절가 없는 회차를 많이 쌓는다 — 옛 방식(최근 30회차)이라면 밀려난다.
     for (let i = 0; i < 40; i += 1) {
       await seed('2026-09-02', []);
     }
     const found = await getLatestStopPrices(account);
     assert.equal(found.get('005935')?.stop, 177_000, '40회차 뒤에도 찾아야 한다');
-    assert.equal(found.get('005935')?.layer, 'bet');
+    assert.equal(found.get('005935')?.layer, 'short');
   });
 
   it('같은 종목을 다시 사면 나중 회차의 손절가가 이긴다', async (t) => {

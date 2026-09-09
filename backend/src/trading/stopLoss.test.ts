@@ -84,10 +84,10 @@ describe('손절 판정 — 규칙이 집행하므로 시험으로 덮는다 (20
    */
   it('★ 규칙에 적힌 층을 매도로 그대로 옮긴다 — 층 장부가 여기서 끊겼다', () => {
     const stops = new Map<string, StopRule>([
-      ['131290', { stop: 218_000, round: 22, layer: 'bet' }],
+      ['131290', { stop: 218_000, round: 22, layer: 'short' }],
     ]);
     const r = checkStops([pos('131290', 20, 217_000)], stops, NO_EXEC);
-    assert.equal(r.breaches[0].layer, 'bet');
+    assert.equal(r.breaches[0].layer, 'short');
   });
 
   it('층을 모르면 비운 채 낸다 — 짐작해서 채우면 그 층 손익이 거짓이 된다', () => {

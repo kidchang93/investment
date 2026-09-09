@@ -1073,7 +1073,7 @@ async function main(): Promise<void> {
      * 비워 둔다 — 짐작해서 채우면 그 층의 손익이 거짓이 된다.
      */
     const layerRaw = (req.body as { layer?: unknown }).layer;
-    const layer = layerRaw === 'etf' || layerRaw === 'short' || layerRaw === 'bet'
+    const layer = layerRaw === 'etf' || layerRaw === 'short'
       ? layerRaw
       : undefined;
     const auditBase = {

@@ -129,7 +129,7 @@ export function Dashboard({ accountId }: { accountId: string | null }): JSX.Elem
       <header className="dash__head">
         <div>
           <h2>목표 연 15~20%</h2>
-          <p>ETF 50% · 단기 30% · 유망주 20%로 나눠 담고, 비중을 지킨다</p>
+          <p>ETF 50% · 단기 50%로 나눠 담고, 비중을 지킨다</p>
         </div>
         <button
           aria-label={isLoading ? '갱신 중' : '새로고침'}

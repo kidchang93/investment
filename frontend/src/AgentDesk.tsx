@@ -171,7 +171,7 @@ interface Decision {
   quantity: number;
   rationale: string;
   limitPrice?: number;
-  layer?: 'etf' | 'short' | 'bet';
+  layer?: 'etf' | 'short';
   plan?: {
     targetPrice: number; stopPrice: number; horizonDays: number;
     expectedReturn: number; basis: string;
@@ -330,7 +330,7 @@ const ACTION_LABEL: Record<string, string> = {
   buy: '매수', sell: '매도', hold: '보유', amend: '정정', cancel: '취소',
 };
 
-const LAYER_LABEL: Record<string, string> = { etf: 'ETF', short: '단기', bet: '유망주' };
+const LAYER_LABEL: Record<string, string> = { etf: 'ETF', short: '단기' };
 
 function timeOf(ms: number): string {
   return new Intl.DateTimeFormat('ko-KR', {

@@ -39,6 +39,7 @@ import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
 import { getLayerPositions } from '../db/layers.js';
 import { getKisDomesticAccountSnapshot, getKisDomesticExecutions } from '../kis/rest.js';
 import { escapeMrkdwn, sendSlack, sendSlackBot, won as slackWon } from '../notify/slack.js';
+import { parseLayer } from '../trading/layers.js';
 import type { Layer } from '../trading/layers.js';
 import { checkStops, type StopRule, type TargetHit } from '../trading/stopLoss.js';
 import { markAgentActivity } from '../db/agentActivity.js';
@@ -109,14 +110,11 @@ async function stopPricesOf(accountId: string): Promise<Map<string, StopRule>> {
   ]);
   const stops = new Map<string, StopRule>();
   for (const [symbol, found] of latest) {
-    const decided = found.layer;
     stops.set(symbol, {
       stop: found.stop,
       target: found.target,
       round: found.round,
-      layer: (decided === 'etf' || decided === 'short' || decided === 'bet')
-        ? decided
-        : ledger.get(symbol) ?? undefined,
+      layer: parseLayer(found.layer) ?? ledger.get(symbol) ?? undefined,
     });
   }
   return stops;

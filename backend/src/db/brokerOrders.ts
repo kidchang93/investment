@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { pool } from './client.js';
 import type { BrokerOrderRecord, OrderSide, OrderType } from '@invest/shared';
+import { parseLayer } from '../trading/layers.js';
 import type { Layer, SubmittedQuantity } from '../trading/layers.js';
 
 /**
@@ -448,8 +449,7 @@ export async function layerOfOrder(orderNo: string): Promise<Layer | null> {
       ORDER BY id DESC LIMIT 1`,
     [orderNo],
   );
-  const value = rows[0]?.layer;
-  return value === 'etf' || value === 'short' || value === 'bet' ? value : null;
+  return parseLayer(rows[0]?.layer);
 }
 
 export async function applyOrderFill(

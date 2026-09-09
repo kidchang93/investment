@@ -63,11 +63,11 @@ describe('층 장부 — 평균원가법', () => {
   });
 
   it('★ 장부에 없는 수량은 팔지 않는다 — 음수 수량을 만들면 이후 손익이 전부 거짓이 된다', () => {
-    const p = applyTrade(empty('bet', '005930'), {
-      layer: 'bet', symbol: '005930', side: 'buy', quantity: 5, price: 100_000, fee: 0,
+    const p = applyTrade(empty('short', '005930'), {
+      layer: 'short', symbol: '005930', side: 'buy', quantity: 5, price: 100_000, fee: 0,
     }).position;
     const r = applyTrade(p, {
-      layer: 'bet', symbol: '005930', side: 'sell', quantity: 8, price: 110_000, fee: 0,
+      layer: 'short', symbol: '005930', side: 'sell', quantity: 8, price: 110_000, fee: 0,
     });
     assert.equal(r.position.quantity, 0);
     assert.equal(r.shortfall, 3, '못 판 3주가 값으로 남아야 한다');
@@ -109,27 +109,35 @@ describe('층별 집계', () => {
     );
     const etf = summaries.find((s) => s.layer === 'etf')!;
     const short = summaries.find((s) => s.layer === 'short')!;
-    const bet = summaries.find((s) => s.layer === 'bet')!;
 
     assert.equal(etf.symbols, 2);
     assert.equal(etf.marketValue, 96 * 109_870 + 714 * 27_345);
     assert.ok(etf.unrealizedPnl > 0);
     assert.equal(short.realizedPnl, 150_000, '실현손익은 밖에서 들여온다');
     assert.equal(short.totalPnl, short.unrealizedPnl + 150_000);
-    assert.equal(bet.symbols, 0, '아무것도 없는 층도 표에 남는다 — 0원인 사실이 보여야 한다');
-    assert.equal(bet.targetWeight, 0.20);
+    assert.equal(short.targetWeight, 0.50, '유망주 층을 합쳐 절반이 됐다(2026-09-09)');
     assert.ok(Math.abs(totalAssets - (etf.marketValue + short.marketValue + 10_000_000)) < 1);
+  });
+
+  it('아무것도 없는 층도 표에 남는다 — 0원인 사실이 보여야 한다', () => {
+    const { summaries } = summarizeLayers(
+      positions.filter((p) => p.layer === 'etf'), prices, new Map(), 0,
+    );
+    const short = summaries.find((s) => s.layer === 'short')!;
+    assert.equal(short.symbols, 0);
+    assert.equal(short.marketValue, 0);
+    assert.equal(short.targetWeight, 0.50, '비어 있어도 노리는 비중은 그대로다');
   });
 
   it('★ 현재가를 못 받은 종목은 평가액에 0으로 넣지 않고 이름을 돌려준다', () => {
     const { summaries, unpriced } = summarizeLayers(
-      [...positions, { layer: 'bet', symbol: '999999', quantity: 5, cost: 1_000_000 }],
+      [...positions, { layer: 'short', symbol: '999999', quantity: 5, cost: 1_000_000 }],
       prices, new Map(), 0,
     );
-    assert.deepEqual(unpriced, ['bet:999999']);
-    const bet = summaries.find((s) => s.layer === 'bet')!;
-    assert.equal(bet.marketValue, 0);
-    assert.equal(bet.cost, 1_000_000, '원가는 남는다 — 산 것은 사실이다');
+    assert.deepEqual(unpriced, ['short:999999']);
+    const short = summaries.find((s) => s.layer === 'short')!;
+    assert.equal(short.marketValue, 10 * 268_000, '값을 받은 종목만 평가액에 든다');
+    assert.equal(short.cost, 2_700_000 + 1_000_000, '원가는 남는다 — 산 것은 사실이다');
   });
 
   it('수량이 0인 자리는 세지 않는다', () => {
@@ -154,7 +162,7 @@ describe('★ 증권사 잔고 대조 — 2026-08-14에 중복 체결을 잡은 
   });
 
   it('장부에만 있는 종목도 잡는다 — 팔렸는데 기록을 못 한 경우', () => {
-    const m = reconcile([{ layer: 'bet', symbol: '005930', quantity: 10, cost: 1 }], new Map());
+    const m = reconcile([{ layer: 'short', symbol: '005930', quantity: 10, cost: 1 }], new Map());
     assert.deepEqual(m, [{ symbol: '005930', ledger: 10, broker: 0 }]);
   });
 
@@ -176,8 +184,8 @@ describe('★ 증권사 잔고 대조 — 2026-08-14에 중복 체결을 잡은 
  */
 describe('체결의 층 판정 — 모르면 넣지 않는다', () => {
   it('주문에 층이 적혀 있으면 그것이 맞다', () => {
-    const d = resolveFillLayer('bet', 'etf');
-    assert.deepEqual(d, { kind: 'use', layer: 'bet', fromOrder: true });
+    const d = resolveFillLayer('short', 'etf');
+    assert.deepEqual(d, { kind: 'use', layer: 'short', fromOrder: true });
   });
 
   it('주문에 없고 사람이 정해 줬으면 그 값으로 넣는다', () => {
@@ -282,13 +290,13 @@ describe('매도의 층 — 판단자에게 묻지 않고 장부에서 읽는다
 
   it('판단자가 적었고 장부와 같으면 그대로 쓴다', () => {
     assert.deepEqual(
-      resolveSellLayer('bet', ['bet']),
-      { kind: 'use', layer: 'bet', from: 'decision' },
+      resolveSellLayer('short', ['short']),
+      { kind: 'use', layer: 'short', from: 'decision' },
     );
   });
 
   it('★ 판단자와 장부가 어긋나면 내지 않는다 — 둘 중 하나가 틀렸다', () => {
-    const d = resolveSellLayer('bet', ['etf']);
+    const d = resolveSellLayer('short', ['etf']);
     assert.equal(d.kind, 'block');
     assert.match(d.kind === 'block' ? d.why : '', /장부/);
   });

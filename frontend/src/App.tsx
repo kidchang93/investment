@@ -6001,7 +6001,7 @@ export function App(): JSX.Element {
               */}
               <h2 className="portfolio-section" data-kind="live">
                 <span>3층 성과</span>
-                <em>ETF 50% · 단기 30% · 유망주 20%가 목표</em>
+                <em>ETF 50% · 단기 50%가 목표</em>
               </h2>
               <PortfolioLayers accountId={kisAccountId} />
 

@@ -112,11 +112,11 @@ describe('멱등성 키', { skip: false }, () => {
       limitPrice: 245_500,
       orderNo: 'TEST-LAYER',
       orderBranchNo: '00',
-      layer: 'bet',
+      layer: 'short',
     });
 
     const saved = await getOrderByClientOrderId(key);
-    assert.equal(saved?.layer, 'bet', '층이 저장돼야 layerSync가 되돌릴 수 있다');
+    assert.equal(saved?.layer, 'short', '층이 저장돼야 layerSync가 되돌릴 수 있다');
   });
 
   it('없는 키를 조회하면 null', async (t) => {

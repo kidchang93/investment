@@ -97,7 +97,7 @@ async function main(): Promise<void> {
    *   자동 경로(데몬)가 층 모르는 체결을 전부 ETF로 만들고 있었다.
    */
   const requestedLayer: Layer | undefined =
-    args.includes('--layer') && ['etf', 'short', 'bet'].includes(layerArg)
+    args.includes('--layer') && ['etf', 'short'].includes(layerArg)
       ? (layerArg as Layer)
       : undefined;
   const daysArg = Number(args[args.indexOf('--days') + 1]);
@@ -199,7 +199,7 @@ async function main(): Promise<void> {
      */
     console.log(`\n★ 층을 몰라 안 넣은 체결 ${skipped.length}건:`);
     for (const line of skipped) console.log(`  - ${line}`);
-    console.log('  넣으려면 그 층을 정해 다시 부른다 — 예: --layer bet --apply');
+    console.log('  넣으려면 그 층을 정해 다시 부른다 — 예: --layer short --apply');
     process.exitCode = 3;
   }
 }

@@ -85,7 +85,7 @@ export interface DeliberationDecision {
    * 실제로 그랬다 — 그날 낸 두 건은 `rationale`에 "유망주 층"이라고 적혀 있었지만
    * 주문 기록의 `layer`는 비어 있었다.
    */
-  layer?: 'etf' | 'short' | 'bet';
+  layer?: 'etf' | 'short';
   /** `amend`·`cancel`의 대상. 원주문 번호(ODNO)와 채번지점(KRX_FWDG_ORD_ORGNO) */
   orderNo?: string;
   orderBranchNo?: string;
@@ -242,8 +242,8 @@ export async function ensureDeliberationSchema(): Promise<void> {
 function decisionProblem(d: DeliberationDecision): string | null {
   if (d.action === 'buy') {
     // 층을 모르면 체결을 층에 되돌릴 수 없다. 짐작해서 채우지 않는다.
-    if (d.layer !== 'etf' && d.layer !== 'short' && d.layer !== 'bet') {
-      return `${d.symbol} 매수에 layer가 없습니다. 'etf' | 'short' | 'bet' 중 하나를 적으세요`
+    if (d.layer !== 'etf' && d.layer !== 'short') {
+      return `${d.symbol} 매수에 layer가 없습니다. 'etf' | 'short' 중 하나를 적으세요`
         + ' — 증권사 잔고는 층을 모르므로 여기 없으면 층별 성과가 거짓이 됩니다.';
     }
     /*
