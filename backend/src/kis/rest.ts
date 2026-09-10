@@ -16,7 +16,10 @@ import {
 } from './auth.js';
 import { DEFAULT_EXCHANGE, marketDivCode, type KisExchange } from './exchanges.js';
 import { assertVenueUsable, DEFAULT_ORDER_VENUE, type OrderVenue } from './orderVenues.js';
-import { isExpiredToken, kisErrorCodeOf, kisErrorSuffix, KisRequestError } from './errorCodes.js';
+import {
+  isExpiredToken, kisErrorCodeOf, kisErrorKind, kisErrorSuffix,
+  KisRequestError, type KisErrorKind,
+} from './errorCodes.js';
 import { orderCashPayload } from './orderCash.js';
 import { CONFIRMED_ORDER_DIVISIONS } from './orderDivisions.js';
 import {
@@ -2093,6 +2096,61 @@ export function accountTotalsFrom(summary: Record<string, string>): AccountTotal
  * **알 수 없는 것**: 그 코드로 지금 주문이 나가는가 — 시간대·종목 상태에 따라
  * 주문은 따로 거절될 수 있고 그건 실제 주문으로만 확인된다.
  */
+/**
+ * **이 TR이 이 서버에서 도는가.** 응답 내용이 아니라 **되는지 여부**만 답한다.
+ *
+ * ── 왜 (2026-09-10) ──────────────────────────────────────────────────────
+ *
+ * 상품을 넓힐 때(해외주식·선물옵션) 가장 먼저 답해야 하는 것이 *"모의에서
+ * 되는가"*다. 이 레포는 그것을 **나중에 알아서** 두 번 크게 헛돌았다 —
+ * 스톱지정가(`ORD_DVSN=22`)는 코드를 다 짜고 시험 631개를 통과시킨 뒤에야 모의가
+ * 거절한다는 것을 알았고, 개장일 조회(`chk-holiday`)는 리스크 룰이 늘 보류로
+ * 막히고 나서야 원인을 찾았다.
+ *
+ * ★ **주문을 쏘지 않는다.** 조회 TR만 보내고, 그 응답으로 세 가지를 가른다:
+ *
+ *     ok           rt_cd = 0 — 이 서버에서 돈다
+ *     trNotOnVts   EGW02006 — 그 TR이 모의 서버에 없다(기능이 없는 것)
+ *     그 밖        오류 코드와 KIS가 한 말을 그대로 남긴다
+ *
+ * ★ **"TR ID를 잘못 적은 것"과 "모의에 없는 것"은 다르다.** 앞은 KIS가 다른
+ *   코드로 답하므로 `code`를 함께 돌려준다 — 그것을 안 보면 오타를 "미지원"으로
+ *   기록하게 된다.
+ */
+export async function probeKisTr(
+  account: KisAccountConfig,
+  path: string,
+  trId: string,
+  params: Record<string, string>,
+): Promise<{
+  ok: boolean; kind: KisErrorKind | null; code: string; message: string;
+  /** 성공했을 때의 원본 응답. **탐침이 값도 보게** 한다 — 되는 것과 값이 있는 것은 다르다 */
+  body?: Record<string, unknown>;
+}> {
+  try {
+    const { body } = await kisGetWithHeaders(path, trId, params, '', toCredentials(account));
+    const record = body as Record<string, unknown>;
+    const code = kisErrorCodeOf(body);
+    return {
+      ok: String(record.rt_cd ?? '') === '0',
+      kind: kisErrorKind(code),
+      code,
+      message: String(record.msg1 ?? '').trim(),
+      body: record,
+    };
+  } catch (e) {
+    const text = e instanceof Error ? e.message : String(e);
+    // KIS가 한 말만 뽑는다. 본문 전체를 두면 표로 못 읽는다.
+    const code = /"msg_cd":"([^"]*)"/.exec(text)?.[1] ?? '';
+    return {
+      ok: false,
+      kind: kisErrorKind(code),
+      code,
+      message: /"msg1":"([^"]*)"/.exec(text)?.[1] ?? text.slice(0, 90),
+    };
+  }
+}
+
 export async function probeOrderDivision(
   account: KisAccountConfig,
   symbol: string,
