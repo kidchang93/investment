@@ -17,6 +17,9 @@ import {
 import { DEFAULT_EXCHANGE, marketDivCode, type KisExchange } from './exchanges.js';
 import { assertVenueUsable, DEFAULT_ORDER_VENUE, type OrderVenue } from './orderVenues.js';
 import {
+  overseasOrderPayload, overseasOrderTr, type OverseasExchange,
+} from './orderOverseas.js';
+import {
   isExpiredToken, kisErrorCodeOf, kisErrorKind, kisErrorSuffix,
   KisRequestError, type KisErrorKind,
 } from './errorCodes.js';
@@ -2924,6 +2927,77 @@ export async function getKisDomesticReservedOrders(
  * - 응답 output의 `ODNO`(주문번호)와 `KRX_FWDG_ORD_ORGNO`(주문채번지점번호)를 반드시 보관해야
  *   이후 정정·취소를 보낼 수 있다.
  */
+/**
+ * **해외주식 주문을 보낸다.** 지정가만 보낸다.
+ *
+ * ── 2026-09-10에 생겼다 ──────────────────────────────────────────────────
+ *
+ * 사용자가 *"해외주식 먼저 하자"*고 정했고, **주문 코드를 쓰기 전에 조회로
+ * 경계를 먼저 쟀다**(`scripts/probeOverseasStock.ts`). 모의에서 잔고·매수가능
+ * 금액·미체결·체결기준잔고가 전부 돌고 외화 예수금도 있다는 것을 확인한 뒤에
+ * 이 함수를 만들었다 — 순서를 지킨 것이 요점이다.
+ *
+ * ★ **TR과 본문은 `orderOverseas.ts`가 정한다.** 보내기 전에 던져야 하는 계산이라
+ *   네트워크 없이 시험에 태울 수 있어야 한다(`orderCash.ts`와 같은 이유). 특히
+ *   **미국 매도 모의가 `VTTT1001U`**로 실전(`TTTT1006U`)과 번호 체계가 달라,
+ *   그 표를 규칙이 아니라 짝으로 못 박아 두었다.
+ *
+ * ★ **서버 불일치는 `kisPost`가 막는다.** 국내 주문과 같은 경로이므로 실전
+ *   자격증명이 모의 환경에서 주문 경로로 새는 일은 여기서도 일어나지 않는다.
+ *
+ * ★ 시장가는 만들지 않았다 — 시장마다 주문구분이 달라 아직 확인하지 않았다.
+ */
+export async function placeKisOverseasOrder(
+  account: KisAccountConfig,
+  params: {
+    exchange: OverseasExchange;
+    /** 해외 종목코드. 미국은 티커(`AAPL`) */
+    symbol: string;
+    side: OrderSide;
+    quantity: number;
+    /** 지정가. **필수다** — 시장가 경로가 없다 */
+    limitPrice: number;
+  },
+): Promise<{ orderNo: string; orderBranchNo: string; acceptedAt: string; message: string }> {
+  const trId = overseasOrderTr(params.exchange, params.side, config.env);
+  const body = await kisPost(
+    '/uapi/overseas-stock/v1/trading/order',
+    trId,
+    overseasOrderPayload({
+      cano: account.cano,
+      productCode: account.productCode,
+      exchange: params.exchange,
+      symbol: params.symbol,
+      side: params.side,
+      quantity: params.quantity,
+      limitPrice: params.limitPrice,
+    }),
+    toCredentials(account),
+  );
+
+  if (body.rt_cd !== '0') {
+    // 국내와 같은 이유로 **코드를 들고** 던진다 — 모의 미지원과 진짜 거절을 가른다.
+    throw new KisRequestError(
+      `KIS 해외주식 주문 전송 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`
+      + ` (${String(body.msg_cd ?? '코드 없음')})`,
+      kisErrorCodeOf(body),
+    );
+  }
+
+  /*
+   * ★ 응답 필드는 국내와 같은 이름을 쓴다고 보고 읽되, **없으면 빈 문자열이다.**
+   *   실제 접수 응답을 아직 못 봤으므로(주문을 쏘지 않았다) 여기서 값을
+   *   지어내지 않는다 — 첫 주문 때 사람이 확인하고 다르면 고친다.
+   */
+  const output = (body.output ?? {}) as Record<string, string>;
+  return {
+    orderNo: output.ODNO ?? '',
+    orderBranchNo: output.KRX_FWDG_ORD_ORGNO ?? '',
+    acceptedAt: output.ORD_TMD ?? '',
+    message: String(body.msg1 ?? '주문이 접수되었습니다.').trim(),
+  };
+}
+
 export async function placeKisDomesticOrder(
   account: KisAccountConfig,
   params: {

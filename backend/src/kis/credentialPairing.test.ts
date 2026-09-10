@@ -24,6 +24,7 @@ import {
   getKisDomesticAccountSnapshot,
   placeKisDomesticOrder,
   toCredentials,
+  placeKisOverseasOrder,
 } from './rest.js';
 
 /** 이 실행의 서버가 아닌 쪽. `APP_ENV`가 무엇이든 "어긋난 짝"을 만들 수 있어야 한다. */
@@ -99,6 +100,26 @@ describe('짝이 어긋난 자격증명으로는 주문을 보내지 않는다',
       /자격증명이 주문 경로에 들어왔습니다/,
     );
     assert.equal(fetchCalls, 0, 'KIS로 나가기 전에 막아야 한다');
+  });
+
+  it('★ 해외주식 주문도 같은 자리에서 막힌다 — 주문 경로는 하나가 아니다', () => {
+    /*
+     * 2026-09-10에 해외주식 주문을 붙이면서 넣었다. 가드가 `kisPost` 안에 있어
+     * 새 주문 경로도 자동으로 보호되지만, **그 사실이 시험으로 못 박혀 있어야**
+     * 나중에 누가 kisPost를 안 거치는 경로를 만들 때 여기서 걸린다.
+     */
+    return assert.rejects(
+      placeKisOverseasOrder(account(OTHER_SERVER), {
+        exchange: 'NASD',
+        symbol: 'AAPL',
+        side: 'buy',
+        quantity: 1,
+        limitPrice: 190.25,
+      }),
+      /자격증명이 주문 경로에 들어왔습니다/,
+    ).then(() => {
+      assert.equal(fetchCalls, 0, 'KIS로 나가기 전에 막아야 한다');
+    });
   });
 
   it('정정·취소도 같은 자리에서 막힌다', async () => {
