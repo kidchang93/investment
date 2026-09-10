@@ -55,6 +55,8 @@ interface FairRow {
   gap: number | null;
   basis: string;
   age_min: number;
+  /** 시장 대비 60일로 급락 중인가 — 분석가가 판정해 넣는다 */
+  falling: boolean;
 }
 
 async function main(): Promise<void> {
@@ -66,7 +68,7 @@ async function main(): Promise<void> {
   // ── 적정가 (분석가가 넣은 가장 최근 것) ──
   const { rows } = await pool.query<FairRow>(
     `SELECT DISTINCT ON (symbol)
-            symbol, price, chart_mid, fundamental_mid, gap, basis,
+            symbol, price, chart_mid, fundamental_mid, gap, basis, falling,
             EXTRACT(EPOCH FROM (now() - measured_at)) / 60 AS age_min
        FROM trading_fair_values
       WHERE measured_at > now() - interval '2 hours'
@@ -171,15 +173,43 @@ async function main(): Promise<void> {
     const sorted = rows.sort((a, b) => (a.gap ?? 99) - (b.gap ?? 99));
     let shownCandidates = 0;
     let hidden = 0;
+    let dropped = 0;
     const visible = sorted.filter((r) => {
       if (held.has(r.symbol) || starred.has(r.symbol)) return true;
+      /*
+       * ★★ **떨어지는 중인 후보는 이 25칸을 안 먹는다** (2026-09-10).
+       *
+       * 이 표는 gap 오름차순이라 25칸이 정의상 **가장 많이 떨어진 것들**로
+       * 채워졌다. 판단자는 회차마다 그것을 읽고 같은 말을 남겼다 —
+       * *"가장 싼 여섯(코오롱티슈진 −63.4%, HLB −31.3%)은 전부 '크게
+       * 떨어졌다'이지 '싸다'가 아니다. 회차 542~595가 같은 이유로 걸렀다."*
+       * (2026-09-09 회차 596)
+       *
+       * 그동안 급락이 아니면서 싼 후보는 25칸 **뒤로 밀려 안 보였다.** 자리를
+       * 비켜 주는 것이 이 수정이다.
+       *
+       * ★ **보유와 ⭐는 위에서 이미 통과했다.** 들고 있는 것이 무너지는 중이면
+       *   그것이야말로 봐야 하는 자리이고, ⭐는 애초에 이 판정으로 걸러진
+       *   뒤에 뽑힌 것이다.
+       */
+      if (r.falling) { dropped += 1; return false; }
       if (shownCandidates < CANDIDATE_SHOWN) { shownCandidates += 1; return true; }
       hidden += 1;
       return false;
     });
-    if (hidden > 0) {
+    if (hidden > 0 || dropped > 0) {
       console.log(`  (보유 ${held.size} · ⭐ ${starred.size} · 그 밖에 싼 순으로 ${shownCandidates}종목을 보입니다`
         + ` — 문턱 밖 ${hidden}종목은 접었습니다)`);
+    }
+    /*
+     * ★ **접은 것을 말한다.** 조용히 자르면 판단자는 그것이 전부인 줄 알고
+     *   "후보가 이것뿐이다"라고 적는다 — 31번째가 조용히 사라졌던 멀티시세와
+     *   같은 병이다. 그리고 이 필터가 너무 세게 걸리는 날이 오면 이 줄이
+     *   그것을 먼저 보여 준다.
+     */
+    if (dropped > 0) {
+      console.log(`  ★ 떨어지는 중인 ${dropped}종목은 후보에서 뺐습니다 — 시장 대비 60일로 급락 중이라`
+        + ` "싸다"가 아니라 "떨어졌다"입니다(보유·⭐는 그대로 보입니다).`);
     }
     for (const r of visible) {
       const instrument = await getKoreanInstrumentBySymbol(r.symbol);

@@ -12,8 +12,8 @@ import {
   CHEAP_GATE, RICH_GATE, crossesGate, gateSignature, type GateInput,
 } from './judgeGate.js';
 
-const row = (symbol: string, gap: number | null, held = false): GateInput =>
-  ({ symbol, gap, held });
+const row = (symbol: string, gap: number | null, held = false, falling = false): GateInput =>
+  ({ symbol, gap, held, falling });
 
 suite('문턱', () => {
   it('싸면 부른다 — 보유든 후보든 살 수 있다', () => {
@@ -40,6 +40,29 @@ suite('문턱', () => {
 
   it('적정가를 못 냈으면 부르지 않는다 — 모르는 것은 신호가 아니다', () => {
     assert.equal(crossesGate(row('069500', null, true)), false);
+  });
+
+  it('★★ 떨어지는 중인 **후보**는 싸도 부르지 않는다 — "싸다"가 아니라 "떨어졌다"다', () => {
+    /*
+     * 2026-09-10 회귀. 급락 축이 ⭐추천에만 걸리고 이 게이트에는 안 걸려 있어
+     * 코오롱티슈진(−63.4%)·HLB(−31.3%)가 매 회차 판단자를 불렀다. 시험 6거래일에
+     * 회차 125개 중 116개가 결정 0건이었고, 판단자는 매번 같은 이유로 거절했다.
+     */
+    assert.equal(crossesGate(row('950220', -0.63, false, true)), false, '급락 후보는 부를 이유가 아니다');
+    assert.equal(crossesGate(row('950220', -0.63, false, false)), true, '급락이 아니면 싼 후보는 부른다');
+  });
+
+  it('★★ 떨어지는 중이어도 **보유**는 부른다 — 팔지 말지를 정해야 한다', () => {
+    /*
+     * falling은 "싸다를 믿지 않는다"는 축이지 "보지 말라"는 축이 아니다.
+     * 들고 있는 것이 무너지는 중이면 그것이야말로 판단자가 봐야 하는 자리다.
+     */
+    assert.equal(crossesGate(row('028300', -0.31, true, true)), true);
+  });
+
+  it('falling을 안 주면 예전 동작 그대로다', () => {
+    // 이 필드를 안 넘기는 호출부가 조용히 달라지면 안 된다.
+    assert.equal(crossesGate({ symbol: '069500', gap: -0.30, held: false }), true);
   });
 });
 

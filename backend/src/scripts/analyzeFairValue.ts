@@ -51,7 +51,9 @@ import {
 } from '../kis/rest.js';
 import { getMainNews } from '../naver/finance.js';
 import { escapeMrkdwn, sendSlackBot, slackBotConfigured } from '../notify/slack.js';
-import { crossesGate, gateSignature } from '../trading/judgeGate.js';
+import {
+  CHEAP_GATE, crossesGate, gateSignature, type GateInput,
+} from '../trading/judgeGate.js';
 import { markAgentActivity } from '../db/agentActivity.js';
 import {
   ASSET_KIND_LABEL, ASSET_KIND_METHOD,
@@ -178,6 +180,19 @@ async function ensureSchema(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS trading_fair_values_time_idx
       ON trading_fair_values (measured_at DESC);
+    /*
+     * ★★ **급락 판정을 함께 남긴다** (2026-09-10).
+     *
+     * 그전에는 이 판정을 계산해 ⭐추천에서 빼는 데만 쓰고 **버렸다.** 그래서
+     * 판단자 화면(showFairValues.ts)은 gap 오름차순 25칸을 그냥 찍었고,
+     * 그 25칸은 정의상 **가장 많이 떨어진 것들**이 독점했다. 판단자가 회차마다
+     * 같은 말을 남긴 이유다 — *"가장 싼 여섯은 전부 '떨어졌다'이지 '싸다'가 아니다."*
+     *
+     * ★ 남겨야 **나중에 채점할 수 있다.** 이 필터가 옳았는지는 "그때 급락이라고
+     *   판정한 것들이 그 뒤 어떻게 됐나"로만 답할 수 있고, 그러려면 그때의
+     *   판정이 있어야 한다. 이 표가 적정가를 남기는 이유와 같다.
+     */
+    ALTER TABLE trading_fair_values ADD COLUMN IF NOT EXISTS falling BOOLEAN NOT NULL DEFAULT false;
 
     /*
      * ★★ **⭐ 추천을 남긴다** (2026-09-09).
@@ -364,6 +379,15 @@ async function main(): Promise<void> {
     // 뉴스가 없어도 적정가는 낸다.
   }
 
+  /*
+   * ★ **시장 중앙값을 루프 앞에서 구한다.** 급락 판정을 적정가와 같은 행에
+   *   넣어야 하고(아래 INSERT), 그러려면 각 종목을 훑기 전에 기준이 있어야 한다.
+   *   쿼리 한 번이고 일봉은 이미 DB에 있다.
+   */
+  const marketReturn = await marketMedianReturn60();
+  const relativeReturn = (ret: number | null): number | null =>
+    ret === null || marketReturn === null ? null : ret - marketReturn;
+
   const rows: Row[] = [];
   for (const symbol of [...targets, ...candidates]) {
     const instrument = await getKoreanInstrumentBySymbol(symbol);
@@ -412,11 +436,13 @@ async function main(): Promise<void> {
     rows.push({ symbol, name, fv, news: hit, held: held.has(symbol), ret60 });
 
     await pool.query(
-      `INSERT INTO trading_fair_values (symbol, price, chart_mid, fundamental_mid, gap, basis)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
+      `INSERT INTO trading_fair_values
+         (symbol, price, chart_mid, fundamental_mid, gap, basis, falling)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
       [
         symbol, price, chart?.mid ?? null, fundamental?.mid ?? null, fv.gap,
         [chart?.basis, fundamental?.basis].filter(Boolean).join(' | '),
+        isFalling(relativeReturn(ret60)),
       ],
     );
   }
@@ -461,9 +487,7 @@ async function main(): Promise<void> {
    *   문턱을 두면 시장이 빠지는 날 전부 걸린다. 중앙값은 **오늘 후보 집합**에서
    *   구한다(이미 일봉을 읽었으므로 공짜다).
    */
-  const marketReturn = await marketMedianReturn60();
-  const relativeOf = (r: Row): number | null =>
-    r.ret60 === null || marketReturn === null ? null : r.ret60 - marketReturn;
+  const relativeOf = (r: Row): number | null => relativeReturn(r.ret60);
   const falling = new Set(scored.filter((r) => isFalling(relativeOf(r))).map((r) => r.symbol));
 
   /* ① 절대 기준 — 그 종목 자신의 최근 궤적 대비 싸다 */
@@ -612,7 +636,7 @@ async function main(): Promise<void> {
   const sent = await sendSlackBot([header, ...lines].join('\n'));
   console.log(sent ? '\nstock-briefing 채널로 보냈다.' : '\n보내지 못했다.');
 
-  if (!args.includes('--no-judge')) await maybeCallJudge(rows, accountId);
+  if (!args.includes('--no-judge')) await maybeCallJudge(rows, accountId, falling);
 }
 
 /**
@@ -635,8 +659,36 @@ async function main(): Promise<void> {
  * ★ **판정은 `trading/judgeGate.ts`에 있고 시험이 붙어 있다.** 여기 있을 때는
  *   시험이 없어 2026-09-03에 두 번 무너진 것을 로그를 눈으로 읽고 알았다.
  */
-async function maybeCallJudge(rows: Row[], accountId: string): Promise<void> {
-  const crossed = rows.filter((r) => crossesGate({ symbol: r.symbol, gap: r.fv.gap, held: r.held }));
+async function maybeCallJudge(
+  rows: Row[], accountId: string, falling: Set<string>,
+): Promise<void> {
+  /*
+   * ★★ **급락 축을 게이트에도 넘긴다** (2026-09-10). 그전에는 ⭐추천에만
+   *    걸려 있어서, 적정가가 −7% 아래인 급락 종목이 매 회차 판단자를 부르고
+   *    판단자는 매번 "떨어진 것이지 싼 게 아니다"로 거절했다. 자세한 것은
+   *    `judgeGate.crossesGate` 주석에 있다.
+   */
+  const gateRowOf = (r: Row): GateInput =>
+    ({ symbol: r.symbol, gap: r.fv.gap, held: r.held, falling: falling.has(r.symbol) });
+
+  const crossed = rows.filter((r) => crossesGate(gateRowOf(r)));
+
+  /*
+   * ★ **몇을 걸렀는지 적는다.** 이 필터가 너무 세게 걸려 소집이 0이 되는 날이
+   *   오면 그것도 결함인데, 안 적으면 "조용히 아무 일도 안 일어나는 것"과
+   *   구분되지 않는다 — 2026-09-03에 게이트가 무너진 것을 로그를 눈으로 읽고서야
+   *   알았던 것과 같은 자리다.
+   */
+  const blocked = rows.filter(
+    (r) => !r.held && falling.has(r.symbol) && r.fv.gap !== null && r.fv.gap <= CHEAP_GATE,
+  );
+  if (blocked.length > 0) {
+    console.log(
+      `떨어지는 중이라 소집 사유로 안 세는 ${blocked.length}종목: `
+      + blocked.map((r) => r.name).join(', '),
+    );
+  }
+
   if (crossed.length === 0) {
     console.log('판단자를 부르지 않는다 — 문턱을 넘은 종목이 없다.');
     return;
@@ -646,9 +698,7 @@ async function maybeCallJudge(rows: Row[], accountId: string): Promise<void> {
    * ★ **같은 신호로 다시 부르지 않는다.** 직전 호출 때 넘어 있던 종목 묶음과
    *   같으면 새 정보가 아니다 — 5분 전과 상황이 같다는 뜻이다.
    */
-  const signature = gateSignature(
-    rows.map((r) => ({ symbol: r.symbol, gap: r.fv.gap, held: r.held })),
-  );
+  const signature = gateSignature(rows.map(gateRowOf));
   const { rows: last } = await pool.query<{ note: string }>(
     `SELECT note FROM trading_heartbeats
       WHERE name = 'fair-value-judge'
