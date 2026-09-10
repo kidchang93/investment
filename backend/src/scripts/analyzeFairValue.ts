@@ -403,7 +403,11 @@ async function main(): Promise<void> {
     }));
     const chart = chartBand(bars);
     if (!chart) missing.push(`차트(봉 ${bars.length})`);
-    const ret60 = return60(bars);
+    /*
+     * ★ **현재가를 종점으로 준다**(2026-09-10). 일봉이 밀리면 옛 종가로 급락을
+     *   판정하게 되고, 실제로 SAMG엔터가 그 틈으로 필터를 뚫었다.
+     */
+    const ret60 = return60(bars, price);
 
     /*
      * ── ① 재무 — **개별 주식에만 묻는다** ──

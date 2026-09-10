@@ -81,13 +81,41 @@ export function crossesGate(row: GateInput): boolean {
 }
 
 /**
+ * 시그니처에 넣을 **후보** 수. 보유는 수에 상관없이 전부 넣는다.
+ *
+ * ★★ **판단자가 보는 만큼만 접는다** (2026-09-10). 그전에는 문턱을 넘은 것을
+ *    전부 접었는데, 후보 풀이 900종목이 되자 문턱을 넘는 것이 163종목이 됐고
+ *    **그중 하나만 칸을 옮겨도 새 신호**가 됐다. 그날 실측이 이렇다:
+ *
+ *      09-08  소집 44 · 서로 다른 신호 27 · 시그니처 117자
+ *      09-09  소집 30 · 서로 다른 신호 17 · 시그니처 124자
+ *      09-10  소집 31 · 서로 다른 신호 **31** · 시그니처 **1,735자**  ← 방어가 0%
+ *
+ *    31번을 불러 31번 다 결정 0건이었다. 헤드리스 Claude를 그만큼 산 것이다.
+ *
+ * ★ 5인 이유는 **판단자 화면의 ⭐가 다섯**이기 때문이다(`RECOMMEND_LIMIT`).
+ *   그 아래 25칸은 "판정이 어디쯤에서 끊겼는지 보이는 만큼"이지 살 자리가
+ *   아니다 — 100등짜리가 한 칸 움직인 것은 판단을 바꾸지 않는다.
+ *
+ * ★ **보유는 전부 넣는다.** 들고 있는 것의 gap이 깊어지면 팔지 말지가 바뀐다.
+ */
+export const SIGNATURE_TOP_CANDIDATES = 5;
+
+/**
  * 문턱을 넘은 것들을 **한 문자열로** 접는다. 직전 회차 것과 같으면 안 부른다.
  *
  * ★ 종목코드로 정렬한다 — 표의 순서가 바뀌었다고 새 신호가 되면 안 된다.
+ *
+ * ★ 후보는 **싼 순 `SIGNATURE_TOP_CANDIDATES`개만** 넣는다(위 주석).
  */
 export function gateSignature(rows: GateInput[]): string {
-  return rows
-    .filter(crossesGate)
+  const crossed = rows.filter(crossesGate);
+  const held = crossed.filter((r) => r.held);
+  const candidates = crossed
+    .filter((r) => !r.held)
+    .sort((a, b) => (a.gap ?? 0) - (b.gap ?? 0))
+    .slice(0, SIGNATURE_TOP_CANDIDATES);
+  return [...held, ...candidates]
     .map((r) => `${r.symbol}:${Math.round((r.gap ?? 0) / SIGNATURE_BUCKET)}`)
     .sort()
     .join(',');

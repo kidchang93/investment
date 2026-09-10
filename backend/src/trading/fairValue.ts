@@ -364,10 +364,34 @@ export const MOMENTUM_DAYS = 60;
  *
  * ★ `bars`는 **오름차순**(오래된 것이 앞)이다 — `chartBand`가 `slice(-N)`으로
  *   최근을 집는 것과 같은 전제다.
+ *
+ * ── ★★ 종점은 **현재가**다 (2026-09-10) ─────────────────────────────────
+ *
+ * 그전에는 종점으로 `bars[마지막].close`를 썼다. 일봉이 하루라도 밀리면 그만큼
+ * **옛날 값으로 급락을 판정**하게 되고, 실제로 뚫렸다 — 판단자가 회차 11:02에
+ * 산수로 짚었다:
+ *
+ *   *"SAMG엔터의 마지막 봉은 09-04(18,900원)이고 60일 전은 06-11(26,000원)이라
+ *    18,900/26,000−1 = −27.31%, 시장 −7.4% 대비 −19.91%p로 FALLING_GATE를
+ *    0.09%p 차이로 통과했다."*
+ *
+ * 그날 그 종목의 일봉은 **4거래일 밀려 있었고**(수집이 도중에 죽었다), 현재가
+ * 17,470원으로 재면 −32.8% · 대비 −25.4%p라 걸린다. 즉 **일봉 지연이 급락
+ * 필터를 뚫는 경로**였고, ⭐로 올라온 그 종목을 판단자가 매 회차 거절했다.
+ *
+ * ★ **시작점은 그대로 둔다**(`bars[끝 − MOMENTUM_DAYS]`). 창 길이를 건드리면
+ *   `FALLING_GATE`(−20%p)의 뜻이 달라지고 그것은 파라미터 변경이다. 봉이 밀린
+ *   종목은 창이 그만큼 길어지는데, 그것이 **오히려 사실에 가깝다** — 실제로
+ *   그 기간에 그만큼 빠진 것이다.
+ *
+ * ★ 현재가를 안 주면 예전 동작 그대로다 — 시험과 다른 호출부가 조용히
+ *   달라지지 않게 옵셔널로 둔다.
  */
-export function return60(bars: Bar[]): number | null {
+export function return60(bars: Bar[], currentPrice?: number): number | null {
   if (bars.length < MOMENTUM_DAYS + 1) return null;
-  const now = bars[bars.length - 1]?.close;
+  const now = currentPrice !== undefined && currentPrice > 0
+    ? currentPrice
+    : bars[bars.length - 1]?.close;
   const then = bars[bars.length - 1 - MOMENTUM_DAYS]?.close;
   if (!(now > 0) || !(then > 0)) return null;
   return now / then - 1;

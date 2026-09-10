@@ -9,7 +9,8 @@ import assert from 'node:assert/strict';
 import { describe as suite, it } from 'node:test';
 
 import {
-  CHEAP_GATE, RICH_GATE, crossesGate, gateSignature, type GateInput,
+  CHEAP_GATE, RICH_GATE, SIGNATURE_TOP_CANDIDATES,
+  crossesGate, gateSignature, type GateInput,
 } from './judgeGate.js';
 
 const row = (symbol: string, gap: number | null, held = false, falling = false): GateInput =>
@@ -91,6 +92,52 @@ suite('시그니처', () => {
 
   it('넘은 것이 없으면 빈 문자열이다', () => {
     assert.equal(gateSignature([row('069500', 0.01, true)]), '');
+  });
+
+  it('★★ 후보는 싼 순 상위 몇 개만 접는다 — 100등이 움직였다고 부르지 않는다', () => {
+    /*
+     * 2026-09-10 회귀. 후보 풀이 900종목이 되자 문턱을 넘는 것이 163종목이 됐고,
+     * 그중 하나만 칸을 옮겨도 새 신호가 되어 **31번 불러 31번 다 다른 신호**였다
+     * (전부 결정 0건). 판단자 화면의 ⭐는 다섯인데 시그니처는 163을 접고 있었다.
+     */
+    // C000이 가장 얕고(−0.10) C039가 가장 싸다(−0.49). 상위 5는 C035~C039다.
+    const base: GateInput[] = Array.from({ length: 40 }, (_, i) =>
+      row(`C${String(i).padStart(3, '0')}`, -0.10 - i * 0.01, false));
+
+    /*
+     * 얕은 쪽(C000)이 −0.10 → −0.08로 움직인다. 여전히 문턱(−7%)은 넘지만
+     * 상위 5와는 무관한 자리다 — 판단자 화면에 안 보이는 변화이므로 같은 신호여야
+     * 한다. 이것이 안 되면 163종목 중 하나만 흔들려도 매번 부르게 된다.
+     */
+    const moved = base.map((r, i) => (i === 0 ? { ...r, gap: -0.08 } : r));
+    assert.equal(gateSignature(base), gateSignature(moved), '상위 밖의 변화는 새 신호가 아니다');
+
+    // 반대로 상위 5 안이 바뀌면 새 신호다 — 그것은 판단자가 실제로 보는 자리다.
+    const deeper = base.map((r, i) => (i === 39 ? { ...r, gap: -0.99 } : r));
+    assert.notEqual(gateSignature(base), gateSignature(deeper), '상위 안의 변화는 새 신호다');
+
+    // 그리고 접히는 것은 상위 N개뿐이다.
+    assert.equal(gateSignature(base).split(',').length, SIGNATURE_TOP_CANDIDATES);
+  });
+
+  it('★ 보유는 몇이든 전부 들어간다 — 팔지 말지가 걸려 있다', () => {
+    const rows: GateInput[] = [
+      row('H1', -0.30, true), row('H2', -0.25, true), row('H3', -0.20, true),
+      row('H4', -0.15, true), row('H5', -0.12, true), row('H6', -0.11, true),
+      ...Array.from({ length: 20 }, (_, i) => row(`C${i}`, -0.40 - i * 0.01, false)),
+    ];
+    const parts = gateSignature(rows).split(',');
+    assert.equal(parts.length, 6 + SIGNATURE_TOP_CANDIDATES, `보유 6 + 후보 ${SIGNATURE_TOP_CANDIDATES}`);
+    for (const held of ['H1', 'H2', 'H3', 'H4', 'H5', 'H6']) {
+      assert.ok(parts.some((x) => x.startsWith(`${held}:`)), `${held}이 빠졌다`);
+    }
+  });
+
+  it('보유의 gap이 깊어지면 새 신호다 — 그것은 판단을 바꾼다', () => {
+    assert.notEqual(
+      gateSignature([row('005930', -0.10, true)]),
+      gateSignature([row('005930', -0.30, true)]),
+    );
   });
 
   it('★ 문턱을 안 넘은 종목은 시그니처에 안 들어간다', () => {
