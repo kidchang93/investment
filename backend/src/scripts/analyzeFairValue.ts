@@ -514,12 +514,22 @@ async function main(): Promise<void> {
     }
   }
 
-  const picks = scored
+  /*
+   * ★★ **몇이 통과했고 몇을 보이는지 갈라 둔다** (2026-09-10).
+   *
+   * 그전에는 자른 뒤의 다섯만 남겼다. 그래서 판단자가 *"−25% 아래 25종목 중
+   * ⭐는 5개뿐"*을 보고 **이유를 잘못 추론했다** — 미결에 *"⭐ 후보를 '거래대금
+   * 상위 40 중 개별주식'으로 한정하는 것이 옳은지 아무도 재지 않았다"*고 적었다.
+   * 실제 이유는 거래대금이 아니라 `RECOMMEND_LIMIT`(표시 상한)다.
+   *
+   * ★ 화면이 안 밝히면 판단자는 짐작하고, 짐작은 미결로 쌓인다.
+   */
+  const eligible = scored
     .filter((r) => byAbsolute.has(r.symbol) || byRelative.has(r.symbol))
     // ★ 떨어지는 중인 것은 "싸다"가 아니라 "떨어졌다"이다. 추천에서 뺀다.
     .filter((r) => !falling.has(r.symbol))
-    .sort((a, b) => gapOf(a) - gapOf(b))
-    .slice(0, RECOMMEND_LIMIT);
+    .sort((a, b) => gapOf(a) - gapOf(b));
+  const picks = eligible.slice(0, RECOMMEND_LIMIT);
 
   /* ★ 어느 기준으로 올라왔는지 — 없으면 판단자가 둘을 같게 읽는다 */
   const standardOf = (symbol: string): string => [
@@ -528,6 +538,10 @@ async function main(): Promise<void> {
   ].filter(Boolean).join('+');
 
   const rule = [
+    // ★ 자른 것을 말한다 — 5건인 이유가 문턱이 아니라 표시 상한임을 밝힌다.
+    eligible.length > picks.length
+      ? `문턱 통과 ${eligible.length}건 중 싼 순 ${RECOMMEND_LIMIT}건만 표시`
+      : `문턱 통과 ${eligible.length}건 전부 표시`,
     `절대 ${(RECOMMEND_GAP * 100).toFixed(0)}% 이하`,
     cutoff === null
       ? `상대 순위 미사용(후보 ${scored.length} < ${MIN_CANDIDATES_FOR_RANK})`

@@ -241,7 +241,26 @@ async function main(): Promise<void> {
   try {
     const snap = await getKisDomesticAccountSnapshot(account);
     const pnl = snap.positions.reduce((s, p) => s + (p.unrealizedPnl ?? 0), 0);
-    console.log(`  총평가 ${won(snap.totalEvaluation ?? 0)} · 예수금 ${won(snap.cashBalance ?? 0)} · 평가손익 ${pnl >= 0 ? '+' : ''}${won(pnl)}`);
+    /*
+     * ★★ **총평가가 무엇으로 이루어졌는지 함께 적는다** (2026-09-10).
+     *
+     * 그전에는 `총평가 · 예수금(D+0) · 평가손익`만 찍었다. 판단자가 검산하면
+     * **총평가 ≠ 보유 평가 합 + 예수금**이 되는데, 차이가 회차마다 4.88~4.95백만원
+     * 으로 거의 고정이라 판단자는 그것을 **결함으로 의심하고 미결에 적었다.
+     * 열네 회차째였다** — *"이 값이 틀리면 층 비중·자리 크기가 전부 틀린다."*
+     *
+     * 결함이 아니었다. 총평가는 **D+2 예수금**(`settlementCash`)으로 이루어지고
+     * 화면에 찍히던 것은 **D+0**(`cashBalance`)이라, 그 둘의 차이가 그대로
+     * 보였을 뿐이다(2026-09-10 실측: 33,573,826 − 28,650,344 = 4,923,482).
+     *
+     * ★ **셋을 나란히 적는다.** 값이 셋인 것을 숨기면 판단자는 매 회차 같은
+     *   자리에서 같은 의심을 되풀이한다 — 검산할 수 있게 해 주는 것이 답이다.
+     */
+    const stock = snap.stockEvaluation ?? snap.positions.reduce((s, p) => s + (p.marketValue ?? 0), 0);
+    console.log(`  총평가 ${won(snap.totalEvaluation ?? 0)} · 평가손익 ${pnl >= 0 ? '+' : ''}${won(pnl)}`);
+    console.log(`    = 주식 ${won(stock)} + D+2 예수금 ${won(snap.settlementCash ?? 0)}`);
+    console.log(`    지금 예수금(D+0) ${won(snap.cashBalance ?? 0)}`
+      + ` — 총평가와 검산할 때는 위의 D+2를 쓴다`);
     /*
      * ★ **예수금이 아니라 매수여력을 봐야 한다.** 예수금(D+0)에는 오늘 체결된 것도
      *   미체결이 묶어 둔 것도 아직 안 빠져 있다 — 2026-08-20에 예수금
