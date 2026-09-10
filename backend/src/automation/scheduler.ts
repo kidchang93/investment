@@ -50,8 +50,22 @@ export interface AutomationSettings {
 }
 
 export interface TaskState extends TaskSpec {
-  /** 오늘 이미 했나 */
+  /**
+   * 오늘 이미 했나.
+   *
+   * ★★ **백그라운드 작업은 시작하자마자 참이 된다.** 스케줄러가 같은 이름으로
+   *    시작 기록을 남기기 때문이고, 그것은 **중복 실행을 막으려는 의도**라
+   *    바꾸지 않는다. 대신 끝까지 갔는지는 `finishedToday`가 답한다 — 둘을
+   *    섞으면 화면이 "했다"고 말하는데 실제로는 도중에 죽은 상태가 된다
+   *    (2026-09-10: 일봉 수집이 6거래일 중 4일 그랬고 아무도 몰랐다).
+   */
   doneToday: boolean;
+  /**
+   * 백그라운드 작업이 **끝까지 갔나**(`{이름}-done` 기록이 있나).
+   *
+   * 백그라운드가 아닌 작업은 `null`이다 — 그쪽은 `doneToday`가 곧 완료다.
+   */
+  finishedToday: boolean | null;
   /** 오늘 마지막으로 한 시각 `HH:MM` */
   lastRunAt: string | null;
   /** 지금 돌고 있나 */
@@ -385,6 +399,9 @@ export async function getStatus(): Promise<AutomationStatus> {
     tasks.push({
       ...task,
       doneToday: task.noHeartbeat ? false : ((await doneToday(name)) ?? false),
+      finishedToday: task.background && !task.noHeartbeat
+        ? ((await doneToday(`${name}-done`)) ?? false)
+        : null,
       lastRunAt: await lastRunAt(task.name),
       running: running.has(task.name),
       inWindow: isInWindow(task, clock),

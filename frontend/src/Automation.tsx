@@ -30,6 +30,14 @@ interface TaskState {
   daily: boolean;
   everyMinutes?: number;
   doneToday: boolean;
+  /**
+   * 백그라운드 작업이 **끝까지 갔나**. 백그라운드가 아니면 null이다.
+   *
+   * ★ `doneToday`는 백그라운드에서 **시작하자마자** 참이 된다(중복 실행을
+   *   막으려는 의도다). 그것만 보고 '오늘 함'이라 찍었더니 일봉 수집이
+   *   6거래일 중 4일 도중에 죽었는데도 화면은 계속 정상이었다(2026-09-10).
+   */
+  finishedToday: boolean | null;
   lastRunAt: string | null;
   running: boolean;
   inWindow: boolean;
@@ -192,15 +200,23 @@ export function Automation(): JSX.Element {
         </summary>
       <ol className="automation__tasks">
         {tasks.map((task) => {
+          /*
+           * ★ 백그라운드는 **시작 기록만으로 '오늘 함'이라 하지 않는다.**
+           *   끝까지 간 것(`finishedToday`)만 그렇게 부르고, 시작만 남은 것은
+           *   '안 끝남'이라고 적는다 — 그것이 실제로 일어난 일이다.
+           */
+          const startedNotFinished = task.doneToday && task.finishedToday === false && !task.running;
           const state = task.running
             ? '도는 중'
             : task.skipped
               ? '매매 꺼짐'
-              : task.doneToday
-                ? '오늘 함'
-                : task.inWindow
-                  ? '대기'
-                  : '창 밖';
+              : startedNotFinished
+                ? '안 끝남'
+                : task.doneToday
+                  ? '오늘 함'
+                  : task.inWindow
+                    ? '대기'
+                    : '창 밖';
           return (
             <li key={task.name} className="automation__task" data-state={state} data-window={task.inWindow}>
               <span className="automation__task-time">
