@@ -40,14 +40,14 @@ import { spawn } from 'node:child_process';
 
 import '../config.js';
 
-import type { FinancialSnapshot } from '@invest/shared';
+import type { FinancialSnapshot, NewsItem } from '@invest/shared';
 
 import { getKisAccount } from '../config.js';
 import { closeDb, pool } from '../db/client.js';
 import { getDailyBars } from '../db/dailyBars.js';
 import { getKoreanInstrumentBySymbol, getTopTurnoverInstruments } from '../db/instruments.js';
 import {
-  getDomesticQuotes, getFinancials, getKisDomesticAccountSnapshot,
+  getDomesticQuotes, getFinancials, getInstrumentNews, getKisDomesticAccountSnapshot,
 } from '../kis/rest.js';
 import { getMainNews } from '../naver/finance.js';
 import { escapeMrkdwn, sendSlackBot, slackBotConfigured } from '../notify/slack.js';
@@ -193,6 +193,9 @@ async function ensureSchema(): Promise<void> {
      *   판정이 있어야 한다. 이 표가 적정가를 남기는 이유와 같다.
      */
     ALTER TABLE trading_fair_values ADD COLUMN IF NOT EXISTS falling BOOLEAN NOT NULL DEFAULT false;
+    -- ★★ 종목별 뉴스(2026-09-11). 별표 종목과 보유 개별주식에만 채운다.
+    --   배열이면 받은 기사, failed 객체면 못 받은 것, NULL이면 안 받은 것이다 — 셋을 섞지 않는다.
+    ALTER TABLE trading_fair_values ADD COLUMN IF NOT EXISTS news JSONB;
 
     /*
      * ★★ **⭐ 추천을 남긴다** (2026-09-09).
@@ -287,6 +290,41 @@ async function marketMedianReturn60(): Promise<number | null> {
   );
   const med = rows[0]?.med;
   return med === null || med === undefined ? null : Number(med);
+}
+
+/**
+ * ── ★★ 종목별 뉴스 (2026-09-11) ─────────────────────────────────────────
+ *
+ * 빠른 회차 지침은 *"웹서치를 하지 마세요 — 뉴스는 적정가 표에 붙어 옵니다"*라고
+ * 약속했는데 **표에는 뉴스 칸이 없었다.** 뉴스는 슬랙으로만 갔고, 그마저 네이버
+ * 주요 뉴스 12건을 종목 이름으로 대조하는 방식이라 900종목 앞에서는 거의 늘 비었다.
+ * 판단자가 회차 1311~1363 내내 같은 말을 남겼다 — *"⭐ 종목이 왜 떨어졌는지 판단할
+ * 재료가 없고, 뉴스가 없는 한 ⭐는 계속 걸러질 것입니다."*
+ */
+/** 종목당 붙일 기사 수 — 목록형 기사("기술적 분석 특징주")가 섞여 오므로 넉넉히 */
+const NEWS_PER_SYMBOL = 6;
+/** 이보다 오래된 기사는 "왜 지금 이 값인가"에 답하지 못한다 */
+const NEWS_MAX_AGE_DAYS = 14;
+/** 종목 사이 간격 — `newsWatch.ts`가 간격 없이 12종목 중 2종목을 초당 한도로 잃었다 */
+const NEWS_GAP_MS = 250;
+
+/** 배열이면 받은 기사, `{failed}`면 못 받은 것 — "0건"과 "못 받음"을 섞지 않는다 */
+type NewsCell = Array<{ title: string; source: string; publishedAt?: number }> | { failed: string };
+
+async function fetchNewsCell(symbol: string): Promise<NewsCell> {
+  const instrument = await getKoreanInstrumentBySymbol(symbol);
+  if (!instrument) return { failed: '종목 마스터에 없다' };
+  try {
+    // ★ publishedAt은 **초**다 — 밀리초로 읽으면 1970년이 나온다(NewsItem 주석).
+    const cutoff = Date.now() / 1000 - NEWS_MAX_AGE_DAYS * 86_400;
+    return (await getInstrumentNews(instrument))
+      .filter((n: NewsItem) => n.publishedAt === undefined || n.publishedAt >= cutoff)
+      .sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0))
+      .slice(0, NEWS_PER_SYMBOL)
+      .map((n) => ({ title: n.title, source: n.source, publishedAt: n.publishedAt }));
+  } catch (error) {
+    return { failed: (error as Error).message.slice(0, 80) };
+  }
 }
 
 interface Row {
@@ -570,6 +608,36 @@ async function main(): Promise<void> {
     }
   }
 
+  /*
+   * ── ★★ 뉴스를 붙인다 — ⭐ 종목과 보유 개별주식 ──
+   *
+   * ⭐는 *"왜 떨어졌나"*를, 보유는 *"팔 이유(나쁜 뉴스)가 붙었나"*를 묻는 데 쓴다.
+   * 판단자 화면(`showFairValues.ts`)이 이 칸을 읽는다 — 이제야 지침의 약속이 참이 된다.
+   *
+   * ★ **거르지 않는다.** 목록형 기사가 섞여 오지만 짐작으로 버리면 쓸 만한 것이
+   *   함께 사라진다 — 날짜·출처를 붙여 넉넉히 넘기고 판단자가 고른다.
+   * ★ ETF는 받지 않는다 — 종목 뉴스가 아니라 시황이 붙어 판단에 쓸모가 없다.
+   */
+  const newsTargets = [
+    ...picks.map((r) => r.symbol),
+    ...rows.filter((r) => r.held && r.fv.kind === 'stock').map((r) => r.symbol),
+  ].filter((s, i, all) => all.indexOf(s) === i);
+  const newsBySymbol = new Map<string, NewsCell>();
+  for (const symbol of newsTargets) {
+    const cell = await fetchNewsCell(symbol);
+    newsBySymbol.set(symbol, cell);
+    await pool.query(
+      `UPDATE trading_fair_values SET news = $2::jsonb
+        WHERE symbol = $1
+          AND measured_at = (SELECT max(measured_at) FROM trading_fair_values WHERE symbol = $1)`,
+      [symbol, JSON.stringify(cell)],
+    );
+    await new Promise((resolve) => { setTimeout(resolve, NEWS_GAP_MS); });
+  }
+  const newsFailed = [...newsBySymbol.values()].filter((c) => !Array.isArray(c)).length;
+  console.log(`뉴스를 붙였다 — ${newsTargets.length}종목(⭐ ${picks.length} · 보유 개별주식 포함)`
+    + `${newsFailed > 0 ? ` · ★ 못 받은 것 ${newsFailed}` : ''}`);
+
   if (picks.length > 0) {
     const head = `⭐ *추천* — 거래대금 상위 ${CANDIDATE_POOL} 중 개별주식 ${scored.length}종목에서`;
     console.log(`\n${head}\n   기준: ${rule}`);
@@ -579,7 +647,9 @@ async function main(): Promise<void> {
       const text = `[${standardOf(r.symbol)}] ${describe(r.fv, r.name)}`;
       console.log(`  ⭐ ${text}`);
       lines.push(`⭐ ${escapeMrkdwn(text)}`);
-      for (const n of r.news) lines.push(`     _${escapeMrkdwn(n)}_`);
+      // ★ 종목별 뉴스(위에서 받은 것)를 붙인다. 주요 뉴스 대조는 900종목 앞에서 거의 늘 비었다.
+      const cell = newsBySymbol.get(r.symbol);
+      if (Array.isArray(cell)) for (const n of cell.slice(0, 2)) lines.push(`     _${escapeMrkdwn(n.title)}_`);
     }
     /*
      * ★★ **상대 기준의 뜻을 반드시 적는다.** "하위 20%"는 *싸다*가 아니라

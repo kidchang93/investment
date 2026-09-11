@@ -47,6 +47,33 @@ const CANDIDATE_SHOWN = 25;
 
 const won = (n: number): string => `${Math.round(n).toLocaleString('ko-KR')}원`;
 
+/** 분석가가 붙인 뉴스 한 칸. 배열이면 받은 기사, `{failed}`면 못 받은 것 */
+type NewsCell = Array<{ title: string; source: string; publishedAt?: number }> | { failed: string };
+
+/** 초 단위 시각을 KST로. ★ 밀리초로 읽으면 1970년이 나온다(NewsItem 주석) */
+function newsTime(sec?: number): string {
+  if (sec === undefined) return '(시각 없음)';
+  return new Date(sec * 1000).toLocaleString('ko-KR', {
+    timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+}
+
+/**
+ * 뉴스 한 칸을 줄로.
+ *
+ * ★★ **"0건"·"못 받음"·"안 받음"을 가른다.** 섞으면 판단자가 "뉴스가 없으니
+ *    문제없다"로 읽는다. 2026-09-11까지 지침은 뉴스가 표에 붙어 온다고 약속했는데
+ *    이 화면은 **한 줄도 찍지 않았다** — 회차 1311~1363이 그것을 적었다.
+ */
+function newsLines(cell: NewsCell | null | undefined, isStar: boolean): string[] {
+  if (cell === null || cell === undefined) {
+    return isStar ? ['      📰 이 표에는 뉴스가 없습니다(분석가가 뉴스를 붙이기 전 기록)'] : [];
+  }
+  if (!Array.isArray(cell)) return [`      📰 뉴스를 못 받았습니다 — 없다는 뜻이 아닙니다 (${cell.failed})`];
+  if (cell.length === 0) return ['      📰 최근 기사 0건'];
+  return cell.map((n) => `      📰 ${newsTime(n.publishedAt)} ${n.source} · ${n.title}`);
+}
+
 interface FairRow {
   symbol: string;
   price: number;
@@ -57,6 +84,8 @@ interface FairRow {
   age_min: number;
   /** 시장 대비 60일로 급락 중인가 — 분석가가 판정해 넣는다 */
   falling: boolean;
+  /** 종목별 뉴스 — ⭐·보유 개별주식에만 있다. `null`이면 안 받았다 */
+  news: NewsCell | null;
 }
 
 async function main(): Promise<void> {
@@ -68,12 +97,13 @@ async function main(): Promise<void> {
   // ── 적정가 (분석가가 넣은 가장 최근 것) ──
   const { rows } = await pool.query<FairRow>(
     `SELECT DISTINCT ON (symbol)
-            symbol, price, chart_mid, fundamental_mid, gap, basis, falling,
+            symbol, price, chart_mid, fundamental_mid, gap, basis, falling, news,
             EXTRACT(EPOCH FROM (now() - measured_at)) / 60 AS age_min
        FROM trading_fair_values
       WHERE measured_at > now() - interval '2 hours'
       ORDER BY symbol, measured_at DESC`,
   );
+  const bySymbol = new Map(rows.map((r) => [r.symbol, r]));
 
   /*
    * ── ⭐ 추천 ─────────────────────────────────────────────────────────────
@@ -128,6 +158,8 @@ async function main(): Promise<void> {
         `  ⭐ [${p.standard}] ${p.symbol} ${instrument?.name ?? p.symbol}`
         + `${p.gap === null ? '' : ` · ${(p.gap * 100).toFixed(1)}%`}${stale}`,
       );
+      // ★ "왜 떨어졌나"를 여기서 본다 — 지침이 약속한 그 뉴스다.
+      for (const line of newsLines(bySymbol.get(p.symbol)?.news, true)) console.log(line);
     }
     console.log('  ★ ⭐는 "사라"가 아닙니다 — 층 상한·매수여력·plan을 세울 수 있는지는 당신이 봅니다.');
   }
@@ -228,6 +260,8 @@ async function main(): Promise<void> {
         `  ${r.symbol} ${name} ${won(r.price)} · ${(r.gap * 100).toFixed(1)}% (${mark}) · ${axes}${stale}`,
       );
       if (r.basis) console.log(`      ${r.basis}`);
+      // ★ 보유 개별주식은 "팔 이유(나쁜 뉴스)가 붙었나"를 여기서 본다.
+      if (r.news !== null && r.news !== undefined) for (const line of newsLines(r.news, false)) console.log(line);
     }
   }
 
