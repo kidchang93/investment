@@ -32,6 +32,7 @@ interface BrokerOrderRow {
   original_order_no: string | null;
   message: string;
   blockers: string[] | null;
+  currency?: string | null;
   created_at_ms: string;
 }
 
@@ -74,6 +75,15 @@ export interface BrokerOrderAttempt {
   orderBranchNo?: string;
   originalOrderNo?: string;
   blockers?: string[];
+  /**
+   * 주문 통화(2026-09-11). **비우면 원화다** — 국내 주문은 안 적는다.
+   *
+   * ★ 외화 주문은 반드시 적는다. 안 적으면 일일 한도가 달러 단가를 원화로 읽어
+   *   1,300분의 1로 쌓는다(`orderUsage.usageKrwAmount`).
+   */
+  currency?: string;
+  /** 외화 주문의 원화 환율(판정 시점). 일일 한도를 원화로 쌓는 데 쓴다 */
+  fxToKrw?: number;
 }
 
 export async function ensureBrokerOrderSchema(): Promise<void> {
@@ -127,6 +137,10 @@ export async function ensureBrokerOrderSchema(): Promise<void> {
     -- ★ 3층 중 어느 층의 주문인가. 증권사 잔고는 층을 모르므로 여기서 기억한다.
     --   비어 있으면 옛 주문(층 개념이 생기기 전)이다 — 0으로 채우지 않는다.
     ALTER TABLE trading_broker_orders ADD COLUMN IF NOT EXISTS layer text;
+    -- ★ 주문 통화와 원화 환율(2026-09-11). 비어 있으면 원화(국내) 주문이다.
+    --   외화 주문이 이 둘 없이 쌓이면 일일 한도가 달러 단가를 원화로 읽는다.
+    ALTER TABLE trading_broker_orders ADD COLUMN IF NOT EXISTS currency text;
+    ALTER TABLE trading_broker_orders ADD COLUMN IF NOT EXISTS fx_to_krw numeric(20, 6);
 
     /*
      * ★ **실제로 얼마에 몇 주가 붙었나** (2026-08-22).
@@ -185,9 +199,9 @@ export async function recordBrokerOrderAttempt(attempt: BrokerOrderAttempt): Pro
         INSERT INTO trading_broker_orders (
           id, account_id, action, status, side, instrument_id, requested_instrument_id, symbol,
           order_type, quantity, limit_price, estimated_price, stop_price, order_no, order_branch_no,
-          original_order_no, message, blockers, client_order_id, layer
+          original_order_no, message, blockers, client_order_id, layer, currency, fx_to_krw
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19, $20)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19, $20, $21, $22)
       `,
       [
         randomUUID(),
@@ -210,6 +224,8 @@ export async function recordBrokerOrderAttempt(attempt: BrokerOrderAttempt): Pro
         JSON.stringify(attempt.blockers ?? []),
         attempt.clientOrderId ?? null,
         attempt.layer ?? null,
+        attempt.currency ?? null,
+        attempt.fxToKrw ?? null,
       ],
     );
     return true;
@@ -235,7 +251,7 @@ export async function getBrokerOrderRecords(
       SELECT
         id, account_id, action, status, side, symbol, requested_instrument_id,
         order_type, quantity, limit_price, estimated_price, stop_price,
-        order_no, order_branch_no, original_order_no, message, blockers,
+        order_no, order_branch_no, original_order_no, message, blockers, currency,
         (EXTRACT(EPOCH FROM created_at) * 1000)::bigint::text AS created_at_ms
       FROM trading_broker_orders
       WHERE ($1::text IS NULL OR account_id = $1)
@@ -274,6 +290,7 @@ function rowToBrokerOrderRecord(row: BrokerOrderRow): BrokerOrderRecord {
     originalOrderNo: row.original_order_no ?? undefined,
     message: row.message,
     blockers: row.blockers ?? [],
+    currency: row.currency ?? undefined,
     createdAt: Number(row.created_at_ms),
   };
 }
@@ -329,7 +346,7 @@ export async function completeClaimedOrder(
           status = $2, side = $3, instrument_id = $4, requested_instrument_id = $5, symbol = $6,
           order_type = $7, quantity = $8, limit_price = $9, estimated_price = $10, stop_price = $11,
           order_no = $12, order_branch_no = $13, original_order_no = $14, message = $15,
-          blockers = $16::jsonb, layer = $17
+          blockers = $16::jsonb, layer = $17, currency = $18, fx_to_krw = $19
         WHERE client_order_id = $1
       `,
       [
@@ -350,6 +367,12 @@ export async function completeClaimedOrder(
         attempt.message,
         JSON.stringify(attempt.blockers ?? []),
         attempt.layer ?? null,
+        /*
+         * ★ 멱등성 경로도 통화·환율을 쓴다 — 이 UPDATE가 칸을 따로 적는 곳이라
+         *   여기서 빠지면 판단자·집행기(멱등성 키를 쓴다)의 해외 주문만 원화로 쌓인다.
+         */
+        attempt.currency ?? null,
+        attempt.fxToKrw ?? null,
       ],
     );
     return true;

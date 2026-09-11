@@ -18,6 +18,7 @@ import {
   dailyLimitViolations,
   orderNotional,
   summarizeDailyOrderUsage,
+  usageKrwAmount,
   usageUnitPrice,
   type DailyOrderUsage,
   type DailyOrderUsageRow,
@@ -304,5 +305,36 @@ describe('orderNotional — 판정 대상 주문 1건', () => {
     assert.equal(orderNotional(3, 0), undefined);
     assert.equal(orderNotional(3, Number.NaN), undefined);
     assert.equal(orderNotional(0, 71_300), undefined);
+  });
+});
+describe('일일 사용량 — 외화 주문 (2026-09-11)', () => {
+  it('★★ 달러 단가를 원화로 환산해 쌓는다 — 그대로 더하면 1,300분의 1로 잡힌다', () => {
+    const usage = summarizeDailyOrderUsage([
+      limitRow({ quantity: '10', limitPrice: '190.25', currency: 'USD', fxToKrw: '1337.9' }),
+    ]);
+    assert.equal(usage.notional, 10 * 190.25 * 1337.9);
+    assert.equal(usage.unpricedCount, 0);
+  });
+
+  it('★★ 환율이 없는 외화 주문은 0이 아니라 모름이다', () => {
+    const usage = summarizeDailyOrderUsage([
+      limitRow({ quantity: '10', limitPrice: '190.25', currency: 'USD', fxToKrw: null }),
+    ]);
+    assert.equal(usage.notional, 0, '아는 것의 합에 달러를 원화로 섞지 않는다');
+    assert.equal(usage.unpricedCount, 1, '모르는 건으로 따로 센다');
+  });
+
+  it('통화가 비어 있는 옛 기록은 원화다 — 칸이 생기기 전 기록은 전부 국내다', () => {
+    assert.equal(usageKrwAmount(limitRow({ currency: null })), 100_000, '2주 × 50,000원');
+    assert.equal(usageKrwAmount(limitRow({ currency: 'KRW', fxToKrw: '1337.9' })), 100_000, '원화에 환율을 곱하지 않는다');
+  });
+
+  it('원화와 외화가 섞여도 각자 원화로 더한다', () => {
+    const usage = summarizeDailyOrderUsage([
+      limitRow(),
+      limitRow({ side: 'buy', quantity: '1', limitPrice: '100', currency: 'usd', fxToKrw: '1300' }),
+    ]);
+    assert.equal(usage.notional, 100_000 + 130_000);
+    assert.equal(usage.buyNotional, 100_000 + 130_000);
   });
 });

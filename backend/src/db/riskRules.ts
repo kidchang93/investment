@@ -201,9 +201,11 @@ export async function getTodayUsage(accountId: string): Promise<DailyOrderUsage>
     quantity: string | null;
     limit_price: string | null;
     estimated_price: string | null;
+    currency: string | null;
+    fx_to_krw: string | null;
   }>(
     `
-      SELECT order_type, side, quantity, limit_price, estimated_price
+      SELECT order_type, side, quantity, limit_price, estimated_price, currency, fx_to_krw
       FROM trading_broker_orders
       WHERE account_id = $1
         AND action = 'place'
@@ -219,6 +221,9 @@ export async function getTodayUsage(accountId: string): Promise<DailyOrderUsage>
       quantity: row.quantity,
       limitPrice: row.limit_price,
       estimatedPrice: row.estimated_price,
+      // ★ 외화 주문은 이 둘로 원화 환산된다(2026-09-11). 빼면 달러가 원화로 쌓인다.
+      currency: row.currency,
+      fxToKrw: row.fx_to_krw,
     })),
   );
 }

@@ -6494,7 +6494,7 @@ export function App(): JSX.Element {
                         </strong>
                         <span>
                           {record.quantity !== undefined ? `${formatNumber(record.quantity)}주` : '-'}
-                          {record.limitPrice !== undefined ? ` · ${formatMoney(record.limitPrice)}` : ''}
+                          {record.limitPrice !== undefined ? ` · ${formatMoney(record.limitPrice, record.currency ?? 'KRW')}` : ''}
                           {/*
                             스톱가는 단가와 성질이 다르다 — "얼마에 나가는가"가 아니라
                             "언제 나가는가"다. 합쳐 적으면 손절이 걸린 주문과 그냥 지정가
@@ -6502,7 +6502,7 @@ export function App(): JSX.Element {
                           */}
                           {record.stopPrice !== undefined && (
                             <span title="스톱가입니다. 현재가가 여기 닿으면 위 단가로 주문이 나갑니다.">
-                              {` · 스톱 ${formatMoney(record.stopPrice)}`}
+                              {` · 스톱 ${formatMoney(record.stopPrice, record.currency ?? 'KRW')}`}
                             </span>
                           )}
                           {/*

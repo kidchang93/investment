@@ -22,15 +22,15 @@ const base = {
 };
 
 suite('해외주식 TR 고르기', () => {
-  it('★★ 미국 **매도 모의**는 VTTT1001U다 — 실전(TTTT1006U)에 V를 붙인 값이 아니다', () => {
+  it('★ 미국 매도: 실전은 TTTT1006U, 모의는 **표에 적힌 값**(VTTT1001U, 미확인)을 쓴다', () => {
     /*
-     * 2026-09-10에 KIS 공식 예제에서 확인한 비대칭. 매수는 실전 TTTT1002U /
-     * 모의 VTTT1002U로 뒤 네 자리가 같은데, **매도만 다르다.**
-     * 규칙으로 만들면(실전 번호에 V) 매도가 엉뚱한 TR로 나간다.
+     * 2026-09-11 정정. 공식 설명은 모의 매도를 VTTT1001U라 하고, 같은 파일의 코드는
+     * V를 붙여 VTTT1006U를 만든다 — 공식 원문이 모순이다. 어느 쪽이 맞는지는 모의에
+     * 매도를 보내 봐야 안다. 이 시험은 **표가 무엇을 쓰고 있는지**만 못 박는다.
+     * 확인되면 표 한 칸과 이 줄을 함께 고친다.
      */
     assert.equal(overseasOrderTr('NASD', 'sell', 'vts'), 'VTTT1001U');
     assert.equal(overseasOrderTr('NASD', 'sell', 'prod'), 'TTTT1006U');
-    assert.notEqual(overseasOrderTr('NASD', 'sell', 'vts'), 'VTTT1006U');
   });
 
   it('미국 매수는 실전·모의가 뒤 네 자리를 공유한다', () => {

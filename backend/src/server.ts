@@ -176,10 +176,12 @@ import {
   placeKisDomesticReservedOrder,
   cancelKisDomesticReservedOrder,
   placeKisDomesticOrder,
+  placeKisOverseasOrder,
   getQuote,
   getUsdKrwExchangeRate,
 } from './kis/rest.js';
 import { isUnconfirmedDivision, STOP_LIMIT_ORDER_DIVISION } from './kis/orderDivisions.js';
+import { krwNotional, usOrderExchange, usRegularSession } from './trading/overseasOrderRules.js';
 import { KisRealtime } from './kis/realtime.js';
 import { WATCHLIST } from './watchlist.js';
 import { INSTRUMENT_QUOTE_BATCH } from '@invest/shared';
@@ -204,6 +206,7 @@ import type {
   PlaceReservedOrderRequest,
   CancelReservedOrderRequest,
   PlaceLiveOrderResult,
+  PlaceOverseasOrderRequest,
   OrderNotice,
   ServerMessage,
   Trade,
@@ -1392,6 +1395,217 @@ async function main(): Promise<void> {
       if (clientOrderId) await completeClaimedOrder(clientOrderId, failed);
       else await audit(failed);
       req.log.error({ err, accountId: account.id, instrumentId }, '실주문 전송 실패');
+      return reply.code(502).send({ message });
+    }
+  });
+
+  /*
+   * ── 해외주식 주문 (2026-09-11) ──────────────────────────────────────────
+   *
+   * 국내 경로(`/api/broker/kis/orders`)와 **따로 둔다.** 국내 경로는 모의 한 달
+   * 시험 중에 매일 돌고 있고, 거기에 분기를 넣으면 해외 때문에 국내가 흔들린다.
+   * 게이트·멱등성·감사 기록·리스크 룰은 **같은 것을 쓰고**, 다른 셋만 해외 규칙이
+   * 대신 본다(`trading/overseasOrderRules.ts`):
+   *
+   *   장시간   KST 09:00~15:30 대신 뉴욕 09:30~16:00(서머타임을 Intl이 안다)
+   *   금액     달러 단가 × 환율로 원화 한도에 잰다 — 환율을 모르면 매수 보류
+   *   거래소   마스터 NAS/NYS/AMS → 주문 NASD/NYSE/AMEX, 주간거래(BAQ…)는 막는다
+   *
+   * ★ **지정가만.** 모의는 지정가(`00`)만 받는다(KIS 공식 예제).
+   * ★ **계좌 상태 관문(보유 수·최소 보유·중단선)은 적용하지 않는다** — 그 관문은
+   *   국내 잔고만 읽는다. 조용히 건너뛰지 않고 응답·기록 메시지에 그 사실을 적는다.
+   * ★ 미국 휴장일은 따로 확인하지 않는다. 휴장일 주문은 KIS가 거절하므로 돈이
+   *   새지는 않고, 거절 사유에 휴장 표현이 있으면 그 가능성을 덧붙인다.
+   */
+  app.post<{ Body: Partial<PlaceOverseasOrderRequest> }>('/api/broker/kis/overseas-orders', async (req, reply) => {
+    const { accountId, instrumentId, side, quantity, limitPrice, clientOrderId } = req.body;
+    const layerRaw = (req.body as { layer?: unknown }).layer;
+    const layer = layerRaw === 'etf' || layerRaw === 'short' ? layerRaw : undefined;
+    const auditBase = {
+      accountId: accountId ?? '(미지정)',
+      action: 'place' as const,
+      layer,
+      requestedInstrumentId: instrumentId,
+      side: side === 'buy' || side === 'sell' ? side : undefined,
+      orderType: 'limit' as const,
+      quantity: typeof quantity === 'number' && Number.isFinite(quantity) ? quantity : undefined,
+      limitPrice: typeof limitPrice === 'number' && Number.isFinite(limitPrice) ? limitPrice : undefined,
+      // ★ 통화를 **막힌 기록에도** 적는다. 단가가 달러라는 사실이 기록에서 빠지면 안 된다.
+      currency: 'USD',
+    };
+
+    async function audit(attempt: Parameters<typeof recordBrokerOrderAttempt>[0]): Promise<void> {
+      if (!(await recordBrokerOrderAttempt(attempt))) {
+        req.log.warn({ attempt }, '해외 실주문 감사 기록 저장 실패');
+      }
+    }
+
+    async function block(message: string, blockers: string[], extra: Record<string, unknown> = {}) {
+      await audit({ ...auditBase, ...extra, status: 'blocked', message, blockers });
+    }
+
+    const gate = evaluateLiveOrderGate();
+    if (!gate.enabled) {
+      await block('실주문이 차단되어 있습니다.', gate.blockers);
+      return reply.code(403).send({ message: '실주문이 차단되어 있습니다.', gate });
+    }
+    if (!instrumentId || (side !== 'buy' && side !== 'sell')) {
+      const message = '종목 또는 주문 방향이 올바르지 않습니다.';
+      await block(message, ['종목·방향 오류']);
+      return reply.code(400).send({ message });
+    }
+    if (typeof quantity !== 'number' || !Number.isInteger(quantity) || quantity <= 0) {
+      const message = '수량은 1 이상의 정수여야 합니다.';
+      await block(message, ['수량 오류']);
+      return reply.code(400).send({ message });
+    }
+    if (typeof limitPrice !== 'number' || !Number.isFinite(limitPrice) || limitPrice <= 0) {
+      const message = '해외주식은 지정가만 보냅니다 — 단가(종목 통화)가 필요합니다.';
+      await block(message, ['지정가 단가 누락']);
+      return reply.code(400).send({ message });
+    }
+
+    const account = resolveAccount(accountId);
+    if (account === 'unknown' || !account) {
+      const message = account === 'unknown' ? '등록된 KIS 계좌가 아닙니다.' : '등록된 KIS 계좌가 없습니다.';
+      await block(message, ['계좌 확인 실패']);
+      return reply.code(account === 'unknown' ? 404 : 400).send({ message });
+    }
+
+    const instrument = await getInstrument(instrumentId);
+    if (!instrument) {
+      await block('종목을 찾을 수 없습니다.', ['종목 없음'], { accountId: account.id });
+      return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
+    }
+    const where = {
+      accountId: account.id,
+      instrumentId: instrument.id,
+      symbol: instrument.providerSymbol,
+      /*
+       * ★ 종목을 확인한 뒤로는 **종목 자신의 통화**를 적는다. 그 전까지는 이 경로의
+       *   가정(USD)을 적는다. 박아 둔 USD를 그대로 두었더니 막힌 일본 종목(엔화)
+       *   기록에 USD가 찍혔다(2026-09-11 연기 시험) — 막힌 주문이라도 기록은 사실이어야 한다.
+       */
+      currency: instrument.currency,
+    };
+    const exchange = usOrderExchange(instrument);
+    if (!exchange.ok) {
+      await block(exchange.reason, ['주문 불가 종목'], where);
+      return reply.code(400).send({ message: exchange.reason });
+    }
+
+    const session = usRegularSession(new Date());
+    if (!session.open) {
+      const message = session.reason ?? '미국 정규장 밖입니다.';
+      await block(message, ['미국 장시간 밖'], where);
+      return reply.code(403).send({ message });
+    }
+
+    /*
+     * ★ 환율을 못 받으면 **매수는 보류한다.** 원화 한도로 잴 수 없는 주문을 0원으로
+     *   치면 금액 잣대가 통째로 열린다(`krwNotional` 주석). 매도는 들고 있는 것을
+     *   거두는 것이라 막지 않는다 — 국내 경로와 같은 원칙이다.
+     */
+    let fx: { rate: number; fetchedAt: number } | undefined;
+    try {
+      const rate = await getUsdKrwExchangeRate();
+      fx = { rate: rate.rate, fetchedAt: rate.fetchedAt };
+    } catch (err) {
+      req.log.warn({ err }, '해외 주문 판정용 환율 조회 실패');
+    }
+    const notionalKrw = krwNotional(quantity, limitPrice, fx, Date.now());
+    const placeAudit = { ...auditBase, ...where, fxToKrw: notionalKrw === undefined ? undefined : fx?.rate };
+    if (side === 'buy' && notionalKrw === undefined) {
+      const message = '환율을 확인할 수 없어 매수를 보류합니다 — 원화 한도로 잴 수 없습니다.';
+      await audit({ ...placeAudit, status: 'blocked', message, blockers: ['환율 확인 실패'] });
+      return reply.code(503).send({ message });
+    }
+
+    const verdict = await checkRiskRules({
+      accountId: account.id,
+      symbol: instrument.providerSymbol,
+      side,
+      orderType: 'limit',
+      quantity,
+      // ★ 원화 단가를 넘긴다 — 1회·일일 금액 한도가 둘 다 원화다.
+      price: notionalKrw === undefined ? undefined : notionalKrw / quantity,
+      // 장시간은 위에서 뉴욕 기준으로 봤다. 국내 잣대(KST·국내 개장일)는 여기서 틀린다.
+      skipSessionCheck: true,
+    });
+    if (!verdict.allowed) {
+      await audit({ ...placeAudit, status: 'blocked', message: '리스크 룰에 막혔습니다.', blockers: verdict.violations });
+      return reply.code(403).send({ message: '리스크 룰에 막혔습니다.', verdict });
+    }
+
+    if (clientOrderId) {
+      let claimed: boolean;
+      try {
+        claimed = await claimClientOrderId(account.id, clientOrderId, 'place');
+      } catch (err) {
+        req.log.error({ err, clientOrderId }, '멱등성 키 선점 실패');
+        return reply.code(503).send({ message: '주문 중복 여부를 확인할 수 없어 보내지 않았습니다. 잠시 후 같은 요청을 다시 보내세요.' });
+      }
+      if (!claimed) {
+        const previous = await getOrderByClientOrderId(clientOrderId);
+        req.log.warn({ clientOrderId }, '같은 주문 키로 재요청 — 새로 보내지 않음');
+        return {
+          accepted: previous?.status === 'submitted',
+          accountId: account.id,
+          symbol: instrument.providerSymbol,
+          side,
+          quantity,
+          orderNo: previous?.orderNo ?? '',
+          orderBranchNo: previous?.orderBranchNo ?? '',
+          acceptedAt: '',
+          message: `이미 처리된 주문입니다 · ${previous?.message ?? '앞선 결과를 확인하세요'}`,
+        } satisfies PlaceLiveOrderResult;
+      }
+    }
+
+    const guardNote = ' · 계좌 상태 관문(보유 수·최소 보유·중단선)은 국내 잔고만 읽어 적용하지 않았습니다';
+    try {
+      const result = await placeKisOverseasOrder(account, {
+        exchange: exchange.exchange,
+        symbol: instrument.providerSymbol,
+        side,
+        quantity,
+        limitPrice,
+      });
+      const done = {
+        ...placeAudit,
+        status: 'submitted' as const,
+        message: result.message + guardNote,
+        orderNo: result.orderNo,
+        orderBranchNo: result.orderBranchNo,
+      };
+      if (clientOrderId) await completeClaimedOrder(clientOrderId, done);
+      else await audit(done);
+      dropAccountCache(account.id);
+      req.log.info(
+        { accountId: account.id, symbol: instrument.providerSymbol, exchange: exchange.exchange, side, quantity, orderNo: result.orderNo },
+        '해외 실주문 접수',
+      );
+      return {
+        accepted: true,
+        accountId: account.id,
+        symbol: instrument.providerSymbol,
+        side,
+        quantity,
+        orderNo: result.orderNo,
+        orderBranchNo: result.orderBranchNo,
+        acceptedAt: result.acceptedAt,
+        message: result.message + guardNote,
+      } satisfies PlaceLiveOrderResult;
+    } catch (err) {
+      const raw = String(err instanceof Error ? err.message : err);
+      const holidayHint = /휴장|영업일|장운영|거래일/.test(raw)
+        ? ' (미국 휴장일일 수 있습니다 — 휴장일은 아직 따로 확인하지 않습니다)'
+        : '';
+      const message = raw + holidayHint;
+      const failed = { ...placeAudit, status: 'rejected' as const, message };
+      if (clientOrderId) await completeClaimedOrder(clientOrderId, failed);
+      else await audit(failed);
+      req.log.error({ err, accountId: account.id, instrumentId }, '해외 실주문 전송 실패');
       return reply.code(502).send({ message });
     }
   });

@@ -57,6 +57,12 @@ export interface DailyOrderUsageRow {
   limitPrice: NumericLike;
   /** 시장가 주문의 판정 시점 추정 단가 */
   estimatedPrice: NumericLike;
+  /**
+   * 주문 통화(2026-09-11). **비어 있으면 원화다** — 이 칸이 생기기 전 기록은 전부 국내다.
+   */
+  currency?: string | null;
+  /** 외화 주문의 원화 환율. **외화인데 비어 있으면 금액을 모른다** */
+  fxToKrw?: NumericLike;
 }
 
 export interface DailyOrderUsage {
@@ -110,13 +116,29 @@ export function usageUnitPrice(row: DailyOrderUsageRow): number | undefined {
   return row.orderType === 'market' ? estimatedPrice ?? limitPrice : limitPrice ?? estimatedPrice;
 }
 
+/**
+ * 주문 1건의 **원화** 금액. 모르면 `undefined`다.
+ *
+ * ★★ **외화 단가를 그대로 더하지 않는다** (2026-09-11). 한도가 원화라 달러 단가
+ *    190.25를 원화로 읽으면 **1,300분의 1**로 쌓여 일일 금액 한도가 통째로 샌다.
+ *    외화인데 환율이 없으면 0이 아니라 **모름**이다 — 이 파일 머리의 원칙 그대로다.
+ */
+export function usageKrwAmount(row: DailyOrderUsageRow): number | undefined {
+  const amount = orderNotional(row.quantity, usageUnitPrice(row));
+  if (amount === undefined) return undefined;
+  const currency = (row.currency ?? '').trim().toUpperCase();
+  if (currency === '' || currency === 'KRW') return amount;
+  const rate = positiveNumber(row.fxToKrw);
+  return rate === undefined ? undefined : amount * rate;
+}
+
 export function summarizeDailyOrderUsage(rows: DailyOrderUsageRow[]): DailyOrderUsage {
   let notional = 0;
   let unpricedCount = 0;
   let buyCount = 0;
   let buyNotional = 0;
   for (const row of rows) {
-    const amount = orderNotional(row.quantity, usageUnitPrice(row));
+    const amount = usageKrwAmount(row);
     if (row.side === 'buy') {
       buyCount += 1;
       if (amount !== undefined) buyNotional += amount;

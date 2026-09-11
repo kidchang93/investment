@@ -1605,6 +1605,23 @@ export interface PlaceLiveOrderResult {
   message: string;
 }
 
+/**
+ * 해외주식 주문 요청 (2026-09-11) — 결과는 `PlaceLiveOrderResult`로 같다.
+ *
+ * ★ **지정가만.** 모의는 지정가(`00`)만 받는다(KIS 공식 예제). 시장가 자리가 없다.
+ * ★ 단가는 **종목 통화(달러)** 로 적는다. 원화로 넣으면 1,300배 비싼 주문이 된다.
+ */
+export interface PlaceOverseasOrderRequest {
+  accountId: string;
+  /** 멱등성 키. 국내와 같다 — 같은 값으로 다시 보내면 새로 내지 않는다 */
+  clientOrderId?: string;
+  instrumentId: string;
+  side: OrderSide;
+  quantity: number;
+  /** 지정가(종목 통화). 필수 */
+  limitPrice: number;
+}
+
 /** 정정·취소 전송 요청 */
 export interface AmendLiveOrderRequest {
   accountId: string;
@@ -1759,6 +1776,12 @@ export interface BrokerOrderRecord {
   message: string;
   /** `blocked`일 때 막힌 이유 */
   blockers: string[];
+  /**
+   * 주문 통화(2026-09-11). **비어 있으면 원화다** — 그 전 기록은 전부 국내 주문이다.
+   *
+   * ★ 화면이 단가를 이 통화로 적는다. 없으면 달러 주문 190.25가 "190원"으로 보인다.
+   */
+  currency?: string;
   createdAt: number;
 }
 
