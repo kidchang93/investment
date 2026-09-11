@@ -29,6 +29,8 @@
  *
  *   비용: KIS 시세 1회 + 종목별 재무 1회(캐시) + 네이버 1페이지. **Claude 0회.**
  *   📈(2026-09-11): 스크리너 시세 10회(거래대금 상위 300) + 📈 종목 뉴스 5회.
+ *   📣(2026-09-11): 공시 목록 2회(그날 첫 회차는 이틀치를 채우느라 ~16회) + 기준가 일봉(한 번 구하면 끝)
+ *                   + 📣 종목 뉴스 5회.
  *
  * ── 무엇을 안 하나 ───────────────────────────────────────────────────────
  *
@@ -50,12 +52,12 @@ import { closeDb, pool } from '../db/client.js';
 import { getDailyBars } from '../db/dailyBars.js';
 import { getKoreanInstrumentBySymbol, getTopTurnoverInstruments } from '../db/instruments.js';
 import {
-  getDomesticQuotes, getFinancials, getInstrumentNews, getKisDomesticAccountSnapshot,
+  getDailyCandles, getDomesticQuotes, getFinancials, getInstrumentNews, getKisDomesticAccountSnapshot, probeKisTr,
 } from '../kis/rest.js';
 import { getMainNews } from '../naver/finance.js';
 import { escapeMrkdwn, sendSlackBot, slackBotConfigured } from '../notify/slack.js';
 import {
-  CHEAP_GATE, composeNote, crossesGate, freshRisers, gateSignature, splitNote, type GateInput,
+  CHEAP_GATE, composeNote, crossesGate, freshCatalysts, freshRisers, gateSignature, splitNote, type GateInput,
 } from '../trading/judgeGate.js';
 import { markAgentActivity } from '../db/agentActivity.js';
 import {
@@ -65,6 +67,10 @@ import {
   type AssetKind, type Bar, type FairValue,
 } from '../trading/fairValue.js';
 import { MAX_SCREENING_LOOKUPS, runScreening } from '../trading/screening.js';
+import {
+  baseCloseFor, classifyDisclosure, pickCatalysts, previousWeekday,
+  type CatalystPick, type DayClose, type DisclosureRow,
+} from '../trading/disclosureCatalyst.js';
 
 /** 한 회차에 볼 종목 수 상한. 보유 + 인자로 준 것 */
 const MAX_SYMBOLS = 12;
@@ -132,6 +138,53 @@ const CANDIDATE_POOL = 900;
  *   이유는 ⭐와 같다. 5인 이유도 ⭐와 같다 — 판단자가 한 회차에 볼 수 있는 만큼이다.
  */
 const RISER_LIMIT = 5;
+/**
+ * ★★ **📈로는 판단자를 부르지 않는다** (2026-09-11 12:23, 사용자가 정했다).
+ *
+ * 📈는 "이미 오른 것"이다. 첫 소집(12:07)에서 판단자가 5종목을 전부 "이미 올라
+ * 손절선을 둘 자리가 없다·오른 원인이 없다"로 걸렀고, 사용자가 짚었다 —
+ * *"오를만한 것들로 브리핑을 해줘야지 이미 오른 걸 가지고 뭐하려고?"*
+ * 화면에는 남기고(참고), 소집은 끈다. 이 자리는 "재료가 막 나온 종목"이 대신한다.
+ */
+const RISERS_WAKE_JUDGE = false;
+
+/**
+ * ── 📣 재료가 막 나온 종목 (2026-09-11) ──────────────────────────────────
+ *
+ * 사용자가 정했다 — *"오를만한 것들로 브리핑을 해줘야지 이미 오른 걸 가지고
+ * 뭐하려고?"* 그리고 고른 기준이 "재료가 막 나온 종목"이다. 최근 2거래일 공시에
+ * 호재가 붙었는데 **공시 직전 종가 대비 아직 덜 움직인** 종목을 보인다.
+ * 판정 규칙과 탐침 기록은 `trading/disclosureCatalyst.ts` 머리 주석에 있다.
+ */
+/**
+ * 📣 켜고 끄기. 2026-09-11 13:38에 껐다가(분석가가 12:41부터 끝나지 않았다) 시간 예산
+ * (`CATALYST_BUDGET_MS`)과 끊긴 채우기 잇기(`syncDisclosures`)를 넣고 13:45에 다시 켰다.
+ */
+const CATALYSTS_ENABLED = true;
+const CATALYST_LIMIT = 5;
+/** 공시 직전 종가 대비 이보다 더 올랐으면 "이미 반영됐다"로 본다 */
+const CATALYST_MAX_MOVE = 0.05;
+/** 📣를 훑은 기록 이름. `risers-scan`과 같은 규칙으로 0건·실패를 가른다 */
+const CATALYSTS_HEARTBEAT = 'catalyst-scan';
+/** KIS 뉴스 제목 TR의 제공업체 코드 — 거래소 공시(`F`)·코스닥 공시(`G`). 2026-09-11 탐침 */
+const DISCLOSURE_PROVIDERS = ['F', 'G'];
+/** 한 회차에 거슬러 갈 최대 쪽수(쪽당 40건). 이틀치를 채우는 데 업체마다 7~8쪽이 들었다 */
+const DISCLOSURE_MAX_PAGES = 10;
+/** 공시 쪽 사이 간격 — 700ms에서 초당 한도(`EGW00201`)에 걸렸다(분석가·판단자와 겹친 탓) */
+const DISCLOSURE_GAP_MS = 1100;
+/** 한 회차에 기준가를 구하려고 부를 일봉 수 상한. 구한 값은 표에 남아 다시 안 부른다 */
+const CATALYST_MAX_CANDLE_CALLS = 20;
+const CANDLE_GAP_MS = 600;
+/**
+ * 📣 채우기(공시 쪽·기준가 일봉)에 쓰는 시간 상한. 넘기면 멈추고 가진 것으로 고른다 —
+ * 채우던 것은 다음 회차가 잇는다.
+ *
+ * ★★ 없어서 났다 (2026-09-11 12:41). 첫 실행이 공시를 채우다 끝나지 않았고, 스케줄러의
+ *    20분 시한은 셸만 끊어 `node`가 13:35까지 남았다 — 그동안 분석가·⭐·판단자 소집이 전부
+ *    멈췄다. 같은 시간 `open-orders`도 12:49~13:22 기록이 없어 KIS가 느렸던 것으로 보이지만,
+ *    출력이 남지 않아 확인하지 못했다.
+ */
+const CATALYST_BUDGET_MS = 60_000;
 /** 📈를 훑은 기록 이름. 몇 건이었는지·못 훑었는지를 판단자 화면이 여기서 읽는다 */
 const RISERS_HEARTBEAT = 'risers-scan';
 /** `scripts/deliberate.sh`가 잡는 락. 판단자가 도는 중인지 여기서 본다 */
@@ -270,6 +323,59 @@ async function ensureSchema(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS trading_screening_risers_time_idx
       ON trading_screening_risers (measured_at DESC);
+
+    /*
+     * ★★ 공시를 쌓는다 (2026-09-11, 📣 재료가 막 나온 종목). KIS 뉴스 제목 TR의
+     * 거래소·코스닥 공시만. srno는 KIS의 내용 조회용 일련번호다.
+     * ★ base_close는 공시 직전 종가 — 한 번 구하면 바뀌지 않으므로 여기 남겨 다시 안 부른다.
+     */
+    CREATE TABLE IF NOT EXISTS trading_disclosures (
+      srno           TEXT PRIMARY KEY,
+      provider       TEXT NOT NULL,
+      published_day  TEXT NOT NULL,
+      published_time TEXT NOT NULL,
+      symbol         TEXT NOT NULL,
+      name           TEXT NOT NULL DEFAULT '',
+      title          TEXT NOT NULL,
+      base_day       TEXT,
+      base_close     DOUBLE PRECISION,
+      fetched_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS trading_disclosures_day_idx
+      ON trading_disclosures (published_day DESC, published_time DESC);
+    -- 업체별로 공시를 빈틈없이 가진 구간(YYYYMMDDHHMMSS). complete_from~complete_to 사이는 다 받았다.
+    CREATE TABLE IF NOT EXISTS trading_disclosure_sync (
+      provider      TEXT PRIMARY KEY,
+      complete_from TEXT NOT NULL,
+      complete_to   TEXT NOT NULL,
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    /*
+     * 📣 한 회차의 목록. 0건·못 훑음은 trading_heartbeats의 catalyst-scan 기록이 말하고,
+     * 성공 기록의 ran_at이 이 measured_at과 같다(📈와 같은 규칙).
+     * ★ 남겨야 나중에 채점할 수 있다 — "재료가 나왔는데 덜 움직인 것을 샀으면 어땠나".
+     */
+    CREATE TABLE IF NOT EXISTS trading_catalyst_picks (
+      measured_at    TIMESTAMPTZ NOT NULL,
+      symbol         TEXT NOT NULL,
+      name           TEXT NOT NULL,
+      labels         TEXT NOT NULL,
+      title          TEXT NOT NULL,
+      published_day  TEXT NOT NULL,
+      published_time TEXT NOT NULL,
+      correction     BOOLEAN NOT NULL DEFAULT false,
+      base_day       TEXT NOT NULL,
+      base_close     DOUBLE PRECISION NOT NULL,
+      price          DOUBLE PRECISION NOT NULL,
+      move           DOUBLE PRECISION NOT NULL,
+      warnings       TEXT NOT NULL DEFAULT '',
+      rule           TEXT NOT NULL DEFAULT '',
+      news           JSONB,
+      PRIMARY KEY (measured_at, symbol)
+    );
+    CREATE INDEX IF NOT EXISTS trading_catalyst_picks_time_idx
+      ON trading_catalyst_picks (measured_at DESC);
   `);
 }
 
@@ -473,6 +579,254 @@ function judgeRunning(repoRoot: string): number | null {
   } catch {
     return null;
   }
+}
+
+type KisAccount = NonNullable<ReturnType<typeof getKisAccount>>;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+/** 지금 KST의 `YYYYMMDD` */
+function kstDay(date: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(date).replace(/-/g, '');
+}
+
+/**
+ * 거래소·코스닥 공시를 `since`(`YYYYMMDDHHMMSS`)까지 **빈틈없이** 쌓는다.
+ *
+ * 업체마다 "빈틈없이 가진 구간"(`trading_disclosure_sync`)을 기억하고 두 방향으로 채운다:
+ *
+ *   ① **머리** — 지금부터 과거로, 가진 구간의 끝(`complete_to`)에 닿을 때까지. 5분마다는
+ *      업체당 한 쪽이면 된다. 닿지 못하면(시간·쪽수 상한) 구간을 늘리지 않는다 — 다음
+ *      회차가 처음부터 다시 걷는다(받은 행은 남아 있어 헛일이 아니다).
+ *   ② **꼬리** — 가진 구간의 시작(`complete_from`)이 `since`보다 뒤면 거기서 더 거슬러 간다.
+ *      쪽마다 시작을 옮겨 적으므로 끊겨도 이어진다.
+ *
+ * ★★ 이 구간이 없던 첫 판(2026-09-11 12:41)에서 코스닥 공시가 3쪽에서 끊겼고, 다음 회차는
+ *    첫 쪽에서 "이미 가졌다"로 멈춰 **9/10 16:06 이전이 영영 비었다.**
+ * ★ 쪽을 넘기는 시각은 **종목코드 없는 행까지 포함한** 마지막 행으로 잡는다. 코드가 붙은
+ *   행만 보고 넘기면 그 사이 행을 건너뛴다.
+ * ★ `deadline`을 넘기면 멈추고 `partial`로 알린다.
+ * ★ `probeKisTr`로 부른다. 원본 응답이 필요한데 `kisGet`은 `rest.ts` 안에만 있고,
+ *   `rest.ts`는 서버가 import해서 장중에 고치면 백엔드가 재시작된다. 장 밖에
+ *   `rest.ts`의 조회 함수로 옮길 자리다.
+ */
+async function syncDisclosures(
+  account: KisAccount, since: string, deadline: number,
+): Promise<{ added: number; calls: number; failed: string | null; partial: boolean }> {
+  let added = 0;
+  let calls = 0;
+  let partial = false;
+
+  /** 한 쪽(40건)을 받아 쌓는다. 실패면 문구, 빈 쪽이면 `null`, 아니면 쪽의 시각 범위 */
+  const fetchPage = async (
+    provider: string, date: string, hour: string,
+  ): Promise<{ failed: string } | { newest: string; oldest: string } | null> => {
+    const params = {
+      FID_NEWS_OFER_ENTP_CODE: provider, FID_COND_MRKT_CLS_CODE: '', FID_INPUT_ISCD: '',
+      FID_TITL_CNTT: '', FID_INPUT_DATE_1: date ? `00${date}` : '', FID_INPUT_HOUR_1: hour ? `00${hour}` : '',
+      FID_RANK_SORT_CLS_CODE: '', FID_INPUT_SRNO: '',
+    };
+    let res = await probeKisTr(account, '/uapi/domestic-stock/v1/quotations/news-title', 'FHKST01011800', params);
+    calls += 1;
+    if (!res.ok && res.code === 'EGW00201') {
+      // 초당 한도는 기다리면 풀린다. 한 번만 다시 부른다.
+      await sleep(DISCLOSURE_GAP_MS * 2);
+      res = await probeKisTr(account, '/uapi/domestic-stock/v1/quotations/news-title', 'FHKST01011800', params);
+      calls += 1;
+    }
+    await sleep(DISCLOSURE_GAP_MS);
+    if (!res.ok) return { failed: `${provider} ${res.code} ${res.message}`.slice(0, 80) };
+
+    const rows = ((res.body?.output ?? []) as Array<Record<string, string>>).filter((r) => r.data_dt && r.data_tm);
+    if (rows.length === 0) return null;
+    for (const r of rows) {
+      if (!r.cntt_usiq_srno || !r.iscd1) continue;
+      const { rowCount } = await pool.query(
+        `INSERT INTO trading_disclosures (srno, provider, published_day, published_time, symbol, name, title)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (srno) DO NOTHING`,
+        [r.cntt_usiq_srno, provider, r.data_dt, r.data_tm, r.iscd1, r.kor_isnm1 ?? '', r.hts_pbnt_titl_cntt ?? ''],
+      );
+      added += rowCount ?? 0;
+    }
+    const stamp = (r: Record<string, string>): string => `${r.data_dt}${r.data_tm}`;
+    return { newest: stamp(rows[0]), oldest: stamp(rows[rows.length - 1]) };
+  };
+
+  for (const provider of DISCLOSURE_PROVIDERS) {
+    const cover = (await pool.query<{ complete_from: string; complete_to: string }>(
+      'SELECT complete_from, complete_to FROM trading_disclosure_sync WHERE provider = $1',
+      [provider],
+    )).rows[0] as { complete_from: string; complete_to: string } | undefined;
+    // 가진 구간이 since보다 옛것이면 since까지만 가면 된다.
+    const fresh = cover !== undefined && cover.complete_to > since;
+    const target = fresh ? cover.complete_to : since;
+
+    // ① 머리 — 지금부터 target까지
+    let date = '';
+    let hour = '';
+    let newest: string | null = null;
+    let reached: string | null = null;
+    for (let n = 0; n < DISCLOSURE_MAX_PAGES; n += 1) {
+      if (Date.now() > deadline) { partial = true; break; }
+      const got = await fetchPage(provider, date, hour);
+      if (got === null) { reached = target; break; }
+      if ('failed' in got) return { added, calls, failed: got.failed, partial };
+      if (newest === null) newest = got.newest;
+      if (got.oldest <= target) { reached = got.oldest; break; }
+      // 제자리 — 같은 시각의 행이 한 쪽을 넘는다. 더 걸어도 같은 쪽이 온다.
+      if (got.oldest === `${date}${hour}`) break;
+      date = got.oldest.slice(0, 8);
+      hour = got.oldest.slice(8);
+    }
+    let from: string | null = cover?.complete_from ?? null;
+    if (reached !== null && newest !== null) {
+      from = fresh && cover !== undefined ? cover.complete_from : reached;
+      await pool.query(
+        `INSERT INTO trading_disclosure_sync (provider, complete_from, complete_to) VALUES ($1,$2,$3)
+         ON CONFLICT (provider) DO UPDATE SET complete_from = $2, complete_to = $3, updated_at = now()`,
+        [provider, from, newest],
+      );
+    }
+
+    // ② 꼬리 — 가진 구간의 시작이 since보다 뒤면 거기서부터 더 거슬러 간다
+    if (from !== null && from > since) {
+      let cursor = from;
+      for (let n = 0; n < DISCLOSURE_MAX_PAGES && cursor > since; n += 1) {
+        if (Date.now() > deadline) { partial = true; break; }
+        const got = await fetchPage(provider, cursor.slice(0, 8), cursor.slice(8));
+        if (got === null) break;
+        if ('failed' in got) return { added, calls, failed: got.failed, partial };
+        if (got.oldest >= cursor) break;
+        cursor = got.oldest;
+        await pool.query(
+          'UPDATE trading_disclosure_sync SET complete_from = $2, updated_at = now() WHERE provider = $1',
+          [provider, cursor],
+        );
+      }
+    }
+  }
+  return { added, calls, failed: null, partial };
+}
+
+interface StoredDisclosure {
+  srno: string;
+  symbol: string;
+  name: string;
+  title: string;
+  published_day: string;
+  published_time: string;
+  base_day: string | null;
+  base_close: number | null;
+}
+
+/**
+ * 📣 재료가 막 나온 종목을 뽑아 **남긴다** (위 `CATALYST_LIMIT` 주석).
+ *
+ * ★ 0건·못 훑음을 가르는 법, 기록의 `ran_at` = 줄의 `measured_at`은 `discoverRisers`와 같다.
+ * ★ 실패해도 적정가·⭐는 막지 않는다. 이 회차는 📣 없이 끝나고 `null`을 돌려준다.
+ */
+async function discoverCatalysts(
+  account: KisAccount, held: Set<string>, poolSymbols: Set<string>, quotes: Map<string, number>,
+): Promise<CatalystPick[] | null> {
+  const record = (status: 'ok' | 'failed', note: string, at: Date): Promise<unknown> => pool.query(
+    'INSERT INTO trading_heartbeats (name, status, note, ran_at) VALUES ($1, $2, $3, $4)',
+    [CATALYSTS_HEARTBEAT, status, note, at],
+  ).catch(() => undefined);
+
+  const started = Date.now();
+  const today = kstDay(new Date());
+  const sinceDay = previousWeekday(today);
+  const deadline = started + CATALYST_BUDGET_MS;
+  const sync = await syncDisclosures(account, `${sinceDay}000000`, deadline);
+  if (sync.failed !== null) {
+    await record('failed', `공시를 못 받았다 — ${sync.failed}`, new Date());
+    return null;
+  }
+
+  const { rows: stored } = await pool.query<StoredDisclosure>(
+    `SELECT srno, symbol, name, title, published_day, published_time, base_day, base_close
+       FROM trading_disclosures WHERE published_day >= $1`,
+    [sinceDay],
+  );
+  const eligible = (symbol: string): boolean => poolSymbols.has(symbol) && !held.has(symbol);
+
+  /*
+   * ── 기준가(공시 직전 종가)가 없는 호재 공시만 일봉을 부른다 ──
+   *
+   * ★ DB 일봉 저장소가 아니라 KIS에 묻는다. 저장소는 전날 봉이 아직 없을 수 있다
+   *   (2026-09-11 11시에 가장 최근 봉이 9/9였다).
+   */
+  const closesBySymbol = new Map<string, DayClose[]>();
+  let candleCalls = 0;
+  for (const s of stored) {
+    if (s.base_close !== null || classifyDisclosure(s.title)?.tone !== 'good' || !eligible(s.symbol)) continue;
+    if (!closesBySymbol.has(s.symbol)) {
+      if (candleCalls >= CATALYST_MAX_CANDLE_CALLS || Date.now() > deadline) continue;
+      candleCalls += 1;
+      const candles = await getDailyCandles(s.symbol, 10).then((r) => r.candles).catch(() => []);
+      // ★ 캔들의 time은 그 거래일 자정(UTC)의 초다(`fetchDailyCandlePage`).
+      closesBySymbol.set(s.symbol, candles.map((c) => ({
+        day: new Date(c.time * 1000).toISOString().slice(0, 10).replace(/-/g, ''), close: c.close,
+      })));
+      await sleep(CANDLE_GAP_MS);
+    }
+    const base = baseCloseFor(closesBySymbol.get(s.symbol) ?? [], s.published_day, s.published_time, today);
+    if (base === null) continue;
+    s.base_day = base.day;
+    s.base_close = base.close;
+    await pool.query(
+      'UPDATE trading_disclosures SET base_day = $2, base_close = $3 WHERE srno = $1',
+      [s.srno, base.day, base.close],
+    );
+  }
+
+  const overBudget = sync.partial || Date.now() > deadline;
+  const toRow = (s: StoredDisclosure): DisclosureRow => ({
+    symbol: s.symbol, name: s.name, title: s.title, publishedDay: s.published_day, publishedTime: s.published_time,
+  });
+  const keyOf = (r: DisclosureRow): string => `${r.symbol}|${r.publishedDay}|${r.publishedTime}|${r.title}`;
+  const bases = new Map<string, DayClose | null>(stored.map((s) => [
+    keyOf(toRow(s)),
+    s.base_day === null || s.base_close === null ? null : { day: s.base_day, close: s.base_close },
+  ]));
+  const result = pickCatalysts({
+    rows: stored.map(toRow),
+    eligible,
+    price: (symbol) => quotes.get(symbol),
+    base: (row) => bases.get(keyOf(row)) ?? null,
+    maxMove: CATALYST_MAX_MOVE,
+    limit: CATALYST_LIMIT,
+  });
+
+  const rule = `최근 2거래일(${sinceDay}~) 거래소·코스닥 공시 호재 · 공시 직전 종가 대비`
+    + ` +${(CATALYST_MAX_MOVE * 100).toFixed(0)}% 이하 · 거래대금 상위 ${CANDIDATE_POOL} 개별주식·보유 제외`
+    + ` · 최근 공시 순 ${CATALYST_LIMIT}건 (호재 ${result.eligible}종목 중 이미 오름 ${result.tooMoved}`
+    + ` · 못 잼 ${result.unmeasured} · 풀 밖·보유 ${result.outside})`;
+  const stamped = new Date();
+  for (const p of result.picks) {
+    const cell = await fetchNewsCell(p.symbol);
+    await pool.query(
+      `INSERT INTO trading_catalyst_picks
+         (measured_at, symbol, name, labels, title, published_day, published_time, correction,
+          base_day, base_close, price, move, warnings, rule, news)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb)
+       ON CONFLICT (measured_at, symbol) DO NOTHING`,
+      [stamped, p.symbol, p.name, p.labels.join('·'), p.latest.title, p.latest.publishedDay,
+        p.latest.publishedTime, p.latest.correction, p.base.day, p.base.close, p.price, p.move,
+        p.warnings.join('·'), rule, JSON.stringify(cell)],
+    );
+    await sleep(NEWS_GAP_MS);
+  }
+  await record(
+    'ok',
+    `${result.picks.length}건 · ${rule} · 공시 +${sync.added}건(호출 ${sync.calls}) · 일봉 ${candleCalls}회`
+      + (overBudget ? ` · ★ 시간 예산 ${CATALYST_BUDGET_MS / 1000}초를 넘겨 채우기를 멈췄다 — 다음 회차가 잇는다` : '')
+      + ` · ${Math.round((Date.now() - started) / 1000)}초`,
+    stamped,
+  );
+  return result.picks;
 }
 
 /** 지금 KST로 장이 닫혔나(09:00~15:30 밖). 슬랙 머리말과 📈가 함께 쓴다 */
@@ -808,6 +1162,19 @@ async function main(): Promise<void> {
     ? '📈 오늘 오르는 후보 — 이번에는 없다(장이 닫혔거나 못 훑었다 · risers-scan 기록 참고)'
     : `📈 오늘 오르는 후보 ${risers.length}건을 남겼다`);
 
+  /*
+   * ── 📣 재료가 막 나온 종목 (위 `CATALYST_LIMIT` 주석) ──
+   *
+   * ★ 장이 닫혔으면 훑지 않는다 — 📈와 같은 이유다. 다음 날 첫 회차가 전 평일
+   *   00시부터 거슬러 채우므로 밤사이 공시도 빠지지 않는다.
+   */
+  const catalysts = !CATALYSTS_ENABLED || krxClosedNow() || !account
+    ? null
+    : await discoverCatalysts(account, held, new Set(candidates), quotes);
+  console.log(catalysts === null
+    ? '📣 재료가 막 나온 종목 — 이번에는 없다(장이 닫혔거나 못 훑었다 · catalyst-scan 기록 참고)'
+    : `📣 재료가 막 나온 종목 ${catalysts.length}건을 남겼다`);
+
   if (picks.length > 0) {
     const head = `⭐ *추천* — 거래대금 상위 ${CANDIDATE_POOL} 중 개별주식 ${scored.length}종목에서`;
     console.log(`\n${head}\n   기준: ${rule}`);
@@ -843,6 +1210,20 @@ async function main(): Promise<void> {
      */
     console.log('\n★ 후보의 적정가를 하나도 못 냈다 — 추천을 낼 수 없다.');
     lines.push('⭐ _★ 후보의 적정가를 하나도 못 냈습니다 — 살 것이 없다는 뜻이 아닙니다._');
+  }
+
+  if (catalysts !== null && catalysts.length > 0) {
+    const head = '📣 *재료가 막 나온 종목* — 최근 2거래일 공시 호재, 공시 뒤 아직 +5% 이하';
+    console.log(`\n${head}`);
+    lines.push(`\n${head}`);
+    for (const c of catalysts) {
+      const text = `${c.name} ${Math.round(c.price).toLocaleString('ko-KR')}원`
+        + ` · 공시 뒤 ${c.move >= 0 ? '+' : ''}${(c.move * 100).toFixed(1)}% · [${c.labels.join('·')}] ${c.latest.title}`
+        + (c.warnings.length > 0 ? ` · ⚠${c.warnings.join('·')}` : '');
+      console.log(`  📣 ${text}`);
+      lines.push(`📣 ${escapeMrkdwn(text)}`);
+    }
+    lines.push('_📣는 "재료가 나왔다"이지 "오른다"가 아닙니다. 재료의 크기는 원문에 있고, 판단자가 봅니다._');
   }
 
   if (risers !== null && risers.length > 0) {
@@ -904,7 +1285,7 @@ async function main(): Promise<void> {
   const sent = await sendSlackBot([header, ...lines].join('\n'));
   console.log(sent ? '\nstock-briefing 채널로 보냈다.' : '\n보내지 못했다.');
 
-  if (!args.includes('--no-judge')) await maybeCallJudge(rows, accountId, falling, risers);
+  if (!args.includes('--no-judge')) await maybeCallJudge(rows, accountId, falling, risers, catalysts);
 }
 
 /**
@@ -924,7 +1305,8 @@ async function main(): Promise<void> {
  * ★ ②가 없으면 문턱을 넘은 종목이 하나라도 있는 한 5분마다 계속 부른다.
  *   신호가 바뀔 때만 부르는 것이 이 게이트의 핵심이다.
  *
- * ★ **또는 📈에 오늘 처음 보는 이름이 들어왔을 때** (2026-09-11). ⭐는 떨어진
+ * ★ **또는 📈에 오늘 처음 보는 이름이 들어왔을 때** (2026-09-11 — 같은 날 꺼 뒀다,
+ *   `RISERS_WAKE_JUDGE`). ⭐는 떨어진
  *   것만 올라와서, 이것이 없으면 오르는 종목으로는 판단자가 불리지 않는다.
  *
  * ★ **판단자가 도는 중이면 신호를 적지 않는다**(`judgeRunning`) — 적으면 그 신호는
@@ -935,6 +1317,7 @@ async function main(): Promise<void> {
  */
 async function maybeCallJudge(
   rows: Row[], accountId: string, falling: Set<string>, risers: Riser[] | null,
+  catalysts: CatalystPick[] | null,
 ): Promise<void> {
   /*
    * ★★ **급락 축을 게이트에도 넘긴다** (2026-09-10). 그전에는 ⭐추천에만
@@ -980,12 +1363,17 @@ async function maybeCallJudge(
   );
   const fairChanged = crossed.length > 0 && splitNote(today[0]?.note).fair !== signature;
   const riserSymbols = (risers ?? []).map((r) => r.symbol);
-  const fresh = freshRisers(riserSymbols, today.map((r) => r.note));
+  const notes = today.map((r) => r.note);
+  // ★ 지금은 꺼 뒀다 — `RISERS_WAKE_JUDGE` 주석.
+  const fresh = RISERS_WAKE_JUDGE ? freshRisers(riserSymbols, notes) : [];
+  // ★ 📣는 오늘 처음 보는 이름이면 부른다 — 📈 대신 "오를만한 것"을 대는 자리다.
+  const catalystSymbols = (catalysts ?? []).map((c) => c.symbol);
+  const freshCat = freshCatalysts(catalystSymbols, notes);
 
-  if (!fairChanged && fresh.length === 0) {
+  if (!fairChanged && fresh.length === 0 && freshCat.length === 0) {
     console.log(crossed.length === 0
-      ? '판단자를 부르지 않는다 — 문턱을 넘은 종목도, 새로 오른 📈도 없다.'
-      : `판단자를 부르지 않는다 — 직전과 같은 신호(${crossed.length}종목)이고 새로 오른 📈도 없다.`);
+      ? '판단자를 부르지 않는다 — 문턱을 넘은 종목도, 새 📣 재료도 없다.'
+      : `판단자를 부르지 않는다 — 직전과 같은 신호(${crossed.length}종목)이고 새 📣 재료도 없다.`);
     return;
   }
 
@@ -1000,11 +1388,14 @@ async function maybeCallJudge(
   const reasons = [
     fairChanged ? `문턱을 넘은 ${crossed.length}종목: ${crossed.map((r) => r.name).join(', ')}` : null,
     fresh.length > 0 ? `새로 오른 📈 ${fresh.length}종목: ${fresh.map(nameOf).join(', ')}` : null,
+    freshCat.length > 0
+      ? `새 📣 재료 ${freshCat.length}종목: ${freshCat.map((s) => catalysts?.find((c) => c.symbol === s)?.name ?? s).join(', ')}`
+      : null,
   ].filter(Boolean).join(' · ');
   console.log(`★ 판단자를 부른다 — ${reasons}`);
   await pool.query(
     `INSERT INTO trading_heartbeats (name, status, note) VALUES ('fair-value-judge', 'ok', $1)`,
-    [composeNote(signature, riserSymbols)],
+    [composeNote(signature, riserSymbols, catalystSymbols)],
   );
 
   /*

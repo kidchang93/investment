@@ -10,7 +10,7 @@ import { describe as suite, it } from 'node:test';
 
 import {
   CHEAP_GATE, RICH_GATE, SIGNATURE_TOP_CANDIDATES,
-  composeNote, crossesGate, freshRisers, gateSignature, splitNote, type GateInput,
+  composeNote, crossesGate, freshCatalysts, freshRisers, gateSignature, splitNote, type GateInput,
 } from './judgeGate.js';
 
 const row = (symbol: string, gap: number | null, held = false, falling = false): GateInput =>
@@ -151,17 +151,17 @@ suite('시그니처', () => {
 suite('📈 오늘 오르는 후보', () => {
   it('기록에 ⭐ 시그니처와 📈 이름을 함께 적고 도로 가른다', () => {
     const note = composeNote('005930:-2', ['035420', '000660']);
-    assert.deepEqual(splitNote(note), { fair: '005930:-2', risers: ['000660', '035420'] });
+    assert.deepEqual(splitNote(note), { fair: '005930:-2', risers: ['000660', '035420'], catalysts: [] });
   });
 
   it('📈가 없으면 옛 기록과 같은 모양이다 — 옛 기록도 그대로 읽힌다', () => {
     assert.equal(composeNote('005930:-2', []), '005930:-2');
-    assert.deepEqual(splitNote('005930:-2'), { fair: '005930:-2', risers: [] });
-    assert.deepEqual(splitNote(undefined), { fair: '', risers: [] });
+    assert.deepEqual(splitNote('005930:-2'), { fair: '005930:-2', risers: [], catalysts: [] });
+    assert.deepEqual(splitNote(undefined), { fair: '', risers: [], catalysts: [] });
   });
 
   it('⭐가 없어도 📈만 적을 수 있다', () => {
-    assert.deepEqual(splitNote(composeNote('', ['000660'])), { fair: '', risers: ['000660'] });
+    assert.deepEqual(splitNote(composeNote('', ['000660'])), { fair: '', risers: ['000660'], catalysts: [] });
   });
 
   it('★★ 오늘 이미 보여 준 이름은 새 신호가 아니다 — 5등·6등이 자리를 바꿔도 안 부른다', () => {
@@ -174,6 +174,18 @@ suite('📈 오늘 오르는 후보', () => {
 
   it('옛 기록(📈 표시 없음)만 있으면 전부 새 이름이다', () => {
     assert.deepEqual(freshRisers(['Z', 'A', 'M'], ['005930:-2']), ['Z', 'A', 'M']);
+  });
+
+  it('📣를 📈와 함께 적고 도로 가른다 — 둘은 서로 섞이지 않는다', () => {
+    const note = composeNote('005930:-2', ['A'], ['C', 'B']);
+    assert.deepEqual(splitNote(note), { fair: '005930:-2', risers: ['A'], catalysts: ['B', 'C'] });
+    assert.deepEqual(splitNote(composeNote('', [], ['B'])), { fair: '', risers: [], catalysts: ['B'] });
+  });
+
+  it('★ 📣도 오늘 이미 보여 준 이름은 새 신호가 아니다 — 📈에 있던 이름은 📣로는 새것이다', () => {
+    const notes = [composeNote('', ['A'], ['B'])];
+    assert.deepEqual(freshCatalysts(['B', 'C'], notes), ['C']);
+    assert.deepEqual(freshCatalysts(['A'], notes), ['A']);
   });
 
   it('들어온 순서를 지킨다 — 많이 오른 순 그대로', () => {

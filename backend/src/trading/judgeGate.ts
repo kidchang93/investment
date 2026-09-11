@@ -137,21 +137,35 @@ export function gateSignature(rows: GateInput[]): string {
  * 적는다 — 표를 따로 두지 않고, 표시가 없는 옛 기록도 그대로 읽힌다.
  */
 export const RISER_MARK = '|up:';
+/**
+ * 📣 재료가 막 나온 종목(2026-09-11, `trading/disclosureCatalyst.ts`). 📈와 같은 규칙 —
+ * 오늘 처음 보는 이름일 때만 부른다.
+ */
+export const CATALYST_MARK = '|cat:';
 
-/** 판단자를 부를 때 남길 기록 한 줄 — ⭐ 시그니처 + 그때 보여 준 📈 이름 */
-export function composeNote(fairSignature: string, risers: string[]): string {
-  return risers.length === 0
-    ? fairSignature
-    : `${fairSignature}${RISER_MARK}${[...risers].sort().join(',')}`;
+/** 판단자를 부를 때 남길 기록 한 줄 — ⭐ 시그니처 + 그때 보여 준 📈·📣 이름 */
+export function composeNote(fairSignature: string, risers: string[], catalysts: string[] = []): string {
+  let note = fairSignature;
+  if (risers.length > 0) note += `${RISER_MARK}${[...risers].sort().join(',')}`;
+  if (catalysts.length > 0) note += `${CATALYST_MARK}${[...catalysts].sort().join(',')}`;
+  return note;
 }
 
-/** 기록 한 줄을 ⭐ 시그니처와 📈 이름으로 가른다. 표시가 없으면 옛 기록이다 */
-export function splitNote(note: string | undefined): { fair: string; risers: string[] } {
-  if (note === undefined) return { fair: '', risers: [] };
-  const at = note.indexOf(RISER_MARK);
-  if (at < 0) return { fair: note, risers: [] };
-  const tail = note.slice(at + RISER_MARK.length);
-  return { fair: note.slice(0, at), risers: tail === '' ? [] : tail.split(',') };
+export interface NoteParts { fair: string; risers: string[]; catalysts: string[] }
+
+/** 기록 한 줄을 ⭐ 시그니처와 📈·📣 이름으로 가른다. 표시가 없으면 옛 기록이다 */
+export function splitNote(note: string | undefined): NoteParts {
+  const parts: NoteParts = { fair: '', risers: [], catalysts: [] };
+  if (note === undefined) return parts;
+  const [fair, ...tagged] = note.split(/\|(?=(?:up|cat):)/);
+  parts.fair = fair;
+  for (const chunk of tagged) {
+    const colon = chunk.indexOf(':');
+    const names = chunk.slice(colon + 1) === '' ? [] : chunk.slice(colon + 1).split(',');
+    if (chunk.slice(0, colon) === 'up') parts.risers = names;
+    else parts.catalysts = names;
+  }
+  return parts;
 }
 
 /**
@@ -161,5 +175,11 @@ export function splitNote(note: string | undefined): { fair: string; risers: str
  */
 export function freshRisers(current: string[], notesToday: string[]): string[] {
   const seen = new Set(notesToday.flatMap((note) => splitNote(note).risers));
+  return current.filter((symbol) => !seen.has(symbol));
+}
+
+/** 오늘 판단자에게 **아직 안 보여 준** 📣 이름. `freshRisers`와 같은 규칙이다 */
+export function freshCatalysts(current: string[], notesToday: string[]): string[] {
+  const seen = new Set(notesToday.flatMap((note) => splitNote(note).catalysts));
   return current.filter((symbol) => !seen.has(symbol));
 }

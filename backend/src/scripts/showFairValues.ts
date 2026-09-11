@@ -166,6 +166,75 @@ async function main(): Promise<void> {
     console.log('  ★ ⭐는 "사라"가 아닙니다 — 층 상한·매수여력·plan을 세울 수 있는지는 당신이 봅니다.');
   }
 
+  /** 분석가가 회차마다 남기는 훑음 기록(`risers-scan`·`catalyst-scan`) */
+  interface ScanRecord { ran_at: Date; status: string; note: string; age_min: number }
+  const lastScan = (name: string): Promise<ScanRecord | null | undefined> => pool.query<ScanRecord>(
+    `SELECT ran_at, status, note, EXTRACT(EPOCH FROM (now() - ran_at)) / 60 AS age_min
+       FROM trading_heartbeats
+      WHERE name = $1 AND ran_at > now() - interval '2 hours'
+      ORDER BY ran_at DESC LIMIT 1`,
+    [name],
+  ).then((r) => r.rows[0]).catch(() => null);
+
+  /*
+   * ── 📣 재료가 막 나온 종목 (2026-09-11) ──────────────────────────────────
+   *
+   * 사용자가 정했다 — *"오를만한 것들로 브리핑을 해줘야지 이미 오른 걸 가지고
+   * 뭐하려고?"* 최근 2거래일 공시에 호재가 붙었는데 공시 직전 종가 대비 아직
+   * +5% 넘게 안 움직인 종목이다(`trading/disclosureCatalyst.ts`).
+   *
+   * ★ 📈와 같은 규칙으로 "0건·못 훑음·기록 없음"을 가르고, 기록과 같은 시각의 줄만 읽는다.
+   */
+  interface CatalystRow {
+    symbol: string; name: string; labels: string; title: string; published_day: string;
+    published_time: string; correction: boolean; base_day: string; base_close: number;
+    price: number; move: number; warnings: string; rule: string; news: NewsCell | null;
+  }
+  const catScan = await lastScan('catalyst-scan');
+  console.log('\n── 📣 재료가 막 나온 종목 (공시 호재 · 공시 뒤 아직 덜 움직임) ──');
+  if (catScan === null) {
+    console.log('  ★ 📣 기록을 읽지 못했습니다 — 없다는 뜻이 아닙니다.');
+  } else if (catScan === undefined) {
+    console.log('  (최근 2시간에 분석가가 공시를 훑은 기록이 없습니다 — 없다는 뜻이 아닙니다. 장 밖에는 훑지 않습니다)');
+  } else if (catScan.status !== 'ok') {
+    console.log(`  ★ 이번 회차는 공시를 못 훑었습니다 — 없다는 뜻이 아닙니다 (${catScan.note})`);
+  } else {
+    const picks: CatalystRow[] | null = await pool.query<CatalystRow>(
+      `SELECT symbol, name, labels, title, published_day, published_time, correction,
+              base_day, base_close, price, move, warnings, rule, news
+         FROM trading_catalyst_picks
+        WHERE measured_at = $1
+        ORDER BY published_day DESC, published_time DESC`,
+      [catScan.ran_at],
+    ).then((r) => r.rows).catch(() => null);
+    const stale = catScan.age_min > STALE_MINUTES ? ` ⚠${Math.round(catScan.age_min)}분 전` : '';
+    const md = (day: string): string => `${day.slice(4, 6)}/${day.slice(6, 8)}`;
+    if (picks === null) {
+      console.log('  ★ 📣 줄을 읽지 못했습니다 — 없다는 뜻이 아닙니다.');
+    } else if (picks.length === 0) {
+      console.log(`  없음${stale} — ${catScan.note}`);
+    } else {
+      console.log(`  기준: ${picks[0].rule}${stale}`);
+      for (const c of picks) {
+        const fairGap = bySymbol.get(c.symbol)?.gap;
+        const gap = fairGap === null || fairGap === undefined
+          ? ''
+          : ` · 적정가 대비 ${fairGap > 0 ? '+' : ''}${(fairGap * 100).toFixed(1)}%`;
+        console.log(
+          `  📣 ${c.symbol} ${c.name} ${won(c.price)} · 공시 뒤 ${c.move >= 0 ? '+' : ''}${(c.move * 100).toFixed(1)}%`
+          + ` (기준 ${md(c.base_day)} 종가 ${won(c.base_close)})${gap}`,
+        );
+        console.log(
+          `      재료 [${c.labels}] ${md(c.published_day)} ${c.published_time.slice(0, 2)}:${c.published_time.slice(2, 4)}`
+          + ` ${c.correction ? '(정정) ' : ''}${c.title}`,
+        );
+        if (c.warnings !== '') console.log(`      ⚠ 같은 기간 악재 공시: ${c.warnings}`);
+        for (const line of newsLines(c.news, true)) console.log(line);
+      }
+      console.log('  ★ 📣는 "재료가 나왔다"이지 "오른다"가 아닙니다 — 재료의 크기(공급계약은 매출 대비 금액)는 원문에만 있습니다.');
+    }
+  }
+
   /*
    * ── 📈 오늘 오르는 후보 (2026-09-11) ────────────────────────────────────
    *
@@ -176,20 +245,14 @@ async function main(): Promise<void> {
    *    (`risers-scan`)이 어느 쪽인지 말하고, **그 기록과 같은 시각의 줄만** 읽는다 —
    *    0건인 회차에 옛 회차의 줄이 오늘 것처럼 보이면 안 된다.
    */
-  interface RiserScan { ran_at: Date; status: string; note: string; age_min: number }
   interface RiserRow {
     symbol: string; name: string; price: number; change_rate: number; turnover: number;
     range_rate: number | null; rule: string; news: NewsCell | null;
   }
   // ★ `null`은 못 읽었다, `undefined`는 기록이 없다 — 둘 다 "0건"이 아니다.
-  const scan: RiserScan | null | undefined = await pool.query<RiserScan>(
-    `SELECT ran_at, status, note, EXTRACT(EPOCH FROM (now() - ran_at)) / 60 AS age_min
-       FROM trading_heartbeats
-      WHERE name = 'risers-scan' AND ran_at > now() - interval '2 hours'
-      ORDER BY ran_at DESC LIMIT 1`,
-  ).then((r) => r.rows[0]).catch(() => null);
+  const scan = await lastScan('risers-scan');
 
-  console.log('\n── 📈 오늘 오르는 후보 (정식 회차와 같은 스크리너) ──');
+  console.log('\n── 📈 오늘 오른 종목 (참고 — 이미 오른 것, 이것으로는 판단자를 부르지 않습니다) ──');
   if (scan === null) {
     console.log('  ★ 📈 기록을 읽지 못했습니다 — 없다는 뜻이 아닙니다.');
   } else if (scan === undefined) {
