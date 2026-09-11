@@ -28,7 +28,21 @@ if (!account) {
   process.exit(1);
 }
 
-const [previous] = await getDeliberations({ accountId: account.id, limit: 1 });
+/*
+ * ★★ **직전 "정식" 회차와 견준다** (2026-09-11). 그전에는 종류를 가리지 않고 가장
+ *    최근 회차(limit 1)를 기준으로 삼았다. 9/3에 5분 빠른 회차가 생긴 뒤로 그 기준은
+ *    **늘 몇 분 전**이 됐고, 몇 분 사이엔 아무것도 안 변하니 정식 회차가 매번
+ *    "사건 없음 — 가벼운 회차"로 스스로를 격하했다:
+ *
+ *      9/8   "직전 회차 #114가 1분 전에 이미 다뤘다 — 가벼운 회차로 남긴다"
+ *      9/11  "직전 #1261 이후 3분, 보유 ±0.2% 이내 — 가벼운 회차"
+ *
+ *    매수 10건은 전부 정식·사건 회차에서 나왔는데 **9/7 이후 0건**이었다.
+ *    빠른 회차(`fair-value`)는 기준에서 뺀다 — 보유·⭐만 보는 자리라 정식 회차가
+ *    한 일을 대신하지 않는다. 200건(상한)을 읽어 하루치 빠른 회차를 넘긴다.
+ */
+const [previous] = (await getDeliberations({ accountId: account.id, limit: 200 }))
+  .filter((round) => round.trigger !== 'fair-value');
 const snapshot = await getKisDomesticAccountSnapshot(account);
 
 const prices: Record<string, number> = {};
@@ -147,7 +161,16 @@ if (!previous) {
 }
 
 console.log();
-console.log(verdict.fire ? '▶ 사건 있음 — 에이전트를 소집한다' : '▶ 사건 없음 — 가벼운 회차만 남긴다');
+/*
+ * ★★ **사건이 없어도 발굴은 한다** (2026-09-11). 판단자는 이 한 줄을 따른다 —
+ *    `deliberate.md`에는 "가벼운 회차"라는 말이 없고, 옛 문구 "가벼운 회차만
+ *    남긴다"가 300종목 발굴을 건너뛰게 한 **유일한 출처**였다. 사건은 **보유를
+ *    깊이 다시 볼지**만 정한다. 하루 한 번 넓게 조사하는 것이 정식 회차의 일이다
+ *    (USER_DECISIONS 자동화 표). ★ 이 문구를 grep하는 코드는 없다(2026-09-11 확인).
+ */
+console.log(verdict.fire
+  ? '▶ 사건 있음 — 에이전트를 소집한다'
+  : '▶ 사건 없음 — 보유 재점검은 가볍게 한다. ★ 발굴(브리핑·screenCandidates)은 그대로 한다 — 정식 회차의 일이다');
 for (const reason of verdict.reasons) console.log(`  · ${reason}`);
 
 /*
