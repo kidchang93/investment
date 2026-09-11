@@ -28,6 +28,7 @@
  * 두 번 사는 것이다.
  *
  *   비용: KIS 시세 1회 + 종목별 재무 1회(캐시) + 네이버 1페이지. **Claude 0회.**
+ *   📈(2026-09-11): 스크리너 시세 10회(거래대금 상위 300) + 📈 종목 뉴스 5회.
  *
  * ── 무엇을 안 하나 ───────────────────────────────────────────────────────
  *
@@ -37,6 +38,8 @@
  */
 
 import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import '../config.js';
 
@@ -52,7 +55,7 @@ import {
 import { getMainNews } from '../naver/finance.js';
 import { escapeMrkdwn, sendSlackBot, slackBotConfigured } from '../notify/slack.js';
 import {
-  CHEAP_GATE, crossesGate, gateSignature, type GateInput,
+  CHEAP_GATE, composeNote, crossesGate, freshRisers, gateSignature, splitNote, type GateInput,
 } from '../trading/judgeGate.js';
 import { markAgentActivity } from '../db/agentActivity.js';
 import {
@@ -61,6 +64,7 @@ import {
   chartBand, classifyAsset, combine, describe, fundamentalBand, isFalling, return60,
   type AssetKind, type Bar, type FairValue,
 } from '../trading/fairValue.js';
+import { MAX_SCREENING_LOOKUPS, runScreening } from '../trading/screening.js';
 
 /** 한 회차에 볼 종목 수 상한. 보유 + 인자로 준 것 */
 const MAX_SYMBOLS = 12;
@@ -110,6 +114,28 @@ const MAX_SYMBOLS = 12;
  *   (`warmFinancialCache.ts`).
  */
 const CANDIDATE_POOL = 900;
+
+/**
+ * ── 📈 오늘 오르는 후보 (2026-09-11) ─────────────────────────────────────
+ *
+ * 사용자가 정했다 — *"정식 회차 발굴기를 빠른 회차에도 보여준다."* 그 앞에 —
+ * *"발굴은 분석가가 빠른회차마다 분석해서 보여주는 것이고 … 매매도 빠른회차마다
+ * 진행이 되어야 해."*
+ *
+ * ⭐는 적정가 대비 **싼 것**이라 정의상 떨어진 종목만 올라온다. 빠른 회차가
+ * 사고팔게 된 뒤에도 오르는 종목은 판단자 앞에 한 번도 오지 않았다.
+ *
+ * ★ **정식 회차와 같은 코드**(`runScreening`)로 훑는다 — 거래대금 상위 300 중
+ *   유동성·비용·호가 문턱을 통과한 것. 여기서 따로 고르면 두 회차가 서로 다른
+ *   후보를 본다.
+ * ★ 개별주식만, 보유 제외, **오늘 오른 것**만 많이 오른 순으로 자른다. ETF를 빼는
+ *   이유는 ⭐와 같다. 5인 이유도 ⭐와 같다 — 판단자가 한 회차에 볼 수 있는 만큼이다.
+ */
+const RISER_LIMIT = 5;
+/** 📈를 훑은 기록 이름. 몇 건이었는지·못 훑었는지를 판단자 화면이 여기서 읽는다 */
+const RISERS_HEARTBEAT = 'risers-scan';
+/** `scripts/deliberate.sh`가 잡는 락. 판단자가 도는 중인지 여기서 본다 */
+const DELIBERATE_LOCK = '.cron-logs/deliberate.lock';
 /** 이보다 싸야 **절대 기준**으로 추천한다. 판단자를 부르는 문턱(−7%)보다 엄하게 잡는다 */
 const RECOMMEND_GAP = -0.10;
 /** 추천을 이만큼만 보여준다. 더 길면 안 읽힌다 */
@@ -221,6 +247,29 @@ async function ensureSchema(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS trading_fair_value_picks_time_idx
       ON trading_fair_value_picks (measured_at DESC);
+
+    /*
+     * ★★ 📈 오늘 오르는 후보 (2026-09-11). 정식 회차와 같은 스크리너(runScreening)가
+     * 통과시킨 것 중 개별주식·보유 제외·오늘 오른 순. 판단자 화면(showFairValues.ts)이 읽는다.
+     *
+     * ★ 한 회차가 한 measured_at을 공유한다. 0건이었는지·못 훑었는지는 이 표가 아니라
+     *   trading_heartbeats의 risers-scan 기록이 말하고, 성공 기록의 ran_at이 이 measured_at과 같다.
+     * ★ 남겨야 나중에 채점할 수 있다 — "그때 오르던 것을 샀으면 어땠나".
+     */
+    CREATE TABLE IF NOT EXISTS trading_screening_risers (
+      measured_at TIMESTAMPTZ NOT NULL,
+      symbol      TEXT NOT NULL,
+      name        TEXT NOT NULL,
+      price       DOUBLE PRECISION NOT NULL,
+      change_rate DOUBLE PRECISION NOT NULL,
+      turnover    DOUBLE PRECISION NOT NULL,
+      range_rate  DOUBLE PRECISION,
+      rule        TEXT NOT NULL DEFAULT '',
+      news        JSONB,
+      PRIMARY KEY (measured_at, symbol)
+    );
+    CREATE INDEX IF NOT EXISTS trading_screening_risers_time_idx
+      ON trading_screening_risers (measured_at DESC);
   `);
 }
 
@@ -327,6 +376,113 @@ async function fetchNewsCell(symbol: string): Promise<NewsCell> {
   }
 }
 
+/** 📈 한 줄 */
+interface Riser {
+  symbol: string;
+  name: string;
+  price: number;
+  /** 등락률(%) */
+  changeRate: number;
+  /** 오늘 거래대금(원) */
+  turnover: number;
+  /** 오늘 변동폭(%). 모르면 undefined */
+  rangeRate?: number;
+}
+
+/**
+ * 📈 오늘 오르는 후보를 뽑아 **남긴다** (위 `RISER_LIMIT` 주석).
+ *
+ * ★★ **"0건"과 "못 훑었다"를 가른다.** 회차마다 `RISERS_HEARTBEAT` 기록 한 줄에
+ *    어느 쪽인지 적는다 — 0건이면 줄은 없고 기록만 있다. 섞으면 판단자는
+ *    "오르는 게 없구나"로 읽는다.
+ * ★ 성공 기록의 `ran_at`을 줄들의 `measured_at`과 **같은 시각**으로 적는다. 화면이
+ *   그 시각의 줄만 읽으므로, 0건인 회차에 옛 회차의 줄이 오늘 것처럼 보이지 않는다.
+ * ★ 실패해도 적정가·⭐는 막지 않는다. 이 회차는 📈 없이 끝나고 `null`을 돌려준다.
+ */
+async function discoverRisers(held: Set<string>, cash: number | null): Promise<Riser[] | null> {
+  const record = (status: 'ok' | 'failed', note: string, at: Date): Promise<unknown> => pool.query(
+    'INSERT INTO trading_heartbeats (name, status, note, ran_at) VALUES ($1, $2, $3, $4)',
+    [RISERS_HEARTBEAT, status, note, at],
+  ).catch(() => undefined);
+
+  if (cash === null) {
+    await record('failed', '계좌를 못 읽어 예수금을 모른다 — 훑지 않았다', new Date());
+    return null;
+  }
+  const started = Date.now();
+  /*
+   * ★ **300으로 부른다** — 정식 회차가 `screenCandidates <계좌> 300`으로 부르는 그 값이다.
+   *   기본값(`DEFAULT_SCREENING_LOOKUPS`)은 120이라, 첫 실행이 "거래대금 상위 120"만 봤다.
+   */
+  const result = await runScreening(cash, MAX_SCREENING_LOOKUPS).catch((error: Error) => error);
+  if (result instanceof Error) {
+    await record('failed', result.message.slice(0, 80), new Date());
+    return null;
+  }
+
+  // ★ 이미 등락률 내림차순이다(`runScreening`이 정렬해 돌려준다).
+  const passed = result.rows.filter((row) => row.verdict === 'pass');
+  const risers: Riser[] = [];
+  for (const row of passed) {
+    if (risers.length >= RISER_LIMIT || row.changeRate <= 0) break;
+    if (held.has(row.symbol)) continue;
+    const instrument = await getKoreanInstrumentBySymbol(row.symbol);
+    if (classifyAsset(row.name, instrument?.assetType) !== 'stock') continue;
+    risers.push({
+      symbol: row.symbol, name: row.name, price: row.price, changeRate: row.changeRate,
+      turnover: row.turnover, rangeRate: row.rangeRate,
+    });
+  }
+
+  const rule = `거래대금 상위 ${result.poolSize}(스크리너 통과 ${passed.length}) 중`
+    + ` 개별주식·보유 제외·오늘 오른 순 ${RISER_LIMIT}건`;
+  const stamped = new Date();
+  for (const r of risers) {
+    // ★ "왜 오르나"를 판단자가 여기서 본다 — ⭐의 "왜 떨어졌나"와 같은 칸이다.
+    const cell = await fetchNewsCell(r.symbol);
+    await pool.query(
+      `INSERT INTO trading_screening_risers
+         (measured_at, symbol, name, price, change_rate, turnover, range_rate, rule, news)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb) ON CONFLICT (measured_at, symbol) DO NOTHING`,
+      [stamped, r.symbol, r.name, r.price, r.changeRate, r.turnover, r.rangeRate ?? null, rule,
+        JSON.stringify(cell)],
+    );
+    await new Promise((resolve) => { setTimeout(resolve, NEWS_GAP_MS); });
+  }
+  await record('ok', `${risers.length}건 · ${rule} · ${Math.round((Date.now() - started) / 1000)}초`, stamped);
+  return risers;
+}
+
+/**
+ * 판단자가 지금 도는 중인가 — `scripts/deliberate.sh`의 락(`mkdir` + pid)을 그대로 읽는다.
+ *
+ * ★★ 도는 중에 부르면 새 판단자는 "이미 돌고 있다 — 건너뛴다"로 끝나는데, 이쪽은
+ *    그 신호를 **보여 준 것으로 적어 버린다.** 그러면 다음 회차에는 "직전과 같다"가
+ *    되어 그 신호가 판단자 앞에 영영 안 온다. 📈는 오늘 보여 준 이름을 다시 안
+ *    부르므로 이 구멍이 더 크다.
+ * ★ 죽은 락(pid가 없는 것)은 도는 중으로 치지 않는다 — `deliberate.sh`가 스스로 걷는다.
+ */
+function judgeRunning(repoRoot: string): number | null {
+  const lock = join(repoRoot, DELIBERATE_LOCK);
+  if (!existsSync(lock)) return null;
+  try {
+    const pid = Number(readFileSync(join(lock, 'pid'), 'utf8').trim());
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    process.kill(pid, 0);
+    return pid;
+  } catch {
+    return null;
+  }
+}
+
+/** 지금 KST로 장이 닫혔나(09:00~15:30 밖). 슬랙 머리말과 📈가 함께 쓴다 */
+function krxClosedNow(): boolean {
+  const clock = Number(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date()).replace(':', ''));
+  return clock >= 1530 || clock < 900;
+}
+
 interface Row {
   symbol: string;
   name: string;
@@ -352,10 +508,13 @@ async function main(): Promise<void> {
   // ── 대상: 보유 + 인자 ──
   const symbols: string[] = [];
   const account = getKisAccount(accountId);
+  /** 📈 스크리너가 "1주도 못 산다"를 가르는 값. 계좌를 못 읽으면 모른다(`null`) */
+  let cash: number | null = null;
   if (account) {
     try {
       const snap = await getKisDomesticAccountSnapshot(account);
       for (const p of snap.positions) if (p.quantity > 0) symbols.push(p.symbol);
+      cash = snap.cashBalance ?? null;
     } catch (error) {
       console.log(`계좌를 못 읽었다 — 인자로 준 종목만 본다 (${(error as Error).message.slice(0, 50)})`);
     }
@@ -638,6 +797,17 @@ async function main(): Promise<void> {
   console.log(`뉴스를 붙였다 — ${newsTargets.length}종목(⭐ ${picks.length} · 보유 개별주식 포함)`
     + `${newsFailed > 0 ? ` · ★ 못 받은 것 ${newsFailed}` : ''}`);
 
+  /*
+   * ── 📈 오늘 오르는 후보 (위 `RISER_LIMIT` 주석) ──
+   *
+   * ★ 장이 닫혔으면 훑지 않는다(`fair-value-after`가 30분마다 돈다) — 볼 판단자가
+   *   없고 값도 고정이라, 훑으면 KIS 시세 10회를 그냥 쓴다.
+   */
+  const risers = krxClosedNow() ? null : await discoverRisers(held, cash);
+  console.log(risers === null
+    ? '📈 오늘 오르는 후보 — 이번에는 없다(장이 닫혔거나 못 훑었다 · risers-scan 기록 참고)'
+    : `📈 오늘 오르는 후보 ${risers.length}건을 남겼다`);
+
   if (picks.length > 0) {
     const head = `⭐ *추천* — 거래대금 상위 ${CANDIDATE_POOL} 중 개별주식 ${scored.length}종목에서`;
     console.log(`\n${head}\n   기준: ${rule}`);
@@ -673,6 +843,19 @@ async function main(): Promise<void> {
      */
     console.log('\n★ 후보의 적정가를 하나도 못 냈다 — 추천을 낼 수 없다.');
     lines.push('⭐ _★ 후보의 적정가를 하나도 못 냈습니다 — 살 것이 없다는 뜻이 아닙니다._');
+  }
+
+  if (risers !== null && risers.length > 0) {
+    const head = '📈 *오늘 오르는 후보* — 정식 회차와 같은 스크리너, 개별주식·보유 제외 오른 순';
+    console.log(`\n${head}`);
+    lines.push(`\n${head}`);
+    for (const r of risers) {
+      const text = `${r.name} ${Math.round(r.price).toLocaleString('ko-KR')}원 · +${r.changeRate.toFixed(2)}%`
+        + ` · 거래대금 ${Math.round(r.turnover / 100_000_000).toLocaleString('ko-KR')}억`;
+      console.log(`  📈 ${text}`);
+      lines.push(`📈 ${escapeMrkdwn(text)}`);
+    }
+    lines.push('_📈는 "오른다"이지 "더 오른다"가 아닙니다. 오른 이유가 남는지는 판단자가 봅니다._');
   }
 
   // ── 보유 종목만 갈래별로 ──
@@ -711,10 +894,7 @@ async function main(): Promise<void> {
    * 반복된다. 그 사실을 안 적으면 **"왜 값이 안 변하지"**를 시장이 조용한
    * 것으로 읽거나, 브리핑이 고장난 줄로 읽는다.
    */
-  const clock = Number(new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(new Date()).replace(':', ''));
-  const closed = clock >= 1530 || clock < 900;
+  const closed = krxClosedNow();
 
   const header = `💹 *적정가 분석* — ${now}${closed ? ' · _장 마감 후_' : ''}`
     + `\n_지금 값이 **그 종목의 최근 궤적** 대비 어디쯤인가. 예측이 아니라 기준선이다._`
@@ -724,7 +904,7 @@ async function main(): Promise<void> {
   const sent = await sendSlackBot([header, ...lines].join('\n'));
   console.log(sent ? '\nstock-briefing 채널로 보냈다.' : '\n보내지 못했다.');
 
-  if (!args.includes('--no-judge')) await maybeCallJudge(rows, accountId, falling);
+  if (!args.includes('--no-judge')) await maybeCallJudge(rows, accountId, falling, risers);
 }
 
 /**
@@ -744,11 +924,17 @@ async function main(): Promise<void> {
  * ★ ②가 없으면 문턱을 넘은 종목이 하나라도 있는 한 5분마다 계속 부른다.
  *   신호가 바뀔 때만 부르는 것이 이 게이트의 핵심이다.
  *
+ * ★ **또는 📈에 오늘 처음 보는 이름이 들어왔을 때** (2026-09-11). ⭐는 떨어진
+ *   것만 올라와서, 이것이 없으면 오르는 종목으로는 판단자가 불리지 않는다.
+ *
+ * ★ **판단자가 도는 중이면 신호를 적지 않는다**(`judgeRunning`) — 적으면 그 신호는
+ *   다음 회차에 "이미 보여 줬다"가 되어 판단자 앞에 영영 안 온다.
+ *
  * ★ **판정은 `trading/judgeGate.ts`에 있고 시험이 붙어 있다.** 여기 있을 때는
  *   시험이 없어 2026-09-03에 두 번 무너진 것을 로그를 눈으로 읽고 알았다.
  */
 async function maybeCallJudge(
-  rows: Row[], accountId: string, falling: Set<string>,
+  rows: Row[], accountId: string, falling: Set<string>, risers: Riser[] | null,
 ): Promise<void> {
   /*
    * ★★ **급락 축을 게이트에도 넘긴다** (2026-09-10). 그전에는 ⭐추천에만
@@ -777,31 +963,48 @@ async function maybeCallJudge(
     );
   }
 
-  if (crossed.length === 0) {
-    console.log('판단자를 부르지 않는다 — 문턱을 넘은 종목이 없다.');
-    return;
-  }
-
   /*
    * ★ **같은 신호로 다시 부르지 않는다.** 직전 호출 때 넘어 있던 종목 묶음과
    *   같으면 새 정보가 아니다 — 5분 전과 상황이 같다는 뜻이다.
+   *
+   * ★★ 📈는 **오늘 이미 보여 준 이름**을 다시 세지 않는다(`judgeGate.freshRisers`).
+   *    그래서 오늘 기록을 전부 읽는다 — 직전 한 줄만 보면 5등·6등이 자리를 바꿀
+   *    때마다 부른다.
    */
   const signature = gateSignature(rows.map(gateRowOf));
-  const { rows: last } = await pool.query<{ note: string }>(
+  const { rows: today } = await pool.query<{ note: string }>(
     `SELECT note FROM trading_heartbeats
       WHERE name = 'fair-value-judge'
         AND (ran_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date
-      ORDER BY id DESC LIMIT 1`,
+      ORDER BY id DESC`,
   );
-  if (last[0]?.note === signature) {
-    console.log(`판단자를 부르지 않는다 — 직전과 같은 신호(${crossed.length}종목).`);
+  const fairChanged = crossed.length > 0 && splitNote(today[0]?.note).fair !== signature;
+  const riserSymbols = (risers ?? []).map((r) => r.symbol);
+  const fresh = freshRisers(riserSymbols, today.map((r) => r.note));
+
+  if (!fairChanged && fresh.length === 0) {
+    console.log(crossed.length === 0
+      ? '판단자를 부르지 않는다 — 문턱을 넘은 종목도, 새로 오른 📈도 없다.'
+      : `판단자를 부르지 않는다 — 직전과 같은 신호(${crossed.length}종목)이고 새로 오른 📈도 없다.`);
     return;
   }
 
-  console.log(`★ 판단자를 부른다 — 문턱을 넘은 ${crossed.length}종목: ${crossed.map((r) => r.name).join(', ')}`);
+  const repoRoot = process.cwd().endsWith('backend') ? '..' : '.';
+  const running = judgeRunning(repoRoot);
+  if (running !== null) {
+    console.log(`판단자가 도는 중이다(pid ${running}) — 신호를 적지 않고 다음 5분에 다시 본다.`);
+    return;
+  }
+
+  const nameOf = (symbol: string): string => risers?.find((r) => r.symbol === symbol)?.name ?? symbol;
+  const reasons = [
+    fairChanged ? `문턱을 넘은 ${crossed.length}종목: ${crossed.map((r) => r.name).join(', ')}` : null,
+    fresh.length > 0 ? `새로 오른 📈 ${fresh.length}종목: ${fresh.map(nameOf).join(', ')}` : null,
+  ].filter(Boolean).join(' · ');
+  console.log(`★ 판단자를 부른다 — ${reasons}`);
   await pool.query(
     `INSERT INTO trading_heartbeats (name, status, note) VALUES ('fair-value-judge', 'ok', $1)`,
-    [signature],
+    [composeNote(signature, riserSymbols)],
   );
 
   /*
@@ -810,7 +1013,7 @@ async function maybeCallJudge(
    *   중복은 스케줄러의 `guard`(pgrep)와 `deliberate.sh`가 막는다.
    */
   const child = spawn('zsh', ['scripts/deliberate.sh', '--quick', accountId], {
-    cwd: process.cwd().endsWith('backend') ? '..' : '.',
+    cwd: repoRoot,
     detached: true,
     stdio: 'ignore',
   });

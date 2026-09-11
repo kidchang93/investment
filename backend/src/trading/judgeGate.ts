@@ -120,3 +120,46 @@ export function gateSignature(rows: GateInput[]): string {
     .sort()
     .join(',');
 }
+
+/**
+ * ── 📈 오늘 오르는 후보 (2026-09-11) ─────────────────────────────────────
+ *
+ * 사용자가 정했다 — 정식 회차의 발굴기(`runScreening`, 거래대금 상위 300을 등락률
+ * 순으로)를 빠른 회차에도 보여준다. ⭐는 적정가 대비 **싼 것**이라 정의상 떨어진
+ * 종목만 올라오고, 그것만으로는 오르는 종목이 판단자 앞에 한 번도 오지 않았다.
+ *
+ * ★★ **오늘 처음 보는 이름이 들어올 때만 부른다.** 상위 몇 개를 그대로 접으면
+ *    5등과 6등이 자리를 바꿀 때마다 새 신호가 된다 — ⭐ 시그니처가 2026-09-10에
+ *    1,735자까지 불어나며 겪은 그대로다. 그래서 **오늘 판단자에게 이미 보여 준
+ *    이름**은 다시 세지 않는다. 📈로 부르는 횟수는 그날 새로 오른 이름 수를 못 넘는다.
+ *
+ * 판단자를 부를 때 남기는 기록(`trading_heartbeats.note`)에 ⭐ 시그니처 뒤로 이어
+ * 적는다 — 표를 따로 두지 않고, 표시가 없는 옛 기록도 그대로 읽힌다.
+ */
+export const RISER_MARK = '|up:';
+
+/** 판단자를 부를 때 남길 기록 한 줄 — ⭐ 시그니처 + 그때 보여 준 📈 이름 */
+export function composeNote(fairSignature: string, risers: string[]): string {
+  return risers.length === 0
+    ? fairSignature
+    : `${fairSignature}${RISER_MARK}${[...risers].sort().join(',')}`;
+}
+
+/** 기록 한 줄을 ⭐ 시그니처와 📈 이름으로 가른다. 표시가 없으면 옛 기록이다 */
+export function splitNote(note: string | undefined): { fair: string; risers: string[] } {
+  if (note === undefined) return { fair: '', risers: [] };
+  const at = note.indexOf(RISER_MARK);
+  if (at < 0) return { fair: note, risers: [] };
+  const tail = note.slice(at + RISER_MARK.length);
+  return { fair: note.slice(0, at), risers: tail === '' ? [] : tail.split(',') };
+}
+
+/**
+ * 오늘 판단자에게 **아직 안 보여 준** 📈 이름.
+ *
+ * ★ 들어온 순서(많이 오른 순)를 지킨다 — 로그에 그대로 찍는다.
+ */
+export function freshRisers(current: string[], notesToday: string[]): string[] {
+  const seen = new Set(notesToday.flatMap((note) => splitNote(note).risers));
+  return current.filter((symbol) => !seen.has(symbol));
+}

@@ -44,6 +44,8 @@ const STALE_MINUTES = 20;
  * **그 판정이 어디쯤에서 끊겼는지 보이는 만큼**만 있으면 된다.
  */
 const CANDIDATE_SHOWN = 25;
+/** 📈에서 "상한가 근처"로 표시하는 등락률(%). KRX 가격제한폭은 ±30%다 */
+const LIMIT_UP_WARN = 25;
 
 const won = (n: number): string => `${Math.round(n).toLocaleString('ko-KR')}원`;
 
@@ -162,6 +164,70 @@ async function main(): Promise<void> {
       for (const line of newsLines(bySymbol.get(p.symbol)?.news, true)) console.log(line);
     }
     console.log('  ★ ⭐는 "사라"가 아닙니다 — 층 상한·매수여력·plan을 세울 수 있는지는 당신이 봅니다.');
+  }
+
+  /*
+   * ── 📈 오늘 오르는 후보 (2026-09-11) ────────────────────────────────────
+   *
+   * 사용자가 정했다 — 정식 회차의 발굴기를 빠른 회차에도 보여준다. ⭐는 정의상
+   * **떨어진 것**이라, 이 섹션이 없으면 빠른 판단자 앞에 오르는 종목이 오지 않는다.
+   *
+   * ★★ "0건"·"못 훑음"·"아직 안 훑음"을 가른다. 분석가가 회차마다 남기는 기록
+   *    (`risers-scan`)이 어느 쪽인지 말하고, **그 기록과 같은 시각의 줄만** 읽는다 —
+   *    0건인 회차에 옛 회차의 줄이 오늘 것처럼 보이면 안 된다.
+   */
+  interface RiserScan { ran_at: Date; status: string; note: string; age_min: number }
+  interface RiserRow {
+    symbol: string; name: string; price: number; change_rate: number; turnover: number;
+    range_rate: number | null; rule: string; news: NewsCell | null;
+  }
+  // ★ `null`은 못 읽었다, `undefined`는 기록이 없다 — 둘 다 "0건"이 아니다.
+  const scan: RiserScan | null | undefined = await pool.query<RiserScan>(
+    `SELECT ran_at, status, note, EXTRACT(EPOCH FROM (now() - ran_at)) / 60 AS age_min
+       FROM trading_heartbeats
+      WHERE name = 'risers-scan' AND ran_at > now() - interval '2 hours'
+      ORDER BY ran_at DESC LIMIT 1`,
+  ).then((r) => r.rows[0]).catch(() => null);
+
+  console.log('\n── 📈 오늘 오르는 후보 (정식 회차와 같은 스크리너) ──');
+  if (scan === null) {
+    console.log('  ★ 📈 기록을 읽지 못했습니다 — 없다는 뜻이 아닙니다.');
+  } else if (scan === undefined) {
+    console.log('  (최근 2시간에 분석가가 훑은 기록이 없습니다 — 없다는 뜻이 아닙니다. 장 밖에는 훑지 않습니다)');
+  } else if (scan.status !== 'ok') {
+    console.log(`  ★ 이번 회차는 못 훑었습니다 — 없다는 뜻이 아닙니다 (${scan.note})`);
+  } else {
+    const risers: RiserRow[] | null = await pool.query<RiserRow>(
+      `SELECT symbol, name, price, change_rate, turnover, range_rate, rule, news
+         FROM trading_screening_risers
+        WHERE measured_at = $1
+        ORDER BY change_rate DESC`,
+      [scan.ran_at],
+    ).then((r) => r.rows).catch(() => null);
+    const stale = scan.age_min > STALE_MINUTES ? ` ⚠${Math.round(scan.age_min)}분 전` : '';
+    if (risers === null) {
+      console.log('  ★ 📈 줄을 읽지 못했습니다 — 없다는 뜻이 아닙니다.');
+    } else if (risers.length === 0) {
+      console.log(`  없음 — 오늘 오른 개별주식 중 스크리너를 통과한 것이 없습니다${stale} (${scan.note})`);
+    } else {
+      console.log(`  기준: ${risers[0].rule}${stale}`);
+      for (const r of risers) {
+        // ★ 적정가 표에 있으면 함께 적는다 — 크게 +이면 이미 많이 오른 자리다.
+        const fairGap = bySymbol.get(r.symbol)?.gap;
+        const gap = fairGap === null || fairGap === undefined
+          ? ''
+          : ` · 적정가 대비 ${fairGap > 0 ? '+' : ''}${(fairGap * 100).toFixed(1)}%`;
+        const range = r.range_rate === null ? '' : ` · 변동폭 ${r.range_rate.toFixed(2)}%`;
+        // ★ 가격제한폭 근처는 팔 사람이 없어 체결이 어렵고 되돌림이 크다.
+        const limitUp = r.change_rate >= LIMIT_UP_WARN ? ' · ⚠상한가 근처' : '';
+        console.log(
+          `  📈 ${r.symbol} ${r.name} ${won(r.price)} · +${r.change_rate.toFixed(2)}%`
+          + ` · 거래대금 ${Math.round(r.turnover / 100_000_000).toLocaleString('ko-KR')}억${range}${gap}${limitUp}`,
+        );
+        for (const line of newsLines(r.news, true)) console.log(line);
+      }
+      console.log('  ★ 📈는 "오른다"이지 "더 오른다"가 아닙니다 — 오른 이유(📰)가 1~2주 남을 때만 근거가 됩니다.');
+    }
   }
 
   console.log('\n── 적정가 (분석가 계산) ──');
