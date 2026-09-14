@@ -192,7 +192,6 @@ antc_mkop_cls_code = 311    장운영 구분
 |------|------|------|
 | `MAX_SCREENING_LOOKUPS` | 300종목 | 10회 |
 | `DEFAULT_SCREENING_LOOKUPS` | 120종목 | 4회 |
-| `MAX_PRICE_LOOKUPS` (자동매매 후보) | 240종목 | 8회 |
 
 **10회를 넘겨서는 재 보지 않았다.** 실측은 10묶음 300종목 = 1.08초 · `EGW00201`
 0건까지다(`npx tsx src/scripts/probeMultiQuote.ts budget 10`). 더 올리려면 다시 잰다.
