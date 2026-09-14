@@ -573,11 +573,8 @@ export interface WalkForwardSpec {
    * 생략하면 지금까지처럼 모든 날을 쓴다.
    */
   regimeMask?: Uint8Array;
-  selection: {
-    rule: 'top1';
-    objective: 'netIR';
-    abstainIfNegative: boolean;
-  };
+  /** 학습 1위가 `netIR ≤ 0`이면 그 창을 현금으로 쉬나 */
+  selection: { abstainIfNegative: boolean };
   /**
    * ★ **축 고정.** 있으면 이 축의 칸만 순위에 올린다.
    *
@@ -1165,7 +1162,7 @@ export type BlockASpec = Omit<
   /** ★ 축 고정은 선택이 아니다. 블록 A의 실행 단위가 축 하나다 */
   fixHorizon: number;
   /** ★ `false`만 받는다 — 블록 A에서는 기권을 **켤 수가 없다** */
-  selection: { rule: 'top1'; objective: 'netIR'; abstainIfNegative: false };
+  selection: { abstainIfNegative: false };
 };
 
 export function runBlockA(spec: BlockASpec): WalkForwardResult {

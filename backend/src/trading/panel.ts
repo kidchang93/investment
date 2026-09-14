@@ -443,8 +443,6 @@ export interface UniverseSpec {
   scoreGateSignals: SignalCandidate[];
   /** 종목 자격. 여기 없는 종목은 통째로 뺀다 (오늘 마스터 기준) */
   eligibleSymbols: Set<string>;
-  /** 파탄 판정의 조건. 생략하면 `DEFAULT_ADJUSTMENT_SCAN` */
-  adjustmentScan?: AdjustmentScanOptions;
 }
 
 export interface UniverseMask {
@@ -517,7 +515,7 @@ export function buildUniverseMask(panel: Panel, spec: UniverseSpec): UniverseMas
   const symbolCount = panel.symbols.length;
   const cells = dayCount * symbolCount;
 
-  const adjustment = scanAdjustmentBreaks(panel, spec.adjustmentScan ?? DEFAULT_ADJUSTMENT_SCAN);
+  const adjustment = scanAdjustmentBreaks(panel);
 
   // ① 공통 점수 게이트 — 몇 개 신호가 그 자리에서 유한했나
   const finiteCount = new Uint8Array(cells);

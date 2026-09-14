@@ -131,7 +131,7 @@ function fakeSpec(
     trainMode: 'expanding',
     validationStarts: starts.map((index) => syntheticDay(index)),
     embargoDays: 60,
-    selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
+    selection: { abstainIfNegative: false },
     costRoundTripPct: 0,
     buckets: 10,
     minTrainEntries: 250,
@@ -148,7 +148,7 @@ function blockAAt(horizon: number, edge: number) {
   return runBlockA({
     ...spec,
     fixHorizon: horizon,
-    selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
+    selection: { abstainIfNegative: false },
   });
 }
 
@@ -379,7 +379,7 @@ describe('★ 판정문이 반드시 말해야 하는 것', () => {
     const bad = fakeSpec([fakeSeries('bad', 5, () => -1, DAYS)], DAYS);
     const result = runWalkForward({
       ...bad,
-      selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: true },
+      selection: { abstainIfNegative: true },
     });
     const lines = describeVerdict(result);
     assert.ok(lines.some((line) => line.includes('표본 밖 진입이 0건이다')), lines.join('\n'));
@@ -410,7 +410,7 @@ describe('★ 기권 채점 판정문 — 두 집단의 축을 나란히 적는�
       ...fakeSpec(mixedAxisSeries(days), days, eight),
       trainMode: 'rolling',
       rollingYears: 1,
-      selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: true },
+      selection: { abstainIfNegative: true },
       collectAbstained: true,
     });
     // 참여는 3일 축, 쉰 창의 반사실은 20일 축 — 실측에서 났던 모양 그대로다.
@@ -430,7 +430,7 @@ describe('★ 기권 채점 판정문 — 두 집단의 축을 나란히 적는�
       ...fakeSpec([one], days, eight),
       trainMode: 'rolling',
       rollingYears: 1,
-      selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: true },
+      selection: { abstainIfNegative: true },
       collectAbstained: true,
     });
     const joined = describeAbstainSkill(result).join('\n');

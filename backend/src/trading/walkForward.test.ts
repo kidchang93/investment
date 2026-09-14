@@ -382,7 +382,7 @@ function fakeSpec(
     trainMode: 'expanding',
     validationStarts: starts.map((index) => syntheticDay(index)),
     embargoDays: 60,
-    selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: true },
+    selection: { abstainIfNegative: true },
     costRoundTripPct: 0,
     buckets: 10,
     minTrainEntries: 250,
@@ -568,7 +568,7 @@ describe('★ 축 고정 — 판정이 축을 섞지 않게', () => {
     const result = runBlockA({
       ...costly,
       fixHorizon: 5,
-      selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
+      selection: { abstainIfNegative: false },
     });
     assert.equal(result.selectionCostPct, 0);
     assert.equal(result.evalCostPct, 0);

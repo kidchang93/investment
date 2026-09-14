@@ -555,7 +555,7 @@ function runPlacebo(
     costRoundTripPct: 0,
     selectionCostPct: 0,
     evalCostPct: 0,
-    selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
+    selection: { abstainIfNegative: false },
   });
 }
 
@@ -778,7 +778,7 @@ async function main(): Promise<void> {
     validationStarts: VALIDATION_STARTS,
     embargoDays: embargoFor(options.axes),
     regimeMask,
-    selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
+    selection: { abstainIfNegative: false },
     buckets,
     minNamesPerDay: universeConfig.minNamesPerDay,
     signalsByKey: new Map(usable.map((s) => [s.key, s])),
@@ -880,7 +880,7 @@ async function main(): Promise<void> {
         evalCostPct: 0,
         // 반증에는 쏠림을 안 잰다 — 점수판을 다시 세우는 값이고, 여기서 묻는 것이 아니다.
         signalsByKey: undefined,
-        selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
+        selection: { abstainIfNegative: false },
       });
       antiByAxis.push(result);
       console.log(`\n  ── 축 ${horizon}일`);
@@ -902,7 +902,7 @@ async function main(): Promise<void> {
         selectionCostPct: 0,
         evalCostPct: 0,
         signalsByKey: undefined,
-        selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
+        selection: { abstainIfNegative: false },
       };
       const mirror = runEvalLegMirror(spec);
       mirrorByAxis.push(mirror);
@@ -983,7 +983,7 @@ async function main(): Promise<void> {
           fixHorizon: horizon,
           costRoundTripPct: cost,
           signalsByKey: undefined,
-          selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: false },
+          selection: { abstainIfNegative: false },
         });
         const perEntry = result.oosEntryExcess.length === 0 ? 0 : meanOf(result.oosEntryExcess);
         console.log(
@@ -1013,7 +1013,7 @@ async function main(): Promise<void> {
       costRoundTripPct: options.abstainCost,
       collectAbstained: true,
       signalsByKey: undefined,
-      selection: { rule: 'top1', objective: 'netIR', abstainIfNegative: true },
+      selection: { abstainIfNegative: true },
     });
     for (const line of describeAbstainSkill(abstainScored)) console.log(line);
   }

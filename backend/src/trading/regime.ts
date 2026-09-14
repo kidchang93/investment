@@ -41,18 +41,15 @@ import { localAt, lowerBound, type Panel, type UniverseMask } from './panel.js';
 /** 국면 둘. `unknown`은 아직 판정할 표본이 모자란 날이다. */
 export type Regime = 'trend' | 'chop' | 'unknown';
 
-export interface RegimeSpec {
-  /** 효율성 비율을 보는 창(거래일). 기본 20 */
-  window: number;
-  /**
-   * 중앙값을 만들기 시작하는 최소 표본(일).
-   *
-   * 너무 적으면 처음 몇 종목의 우연이 문턱을 정한다. 250이면 1년치다.
-   */
-  minHistory: number;
-}
+/** 효율성 비율을 보는 창(거래일) */
+const ER_WINDOW = 20;
 
-export const DEFAULT_REGIME_SPEC: RegimeSpec = { window: 20, minHistory: 250 };
+/**
+ * 중앙값을 만들기 시작하는 최소 표본(일).
+ *
+ * 너무 적으면 처음 몇 종목의 우연이 문턱을 정한다. 250이면 1년치다.
+ */
+const MIN_HISTORY = 250;
 
 export interface RegimeSeries {
   /** 날짜별 국면. `panel.days`와 같은 길이 */
@@ -157,11 +154,7 @@ function medianOfSorted(sorted: number[]): number {
  * 가르면 한쪽이 텅 비는 시기가 생기고, 그러면 국면별 비교가 표본 크기 차이를
  * 보는 일이 된다.
  */
-export function buildRegimeSeries(
-  panel: Panel,
-  universe: UniverseMask,
-  spec: RegimeSpec = DEFAULT_REGIME_SPEC,
-): RegimeSeries {
+export function buildRegimeSeries(panel: Panel, universe: UniverseMask): RegimeSeries {
   const returns = buildMarketReturns(panel, universe);
   const dayCount = panel.days.length;
   const ratios = new Float64Array(dayCount).fill(Number.NaN);
@@ -174,14 +167,14 @@ export function buildRegimeSeries(
   let unknownDays = 0;
 
   for (let d = 0; d < dayCount; d += 1) {
-    const ratio = efficiencyRatio(returns, d, spec.window);
+    const ratio = efficiencyRatio(returns, d, ER_WINDOW);
     if (ratio === undefined) {
       unknownDays += 1;
       continue;
     }
     ratios[d] = ratio;
     // ★ 문턱을 먼저 읽고 나서 오늘 값을 넣는다. 순서가 뒤바뀌면 오늘이 문턱에 든다.
-    if (seen.length >= spec.minHistory) {
+    if (seen.length >= MIN_HISTORY) {
       const threshold = medianOfSorted(seen);
       thresholds[d] = threshold;
       if (ratio >= threshold) {
