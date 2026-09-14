@@ -46,6 +46,7 @@ import { getLayerPositions, getLayerTradeStats, getRealizedByLayer, getTradeMark
 import { pool } from './db/client.js';
 import {
   LAYER_LABELS, LAYER_TARGETS, explainMismatches, reconcile, summarizeLayers,
+  type ExplainedMismatch, type LayerPosition,
 } from './trading/layers.js';
 import { ensureMarketSnapshotSchema } from './db/marketSnapshot.js';
 import { startDailySnapshot } from './trading/dailySnapshot.js';
@@ -282,6 +283,37 @@ function resolveAccount(accountId?: string): KisAccountConfig | null | 'unknown'
   return account;
 }
 
+/** 3층 성과를 잴 수 없을 때의 응답. 왜 못 재는지는 `message`에 담는다. */
+function unconfiguredLayers(accountId: string, message: string): PortfolioLayersSnapshot {
+  return {
+    configured: false,
+    accountId,
+    totalAssets: 0,
+    cash: 0,
+    layers: [],
+    mismatches: [],
+    pendingSync: [],
+    unpriced: [],
+    fetchedAt: Date.now(),
+    message,
+  };
+}
+
+/** 장부·잔고 어긋남에서 오늘 낸 주문으로 설명되는 것(`pendingSync`)을 가른다. `layers`·`health`가 같이 쓴다. */
+async function splitMismatches(
+  accountId: string, positions: LayerPosition[], brokerPositions: BrokerPosition[],
+): Promise<{ mismatches: ExplainedMismatch[]; pendingSync: ExplainedMismatch[] }> {
+  const brokerQty = new Map(brokerPositions.map((p) => [p.symbol, p.quantity]));
+  const explained = explainMismatches(reconcile(positions, brokerQty), await getTodaySubmittedQuantities(accountId));
+  return { mismatches: explained.filter((m) => !m.explained), pendingSync: explained.filter((m) => m.explained) };
+}
+
+/** 쿼리 문자열의 숫자. 없거나 숫자로 못 읽으면 기본값이다. */
+function queryNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value ?? fallback);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 /**
  * 멱등성 키를 주문 **전에** 선점한다. 국내·해외 주문 라우트가 같은 것을 쓴다.
  *
@@ -503,35 +535,11 @@ async function main(): Promise<void> {
     if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
     const accountId = account?.id ?? '';
     const readBlock = accountReadBlock(account);
-    if (readBlock) {
-      return {
-        configured: false,
-        accountId,
-        totalAssets: 0,
-        cash: 0,
-        layers: [],
-        mismatches: [],
-        pendingSync: [],
-        unpriced: [],
-        fetchedAt: Date.now(),
-        message: readBlock,
-      } satisfies PortfolioLayersSnapshot;
-    }
+    if (readBlock) return unconfiguredLayers(accountId, readBlock);
     try {
       const snapshot = await readAccountSnapshot(account);
       if (!snapshot.configured) {
-        return {
-          configured: false,
-          accountId,
-          totalAssets: 0,
-          cash: 0,
-          layers: [],
-          mismatches: [],
-        pendingSync: [],
-          unpriced: [],
-          fetchedAt: Date.now(),
-          message: snapshot.message ?? 'KIS 계좌가 설정되지 않았습니다.',
-        } satisfies PortfolioLayersSnapshot;
+        return unconfiguredLayers(accountId, snapshot.message ?? 'KIS 계좌가 설정되지 않았습니다.');
       }
 
       const positions = await getLayerPositions(accountId);
@@ -575,11 +583,7 @@ async function main(): Promise<void> {
         };
       });
 
-      const brokerQty = new Map(snapshot.positions.map((p) => [p.symbol, p.quantity]));
-      const explainedLayers = explainMismatches(
-        reconcile(positions, brokerQty),
-        await getTodaySubmittedQuantities(accountId),
-      );
+      const { mismatches, pendingSync } = await splitMismatches(accountId, positions, snapshot.positions);
       return {
         configured: true,
         accountId,
@@ -592,8 +596,8 @@ async function main(): Promise<void> {
          *   그것을 「빠진 체결」로 적으면 매일 붉은 줄이 하루 종일 떠 있는다.
          *   설명되는 것은 `pendingSync`로 따로 준다 — 감추지 않고 다르게 말한다.
          */
-        mismatches: explainedLayers.filter((m) => !m.explained),
-        pendingSync: explainedLayers.filter((m) => m.explained),
+        mismatches,
+        pendingSync,
         unpriced,
         fetchedAt: Date.now(),
       } satisfies PortfolioLayersSnapshot;
@@ -667,8 +671,6 @@ async function main(): Promise<void> {
 
       // 잔고를 못 받았으면 대조할 것이 없다. 빈 지도로 대조하면 **보유 전부가
       // "장부에만 있다"**로 나와 없는 사고를 지어낸다.
-      const positions = snapshot ? await getLayerPositions(accountId) : [];
-      const brokerQty = new Map((snapshot?.positions ?? []).map((p) => [p.symbol, p.quantity]));
       /*
        * ★★ **오늘 낸 주문으로 설명되는 차이는 경보가 아니다** (2026-09-07에 붙였다).
        *
@@ -684,14 +686,9 @@ async function main(): Promise<void> {
        * 설명되는 차이는 **조용히 지나가지 않고** 안내(`info`)로 남긴다. 무엇이
        * 언제 들어오는지 알면 기다릴 수 있지만, 아무 말이 없으면 빠진 줄 안다.
        */
-      const explained = snapshot
-        ? explainMismatches(
-          reconcile(positions, brokerQty),
-          await getTodaySubmittedQuantities(accountId),
-        )
-        : [];
-      const mismatches = explained.filter((m) => !m.explained);
-      const pendingSync = explained.filter((m) => m.explained);
+      const { mismatches, pendingSync } = snapshot
+        ? await splitMismatches(accountId, await getLayerPositions(accountId), snapshot.positions)
+        : { mismatches: [], pendingSync: [] };
       if (mismatches.length > 0) {
         alerts.push({
           level: 'danger',
@@ -745,9 +742,8 @@ async function main(): Promise<void> {
       const account = resolveAccount(req.query.accountId);
       if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
 
-      const days = Number(req.query.days ?? DEFAULT_EXECUTION_DAYS);
       try {
-        return await getKisDomesticExecutions(account, Number.isFinite(days) ? days : DEFAULT_EXECUTION_DAYS);
+        return await getKisDomesticExecutions(account, queryNumber(req.query.days, DEFAULT_EXECUTION_DAYS));
       } catch (err) {
         req.log.warn({ err, accountId: req.query.accountId }, 'KIS 체결내역 조회 실패');
         return reply.code(502).send({ message: 'KIS 체결내역을 조회할 수 없습니다.' });
@@ -823,12 +819,8 @@ async function main(): Promise<void> {
     async (req, reply) => {
       const account = resolveAccount(req.query.accountId);
       if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
-      const days = Number(req.query.days ?? DEFAULT_EXECUTION_DAYS);
       try {
-        const items = await getKisDomesticReservedOrders(
-          account,
-          Number.isFinite(days) ? days : DEFAULT_EXECUTION_DAYS,
-        );
+        const items = await getKisDomesticReservedOrders(account, queryNumber(req.query.days, DEFAULT_EXECUTION_DAYS));
         return { items };
       } catch (err) {
         // 위와 같은 이유. 이 TR도 모의 서버에 없다.
@@ -844,9 +836,8 @@ async function main(): Promise<void> {
     async (req, reply) => {
       const account = resolveAccount(req.query.accountId);
       if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
-      const days = Number(req.query.days ?? DEFAULT_EXECUTION_DAYS);
       try {
-        return await getKisDomesticTradeProfit(account, Number.isFinite(days) ? days : DEFAULT_EXECUTION_DAYS);
+        return await getKisDomesticTradeProfit(account, queryNumber(req.query.days, DEFAULT_EXECUTION_DAYS));
       } catch (err) {
         req.log.warn({ err, accountId: req.query.accountId }, 'KIS 기간별 매매손익 조회 실패');
         return reply.code(502).send({ message: 'KIS 기간별 매매손익을 조회할 수 없습니다.' });
@@ -1051,8 +1042,7 @@ async function main(): Promise<void> {
       if (accountId && resolveAccount(accountId) === 'unknown') {
         return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
       }
-      const limit = Number(req.query.limit ?? 50);
-      return getBrokerOrderRecords(accountId, Number.isFinite(limit) ? limit : 50);
+      return getBrokerOrderRecords(accountId, queryNumber(req.query.limit, 50));
     },
   );
 
