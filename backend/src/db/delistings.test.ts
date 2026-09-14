@@ -275,7 +275,7 @@ describe('저장소 (DB가 있을 때만)', () => {
   it('같은 코드의 폐지 두 건이 나란히 남는다 — 재상장을 한 줄로 뭉개지 않는다', async (t) => {
     if (!usable) return t.skip('DB에 붙지 못했습니다');
 
-    await upsertDelistings(
+    const saved = await upsertDelistings(
       [
         { symbol: TEST_SYMBOL, delistedOn: '20100429', name: '앞회사', market: 'KOSDAQ', reason: '사유1', note: null },
         { symbol: TEST_SYMBOL, delistedOn: '20260811', name: '뒷회사', market: 'KOSPI', reason: '사유2', note: '비고' },
@@ -284,6 +284,7 @@ describe('저장소 (DB가 있을 때만)', () => {
       '20260813',
       1,
     );
+    assert.deepEqual(saved, { inserted: 2, updated: 0 });
 
     const rows = await storedDelistings(TEST_SYMBOL);
     assert.deepEqual(rows.map((row) => row.delistedOn), ['20100429', '20260811']);
@@ -294,12 +295,13 @@ describe('저장소 (DB가 있을 때만)', () => {
   it('다시 받아도 지우지 않는다 — 이번에 안 받은 구간의 기록이 남는다', async (t) => {
     if (!usable) return t.skip('DB에 붙지 못했습니다');
 
-    await upsertDelistings(
+    const saved = await upsertDelistings(
       [{ symbol: TEST_SYMBOL, delistedOn: '20260811', name: '이름바뀜', market: null, reason: '사유3', note: null }],
       'KIND',
       '20260814',
       2,
     );
+    assert.deepEqual(saved, { inserted: 0, updated: 1 });
 
     const rows = await storedDelistings(TEST_SYMBOL);
     assert.equal(rows.length, 2, '앞 기록이 그대로 있다');
@@ -307,6 +309,24 @@ describe('저장소 (DB가 있을 때만)', () => {
     assert.equal(latest.name, '이름바뀜');
     assert.equal(latest.market, 'KOSPI', '새로 온 값이 null이면 이미 붙여 둔 시장을 지우지 않는다');
     assert.equal(latest.vintage, '20260814');
+  });
+
+  it('한 번에 같은 (코드, 폐지일)이 두 번 오면 앞에서부터 차례로 넣은 것과 같다', async (t) => {
+    if (!usable) return t.skip('DB에 붙지 못했습니다');
+
+    const saved = await upsertDelistings(
+      [
+        { symbol: TEST_SYMBOL, delistedOn: '20300101', name: '첫이름', market: 'KOSDAQ', reason: '사유4', note: '비고4' },
+        { symbol: TEST_SYMBOL, delistedOn: '20300101', name: '둘째이름', market: null, reason: '사유5', note: null },
+      ],
+      'KIND',
+      '20260815',
+      3,
+    );
+    assert.deepEqual(saved, { inserted: 1, updated: 1 });
+
+    const [row] = (await storedDelistings(TEST_SYMBOL)).filter((r) => r.delistedOn === '20300101');
+    assert.deepEqual(row, { delistedOn: '20300101', name: '둘째이름', market: 'KOSDAQ', note: null, vintage: '20260815' });
   });
 
   it('요약이 재상장 코드를 센다', async (t) => {

@@ -84,49 +84,46 @@ export async function upsertDelistings(
   fetchedAt: number,
 ): Promise<{ inserted: number; updated: number }> {
   if (records.length === 0) return { inserted: 0, updated: 0 };
-  const before = await pool.query<{ count: string }>(
-    'SELECT count(*)::text AS count FROM instrument_delistings',
-  );
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    for (const record of records) {
-      await client.query(
-        `INSERT INTO instrument_delistings
-           (symbol, delisted_on, name, market, reason, note, source, vintage, fetched_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         ON CONFLICT (symbol, delisted_on) DO UPDATE SET
-           name = EXCLUDED.name,
-           market = COALESCE(EXCLUDED.market, instrument_delistings.market),
-           reason = EXCLUDED.reason,
-           note = EXCLUDED.note,
-           source = EXCLUDED.source,
-           vintage = EXCLUDED.vintage,
-           fetched_at = EXCLUDED.fetched_at`,
-        [
-          record.symbol,
-          record.delistedOn,
-          record.name,
-          record.market,
-          record.reason,
-          record.note,
-          source,
-          vintage,
-          fetchedAt,
-        ],
-      );
-    }
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
+  /*
+   * 한 문장의 ON CONFLICT DO UPDATE는 같은 줄을 두 번 건드리면 던진다. 그래서 같은
+   * (코드, 폐지일)을 먼저 접되 **앞에서부터 차례로 넣은 것과 같게** 접는다 —
+   * 뒤엣것이 이기고, 시장만은 뒤엣것이 비었으면 앞엣것을 남긴다(아래 COALESCE와 같은 규칙).
+   */
+  const folded = new Map<string, (typeof records)[number]>();
+  for (const record of records) {
+    const key = JSON.stringify([record.symbol, record.delistedOn]);
+    folded.set(key, { ...record, market: record.market ?? folded.get(key)?.market ?? null });
   }
-  const after = await pool.query<{ count: string }>(
-    'SELECT count(*)::text AS count FROM instrument_delistings',
+  const rows = [...folded.values()];
+  const written = await pool.query<{ inserted: boolean }>(
+    `INSERT INTO instrument_delistings
+       (symbol, delisted_on, name, market, reason, note, source, vintage, fetched_at)
+     SELECT r.symbol, r.delisted_on, r.name, r.market, r.reason, r.note, $7::text, $8::text, $9::bigint
+     FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
+       AS r(symbol, delisted_on, name, market, reason, note)
+     ON CONFLICT (symbol, delisted_on) DO UPDATE SET
+       name = EXCLUDED.name,
+       market = COALESCE(EXCLUDED.market, instrument_delistings.market),
+       reason = EXCLUDED.reason,
+       note = EXCLUDED.note,
+       source = EXCLUDED.source,
+       vintage = EXCLUDED.vintage,
+       fetched_at = EXCLUDED.fetched_at
+     RETURNING (xmax = 0) AS inserted`,
+    [
+      rows.map((r) => r.symbol),
+      rows.map((r) => r.delistedOn),
+      rows.map((r) => r.name),
+      rows.map((r) => r.market),
+      rows.map((r) => r.reason),
+      rows.map((r) => r.note),
+      source,
+      vintage,
+      fetchedAt,
+    ],
   );
-  const inserted = Number(after.rows[0].count) - Number(before.rows[0].count);
+  // xmax = 0이면 새로 넣은 줄, 아니면 이미 있던 줄을 갱신한 것이다.
+  const inserted = written.rows.filter((row) => row.inserted).length;
   return { inserted, updated: records.length - inserted };
 }
 

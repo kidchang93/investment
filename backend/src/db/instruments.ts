@@ -272,26 +272,15 @@ export async function ensureDomesticAssetTypes(): Promise<void> {
 
   if (updates.length === 0) return;
 
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    for (const update of updates) {
-      await client.query(
-        `
-          UPDATE instruments
-          SET asset_type = $2, updated_at = now()
-          WHERE id = $1
-        `,
-        [update.id, update.assetType],
-      );
-    }
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  await pool.query(
+    `
+      UPDATE instruments i
+      SET asset_type = u.asset_type, updated_at = now()
+      FROM unnest($1::text[], $2::text[]) AS u(id, asset_type)
+      WHERE i.id = u.id
+    `,
+    [updates.map((update) => update.id), updates.map((update) => update.assetType)],
+  );
 }
 
 export async function searchInstruments(query: string, limit = 30): Promise<Instrument[]> {
@@ -625,36 +614,30 @@ export async function getWatchlistItems(watchlistId: string): Promise<Instrument
   return result.rows.map(rowToInstrument);
 }
 
+/**
+ * 기본 관심그룹이 **비어 있을 때만** 채운다. 코드마다 국내 시장 순으로 하나를 고르고,
+ * 못 찾은 코드는 건너뛰되 자리 번호는 목록 순서 그대로다(같은 코드가 또 오면 앞엣것).
+ */
 export async function seedDefaultWatchlist(items: WatchItem[]): Promise<void> {
-  const count = await pool.query<{ count: string }>(
-    'SELECT count(*) FROM watchlist_items WHERE watchlist_id = $1',
-    [DEFAULT_WATCHLIST_ID],
-  );
-  if (Number(count.rows[0]?.count ?? 0) > 0) return;
-
-  for (const [index, item] of items.entries()) {
-    const instrument = await pool.query<{ id: string }>(
-      `
+  await pool.query(
+    `
+      INSERT INTO watchlist_items (watchlist_id, instrument_id, position)
+      SELECT $1::text, i.id, w.ord - 1
+      FROM unnest($2::text[]) WITH ORDINALITY AS w(code, ord)
+      JOIN LATERAL (
         SELECT id
         FROM instruments
-        WHERE country = 'KR' AND symbol = $1 AND is_active = true
+        WHERE country = 'KR' AND symbol = w.code AND is_active = true
         ORDER BY
           CASE market WHEN 'KOSPI' THEN 0 WHEN 'KOSDAQ' THEN 1 WHEN 'KONEX' THEN 2 ELSE 3 END
         LIMIT 1
-      `,
-      [item.code],
-    );
-    const id = instrument.rows[0]?.id;
-    if (!id) continue;
-    await pool.query(
-      `
-        INSERT INTO watchlist_items (watchlist_id, instrument_id, position)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (watchlist_id, instrument_id) DO NOTHING
-      `,
-      [DEFAULT_WATCHLIST_ID, id, index],
-    );
-  }
+      ) i ON true
+      WHERE NOT EXISTS (SELECT 1 FROM watchlist_items WHERE watchlist_id = $1::text)
+      ORDER BY w.ord
+      ON CONFLICT (watchlist_id, instrument_id) DO NOTHING
+    `,
+    [DEFAULT_WATCHLIST_ID, items.map((item) => item.code)],
+  );
 }
 
 export async function addWatchlistItem(watchlistId: string, instrumentId: string): Promise<Instrument | null> {
