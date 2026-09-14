@@ -11,7 +11,6 @@
  * 하나였다는 것도 손으로 세어서 알았다.
  *
  *   npx tsx src/scripts/layerReport.ts [계좌id]
- *   npx tsx src/scripts/layerReport.ts --seed-etf   # 지금 보유를 ETF 층으로 초기화
  *
  * ★ **장부와 증권사 잔고를 반드시 대조한다.** 2026-08-14에 같은 주문이 두 번
  * 체결된 것을 잡은 것이 이 대조였다. 장부만 믿으면 그런 사고가 조용히 지나간다.
@@ -19,12 +18,7 @@
 
 import { getKisAccount } from '../config.js';
 import { closeDb } from '../db/client.js';
-import {
-  getLayerPositions,
-  getLayerTradeStats,
-  getRealizedByLayer,
-  recordLayerTrade,
-} from '../db/layers.js';
+import { getLayerPositions, getLayerTradeStats, getRealizedByLayer } from '../db/layers.js';
 import { getKisDomesticAccountSnapshot } from '../kis/rest.js';
 import { getTodaySubmittedQuantities } from '../db/brokerOrders.js';
 import { LAYER_LABELS, explainMismatches, reconcile, summarizeLayers } from '../trading/layers.js';
@@ -37,8 +31,7 @@ const padL = (t: string, n: number): string => ' '.repeat(Math.max(1, n - w(t)))
 const signed = (n: number): string => `${n >= 0 ? '+' : ''}${won(n)}`;
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  const accountId = args.find((a) => !a.startsWith('--')) ?? 'VTS-ORDINARY';
+  const accountId = process.argv.slice(2).find((a) => !a.startsWith('--')) ?? 'VTS-ORDINARY';
   const account = getKisAccount(accountId);
   if (!account) throw new Error(`등록되지 않은 계좌: ${accountId}`);
 
@@ -49,40 +42,9 @@ async function main(): Promise<void> {
     if (typeof p.currentPrice === 'number' && p.currentPrice > 0) prices.set(p.symbol, p.currentPrice);
   }
 
-  /*
-   * ★ 장부를 처음 세울 때 쓴다. 지금 보유는 전부 ETF 층에서 산 것이다 —
-   * 단기 층도 ETF로 대체했다(2026-08-14 사용자 결정).
-   * **한 번만 쓴다.** 두 번 돌리면 같은 수량이 두 번 들어간다.
-   */
-  if (args.includes('--seed-etf')) {
-    const existing = await getLayerPositions(accountId);
-    if (existing.length > 0) {
-      console.log(`이미 장부에 ${existing.length}줄이 있다 — 초기화를 건너뛴다.`);
-      console.log('다시 세우려면 trading_layer_positions/trades를 먼저 비워야 한다.');
-    } else {
-      for (const p of snapshot.positions) {
-        await recordLayerTrade(
-          accountId,
-          {
-            layer: 'etf',
-            symbol: p.symbol,
-            side: 'buy',
-            quantity: p.quantity,
-            // 평균단가로 넣는다 — 개별 체결가는 이미 지나갔고 증권사도 평균만 준다.
-            price: p.averagePrice ?? 0,
-            fee: 0,
-          },
-          '장부 초기화(2026-08-14 보유를 ETF 층으로)',
-        );
-      }
-      console.log(`장부를 세웠다 — ${snapshot.positions.length}종목을 ETF 층에 넣었다.\n`);
-    }
-  }
-
   const positions = await getLayerPositions(accountId);
   if (positions.length === 0) {
     console.log('장부가 비어 있다.');
-    console.log('지금 보유를 ETF 층으로 세우려면: npx tsx src/scripts/layerReport.ts --seed-etf');
     return;
   }
 

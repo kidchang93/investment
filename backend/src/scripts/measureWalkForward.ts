@@ -241,7 +241,6 @@ interface Options {
   abstainScore: boolean;
   /** 기권 채점 실행에 쓸 왕복 비용(%) */
   abstainCost: number;
-  family2: boolean;
   showTraining: boolean;
   dryRun: boolean;
   annotateLegacy: boolean;
@@ -280,7 +279,6 @@ function parseOptions(argv: string[]): Options {
     mirror: false,
     abstainScore: false,
     abstainCost: DEFAULT_ROUND_TRIP_PCT,
-    family2: false,
     showTraining: false,
     dryRun: false,
     annotateLegacy: false,
@@ -360,9 +358,6 @@ function parseOptions(argv: string[]): Options {
         options.abstainCost = value;
         break;
       }
-      case '--family2':
-        options.family2 = true;
-        break;
       case '--show-training':
         options.showTraining = true;
         break;
@@ -582,15 +577,12 @@ async function main(): Promise<void> {
   }
 
   // ── 후보 고르기 ────────────────────────────────────────────────────────
-  const family1 = SIGNAL_CANDIDATES.filter((s) => s.dataRequirement === 'price');
   /*
-   * ★ **`--family2`는 수급·공매도 계열이다.** 일봉 저장소에 그 데이터가 없어서
-   * 전부 빠지는데, **빠졌다는 사실을 찍는 것**이 이 플래그의 목적이다 —
-   * 2026-08-10에 그것들이 조용히 `undefined`로 흘러 날짜 수만 줄었다.
+   * ★ 수급·공매도 계열은 일봉 저장소에 데이터가 없어서 전부 빠진다. **빠졌다는
+   * 사실을 찍는다** — 2026-08-10에 그것들이 조용히 `undefined`로 흘러 날짜 수만 줄었다.
    */
-  const candidates = options.family2 ? SIGNAL_CANDIDATES : family1;
   const { usable, excluded } = excludeUnusableSignals(
-    candidates,
+    SIGNAL_CANDIDATES,
     new Set<'price' | 'flow' | 'short'>(['price']),
   );
   console.log(`\n후보 ${usable.length}종 × 축 ${HORIZONS.length}개 = ${usable.length * HORIZONS.length}칸`);
@@ -599,9 +591,6 @@ async function main(): Promise<void> {
   }
   for (const item of excluded) {
     console.log(`  뺀다  ${item.signal.key.padEnd(16)} — ${item.reason}`);
-  }
-  if (excluded.length > 0 && !options.family2) {
-    console.log('  (일봉 전용 실행이라 자동으로 빠졌다. `--family2`로 목록을 넓혀도 결과는 같다)');
   }
   if (usable.length === 0) {
     console.log('\n쓸 수 있는 후보가 없다. 여기서 멈춘다.');
