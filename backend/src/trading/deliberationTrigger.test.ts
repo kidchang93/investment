@@ -15,6 +15,9 @@ import { checkDeliberationTrigger, TRIGGER_THRESHOLDS } from './deliberationTrig
 
 const ref = { kospi: 6500, kosdaq: 800, prices: { '005930': 100_000 } };
 
+/** 미체결 판정과 무관한 시험에 넣는다 — 미체결이 없다 */
+const NO_OPEN_ORDERS = { openOrders: [], now_ms: 0, sessionElapsed: 0 };
+
 describe('사건 감지 — 직전 회의 대비로 잰다', () => {
   it('보유 종목이 문턱만큼 움직이면 연다', () => {
     for (const price of [103_000, 97_000]) {
@@ -22,6 +25,7 @@ describe('사건 감지 — 직전 회의 대비로 잰다', () => {
         reference: ref,
         now: { kospi: 6500, kosdaq: 800, prices: { '005930': price } },
         newFills: [],
+        ...NO_OPEN_ORDERS,
       });
       assert.equal(v.fire, true, String(price));
       assert.match(v.reasons.join(' '), /보유 005930/);
@@ -33,6 +37,7 @@ describe('사건 감지 — 직전 회의 대비로 잰다', () => {
       reference: ref,
       now: { kospi: 6500, kosdaq: 800, prices: { '005930': 102_900 } },
       newFills: [],
+      ...NO_OPEN_ORDERS,
     });
     assert.equal(v.fire, false, v.reasons.join(' '));
   });
@@ -44,12 +49,12 @@ describe('사건 감지 — 직전 회의 대비로 잰다', () => {
    */
   it('회의가 열려 기준선이 갱신되면 같은 하락에 다시 안 열린다', () => {
     const crashed = { kospi: 6500, kosdaq: 800, prices: { '005930': 95_000 } };
-    assert.equal(checkDeliberationTrigger({ reference: ref, now: crashed, newFills: [] }).fire, true);
+    assert.equal(checkDeliberationTrigger({ reference: ref, now: crashed, newFills: [], ...NO_OPEN_ORDERS }).fire, true);
 
     // 회의가 열렸으므로 기준선이 95,000으로 갱신된다. 값이 그대로면 더는 사건이 아니다.
     const after = { kospi: 6500, kosdaq: 800, prices: { '005930': 95_000 } };
     assert.equal(
-      checkDeliberationTrigger({ reference: after, now: crashed, newFills: [] }).fire,
+      checkDeliberationTrigger({ reference: after, now: crashed, newFills: [], ...NO_OPEN_ORDERS }).fire,
       false,
     );
   });
@@ -59,6 +64,7 @@ describe('사건 감지 — 직전 회의 대비로 잰다', () => {
       reference: ref,
       now: { kospi: 6500 * (1 - TRIGGER_THRESHOLDS.indexMovePercent / 100), kosdaq: 800, prices: {} },
       newFills: [],
+      ...NO_OPEN_ORDERS,
     });
     assert.equal(v.fire, true);
     assert.match(v.reasons.join(' '), /코스피/);
@@ -71,6 +77,7 @@ describe('사건 감지 — 체결·거절은 값과 무관하게 사건이다',
       reference: ref,
       now: { kospi: 6500, kosdaq: 800, prices: { '005930': 100_000 } },
       newFills: [{ symbol: '005930', side: 'sell', status: 'rejected' }],
+      ...NO_OPEN_ORDERS,
     });
     assert.equal(v.fire, true);
     assert.match(v.reasons.join(' '), /거절/);
@@ -81,6 +88,7 @@ describe('사건 감지 — 체결·거절은 값과 무관하게 사건이다',
       reference: ref,
       now: { kospi: 6500, kosdaq: 800, prices: { '005930': 100_000 } },
       newFills: [{ symbol: '005930', side: 'buy', status: 'filled' }],
+      ...NO_OPEN_ORDERS,
     });
     assert.equal(v.fire, true);
     assert.match(v.reasons.join(' '), /체결/);
@@ -97,6 +105,7 @@ describe('사건 감지 — 모르는 것을 사건으로 치지 않는다', () 
       reference: null,
       now: { kospi: 6500, kosdaq: 800, prices: { '005930': 1 } },
       newFills: [],
+      ...NO_OPEN_ORDERS,
     });
     assert.equal(v.fire, false, v.reasons.join(' '));
   });
@@ -106,6 +115,7 @@ describe('사건 감지 — 모르는 것을 사건으로 치지 않는다', () 
       reference: null,
       now: { prices: {} },
       newFills: [{ symbol: '005930', side: 'sell', status: 'rejected' }],
+      ...NO_OPEN_ORDERS,
     });
     assert.equal(v.fire, true);
   });
@@ -116,6 +126,7 @@ describe('사건 감지 — 모르는 것을 사건으로 치지 않는다', () 
       reference: ref,
       now: { prices: { '000660': 999_999 } },
       newFills: [],
+      ...NO_OPEN_ORDERS,
     });
     assert.equal(v.fire, false, v.reasons.join(' '));
   });
@@ -125,6 +136,7 @@ describe('사건 감지 — 모르는 것을 사건으로 치지 않는다', () 
       reference: { kospi: 0, prices: { '005930': 0 } },
       now: { kospi: 6500, prices: { '005930': 100_000 } },
       newFills: [],
+      ...NO_OPEN_ORDERS,
     });
     assert.equal(v.fire, false, v.reasons.join(' '));
   });
@@ -136,6 +148,7 @@ describe('사건 감지 — 사유를 전부 적는다', () => {
       reference: ref,
       now: { kospi: 6300, kosdaq: 800, prices: { '005930': 95_000 } },
       newFills: [{ symbol: '000660', side: 'buy', status: 'filled' }],
+      ...NO_OPEN_ORDERS,
     });
     assert.equal(v.fire, true);
     // 체결 · 보유 급변 · 지수 급변 셋이 다 있어야 한다. 하나만 적으면 나머지를 놓친다.
@@ -186,11 +199,12 @@ describe('오래 묵은 미체결 — 안 붙는 것도 사건이다 (2026-08-20
     assert.equal(v.fire, false, v.reasons.join(' '));
   });
 
-  it('미체결을 안 넘기면 이 판정을 하지 않는다 — 기존 호출부가 깨지지 않는다', () => {
+  it('미체결이 없으면 장이 지나도 열지 않는다', () => {
     const v = checkDeliberationTrigger({
       reference: ref,
       now: { prices: {} },
       newFills: [],
+      openOrders: [],
       sessionElapsed: 0.9,
       now_ms: now,
     });

@@ -73,20 +73,17 @@ export interface TriggerInput {
    * 2026-08-20에 지정가 두 건이 미체결로 남았는데, 그것을 정정할지 취소할지
    * 그대로 둘지 **아무도 정하지 않았다** — 판단자는 하루 한 번 열리고 그 회차가
    * 끝나면 주문은 15:30에 그냥 실효된다. 사용자가 그 자리를 짚었다.
-   *
-   * 안 넘기면 이 판정을 하지 않는다(기존 호출부를 깨지 않으려는 것이지,
-   * 안 봐도 된다는 뜻이 아니다 — `checkTrigger.ts`는 반드시 넘긴다).
    */
-  openOrders?: Array<{
+  openOrders: Array<{
     symbol: string;
     side: 'buy' | 'sell';
     /** 주문을 낸 시각 (epoch ms) */
     placedAt: number;
   }>;
   /** 지금 (epoch ms). 미체결 나이를 재는 기준 */
-  now_ms?: number;
+  now_ms: number;
   /** 정규장 경과 비율 0~1. 부르는 쪽이 `sessionElapsedRatio()`로 잰다 */
-  sessionElapsed?: number;
+  sessionElapsed: number;
 }
 
 export interface TriggerVerdict {
@@ -122,12 +119,7 @@ export function checkDeliberationTrigger(input: TriggerInput): TriggerVerdict {
    * ★ **오래 묵은 미체결.** 기준선과 무관한 사건이다 — 값이 안 움직여도
    *   "걸어 둔 값에 안 붙는다"는 사실 자체가 판단할 거리다.
    */
-  if (
-    input.openOrders !== undefined
-    && input.sessionElapsed !== undefined
-    && input.now_ms !== undefined
-    && input.sessionElapsed >= TRIGGER_THRESHOLDS.staleOrderSessionRatio
-  ) {
+  if (input.sessionElapsed >= TRIGGER_THRESHOLDS.staleOrderSessionRatio) {
     for (const order of input.openOrders) {
       const ageMinutes = (input.now_ms - order.placedAt) / 60_000;
       if (ageMinutes < TRIGGER_THRESHOLDS.minOpenOrderMinutes) continue;
