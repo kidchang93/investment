@@ -216,37 +216,3 @@ export function isTrUnavailableOnServer(error: unknown): boolean {
   if (!(error instanceof KisRequestError)) return false;
   return kisErrorKind(error.msgCode) === 'trNotOnVts';
 }
-
-/**
- * 이 **주문유형**을 이 서버가 안 받는가.
- *
- * 재시도해도 같은 답이다. 보유 8종목에 같은 주문을 8번 내 볼 이유가 없다 —
- * 2026-08-03에 실제로 8번 냈고 8번 다 같은 말을 들었다.
- */
-export function isOrderTypeUnavailableOnServer(error: unknown): boolean {
-  if (!(error instanceof KisRequestError)) return false;
-  return kisErrorKind(error.msgCode) === 'orderTypeNotOnVts';
-}
-
-
-/**
- * KIS가 **주문 자체를 거절**한 것인가. 서버가 아픈 것과 가른다.
- *
- * ── 왜 갈라야 하나 (2026-08-04 실측) ─────────────────────────────────────
- *
- * 15:21:41에 매도가 나갔고, 잔고가 아직 안 줄어 다음 세 회차가 같은 종목을 또
- * 팔려 했다. KIS는 `40240000`(잔고 없음)으로 거절했고 **세 번 만에 러너가
- * 연속 실패로 멈췄다** — 마감 3분 전이었다.
- *
- * 연속 실패 정지는 *"같은 오류로 무한히 주문을 시도하지 않게"* 만든 장치다.
- * 그런데 거절은 그 대상이 아니다 — 주문 하나가 안 나간 것이지 러너가 계속
- * 돌면 안 되는 상태가 아니다. 다음 회차에는 잔고가 맞춰져 정상으로 돌아간다.
- *
- * **네트워크·인증 실패는 여전히 세야 한다.** 그건 진짜로 시스템이 아픈 것이고,
- * 그때는 멈추는 쪽이 안전하다.
- */
-export function isOrderRefused(error: unknown): boolean {
-  if (!(error instanceof KisRequestError)) return false;
-  const kind = kisErrorKind(error.msgCode);
-  return kind === 'orderRefused' || kind === 'orderTypeNotOnVts';
-}

@@ -96,11 +96,7 @@ export class KisRealtime extends EventEmitter {
     return [...this.subscriptions.values()].some((item) => item.trId === TR_ORDER_NOTICE);
   }
 
-  /** 실행 중 종목 추가 구독 (매매 기능 확장 시 사용). */
-  subscribe(code: string): void {
-    this.subscribeInstrument({ code, market: 'KOSPI', assetType: 'stock' });
-  }
-
+  /** 실행 중 종목 추가 구독 */
   subscribeInstrument(instrument: ClientSubscribeInstrument): void {
     const trId = this.resolveTradeTrId(instrument);
     if (!trId) return;

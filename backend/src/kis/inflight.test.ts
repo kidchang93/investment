@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { inflightSize, shareInflight } from './inflight.js';
+import { shareInflight } from './inflight.js';
 
 /** 밖에서 끝낼 수 있는 약속. 타이머 없이 순서를 만든다 */
 function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void } {
@@ -65,7 +65,6 @@ describe('겹친 조회 묶기', () => {
     };
     assert.equal(await shareInflight('k', run), 1);
     assert.equal(await shareInflight('k', run), 2, '끝난 값을 재사용하면 오래된 잔고를 보게 된다');
-    assert.equal(inflightSize(), 0, '끝난 조회가 남아 있다');
   });
 
   it('실패도 함께 받는다 — 같은 순간에 같은 것을 물었으면 답도 같아야 한다', async () => {
@@ -82,17 +81,20 @@ describe('겹친 조회 묶기', () => {
     await assert.rejects(first, /KIS 거절/);
     await assert.rejects(second, /KIS 거절/);
     assert.equal(calls, 1);
-    assert.equal(inflightSize(), 0, '실패한 조회가 남으면 다음 요청이 영영 그 실패를 받는다');
+    assert.equal(
+      await shareInflight('boom', async () => '다시'),
+      '다시',
+      '실패한 조회가 남으면 다음 요청이 영영 그 실패를 받는다',
+    );
   });
 
   it('던지는 함수도 붙잡는다 — 동기 예외로 지도가 새면 안 된다', async () => {
-    const before = inflightSize();
     await assert.rejects(
       shareInflight('sync-throw', () => {
         throw new Error('설정 오류');
       }),
       /설정 오류/,
     );
-    assert.equal(inflightSize(), before, '동기 예외 뒤에 항목이 남았다');
+    assert.equal(await shareInflight('sync-throw', async () => '다시'), '다시', '동기 예외 뒤에 항목이 남았다');
   });
 });

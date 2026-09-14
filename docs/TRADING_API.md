@@ -804,7 +804,7 @@ curl -X POST http://localhost:4000/api/broker/kis/orders \
 `isUnconfirmedDivision('22')`가 true이고, 접수 응답 메시지에 그 사실이 덧붙는다.
 모의 서버가 안 받으면 `40970000`(*"모의투자에서 제공하지 않는 주문유형입니다"*)이
 오는데, 이건 `EGW02006`(모의에 그 **TR**이 없음)과 다르다 — `kis/errorCodes.ts`가
-`orderTypeNotOnVts`로 갈라 두었고 `isOrderTypeUnavailableOnServer()`로 묻는다.
+`orderTypeNotOnVts`로 갈라 두었다(`kisErrorKind`).
 **주문구분 값이 틀린 것과 모의 서버에 없는 것은 다른 사실이다.**
 
 트레일링 스탑은 이것으로 안 된다 — 스톱가가 고정이라 고점을 따라가지 않는다.
@@ -841,7 +841,7 @@ curl -X POST http://localhost:4000/api/broker/kis/orders \
 > 1. **리스크 룰의 시간대**(09:00~15:30). NXT는 08:00~20:00이라 지금 룰이 막는다
 > 2. **지정가 경로.** NXT 프리마켓·애프터마켓에는 **시장가가 없고**(넥스트레이드
 >    공식 「호가유형」: 시장가·스톱지정가·중간가는 메인마켓 전용) 러너는 늘 시장가였다.
->    `venueAcceptsMarketOrder`가 가른다
+>    연장 세션에서 시장가를 막는 판정은 아직 없다 — 거래소를 열 때 함께 만든다
 > 3. **살아 있는 시세.** 08:30에 `getQuote`를 부르면 **오류 없이 전일 종가**가 온다.
 >    그 값으로 지정가를 걸면 어제 가격에 주문을 내는 것이고, **갭이 큰 날일수록 크게
 >    틀린다** — 그런데 갭이 큰 날이 거래하려는 날이다. `trading/preOpenPrice.ts`가

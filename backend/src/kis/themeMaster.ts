@@ -196,17 +196,3 @@ export function parseThemeMaster(text: string): ThemeMaster {
 
   return { names, members };
 }
-
-/** 테마별 종목 수. 실측 반도체/반도체장비 110 · 방위산업 27 · 농업 26 */
-export function countThemeMembers(master: ThemeMaster): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const row of master.members) {
-    counts.set(row.themeCode, (counts.get(row.themeCode) ?? 0) + 1);
-  }
-  return counts;
-}
-
-/** 테마에 등장하는 고유 종목코드. 실측 2,333개 */
-export function themeMasterSymbols(master: ThemeMaster): string[] {
-  return [...new Set(master.members.map((row) => row.symbol))];
-}

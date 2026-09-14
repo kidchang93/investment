@@ -44,16 +44,6 @@ export const CONFIRMED_ORDER_DIVISIONS = {
 } as const;
 
 /**
- * 값을 **모르는** 주문구분. 이름만 알고 코드는 확인되지 않았다.
- *
- * 여기 있는 것을 주문 경로에 넣지 마라. 넣으려면 먼저 모의계좌에서 한 건
- * 내 보고 결과를 이 파일에 적어라 — 그러면 위 표로 올라간다.
- */
-export const UNCONFIRMED_ORDER_DIVISIONS = [
-  '시간외 단일가 (16:00~18:00) — 코드값 미확인',
-] as const;
-
-/**
  * 장후 시간외 종가(15:40~16:00)로 **추정하는** 코드. ★ 아직 확인되지 않았다.
  *
  * 확인된 표(`CONFIRMED_ORDER_DIVISIONS`)에 넣지 않은 것은 일부러다. 이 값을 쓰는
@@ -130,9 +120,6 @@ export const STOP_LIMIT_ORDER_DIVISION = '22';
 export function needsConditionPrice(division: string): boolean {
   return division === STOP_LIMIT_ORDER_DIVISION;
 }
-
-export type ConfirmedOrderDivision =
-  (typeof CONFIRMED_ORDER_DIVISIONS)[keyof typeof CONFIRMED_ORDER_DIVISIONS];
 
 /**
  * 이 주문구분이 단가를 비워야 하는가.

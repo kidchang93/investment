@@ -104,14 +104,10 @@ export interface DomesticMasterSector {
 export interface DomesticMasterRow {
   /** 단축코드. 국내 주식·ETF는 6자리, 수익증권 등은 9자리로도 온다 */
   symbol: string;
-  /** 표준코드(ISIN) 12자리 */
-  standardCode: string;
   /** 한글종목명 (뒤 공백 제거) */
   name: string;
   /** 지수업종 코드. 이름은 `indexSectorMaster.ts`가 붙인다 */
   sector: DomesticMasterSector;
-  /** 꼬리 원본. 아직 안 쓰는 고정폭 필드를 여기서 잘라 쓴다 */
-  tail: string;
 }
 
 export const DOMESTIC_MASTER_SPECS: readonly DomesticMasterSpec[] = [
@@ -148,10 +144,8 @@ export function parseDomesticMasterRow(row: string, spec: DomesticMasterSpec): D
 
   return {
     symbol: row.slice(0, 9).trim(),
-    standardCode: row.slice(9, NAME_OFFSET).trim(),
     name: row.slice(NAME_OFFSET, nameEnd).trim(),
     sector: readSector(tail, spec),
-    tail,
   };
 }
 

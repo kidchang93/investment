@@ -12,7 +12,6 @@ import {
   AFTER_HOURS_CLOSE_CANDIDATE,
   CONFIRMED_ORDER_DIVISIONS,
   isUnconfirmedDivision,
-  UNCONFIRMED_ORDER_DIVISIONS,
   usesZeroPrice,
 } from './orderDivisions.js';
 
@@ -50,7 +49,6 @@ describe('주문구분 — 아직 모르는 것', () => {
   it('시간외 단일가는 아직 후보조차 없다', () => {
     const confirmed: string[] = Object.values(CONFIRMED_ORDER_DIVISIONS);
     assert.ok(!confirmed.includes('07'), '07을 확인 없이 넣지 않았다');
-    assert.equal(UNCONFIRMED_ORDER_DIVISIONS.length, 1);
   });
 
   /* 확인된 값을 미확인이라 적으면 기록이 거짓말을 한다. 반대 방향도 못 박는다. */

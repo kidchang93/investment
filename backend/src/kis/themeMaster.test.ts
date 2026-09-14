@@ -20,13 +20,7 @@ import { dirname, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import {
-  countThemeMembers,
-  parseThemeMaster,
-  parseThemeMasterRow,
-  THEME_MASTER_FILE,
-  themeMasterSymbols,
-} from './themeMaster.js';
+import { parseThemeMaster, parseThemeMasterRow, THEME_MASTER_FILE } from './themeMaster.js';
 
 /**
  * backend/.cache 실측(2026-07-31, 파일은 2025-11-06자): 292,984바이트 / 5,528행 /
@@ -137,9 +131,6 @@ describe('parseThemeMaster', () => {
     assert.equal(master.names.size, 3);
     assert.equal(master.names.get('004'), '반도체/반도체장비');
     assert.equal(master.members.length, 4);
-    assert.deepEqual(themeMasterSymbols(master), ['005930', '012450', '000660']);
-    assert.equal(countThemeMembers(master).get('004'), 2);
-    assert.equal(countThemeMembers(master).get('017'), 1);
   });
 
   it('빈 줄과 끝 개행을 무시한다', () => {
@@ -185,19 +176,18 @@ describe('theme_code.mst 실측', () => {
     const master = parseThemeMaster(new TextDecoder('euc-kr').decode(readFileSync(path)));
     assert.equal(master.names.size, 302);
     assert.equal(master.members.length, 5528);
-    assert.equal(themeMasterSymbols(master).length, 2333);
+    assert.equal(new Set(master.members.map((row) => row.symbol)).size, 2333);
   });
 
   it('반도체 110 · 방위산업 27 · 농업 26', { skip: exists ? false : `${path} 없음` }, () => {
     const master = parseThemeMaster(new TextDecoder('euc-kr').decode(readFileSync(path)));
-    const counts = countThemeMembers(master);
     for (const [code, name, count] of [
       ['004', '반도체/반도체장비', 110],
       ['017', '방위산업', 27],
       ['172', '농업', 26],
     ] as const) {
       assert.equal(master.names.get(code), name, `테마 ${code} 이름`);
-      assert.equal(counts.get(code), count, `테마 ${name} 종목 수`);
+      assert.equal(master.members.filter((row) => row.themeCode === code).length, count, `테마 ${name} 종목 수`);
     }
   });
 

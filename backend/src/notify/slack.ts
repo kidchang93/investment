@@ -26,11 +26,6 @@
 
 const WEBHOOK_ENV = 'SLACK_WEBHOOK_URL';
 
-/** 슬랙으로 보낼 수 있는 상태인가. 부르는 쪽이 "안 보냈다"와 "못 보냈다"를 가르는 데 쓴다 */
-export function slackConfigured(): boolean {
-  return webhookUrl() !== null;
-}
-
 /**
  * 설정된 webhook URL. 형식이 아니면 `null`이다.
  *

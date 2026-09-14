@@ -13,7 +13,6 @@ import { config } from '../config.js';
 import {
   assertVenueUsable,
   DEFAULT_ORDER_VENUE,
-  venueAcceptsMarketOrder,
   venueAcceptsStopLimit,
 } from './orderVenues.js';
 
@@ -40,23 +39,6 @@ describe('주문 거래소 — 모의에서는 KRX만', () => {
     assert.throws(() => assertVenueUsable('NXT'), /모의투자/);
     // 무엇을 해야 하는지까지 말해야 한다 — 코드만 던지면 사람이 원인을 못 찾는다.
     assert.throws(() => assertVenueUsable('NXT'), /실전 계좌/);
-  });
-});
-
-describe('주문 거래소 — 프리마켓에는 시장가가 없다', () => {
-  it('KRX는 연장 세션이어도 시장가를 받는다', () => {
-    assert.equal(venueAcceptsMarketOrder('KRX', true), true);
-    assert.equal(venueAcceptsMarketOrder('KRX', false), true);
-  });
-
-  /*
-   * 러너는 지금까지 **늘 시장가**였다. 이 검사가 없으면 프리마켓 주문이 전부
-   * 거절되고, 그 거절이 매 회차 쌓여 러너가 연속 실패로 멈춘다 — 2026-08-04에
-   * 잔고 지연 거절 세 번으로 실제로 멈췄다.
-   */
-  it('NXT는 연장 세션에서 시장가를 받지 않는다', () => {
-    assert.equal(venueAcceptsMarketOrder('NXT', true), false);
-    assert.equal(venueAcceptsMarketOrder('NXT', false), true);
   });
 });
 

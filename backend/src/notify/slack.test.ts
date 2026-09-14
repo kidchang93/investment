@@ -7,36 +7,48 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 
-import { escapeMrkdwn, signedWon, slackConfigured, won } from './slack.js';
+import { escapeMrkdwn, sendSlack, signedWon, won } from './slack.js';
 
 const KEY = 'SLACK_WEBHOOK_URL';
+const HOOK = 'https://hooks.slack.com/services/T000/B000/xxxx';
 const original = process.env[KEY];
+const realFetch = globalThis.fetch;
 
 afterEach(() => {
   if (original === undefined) delete process.env[KEY];
   else process.env[KEY] = original;
+  globalThis.fetch = realFetch;
 });
 
+/** 이 설정으로 `sendSlack`이 실제로 보내는 주소. 안 보내면 null. fetch를 가로채 네트워크를 쓰지 않는다 */
+async function postedUrl(raw: string | undefined): Promise<string | null> {
+  if (raw === undefined) delete process.env[KEY];
+  else process.env[KEY] = raw;
+  const urls: string[] = [];
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    urls.push(String(input));
+    return new Response('ok');
+  }) as typeof fetch;
+  await sendSlack('시험');
+  return urls[0] ?? null;
+}
+
 describe('슬랙 설정 판별 — "안 쓴다"와 "잘못 넣었다"를 가른다', () => {
-  it('설정이 없으면 안 보낸다', () => {
-    delete process.env[KEY];
-    assert.equal(slackConfigured(), false);
+  it('설정이 없으면 안 보낸다', async () => {
+    assert.equal(await postedUrl(undefined), null);
   });
 
-  it('슬랙 webhook 주소면 보낸다', () => {
-    process.env[KEY] = 'https://hooks.slack.com/services/T000/B000/xxxx';
-    assert.equal(slackConfigured(), true);
+  it('슬랙 webhook 주소면 보낸다', async () => {
+    assert.equal(await postedUrl(HOOK), HOOK);
   });
 
-  it('★ 따옴표째 붙여 넣어도 읽는다 — .env에서 실제로 일어나는 일이다', () => {
-    process.env[KEY] = '"https://hooks.slack.com/services/T000/B000/xxxx"';
-    assert.equal(slackConfigured(), true);
+  it('★ 따옴표째 붙여 넣어도 읽는다 — .env에서 실제로 일어나는 일이다', async () => {
+    assert.equal(await postedUrl(`"${HOOK}"`), HOOK);
   });
 
-  it('★ 슬랙 주소가 아니면 안 보낸다 — 엉뚱한 곳으로 계좌 내역이 나가면 안 된다', () => {
+  it('★ 슬랙 주소가 아니면 안 보낸다 — 엉뚱한 곳으로 계좌 내역이 나가면 안 된다', async () => {
     for (const bad of ['https://example.com/hook', 'hooks.slack.com/services/x', 'TODO', '']) {
-      process.env[KEY] = bad;
-      assert.equal(slackConfigured(), false, `입력 ${bad}`);
+      assert.equal(await postedUrl(bad), null, `입력 ${bad}`);
     }
   });
 });

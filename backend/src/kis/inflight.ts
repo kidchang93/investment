@@ -36,8 +36,3 @@ export function shareInflight<T>(key: string, run: () => Promise<T>): Promise<T>
   inflight.set(key, started);
   return started;
 }
-
-/** 지금 묶여 있는 조회 수. 시험과 진단용이다 */
-export function inflightSize(): number {
-  return inflight.size;
-}

@@ -1,5 +1,5 @@
 /**
- * 네이버 금융에서 **시황·뉴스·거래대금 상위**를 받아 온다.
+ * 네이버 금융에서 **시황·뉴스**를 받아 온다.
  *
  * ── 왜 여기서 받나 (2026-09-03) ──────────────────────────────────────────
  *
@@ -174,64 +174,6 @@ export async function getMainNews(limit = 10): Promise<NaverNews[]> {
       title,
       summary,
       url: hrefMatch ? `${BASE}${unescapeHtml(hrefMatch[1])}` : '',
-    });
-  }
-  return out;
-}
-
-// ── 거래대금 상위 ───────────────────────────────────────────────────────
-
-export interface TurnoverRow {
-  rank: number;
-  name: string;
-  /** 종목코드. 링크에서 읽는다 */
-  symbol: string;
-  price: number | null;
-  changeRate: number | null;
-}
-
-/**
- * 거래대금(거래량) 상위. `/sise/sise_quant.naver`.
- *
- * ★ **자금이 어디로 몰리는지**가 이 표의 값어치다. 2026-09-03 아침에 상위가
- *   인버스·레버리지 ETF로 도배돼 있었는데, 그건 "방향에 베팅이 몰렸다"는
- *   신호이지 개별 종목 이야기가 아니다.
- */
-export async function getTurnoverTop(limit = 15): Promise<TurnoverRow[]> {
-  const html = await fetchPage('/sise/sise_quant.naver');
-  const out: TurnoverRow[] = [];
-  // 각 줄: <a href="/item/main.naver?code=069500" class="tltle">KODEX 200</a> … 이어서 td들
-  /*
-   * 실제 모양(2026-09-03 실측) — 셀 사이에 줄바꿈과 중첩 span이 많다:
-   *
-   * ```html
-   * <td><a href="/item/main.naver?code=252670" class="tltle">KODEX 200선물인버스2X</a></td>
-   * <td class="number">82</td>                    ← 현재가
-   * <td class="number"> … 1 … </td>               ← 전일비(부호 없음)
-   * <td class="number"> … -1.20% … </td>          ← 등락률(부호 있음)
-   * ```
-   *
-   * ★ 처음에 `[\s\S]{0,600}?</tr>`로 잡으려다 **한 줄도 못 읽었다** — 셀 안의
-   *   빈 줄·주석 때문에 한 행이 600자를 넘는다. 다음 종목 링크 전까지로 끊는다.
-   * ★ 등락률에는 부호가 이미 붙어 있다. 클래스에서 방향을 다시 읽지 않는다.
-   */
-  const rowRe = new RegExp(
-    'href="/item/main\\.naver\\?code=([0-9A-Z]{6})"[^>]*class="tltle">([^<]+)</a>'
-    + '([\\s\\S]*?)(?=href="/item/main\\.naver\\?code=|</table>)',
-    'g',
-  );
-  let m: RegExpExecArray | null;
-  while ((m = rowRe.exec(html)) !== null && out.length < limit) {
-    const cells = [...m[3].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => stripTags(c[1]));
-    const price = parseNumber(cells[0]);
-    const rateCell = cells.find((c) => c.includes('%'));
-    const rate = parseNumber(rateCell?.replace('%', '').replace(/\s/g, ''));
-    out.push({
-      rank: out.length + 1,
-      symbol: m[1],
-      name: unescapeHtml(m[2]).trim(),
-      price,
-      changeRate: rate,
     });
   }
   return out;

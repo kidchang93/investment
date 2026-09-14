@@ -18,7 +18,6 @@ import { describe, it } from 'node:test';
 
 import {
   isExpiredToken,
-  isOrderTypeUnavailableOnServer,
   isRetriableTransportError,
   isTrUnavailableOnServer,
   kisErrorCodeOf,
@@ -155,25 +154,15 @@ describe('이 서버에 없는 기능인지 가르기', () => {
  * 재시도해도 같은 답이라 첫 건에서 그만둬야 한다.
  */
 describe('이 서버가 안 받는 주문유형인지 가르기', () => {
-  it('40970000이면 참이다', () => {
-    assert.equal(
-      isOrderTypeUnavailableOnServer(new KisRequestError('모의투자에서 제공하지 않는 주문유형입니다.', '40970000')),
-      true,
-    );
+  it('40970000은 주문유형 없음이다', () => {
+    assert.equal(kisErrorKind('40970000'), 'orderTypeNotOnVts');
   });
 
   /* TR 자체가 없는 것(EGW02006)과는 다른 사실이다. 사람에게 할 말이 다르다. */
   it('TR이 없는 것과 섞이지 않는다', () => {
-    const trGone = new KisRequestError('모의투자 TR 이 아닙니다.', 'EGW02006');
-    assert.equal(isOrderTypeUnavailableOnServer(trGone), false);
-    assert.equal(isTrUnavailableOnServer(trGone), true);
-
-    const typeGone = new KisRequestError('주문유형', '40970000');
-    assert.equal(isTrUnavailableOnServer(typeGone), false);
-  });
-
-  it('KIS 응답이 아닌 오류는 거짓이다', () => {
-    assert.equal(isOrderTypeUnavailableOnServer(new Error('fetch failed')), false);
+    assert.equal(kisErrorKind('EGW02006'), 'trNotOnVts');
+    assert.equal(isTrUnavailableOnServer(new KisRequestError('모의투자 TR 이 아닙니다.', 'EGW02006')), true);
+    assert.equal(isTrUnavailableOnServer(new KisRequestError('주문유형', '40970000')), false);
   });
 });
 

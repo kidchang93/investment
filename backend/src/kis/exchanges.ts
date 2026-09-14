@@ -48,13 +48,3 @@ export const DEFAULT_EXCHANGE: KisExchange = 'KRX';
 export function marketDivCode(exchange: KisExchange = DEFAULT_EXCHANGE): string {
   return MARKET_DIV_CODE[exchange];
 }
-
-/**
- * 사람에게 보일 이름. 기록에 **어느 시장의 값인지** 남기려고 둔다.
- *
- * 개장 전 지정가는 값의 출처가 셋으로 갈리는데(NXT 체결가·KRX 예상체결가·전일 종가),
- * 어느 것이었는지 안 남기면 나중에 체결가가 이상해도 원인을 못 찾는다.
- */
-export function exchangeLabel(exchange: KisExchange): string {
-  return { KRX: 'KRX', NXT: 'NXT', UNIFIED: 'KRX+NXT 통합' }[exchange];
-}

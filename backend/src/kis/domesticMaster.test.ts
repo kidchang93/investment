@@ -67,7 +67,6 @@ describe('parseDomesticMasterRow', () => {
     const row = buildRow(KOSDAQ, { symbol: '900110', standardCode: 'HK0000057197', name: '딥커머스', group: 'FS' });
     const parsed = parseDomesticMasterRow(row, KOSDAQ);
     assert.equal(parsed.symbol, '900110');
-    assert.equal(parsed.standardCode, 'HK0000057197');
     assert.equal(parsed.name, '딥커머스');
   });
 
@@ -88,13 +87,6 @@ describe('parseDomesticMasterRow', () => {
       () => parseDomesticMasterRow(row, { ...KONEX, tailLength: 183 }),
       /꼬리 정렬이 어긋났습니다/,
     );
-  });
-
-  it('꼬리 원본을 그대로 넘겨 준다 — 업종 등 뒤 필드를 여기서 자른다', () => {
-    const row = buildRow(KOSPI, { symbol: '005930', standardCode: 'KR7005930003', name: '삼성전자', group: 'ST' });
-    const { tail } = parseDomesticMasterRow(row, KOSPI);
-    assert.equal(tail.length, KOSPI.tailLength);
-    assert.equal(tail.slice(0, 2), 'ST');
   });
 
   it('행 길이가 고정폭과 맞지 않으면 던진다', () => {
@@ -138,7 +130,7 @@ describe('parseDomesticMasterRow 지수업종', () => {
       sectorLargeCode: '0027',
       sectorMidCode: '0013',
     });
-    const tail = parseDomesticMasterRow(row, KOSPI).tail;
+    const tail = row.slice(-KOSPI.tailLength);
     // 왼쪽으로 한 칸: '1002'는 idxcode.mst에 실제로 있는 코드(코스닥 대형주)다.
     assert.match(tail.slice(2, 6), /^\d{4}$/);
     assert.equal(tail.slice(2, 6), '1002');

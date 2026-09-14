@@ -47,24 +47,6 @@ export function assertVenueUsable(venue: OrderVenue): void {
 }
 
 /**
- * NXT 프리마켓·애프터마켓에는 **시장가가 없다.**
- *
- * 넥스트레이드 공식 「호가유형」 표: 시장가·스톱지정가·중간가는 **메인마켓 전용**이고
- * 프리/애프터는 지정가 계열(지정가·최유리·최우선)만 받는다. 우리 러너는 지금까지
- * **늘 시장가**였으므로, 이 검사가 없으면 프리마켓 주문이 전부 거절된다.
- *
- * ★ 규정 근거이고 실측이 아니다. 실전에서 한 번 내 보면 이 주석을 고칠 수 있다.
- *
- * **시각을 여기서 읽지 않는다.** 장 시간표는 매매 계층(`trading/preOpenPrice.ts`)이
- * 들고 있고, `kis/`가 그것을 다시 물으면 표가 두 곳으로 갈린다. 부르는 쪽이
- * "지금 연장 세션인가"를 넘긴다.
- */
-export function venueAcceptsMarketOrder(venue: OrderVenue, inExtendedSession: boolean): boolean {
-  if (venue === 'KRX') return true;
-  return !inExtendedSession;
-}
-
-/**
  * 이 거래소가 **스톱지정가(`22`)를 받는가.**
  *
  * 서로 다른 두 출처가 같은 말을 한다 — 개발자센터 `ORD_DVSN` 표는 `21`~`24`
