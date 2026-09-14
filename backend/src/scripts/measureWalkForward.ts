@@ -42,6 +42,8 @@
  *     [--annotate-legacy]
  */
 
+import { parseArgs } from 'node:util';
+
 import { closeDb, pool } from '../db/client.js';
 import { getDailyBars, type DailyBar as StoredBar } from '../db/dailyBars.js';
 import { measureDelistingGap } from '../db/delistings.js';
@@ -263,133 +265,90 @@ function parseNumberList(raw: string, label: string): number[] {
 }
 
 function parseOptions(argv: string[]): Options {
-  const options: Options = {
-    asset: 'stock',
-    buckets: null,
-    market: null,
-    dataset: 'dailybars-20260812',
-    procedure: 'expanding',
-    axes: [...HORIZONS],
-    evalCosts: [...DEFAULT_EVAL_COSTS],
-    blockB: false,
-    // ★ 위약이 곧 블록 A의 판정 기준이다. 기본으로 돈다 — 끄려면 0을 준다.
-    placeboFamilies: 50,
-    placeboAxis: null,
-    anti: false,
-    mirror: false,
-    abstainScore: false,
-    abstainCost: DEFAULT_ROUND_TRIP_PCT,
-    showTraining: false,
-    dryRun: false,
-    annotateLegacy: false,
-    limitSymbols: null,
-    regime: null,
-  };
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    const next = (): string => argv[(index += 1)] ?? '';
-    switch (arg) {
-      case '--buckets':
-        options.buckets = Number(next());
-        break;
-      case '--market': {
-        const raw = next().toUpperCase();
-        if (raw !== 'KOSPI' && raw !== 'KOSDAQ') throw new Error(`--market 은 KOSPI|KOSDAQ: ${raw}`);
-        options.market = raw;
-        break;
-      }
-      case '--asset': {
-        const raw = next();
-        if (raw !== 'stock' && raw !== 'etf') throw new Error(`--asset 은 stock|etf: ${raw}`);
-        options.asset = raw;
-        break;
-      }
-      case '--dataset':
-        options.dataset = next();
-        break;
-      case '--procedure': {
-        const value = next();
-        if (value !== 'expanding' && value !== 'rolling') {
-          throw new Error(`--procedure는 expanding 또는 rolling이어야 합니다: ${value}`);
-        }
-        options.procedure = value;
-        break;
-      }
-      case '--axes': {
-        const axes = parseNumberList(next(), '--axes');
-        const unknown = axes.filter((h) => !HORIZONS.includes(h));
-        if (unknown.length > 0) {
-          throw new Error(`계열을 안 만든 축입니다: ${unknown.join(',')} (가능: ${HORIZONS.join(',')})`);
-        }
-        options.axes = axes;
-        break;
-      }
-      case '--eval-costs':
-        options.evalCosts = parseNumberList(next(), '--eval-costs');
-        break;
-      case '--block-b':
-        options.blockB = true;
-        break;
-      case '--placebo-families':
-        options.placeboFamilies = Number(next());
-        break;
-      case '--placebo-axis': {
-        const value = Number(next());
-        if (!HORIZONS.includes(value)) {
-          throw new Error(`--placebo-axis는 ${HORIZONS.join(',')} 중 하나여야 합니다: ${value}`);
-        }
-        options.placeboAxis = value;
-        break;
-      }
-      case '--anti':
-        options.anti = true;
-        break;
-      case '--mirror':
-        options.mirror = true;
-        break;
-      case '--abstain-score':
-        options.abstainScore = true;
-        break;
-      case '--cost': {
-        const value = Number(next());
-        if (!Number.isFinite(value) || value < 0) {
-          throw new Error('--cost는 0 이상의 숫자여야 합니다(단위 %)');
-        }
-        options.abstainCost = value;
-        break;
-      }
-      case '--show-training':
-        options.showTraining = true;
-        break;
-      case '--dry-run':
-        // 원장에 안 쓴다. 실행 시간을 재거나 표만 보고 싶을 때.
-        options.dryRun = true;
-        break;
-      case '--annotate-legacy':
-        // ★ 옛 walk-forward 줄 2개의 note에 "독립 검정 아님"을 덧붙인다. 줄은 안 늘어난다.
-        options.annotateLegacy = true;
-        break;
-      case '--limit-symbols':
-        // ★ 시간을 재려고 줄일 때만. 시장을 대표하지 않으므로 판정에 쓰지 않는다.
-        options.limitSymbols = Number(next());
-        break;
-      case '--regime': {
-        const value = next();
-        if (value !== 'trend' && value !== 'chop') {
-          throw new Error(`--regime은 trend 또는 chop입니다: ${value}`);
-        }
-        options.regime = value;
-        break;
-      }
-      default:
-        throw new Error(`모르는 인자입니다: ${arg}`);
-    }
+  const { values } = parseArgs({
+    args: argv,
+    strict: true,
+    options: {
+      buckets: { type: 'string' },
+      market: { type: 'string' },
+      asset: { type: 'string', default: 'stock' },
+      dataset: { type: 'string', default: 'dailybars-20260812' },
+      procedure: { type: 'string', default: 'expanding' },
+      axes: { type: 'string' },
+      'eval-costs': { type: 'string' },
+      'block-b': { type: 'boolean', default: false },
+      // ★ 위약이 곧 블록 A의 판정 기준이다. 기본으로 돈다 — 끄려면 0을 준다.
+      'placebo-families': { type: 'string', default: '50' },
+      'placebo-axis': { type: 'string' },
+      anti: { type: 'boolean', default: false },
+      mirror: { type: 'boolean', default: false },
+      'abstain-score': { type: 'boolean', default: false },
+      cost: { type: 'string' },
+      'show-training': { type: 'boolean', default: false },
+      // 원장에 안 쓴다. 실행 시간을 재거나 표만 보고 싶을 때.
+      'dry-run': { type: 'boolean', default: false },
+      // ★ 옛 walk-forward 줄 2개의 note에 "독립 검정 아님"을 덧붙인다. 줄은 안 늘어난다.
+      'annotate-legacy': { type: 'boolean', default: false },
+      // ★ 시간을 재려고 줄일 때만. 시장을 대표하지 않으므로 판정에 쓰지 않는다.
+      'limit-symbols': { type: 'string' },
+      regime: { type: 'string' },
+    },
+  });
+
+  const market = values.market?.toUpperCase();
+  if (market !== undefined && market !== 'KOSPI' && market !== 'KOSDAQ') {
+    throw new Error(`--market 은 KOSPI|KOSDAQ: ${market}`);
   }
-  if (!Number.isInteger(options.placeboFamilies) || options.placeboFamilies < 0) {
+  const { asset, procedure, regime } = values;
+  if (asset !== 'stock' && asset !== 'etf') throw new Error(`--asset 은 stock|etf: ${asset}`);
+  if (procedure !== 'expanding' && procedure !== 'rolling') {
+    throw new Error(`--procedure는 expanding 또는 rolling이어야 합니다: ${procedure}`);
+  }
+  const axes = values.axes === undefined ? [...HORIZONS] : parseNumberList(values.axes, '--axes');
+  const unknown = axes.filter((h) => !HORIZONS.includes(h));
+  if (unknown.length > 0) {
+    throw new Error(`계열을 안 만든 축입니다: ${unknown.join(',')} (가능: ${HORIZONS.join(',')})`);
+  }
+  const placeboAxis = values['placebo-axis'] === undefined ? null : Number(values['placebo-axis']);
+  if (placeboAxis !== null && !HORIZONS.includes(placeboAxis)) {
+    throw new Error(`--placebo-axis는 ${HORIZONS.join(',')} 중 하나여야 합니다: ${placeboAxis}`);
+  }
+  const abstainCost = values.cost === undefined ? DEFAULT_ROUND_TRIP_PCT : Number(values.cost);
+  if (!Number.isFinite(abstainCost) || abstainCost < 0) {
+    throw new Error('--cost는 0 이상의 숫자여야 합니다(단위 %)');
+  }
+  if (regime !== undefined && regime !== 'trend' && regime !== 'chop') {
+    throw new Error(`--regime은 trend 또는 chop입니다: ${regime}`);
+  }
+  const placeboFamilies = Number(values['placebo-families']);
+  if (!Number.isInteger(placeboFamilies) || placeboFamilies < 0) {
     throw new Error('--placebo-families는 0 이상의 정수여야 합니다');
   }
-  if (options.axes.length === 0) throw new Error('--axes가 비었습니다');
-  return options;
+  if (axes.length === 0) throw new Error('--axes가 비었습니다');
+
+  return {
+    asset,
+    buckets: values.buckets === undefined ? null : Number(values.buckets),
+    market: market ?? null,
+    dataset: values.dataset,
+    procedure,
+    axes,
+    evalCosts: values['eval-costs'] === undefined
+      ? [...DEFAULT_EVAL_COSTS]
+      : parseNumberList(values['eval-costs'], '--eval-costs'),
+    blockB: values['block-b'],
+    placeboFamilies,
+    placeboAxis,
+    anti: values.anti,
+    mirror: values.mirror,
+    abstainScore: values['abstain-score'],
+    abstainCost,
+    showTraining: values['show-training'],
+    dryRun: values['dry-run'],
+    annotateLegacy: values['annotate-legacy'],
+    limitSymbols: values['limit-symbols'] === undefined ? null : Number(values['limit-symbols']),
+    regime: regime ?? null,
+  };
 }
 
 function heapMb(): number {
