@@ -16,7 +16,7 @@
 | 백엔드 | Fastify 5 + ws 8 (REST + WebSocket 중계) |
 | 프론트엔드 | React 18 + Vite 5 + lightweight-charts 4 |
 | 외부 API | 한국투자증권 오픈API (REST + 실시간 WebSocket) |
-| 개발 실행 | tsx (backend), vite (frontend), concurrently |
+| 개발 실행 | tsx (backend), vite (frontend) — `npm run dev`는 셸 `&` + `trap 'kill 0' INT` |
 
 ### 워크스페이스 구조
 

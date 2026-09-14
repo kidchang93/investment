@@ -10,7 +10,7 @@
     "frontend"
   ],
   "scripts": {
-    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "dev": "trap 'kill 0' INT; npm run dev -w backend & npm run dev -w frontend",
     "dev:api": "npm run dev -w backend",
     "dev:web": "npm run dev -w frontend",
     "build": "npm run build -w frontend",
@@ -19,8 +19,5 @@
   },
   "engines": {
     "node": ">=20.15"
-  },
-  "devDependencies": {
-    "concurrently": "^9.1.0"
   }
 }
