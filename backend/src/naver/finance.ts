@@ -1,11 +1,10 @@
 /**
- * 네이버 금융에서 **시황·뉴스**를 받아 온다.
+ * 네이버 금융에서 **주요 뉴스**를 받아 온다.
  *
  * ── 왜 여기서 받나 (2026-09-03) ──────────────────────────────────────────
  *
  * 사용자가 *"KIS로 호출하는 건 한계가 있을 것 같으니"*라고 했다. 맞다 —
- * KIS 뉴스는 **제목만** 오고 그나마 시세 나열이 기사로 섞여 온다
- * (`newsWatch.ts`가 그것을 걸러야 했다).
+ * KIS 뉴스는 **제목만** 오고 그나마 시세 나열이 기사로 섞여 온다.
  *
  * 처음에는 Firecrawl·Playwright를 얹으려 했는데 **둘 다 필요 없었다.**
  * 네이버 금융은 **서버 렌더링 정적 HTML**이라 그냥 받으면 된다(2026-09-03 실측:
@@ -55,65 +54,6 @@ async function fetchPage(path: string): Promise<string> {
   });
   if (!res.ok) throw new Error(`네이버 ${path} 실패: HTTP ${res.status}`);
   return decoder.decode(new Uint8Array(await res.arrayBuffer()));
-}
-
-/** `6,604.81` → `6604.81`. 못 읽으면 `null`(0으로 채우지 않는다) */
-function parseNumber(text: string | undefined): number | null {
-  if (!text) return null;
-  const cleaned = text.replace(/[,\s]/g, '');
-  if (!/^[+-]?\d+(\.\d+)?$/.test(cleaned)) return null;
-  return Number(cleaned);
-}
-
-// ── 시황 ────────────────────────────────────────────────────────────────
-
-export interface IndexQuote {
-  name: string;
-  /** 현재 지수. 못 읽었으면 `null` */
-  value: number | null;
-  /** 전일 대비. 부호 포함 */
-  change: number | null;
-  /** 등락률(%) */
-  changeRate: number | null;
-}
-
-/**
- * 코스피·코스닥 지수. `/sise/`의 `id="KOSPI_now"` 꼴에서 읽는다.
- *
- * 실제 모양(2026-09-03 실측):
- *
- * ```html
- * <span id="KOSPI_now" class="num ">6,615.71</span>
- * <span id="KOSPI_change" class="num_s ">
- *   <span class="nup"></span>42.09 +0.64%<span class="blind">상승</span>
- * </span>
- * ```
- *
- * ★ **등락률에는 부호가 이미 붙어 있다**(`+0.64%` · `-1.20%`). 처음에 클래스에서
- *   방향을 따로 읽으려다 `null`만 나왔다 — 부호는 숫자에 있고 클래스(`nup`/`ndown`)와
- *   `<span class="blind">상승</span>`은 그것을 되풀이할 뿐이다.
- *
- * ★ **변화량에는 부호가 없다**(`42.09`). 그래서 등락률의 부호를 그것에 옮겨 붙인다.
- */
-export async function getIndexQuotes(): Promise<IndexQuote[]> {
-  const html = await fetchPage('/sise/');
-  const out: IndexQuote[] = [];
-  for (const [key, name] of [['KOSPI', '코스피'], ['KOSDAQ', '코스닥']] as const) {
-    const now = new RegExp(`id="${key}_now"[^>]*>([^<]+)<`).exec(html);
-    const block = new RegExp(`id="${key}_change"[\\s\\S]{0,400}?</span>\\s*</a>`).exec(html);
-    const text = block ? htmlText(block[0]) : '';
-    // "42.09 +0.64% 상승" — 등락률만 부호를 갖는다.
-    const rate = parseNumber(/([+-]?\d+\.\d+)%/.exec(text)?.[1]);
-    const changeAbs = parseNumber(/([\d,]+\.?\d*)\s*[+-]?\d/.exec(text)?.[1]);
-    const sign = rate !== null && rate < 0 ? -1 : 1;
-    out.push({
-      name,
-      value: parseNumber(now?.[1]),
-      change: changeAbs === null ? null : Math.abs(changeAbs) * sign,
-      changeRate: rate,
-    });
-  }
-  return out;
 }
 
 // ── 주요 뉴스 ───────────────────────────────────────────────────────────

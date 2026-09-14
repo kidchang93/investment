@@ -460,7 +460,7 @@ async function marketMedianReturn60(): Promise<number | null> {
 const NEWS_PER_SYMBOL = 6;
 /** 이보다 오래된 기사는 "왜 지금 이 값인가"에 답하지 못한다 */
 const NEWS_MAX_AGE_DAYS = 14;
-/** 종목 사이 간격 — `newsWatch.ts`가 간격 없이 12종목 중 2종목을 초당 한도로 잃었다 */
+/** 종목 사이 간격 — 간격 없이 부르면 12종목 중 2종목을 초당 한도로 잃었다(2026-09-03 장중 뉴스 감시) */
 const NEWS_GAP_MS = 250;
 
 /** 배열이면 받은 기사, `{failed}`면 못 받은 것 — "0건"과 "못 받음"을 섞지 않는다 */
