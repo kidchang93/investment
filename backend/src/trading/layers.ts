@@ -42,9 +42,10 @@
  * 자주 비었고**(층 근거에 *"자주 0원이다"*라고 적혀 있었다), 그만큼이 현금으로
  * 쉬었다. 9월 9일 기준 유망주 층은 5.1%, 목표의 4분의 1이었다.
  *
- * ★ 과거 기록도 함께 옮겼다(`scripts/mergeBetIntoShort.ts`). 층이 하나가
- *   되었으므로 옛 유망주 손익을 따로 두면 합계가 어긋난다. 되돌리려면 그
- *   스크립트가 남긴 `trading_layer_merge_backup`을 쓴다.
+ * ★ 과거 기록도 함께 옮겼다. 층이 하나가 되었으므로 옛 유망주 손익을 따로 두면
+ *   합계가 어긋난다. 옮긴 행은 `trading_layer_merge_backup`에 남아 있다. 옮긴
+ *   스크립트(`mergeBetIntoShort.ts`, `--revert`로 되돌림)는 지웠다 — 필요하면
+ *   git 이력 `e797172`에서 되살린다.
  */
 export type Layer = 'etf' | 'short';
 
@@ -69,7 +70,7 @@ export const LAYER_TARGETS: Record<Layer, { weight: number; rationale: string }>
  * DB에서 읽은 문자열을 층으로 읽는다. 층이 아니면 `null`.
  *
  * ★ **옛 `'bet'`(유망주)은 `'short'`로 읽어 준다.** 2026-09-09에 층을 합치면서
- *   기록을 옮겼지만(`scripts/mergeBetIntoShort.ts`), 되돌리기 백업이나 손으로
+ *   기록을 옮겼지만, 되돌리기 백업이나 손으로
  *   넣은 행처럼 빠져나간 값이 있을 수 있다. 그때 `null`로 떨어뜨리면 그 자리는
  *   **층을 잃고 조용히 집계에서 빠진다** — 층별 손익이 그만큼 거짓이 된다.
  */
