@@ -128,18 +128,20 @@ export function gateSignature(rows: GateInput[]): string {
  * 순으로)를 빠른 회차에도 보여준다. ⭐는 적정가 대비 **싼 것**이라 정의상 떨어진
  * 종목만 올라오고, 그것만으로는 오르는 종목이 판단자 앞에 한 번도 오지 않았다.
  *
- * ★★ **오늘 처음 보는 이름이 들어올 때만 부른다.** 상위 몇 개를 그대로 접으면
- *    5등과 6등이 자리를 바꿀 때마다 새 신호가 된다 — ⭐ 시그니처가 2026-09-10에
- *    1,735자까지 불어나며 겪은 그대로다. 그래서 **오늘 판단자에게 이미 보여 준
- *    이름**은 다시 세지 않는다. 📈로 부르는 횟수는 그날 새로 오른 이름 수를 못 넘는다.
+ * ★★ **📈로는 판단자를 부르지 않는다** (2026-09-11 12:23, 사용자가 정했다). 📈는
+ *    "이미 오른 것"이라 첫 소집에서 판단자가 5종목을 전부 걸렀고, 사용자가 짚었다 —
+ *    *"오를만한 것들로 브리핑을 해줘야지 이미 오른 걸 가지고 뭐하려고?"* 그때 보여 준
+ *    이름은 기록에만 남긴다. 부르는 자리는 📣(아래)가 대신한다.
  *
  * 판단자를 부를 때 남기는 기록(`trading_heartbeats.note`)에 ⭐ 시그니처 뒤로 이어
  * 적는다 — 표를 따로 두지 않고, 표시가 없는 옛 기록도 그대로 읽힌다.
  */
 export const RISER_MARK = '|up:';
 /**
- * 📣 재료가 막 나온 종목(2026-09-11, `trading/disclosureCatalyst.ts`). 📈와 같은 규칙 —
- * 오늘 처음 보는 이름일 때만 부른다.
+ * 📣 재료가 막 나온 종목(2026-09-11, `trading/disclosureCatalyst.ts`). **오늘 처음 보는
+ * 이름이 들어올 때만 부른다.** 상위 몇 개를 그대로 접으면 5등과 6등이 자리를 바꿀
+ * 때마다 새 신호가 된다 — ⭐ 시그니처가 2026-09-10에 1,735자까지 불어나며 겪은
+ * 그대로다. 그래서 **오늘 판단자에게 이미 보여 준 이름**은 다시 세지 않는다.
  */
 export const CATALYST_MARK = '|cat:';
 
@@ -169,16 +171,12 @@ export function splitNote(note: string | undefined): NoteParts {
 }
 
 /**
- * 오늘 판단자에게 **아직 안 보여 준** 📈(`risers`)·📣(`catalysts`) 이름.
- * 두 표시는 서로 섞이지 않는다 — 📈에 있던 이름도 📣로는 새것이다.
+ * 오늘 판단자에게 **아직 안 보여 준** 📣 이름. 📈 표시와 섞이지 않는다 — 📈에
+ * 있던 이름도 📣로는 새것이다.
  *
- * ★ 들어온 순서(많이 오른 순)를 지킨다 — 로그에 그대로 찍는다.
+ * ★ 들어온 순서를 지킨다 — 로그에 그대로 찍는다.
  */
-export function freshNames(
-  part: 'risers' | 'catalysts',
-  current: string[],
-  notesToday: string[],
-): string[] {
-  const seen = new Set(notesToday.flatMap((note) => splitNote(note)[part]));
+export function freshNames(current: string[], notesToday: string[]): string[] {
+  const seen = new Set(notesToday.flatMap((note) => splitNote(note).catalysts));
   return current.filter((symbol) => !seen.has(symbol));
 }

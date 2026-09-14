@@ -36,12 +36,13 @@
  *
  * **주문을 내지 않는다. 판단하지 않는다.** 적정가와 뉴스를 나란히 놓을 뿐이다.
  *
- *   npx tsx src/scripts/analyzeFairValue.ts [계좌id] [--quiet] [--symbols 005930,000660]
+ *   npx tsx src/scripts/analyzeFairValue.ts [계좌id] [--no-judge]
  */
 
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import '../config.js';
 
@@ -54,6 +55,7 @@ import { getKoreanInstrumentBySymbol, getTopTurnoverInstruments } from '../db/in
 import {
   getDailyCandles, getDomesticQuotes, getFinancials, getInstrumentNews, getKisDomesticAccountSnapshot, probeKisTr,
 } from '../kis/rest.js';
+import { kstToday } from '../kis/normalize.js';
 import { getMainNews } from '../naver/finance.js';
 import { escapeMrkdwn, sendSlackBot, slackBotConfigured } from '../notify/slack.js';
 import {
@@ -72,7 +74,7 @@ import {
   type CatalystPick, type DayClose, type DisclosureRow,
 } from '../trading/disclosureCatalyst.js';
 
-/** 한 회차에 볼 종목 수 상한. 보유 + 인자로 준 것 */
+/** 한 회차에 볼 보유 종목 수 상한 */
 const MAX_SYMBOLS = 12;
 
 /**
@@ -136,17 +138,15 @@ const CANDIDATE_POOL = 900;
  *   후보를 본다.
  * ★ 개별주식만, 보유 제외, **오늘 오른 것**만 많이 오른 순으로 자른다. ETF를 빼는
  *   이유는 ⭐와 같다. 5인 이유도 ⭐와 같다 — 판단자가 한 회차에 볼 수 있는 만큼이다.
- */
-const RISER_LIMIT = 5;
-/**
+ *
  * ★★ **📈로는 판단자를 부르지 않는다** (2026-09-11 12:23, 사용자가 정했다).
  *
  * 📈는 "이미 오른 것"이다. 첫 소집(12:07)에서 판단자가 5종목을 전부 "이미 올라
  * 손절선을 둘 자리가 없다·오른 원인이 없다"로 걸렀고, 사용자가 짚었다 —
  * *"오를만한 것들로 브리핑을 해줘야지 이미 오른 걸 가지고 뭐하려고?"*
- * 화면에는 남기고(참고), 소집은 끈다. 이 자리는 "재료가 막 나온 종목"이 대신한다.
+ * 화면에는 남기고(참고), 소집하지 않는다. 이 자리는 "재료가 막 나온 종목"이 대신한다.
  */
-const RISERS_WAKE_JUDGE = false;
+const RISER_LIMIT = 5;
 
 /**
  * ── 📣 재료가 막 나온 종목 (2026-09-11) ──────────────────────────────────
@@ -553,7 +553,7 @@ async function discoverRisers(held: Set<string>, cash: number | null): Promise<R
       [stamped, r.symbol, r.name, r.price, r.changeRate, r.turnover, r.rangeRate ?? null, rule,
         JSON.stringify(cell)],
     );
-    await new Promise((resolve) => { setTimeout(resolve, NEWS_GAP_MS); });
+    await sleep(NEWS_GAP_MS);
   }
   await record('ok', `${risers.length}건 · ${rule} · ${Math.round((Date.now() - started) / 1000)}초`, stamped);
   return risers;
@@ -582,15 +582,6 @@ function judgeRunning(repoRoot: string): number | null {
 }
 
 type KisAccount = NonNullable<ReturnType<typeof getKisAccount>>;
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
-
-/** 지금 KST의 `YYYYMMDD` */
-function kstDay(date: Date): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(date).replace(/-/g, '');
-}
 
 /**
  * 거래소·코스닥 공시를 `since`(`YYYYMMDDHHMMSS`)까지 **빈틈없이** 쌓는다.
@@ -736,7 +727,7 @@ async function discoverCatalysts(
   ).catch(() => undefined);
 
   const started = Date.now();
-  const today = kstDay(new Date());
+  const today = kstToday();
   const sinceDay = previousWeekday(today);
   const deadline = started + CATALYST_BUDGET_MS;
   const sync = await syncDisclosures(account, `${sinceDay}000000`, deadline);
@@ -852,14 +843,11 @@ async function main(): Promise<void> {
   // 화면이 자세를 바꾸는 근거. 실패해도 본 일을 막지 않는다(`db/agentActivity.ts`).
   await markAgentActivity('analyst', 'measuring', '적정가를 재는 중').catch(() => {});
   const args = process.argv.slice(2);
-  const quiet = args.includes('--quiet');
-  const symArg = args.indexOf('--symbols');
-  const extra = symArg >= 0 ? (args[symArg + 1] ?? '').split(',').filter(Boolean) : [];
-  const accountId = args.find((a) => !a.startsWith('--') && !extra.includes(a)) ?? 'VTS-ORDINARY';
+  const accountId = args.find((a) => !a.startsWith('--')) ?? 'VTS-ORDINARY';
 
   await ensureSchema();
 
-  // ── 대상: 보유 + 인자 ──
+  // ── 대상: 보유 ──
   const symbols: string[] = [];
   const account = getKisAccount(accountId);
   /** 📈 스크리너가 "1주도 못 산다"를 가르는 값. 계좌를 못 읽으면 모른다(`null`) */
@@ -870,10 +858,9 @@ async function main(): Promise<void> {
       for (const p of snap.positions) if (p.quantity > 0) symbols.push(p.symbol);
       cash = snap.cashBalance ?? null;
     } catch (error) {
-      console.log(`계좌를 못 읽었다 — 인자로 준 종목만 본다 (${(error as Error).message.slice(0, 50)})`);
+      console.log(`계좌를 못 읽었다 — 보유 없이 후보만 본다 (${(error as Error).message.slice(0, 50)})`);
     }
   }
-  for (const s of extra) if (!symbols.includes(s)) symbols.push(s);
   const held = new Set(symbols);
   const targets = symbols.slice(0, MAX_SYMBOLS);
 
@@ -887,22 +874,20 @@ async function main(): Promise<void> {
    *   (오늘 판단자도 KODEX 200이 −10%인데 ETF 층이 60.9%라 안 샀다).
    */
   const candidates: string[] = [];
-  if (!args.includes('--no-candidates')) {
-    try {
-      /*
-       * ★ `assetTypes`에 'stock'만 준다 — ETF는 애초에 안 딸려 온다. 그래도
-       *   `classifyAsset`으로 한 번 더 거른다(레버리지가 stock으로 등록된 경우).
-       */
-      const ranked = await getTopTurnoverInstruments(['stock'], CANDIDATE_POOL);
-      for (const inst of ranked) {
-        if (held.has(inst.symbol)) continue;
-        if (classifyAsset(inst.name, inst.assetType) !== 'stock') continue;
-        candidates.push(inst.symbol);
-      }
-      console.log(`후보 ${candidates.length}종목 (20일 평균 거래대금 상위 ${CANDIDATE_POOL} 중 개별주식, 보유 제외)`);
-    } catch (error) {
-      console.log(`후보를 못 뽑았다 — 보유만 본다 (${(error as Error).message.slice(0, 50)})`);
+  try {
+    /*
+     * ★ `assetTypes`에 'stock'만 준다 — ETF는 애초에 안 딸려 온다. 그래도
+     *   `classifyAsset`으로 한 번 더 거른다(레버리지가 stock으로 등록된 경우).
+     */
+    const ranked = await getTopTurnoverInstruments(['stock'], CANDIDATE_POOL);
+    for (const inst of ranked) {
+      if (held.has(inst.symbol)) continue;
+      if (classifyAsset(inst.name, inst.assetType) !== 'stock') continue;
+      candidates.push(inst.symbol);
     }
+    console.log(`후보 ${candidates.length}종목 (20일 평균 거래대금 상위 ${CANDIDATE_POOL} 중 개별주식, 보유 제외)`);
+  } catch (error) {
+    console.log(`후보를 못 뽑았다 — 보유만 본다 (${(error as Error).message.slice(0, 50)})`);
   }
 
   if (targets.length === 0 && candidates.length === 0) {
@@ -1145,7 +1130,7 @@ async function main(): Promise<void> {
           AND measured_at = (SELECT max(measured_at) FROM trading_fair_values WHERE symbol = $1)`,
       [symbol, JSON.stringify(cell)],
     );
-    await new Promise((resolve) => { setTimeout(resolve, NEWS_GAP_MS); });
+    await sleep(NEWS_GAP_MS);
   }
   const newsFailed = [...newsBySymbol.values()].filter((c) => !Array.isArray(c)).length;
   console.log(`뉴스를 붙였다 — ${newsTargets.length}종목(⭐ ${picks.length} · 보유 개별주식 포함)`
@@ -1260,7 +1245,6 @@ async function main(): Promise<void> {
     }
   }
 
-  if (quiet) { console.log('\n(--quiet — 슬랙으로 보내지 않았다)'); return; }
   if (!slackBotConfigured()) {
     console.log('\n봇이 설정돼 있지 않다 — BOT_TOKEN·SLACK_BRIEFING_CHANNEL이 필요하다.');
     return;
@@ -1305,9 +1289,8 @@ async function main(): Promise<void> {
  * ★ ②가 없으면 문턱을 넘은 종목이 하나라도 있는 한 5분마다 계속 부른다.
  *   신호가 바뀔 때만 부르는 것이 이 게이트의 핵심이다.
  *
- * ★ **또는 📈에 오늘 처음 보는 이름이 들어왔을 때** (2026-09-11 — 같은 날 꺼 뒀다,
- *   `RISERS_WAKE_JUDGE`). ⭐는 떨어진
- *   것만 올라와서, 이것이 없으면 오르는 종목으로는 판단자가 불리지 않는다.
+ * ★ **또는 📣에 오늘 처음 보는 이름이 들어왔을 때.** 📈(이미 오른 것)로는 부르지
+ *   않는다 — `RISER_LIMIT` 주석.
  *
  * ★ **판단자가 도는 중이면 신호를 적지 않는다**(`judgeRunning`) — 적으면 그 신호는
  *   다음 회차에 "이미 보여 줬다"가 되어 판단자 앞에 영영 안 온다.
@@ -1350,7 +1333,7 @@ async function maybeCallJudge(
    * ★ **같은 신호로 다시 부르지 않는다.** 직전 호출 때 넘어 있던 종목 묶음과
    *   같으면 새 정보가 아니다 — 5분 전과 상황이 같다는 뜻이다.
    *
-   * ★★ 📈는 **오늘 이미 보여 준 이름**을 다시 세지 않는다(`judgeGate.freshNames`).
+   * ★★ 📣는 **오늘 이미 보여 준 이름**을 다시 세지 않는다(`judgeGate.freshNames`).
    *    그래서 오늘 기록을 전부 읽는다 — 직전 한 줄만 보면 5등·6등이 자리를 바꿀
    *    때마다 부른다.
    */
@@ -1362,15 +1345,13 @@ async function maybeCallJudge(
       ORDER BY id DESC`,
   );
   const fairChanged = crossed.length > 0 && splitNote(today[0]?.note).fair !== signature;
+  // 📈 이름은 부르는 근거가 아니라 기록에만 남긴다 — `RISER_LIMIT` 주석.
   const riserSymbols = (risers ?? []).map((r) => r.symbol);
-  const notes = today.map((r) => r.note);
-  // ★ 지금은 꺼 뒀다 — `RISERS_WAKE_JUDGE` 주석.
-  const fresh = RISERS_WAKE_JUDGE ? freshNames('risers', riserSymbols, notes) : [];
   // ★ 📣는 오늘 처음 보는 이름이면 부른다 — 📈 대신 "오를만한 것"을 대는 자리다.
   const catalystSymbols = (catalysts ?? []).map((c) => c.symbol);
-  const freshCat = freshNames('catalysts', catalystSymbols, notes);
+  const freshCat = freshNames(catalystSymbols, today.map((r) => r.note));
 
-  if (!fairChanged && fresh.length === 0 && freshCat.length === 0) {
+  if (!fairChanged && freshCat.length === 0) {
     console.log(crossed.length === 0
       ? '판단자를 부르지 않는다 — 문턱을 넘은 종목도, 새 📣 재료도 없다.'
       : `판단자를 부르지 않는다 — 직전과 같은 신호(${crossed.length}종목)이고 새 📣 재료도 없다.`);
@@ -1384,10 +1365,8 @@ async function maybeCallJudge(
     return;
   }
 
-  const nameOf = (symbol: string): string => risers?.find((r) => r.symbol === symbol)?.name ?? symbol;
   const reasons = [
     fairChanged ? `문턱을 넘은 ${crossed.length}종목: ${crossed.map((r) => r.name).join(', ')}` : null,
-    fresh.length > 0 ? `새로 오른 📈 ${fresh.length}종목: ${fresh.map(nameOf).join(', ')}` : null,
     freshCat.length > 0
       ? `새 📣 재료 ${freshCat.length}종목: ${freshCat.map((s) => catalysts?.find((c) => c.symbol === s)?.name ?? s).join(', ')}`
       : null,
