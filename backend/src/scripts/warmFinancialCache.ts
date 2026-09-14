@@ -20,9 +20,10 @@
  * ★ `analyzeFairValue.ts`와 **같은 표**(`trading_financial_cache`)를 쓴다.
  *   TTL도 그쪽 상수와 맞춰 12시간이다 — 여기서 채운 것을 그쪽이 그대로 읽는다.
  *
- *   npx tsx src/scripts/warmFinancialCache.ts [--limit 900] [--force]
- *     `--force`면 아직 안 낡은 것도 다시 받는다.
+ *   npx tsx src/scripts/warmFinancialCache.ts
  */
+
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import '../config.js';
 
@@ -51,7 +52,7 @@ import { FINANCIAL_TTL_HOURS, classifyAsset } from '../trading/fairValue.js';
  *   하루 거래대금 1억짜리에 960만원을 넣으면 그날 거래의 10%가 되어 사고
  *   파는 값 자체를 우리가 밀어 올린다. 그 아래는 **사도 못 파는 종목**이다.
  */
-const DEFAULT_LIMIT = 900;
+const LIMIT = 900;
 /** ★ 받는 쪽과 읽는 쪽이 같아야 해서 `trading/fairValue.ts`에 모아 두었다 */
 const TTL_HOURS = FINANCIAL_TTL_HOURS;
 /**
@@ -60,15 +61,8 @@ const TTL_HOURS = FINANCIAL_TTL_HOURS;
  */
 const GAP_MS = 120;
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => { setTimeout(r, ms); });
-
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  const force = args.includes('--force');
-  const limArg = args.indexOf('--limit');
-  const limit = limArg >= 0 ? Number(args[limArg + 1]) || DEFAULT_LIMIT : DEFAULT_LIMIT;
-
-  const ranked = await getTopTurnoverInstruments(['stock'], limit);
+  const ranked = await getTopTurnoverInstruments(['stock'], LIMIT);
   const targets = ranked.filter((i) => classifyAsset(i.name, i.assetType) === 'stock');
 
   const { rows: fresh } = await pool.query<{ symbol: string }>(
@@ -77,10 +71,10 @@ async function main(): Promise<void> {
     [String(TTL_HOURS)],
   );
   const cached = new Set(fresh.map((r) => r.symbol));
-  const todo = force ? targets : targets.filter((i) => !cached.has(i.symbol));
+  const todo = targets.filter((i) => !cached.has(i.symbol));
 
   console.log(
-    `거래대금 상위 ${limit} 중 개별주식 ${targets.length}종목`
+    `거래대금 상위 ${LIMIT} 중 개별주식 ${targets.length}종목`
     + ` · 이미 신선한 것 ${targets.length - todo.length} · 받을 것 ${todo.length}`,
   );
   if (todo.length === 0) return;
