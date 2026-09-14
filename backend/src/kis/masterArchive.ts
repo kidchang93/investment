@@ -32,13 +32,10 @@
  *
  * 받다 끊기거나 빈 파일이 오면 **여기서 던진다.** 부르는 쪽이 기존 파일을 그대로
  * 두게 하려면 쓰기 전에 걸러야 한다. 푼 길이와 CRC32를 zip이 적어 둔 값과 맞춰
- * 보므로, 한 바이트만 달라도 걸린다.
- *
- * `zlib.crc32`를 쓰지 않고 표를 직접 만든다 — 그 API는 Node 20.15+에만 있고
- * 이 레포의 `engines`는 `>=20`이다.
+ * 보므로, 한 바이트만 달라도 걸린다. CRC32는 `zlib.crc32`(Node 20.15+)로 잰다.
  */
 
-import { inflateRawSync } from 'node:zlib';
+import { crc32, inflateRawSync } from 'node:zlib';
 
 /** End of central directory 서명 */
 const EOCD_SIGNATURE = 0x06054b50;
@@ -226,29 +223,6 @@ function dosDateTimeToDate(dosDate: number, dosTime: number, label: string): Dat
     throw new Error(`${label}: zip 내부 날짜가 말이 안 됩니다 (${year}-${month}-${day}).`);
   }
   return new Date(year, month - 1, day, hour, minute, second);
-}
-
-/** CRC-32 (IEEE 802.3). zip이 적어 둔 값과 맞춰 받다 끊긴 파일을 걸러낸다. */
-export function crc32(data: Buffer): number {
-  let value = 0xffffffff;
-  for (let i = 0; i < data.length; i += 1) {
-    value = CRC32_TABLE[(value ^ data[i]!) & 0xff]! ^ (value >>> 8);
-  }
-  return (value ^ 0xffffffff) >>> 0;
-}
-
-const CRC32_TABLE = buildCrc32Table();
-
-function buildCrc32Table(): Uint32Array {
-  const table = new Uint32Array(256);
-  for (let i = 0; i < 256; i += 1) {
-    let value = i;
-    for (let bit = 0; bit < 8; bit += 1) {
-      value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
-    }
-    table[i] = value >>> 0;
-  }
-  return table;
 }
 
 function hex32(value: number): string {

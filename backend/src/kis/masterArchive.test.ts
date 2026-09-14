@@ -19,7 +19,7 @@ import { dirname, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { crc32, readSingleEntryZip } from './masterArchive.js';
+import { readSingleEntryZip } from './masterArchive.js';
 
 const ARCHIVE = readFixture('idxcode.mst.zip');
 
@@ -34,8 +34,6 @@ const MEASURED_ENTRY_NAME = 'idxcode.mst';
 const MEASURED_ENTRY_BYTES = 22_586;
 const MEASURED_ENTRY_ROWS = 491;
 const MEASURED_MODIFIED_AT_ISO = '2026-05-21T07:16:19.000Z';
-/** zip이 central directory에 적어 둔 CRC. 우리 계산과 맞춰 보는 **독립 오라클**이다 */
-const MEASURED_CRC = 0xd224c78b;
 
 /** 픽스처의 자리들. 바이트를 조작해 실패를 재현하는 데 쓴다 */
 const CENTRAL_OFFSET = 4882;
@@ -158,21 +156,6 @@ describe('readSingleEntryZip', () => {
     const patched = Buffer.from(ARCHIVE);
     patched.writeUInt16LE(99, CENTRAL_OFFSET + 10);
     assert.throws(() => readSingleEntryZip(patched, 'idxcode.mst.zip'), /압축 방식/);
-  });
-});
-
-describe('crc32', () => {
-  it('zip이 적어 둔 CRC와 맞는다 — 우리가 만든 값이 아닌 독립 오라클이다', () => {
-    const entry = readSingleEntryZip(ARCHIVE, 'idxcode.mst.zip');
-    assert.equal(crc32(entry.data), MEASURED_CRC);
-    assert.equal(ARCHIVE.readUInt32LE(CENTRAL_OFFSET + 16), MEASURED_CRC);
-  });
-
-  it('IEEE 802.3 표준값과 맞는다', () => {
-    // 널리 알려진 검사값. 표 생성이 어긋나면 여기서 걸린다.
-    assert.equal(crc32(Buffer.alloc(0)), 0x00000000);
-    assert.equal(crc32(Buffer.from('123456789')), 0xcbf43926);
-    assert.equal(crc32(Buffer.from('The quick brown fox jumps over the lazy dog')), 0x414fa339);
   });
 });
 

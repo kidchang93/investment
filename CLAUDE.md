@@ -11,7 +11,7 @@
 | 항목 | 기술 |
 |------|------|
 | 언어 | TypeScript 5.6 (ESM, `"type": "module"`) |
-| 런타임 | Node.js ≥ 20 |
+| 런타임 | Node.js ≥ 20.15 (`process.loadEnvFile`·`zlib.crc32`) |
 | 모노레포 | npm workspaces (`shared` / `backend` / `frontend`) |
 | 백엔드 | Fastify 5 + ws 8 (REST + WebSocket 중계) |
 | 프론트엔드 | React 18 + Vite 5 + lightweight-charts 4 |

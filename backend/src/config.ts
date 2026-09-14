@@ -1,9 +1,17 @@
-import { config as loadEnv } from 'dotenv';
 import { resolve } from 'node:path';
 
-// 루트(.env) → backend/.env 순으로 로드 (루트 우선)
-loadEnv({ path: resolve(process.cwd(), '../.env') });
-loadEnv({ path: resolve(process.cwd(), '.env') });
+/*
+ * 루트(.env) → backend/.env 순으로 로드한다. 이미 있는 환경변수는 덮지 않으므로
+ * 먼저 읽은 루트 쪽이 이긴다. 파일이 없는 것은 정상이고(backend/.env는 보통 없다),
+ * 그 밖의 오류(권한·디렉터리 등)는 삼키지 않는다 — 설정이 조용히 빠진 채로 뜨면 안 된다.
+ */
+for (const path of [resolve(process.cwd(), '../.env'), resolve(process.cwd(), '.env')]) {
+  try {
+    process.loadEnvFile(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
 
 const isProd = process.env.APP_ENV === 'prod';
 
