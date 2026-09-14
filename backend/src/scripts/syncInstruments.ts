@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { inferDomesticAssetType } from '../db/assetTypes.js';
-import { closeDb, pool } from '../db/client.js';
+import { closeDb, withTransaction } from '../db/client.js';
 import { ensureDomesticAssetTypes, ensureInstrumentSchema } from '../db/instruments.js';
 import { ensureThemeSchema, replaceThemes } from '../db/themes.js';
 import { DOMESTIC_MASTER_SPECS, parseDomesticMasterRow } from '../kis/domesticMaster.js';
@@ -442,9 +442,7 @@ function loadCommodityIndicators(): NormalizedInstrument[] {
 }
 
 async function upsertInstruments(instruments: NormalizedInstrument[]): Promise<void> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     await client.query('UPDATE instruments SET is_active = false');
 
     const sql = `
@@ -501,14 +499,7 @@ async function upsertInstruments(instruments: NormalizedInstrument[]): Promise<v
         item.sectorMid?.name ?? null,
       ]);
     }
-
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 function dedupe(instruments: NormalizedInstrument[]): NormalizedInstrument[] {
