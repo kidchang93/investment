@@ -45,6 +45,8 @@
  * 조회 전용이다. 주문을 내지 않는다.
  */
 
+import { setTimeout as sleep } from 'node:timers/promises';
+
 import { config } from '../config.js';
 import { closeDb, pool } from '../db/client.js';
 import { getAccessToken, primaryCredentials } from '../kis/auth.js';
@@ -151,7 +153,6 @@ function kstNow(): { day: string; clock: string; hhmm: number } {
   };
 }
 
-const delay = (ms: number): Promise<void> => new Promise((r) => { setTimeout(r, ms); });
 
 async function collect(session: Session, symbolCount: number, intervalSec: number): Promise<void> {
   await ensureSchema();
@@ -199,7 +200,7 @@ async function collect(session: Session, symbolCount: number, intervalSec: numbe
       }
     }
     console.log(`[${t.clock}] ${round}회차 · ${saved}/${symbols.length}종목 저장`);
-    await delay(intervalSec * 1000);
+    await sleep(intervalSec * 1000);
   }
 
   /*
@@ -208,7 +209,7 @@ async function collect(session: Session, symbolCount: number, intervalSec: numbe
    *   1~2영업일이 뜬다.
    */
   console.log('\n창이 끝났다. 확정가를 받는다…');
-  await delay(session === 'close' ? 90_000 : 60_000);
+  await sleep(session === 'close' ? 90_000 : 60_000);
   await settlePrices(session, symbols);
 }
 

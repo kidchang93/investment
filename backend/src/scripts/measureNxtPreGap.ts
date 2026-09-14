@@ -39,6 +39,7 @@
 import { getKisAccount } from '../config.js';
 import { pool } from '../db/client.js';
 import { getDailyMarketBars, toCredentials } from '../kis/rest.js';
+import { meanOf as mean } from '../trading/walkForward.js';
 
 const wanted = Number(process.argv[2] ?? 150);
 const PERIODS: Record<string, [string, string]> = {
@@ -60,8 +61,6 @@ if (!account) {
   process.exit(1);
 }
 const credentials = { ...toCredentials(account), crossServerRead: true };
-
-const mean = (v: number[]): number => (v.length === 0 ? 0 : v.reduce((a, b) => a + b, 0) / v.length);
 
 const { rows } = await pool.query<{ symbol: string }>(
   `SELECT symbol FROM instruments

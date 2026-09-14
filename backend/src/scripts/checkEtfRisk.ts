@@ -27,6 +27,8 @@
  * 목록은 보유와 어긋난다(`close.sh`가 같은 이유로 잔고를 스스로 읽는다).
  */
 
+import { setTimeout as sleep } from 'node:timers/promises';
+
 import { config, getKisAccount } from '../config.js';
 import { closeDb, pool } from '../db/client.js';
 import { getAccessToken, primaryCredentials } from '../kis/auth.js';
@@ -137,7 +139,7 @@ async function main(): Promise<void> {
      * 모의 서버는 초당 1건이라 300ms로는 `초당 거래건수를 초과하였습니다`가 난다
      * (2026-08-14 실측, 5종목 중 1종목 실패). 조사에 서둘 이유가 없다.
      */
-    await new Promise((r) => setTimeout(r, 1_200));
+    await sleep(1_200);
   }
   if (sizes.length === 0) {
     console.log('\n★ 한 종목도 못 받았다 — ETF가 아니거나(주식은 이 TR이 답하지 않는다) 조회가 실패했다.');

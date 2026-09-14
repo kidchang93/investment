@@ -40,6 +40,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 import { CANDLE_AXIS_LABELS, type Candle, type Instrument } from '@invest/shared';
 
+import { kstToday } from '../kis/normalize.js';
 import { DEFAULT_COSTS, backtest, roundTripCostRate } from '../trading/backtest.js';
 import {
   countExcluded,
@@ -57,13 +58,6 @@ const OUT = process.env.MEASURE_INTRADAY_OUT ?? '/tmp/strategy-measurement-intra
 
 /** 원금. 일봉 측정과 같은 값을 쓴다 — 다르면 비용 비율을 견줄 수 없다. */
 const START_CASH = Number(process.argv[3] ?? 50_000);
-
-/** `Candle.time`(UTC epoch 초) → KST 달력 날짜 `YYYYMMDD`. */
-function kstDateOf(time: number): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' })
-    .format(new Date(time * 1000))
-    .replace(/-/g, '');
-}
 
 interface Loaded {
   days: MinuteDayRecord[];
@@ -210,7 +204,7 @@ async function main(): Promise<void> {
 
       for (const trade of result.trades) {
         holdMinutes.push((trade.exitTime - trade.entryTime) / 60);
-        if (kstDateOf(trade.entryTime) !== kstDateOf(trade.exitTime)) overnightTrades += 1;
+        if (kstToday(trade.entryTime * 1000) !== kstToday(trade.exitTime * 1000)) overnightTrades += 1;
         // 매수→매도 값 변화가 왕복 비용에도 못 미친 매매. 방향이 아니라 산수 문제다.
         // 비용은 종목마다 다르다 — ETF는 매도 거래세가 면제라 문턱이 더 낮다.
         const move = Math.abs(trade.exitPrice - trade.entryPrice) / trade.entryPrice;

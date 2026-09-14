@@ -47,6 +47,7 @@
  */
 
 import { writeFileSync } from 'node:fs';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { Instrument, Quote, ScreeningVerdict } from '@invest/shared';
 
@@ -384,7 +385,7 @@ async function main(): Promise<void> {
         winCounts.set(strategy.key, (winCounts.get(strategy.key) ?? 0) + window.winCount);
       });
     }
-    await new Promise((r) => setTimeout(r, GAP_MS));
+    await sleep(GAP_MS);
   }
 
   console.log(

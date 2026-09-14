@@ -36,6 +36,7 @@ import { appendFileSync, existsSync, unlinkSync } from 'node:fs';
 import type { Candle, Instrument } from '@invest/shared';
 
 import { getCategoryInstruments } from '../db/instruments.js';
+import { kstToday } from '../kis/normalize.js';
 import { MINUTE_CALLS_PER_DAY, getDailyCandles, getDomesticDayMinuteCandles } from '../kis/rest.js';
 import { spreadEvenly } from '../trading/rangeExpansion.js';
 
@@ -114,13 +115,6 @@ async function buildPool(size: number): Promise<Instrument[]> {
   return pool;
 }
 
-/** `Candle.time`(UTC epoch 초) → KST 달력 날짜 `YYYYMMDD`. */
-function kstDateOf(time: number): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' })
-    .format(new Date(time * 1000))
-    .replace(/-/g, '');
-}
-
 async function main(): Promise<void> {
   const stockCount = Number(process.argv[2] ?? 20);
   const dayCount = Number(process.argv[3] ?? 15);
@@ -148,8 +142,8 @@ async function main(): Promise<void> {
    * 장중이면 하루가 아직 안 끝났다.
    */
   const calendar = await getDailyCandles('005930', DAILY_HISTORY_DAYS);
-  const today = kstDateOf(Math.floor(Date.now() / 1000));
-  const available = calendar.candles.map((candle) => kstDateOf(candle.time)).filter((date) => date < today);
+  const today = kstToday();
+  const available = calendar.candles.map((candle) => kstToday(candle.time * 1000)).filter((date) => date < today);
   const dates = dateMode === 'contiguous' ? available.slice(-dayCount) : spreadEvenly(available, dayCount);
 
   const pool = await buildPool(stockCount);
@@ -179,7 +173,7 @@ async function main(): Promise<void> {
     // 검산용 일봉. 종목당 한 번만 받는다.
     const daily = await getDailyCandles(instrument.symbol, DAILY_HISTORY_DAYS).catch(() => null);
     kisCalls += 1;
-    const dailyByDate = new Map((daily?.candles ?? []).map((candle) => [kstDateOf(candle.time), candle]));
+    const dailyByDate = new Map((daily?.candles ?? []).map((candle) => [kstToday(candle.time * 1000), candle]));
 
     for (const date of dates) {
       const candles = await getDomesticDayMinuteCandles(instrument, date, CALL_GAP_MS);
