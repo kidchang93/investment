@@ -34,6 +34,7 @@ backend/src/
 ├── config.ts          # .env 로드, vts/prod 도메인·자격증명 분기 (★개장일 조회는 서버가 갈릴 수 있다)
 ├── watchlist.ts       # 감시 종목 (env 오버라이드 → 없으면 기본값)
 ├── quoteCache.ts      # 현재가 캐시(45초). ★시각을 다시 찍지 않는다 — 나이는 Quote.fetchedAt 하나뿐
+├── htmlText.ts        # HTML 조각 → 글자 (태그 제거·실체참조). naver/·krx/가 같이 쓴다
 ├── themes/
 │   └── pulse.ts       # 테마 등락률: DB 명단 + 멀티시세 → 집계 (순수 함수 + 호출 예산)
 ├── krx/               # 거래소 공개 자료 (KIS가 아니다. 토큰·서버 분기와 무관)

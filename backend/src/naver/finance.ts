@@ -33,6 +33,8 @@
  * 조회 전용이다. 주문을 내지 않는다.
  */
 
+import { decodeEntities, htmlText } from '../htmlText.js';
+
 const BASE = 'https://finance.naver.com';
 
 /**
@@ -53,29 +55,6 @@ async function fetchPage(path: string): Promise<string> {
   });
   if (!res.ok) throw new Error(`네이버 ${path} 실패: HTTP ${res.status}`);
   return decoder.decode(new Uint8Array(await res.arrayBuffer()));
-}
-
-/**
- * HTML 엔티티를 푼다. 뉴스 제목에 `&quot;`·`&middot;`·`&hellip;`가 그대로 온다.
- * ★ `&amp;`를 **마지막에** 푼다 — 먼저 풀면 `&amp;quot;`가 `"`가 되어 원문이 바뀐다.
- */
-function unescapeHtml(text: string): string {
-  return text
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;|&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&middot;/g, '·')
-    .replace(/&hellip;/g, '…')
-    .replace(/&ldquo;|&rdquo;/g, '"')
-    .replace(/&lsquo;|&rsquo;/g, "'")
-    .replace(/&amp;/g, '&');
-}
-
-/** 태그를 걷어내고 공백을 정리한다 */
-function stripTags(html: string): string {
-  return unescapeHtml(html.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
 }
 
 /** `6,604.81` → `6604.81`. 못 읽으면 `null`(0으로 채우지 않는다) */
@@ -122,7 +101,7 @@ export async function getIndexQuotes(): Promise<IndexQuote[]> {
   for (const [key, name] of [['KOSPI', '코스피'], ['KOSDAQ', '코스닥']] as const) {
     const now = new RegExp(`id="${key}_now"[^>]*>([^<]+)<`).exec(html);
     const block = new RegExp(`id="${key}_change"[\\s\\S]{0,400}?</span>\\s*</a>`).exec(html);
-    const text = block ? stripTags(block[0]) : '';
+    const text = block ? htmlText(block[0]) : '';
     // "42.09 +0.64% 상승" — 등락률만 부호를 갖는다.
     const rate = parseNumber(/([+-]?\d+\.\d+)%/.exec(text)?.[1]);
     const changeAbs = parseNumber(/([\d,]+\.?\d*)\s*[+-]?\d/.exec(text)?.[1]);
@@ -159,9 +138,9 @@ export async function getMainNews(limit = 10): Promise<NaverNews[]> {
   let m: RegExpExecArray | null;
   while ((m = blockRe.exec(html)) !== null && out.length < limit) {
     const hrefMatch = /href="([^"]+)"/.exec(m[1]);
-    const title = stripTags(m[1]);
+    const title = htmlText(m[1]);
     // 꼬리의 언론사·날짜·시각을 뗀다.
-    const summary = stripTags(m[2])
+    const summary = htmlText(m[2])
       // "… 머니투데이 | 2026-09-03 09:12" 꼬리를 뗀다. 구분자가 `|`일 때도 없을 때도 있다.
       // 실제 꼬리: "… 머니투데이 | 2026-09-03 09:20:57" — **초까지** 온다.
       // 처음에 `\d{2}:\d{2}`까지만 봐서 한 건도 안 잘렸다.
@@ -173,7 +152,7 @@ export async function getMainNews(limit = 10): Promise<NaverNews[]> {
     out.push({
       title,
       summary,
-      url: hrefMatch ? `${BASE}${unescapeHtml(hrefMatch[1])}` : '',
+      url: hrefMatch ? `${BASE}${decodeEntities(hrefMatch[1])}` : '',
     });
   }
   return out;

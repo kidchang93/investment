@@ -30,6 +30,8 @@
  * 같은 코드가 여러 번 나오는 것도 정상이다(재상장·코드 재사용). 7개 코드가 그렇다.
  */
 
+import { htmlText } from '../htmlText.js';
+
 /** 조회 폼이 걸린 곳. 인증이 없으므로 `config.ts` 분기 대상이 아니다. */
 export const KIND_DELISTING_URL = 'https://kind.krx.co.kr/investwarn/delcompany.do';
 
@@ -93,14 +95,14 @@ export function parseDelistingTable(html: string): DelistingRecord[] {
   const records: DelistingRecord[] = [];
 
   for (const row of rows) {
-    const headerCells = [...row.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)].map((m) => cellText(m[1]));
+    const headerCells = [...row.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/gi)].map((m) => htmlText(m[1]));
     if (headerCells.length > 0) {
       assertHeader(headerCells);
       headerSeen = true;
       continue;
     }
 
-    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => cellText(m[1]));
+    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => htmlText(m[1]));
     if (cells.length === 0) continue;
     if (cells.length !== EXPECTED_HEADER.length) {
       throw new Error(`KIND 상장폐지 목록의 열 수가 ${EXPECTED_HEADER.length}이 아닙니다: ${cells.join(' | ')}`);
@@ -135,26 +137,6 @@ function assertHeader(cells: string[]): void {
       + ` · 아는 것 [${EXPECTED_HEADER.join(', ')}]`,
     );
   }
-}
-
-/** 칸 하나에서 글자만 남긴다. 태그를 지우고 실체참조를 되돌린 뒤 공백을 하나로 만든다. */
-function cellText(cell: string): string {
-  return decodeEntities(cell.replace(/<[^>]*>/g, ' '))
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/** KIND가 실제로 쓰는 것들만 되돌린다. 숫자 참조(`&#39;`)도 온다. */
-function decodeEntities(text: string): string {
-  return text
-    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    // `&amp;`는 마지막이다 — 먼저 풀면 `&amp;lt;`가 `<`가 된다.
-    .replace(/&amp;/g, '&');
 }
 
 /**
