@@ -39,10 +39,6 @@ import { Automation } from './Automation';
 import { Dashboard } from './Dashboard';
 import { PortfolioLayers } from './PortfolioLayers';
 import { Chart, type ChartCommand, type ChartCommandType, type ChartReadout } from './Chart';
-import {
-  KR_KONEX_SELL_TAX_RATE,
-  KR_SELL_TAX_RATE,
-} from '@invest/shared';
 import type {
   BrokerAccountRef,
   ChartTradeMark,
@@ -89,7 +85,6 @@ import {
 
 type RangeKey = '1M' | '3M' | '6M' | '1Y' | 'ALL';
 type TimeframeKey = '1' | '5' | '15' | '1D';
-type ChartTool = 'cursor' | 'crosshair' | 'trend' | 'measure' | 'text' | 'lock';
 type MoveFilter = 'all' | 'up' | 'down';
 type WatchSortKey = 'custom' | 'rate' | 'volume' | 'name';
 type SessionTone = 'open' | 'pre' | 'closed';
@@ -106,22 +101,9 @@ type LayoutPreset = 'balanced' | 'chart' | 'reading';
 type AppPage = 'goal' | 'terminal' | 'market' | 'portfolio';
 
 type SidePanelTab = 'watch' | 'discover';
-type TerminalTab =
-  | 'overview'
-  | 'news'
-  | 'macro'
-  | 'calendar'
-  | 'reports'
-  | 'heatmap'
-  | 'ranking'
-  | 'screening'
-  | 'themes'
-  | 'fees';
+type TerminalTab = 'overview' | 'news' | 'macro' | 'ranking' | 'screening' | 'themes';
 type NewsFilter = 'all' | 'macro' | 'stocks' | 'commodities' | 'crypto' | 'policy';
-type MacroFilter = 'all' | 'energy' | 'metals' | 'agriculture' | 'rates' | 'fx' | 'indices' | 'crypto';
-type CalendarRegionFilter = 'all' | 'domestic' | 'global';
-type CalendarImpactFilter = 'all' | '최고' | '높음' | '보통';
-type FeeMarket = 'kospi' | 'kosdaq' | 'kr_etf' | 'konex' | 'us_stock' | 'kospi200_future' | 'kospi200_option';
+type MacroFilter = 'all' | 'energy' | 'metals' | 'fx' | 'indices';
 
 interface PriceSnapshot {
   price: number;
@@ -175,32 +157,6 @@ interface MacroBoardItem {
   detail: string;
   filter: MacroFilter;
   instrumentId?: string;
-  fallback?: string;
-}
-
-interface EconomicEvent {
-  date: string;
-  time: string;
-  region: string;
-  title: string;
-  impact: '최고' | '높음' | '보통';
-  scope: CalendarRegionFilter;
-}
-
-interface FeeBroker {
-  name: string;
-  product: string;
-  commissionRate: number;
-  institutionRate: number;
-  supportsDerivatives: boolean;
-}
-
-interface HeatmapItem {
-  symbol: string;
-  name: string;
-  sector: string;
-  /** 타일 크기 비율. 시총이 아니라 화면을 채우는 값이다. */
-  weight: number;
 }
 
 
@@ -352,15 +308,6 @@ const LAYOUT_PRESET_OPTIONS: Array<{ key: LayoutPreset; label: string; title: st
   { key: 'reading', label: '리딩', title: '뉴스/체결 리딩 레이아웃' },
 ];
 
-const TOOL_OPTIONS: Array<{ key: ChartTool; label: string; title: string }> = [
-  { key: 'cursor', label: '+', title: '커서' },
-  { key: 'crosshair', label: 'X', title: '십자선' },
-  { key: 'trend', label: '/', title: '추세선' },
-  { key: 'measure', label: '<>', title: '측정' },
-  { key: 'text', label: 'T', title: '텍스트' },
-  { key: 'lock', label: '#', title: '도구 잠금' },
-];
-
 /*
  * 이름만 보고 무엇이 있는지 알 수 있게 적는다. `터미널`은 안에 뉴스·매크로·
  * 캘린더가 들어 있다는 걸 이름이 전혀 알려주지 못했고, `차트`는 차트만 있고
@@ -371,7 +318,7 @@ const APP_PAGE_OPTIONS: Array<{ key: AppPage; label: string; title: string }> = 
   { key: 'goal', label: '목표', title: '연 15~20%까지 어디쯤인가 · 지금 할 일' },
   { key: 'market', label: '종목', title: '차트와 주문을 한 화면에서' },
   { key: 'portfolio', label: '내 계좌', title: '잔고·주문내역·손익·리스크 룰' },
-  { key: 'terminal', label: '발견', title: '뉴스·매크로·캘린더·랭킹' },
+  { key: 'terminal', label: '발견', title: '뉴스·매크로·랭킹' },
 ];
 
 const SIDE_PANEL_OPTIONS: Array<{ key: SidePanelTab; label: string }> = [
@@ -437,40 +384,28 @@ interface TerminalTabOption {
 }
 
 /*
- * 탭 12개를 한 줄에 평평하게 늘어놓으면 무엇이 어디 있는지 알 수 없다. 라벨만
- * 봐서는 히트맵·랭킹·테마가 서로 어떻게 다른지도 구분되지 않는다. 찾는 것이
- * 무엇이냐로 묶어 준다 — 지금 시장이 어떤지, 무슨 일이 있었는지, 남들은 뭐라
- * 하는지, 계산해 볼 것.
- *
- * 줄을 늘리지 않고 한 줄 안에서 묶는다. 버튼 합계가 720px인데 줄 폭이 1484px라
- * 여유가 충분하다.
+ * 탭을 한 줄에 평평하게 늘어놓으면 라벨만 봐서는 랭킹·테마가 서로 어떻게 다른지
+ * 구분되지 않는다. 찾는 것이 무엇이냐로 묶어 준다 — 지금 시장이 어떤지, 무슨 일이
+ * 있었는지, 계산해 볼 것.
  */
 const TERMINAL_TAB_GROUPS: Array<{ label: string; options: TerminalTabOption[] }> = [
   {
     label: '시세',
     options: [
       { key: 'overview', label: '대시보드', title: '핵심 지표와 출처' },
-      { key: 'heatmap', label: '히트맵', title: '시총 상위 종목 등락 지도' },
       { key: 'ranking', label: '랭킹', title: '많이 움직인 종목' },
       // 테마 수는 서버가 세어 준다. 여기 박아 두면 동기화 뒤에 조용히 틀린 값이 된다.
       { key: 'themes', label: '테마', title: '분야별 등락률' },
-      { key: 'macro', label: '매크로', title: '원자재·환율·금리·지수' },
+      { key: 'macro', label: '매크로', title: '원자재·환율·지수' },
     ],
   },
   {
-    label: '뉴스·일정',
-    options: [
-      { key: 'news', label: '뉴스룸', title: '속보와 종목별 뉴스' },
-      { key: 'calendar', label: '캘린더', title: '경제 지표 발표 일정' },
-      { key: 'reports', label: '리포트', title: '고른 종목의 오늘 수치' },
-    ],
+    label: '뉴스',
+    options: [{ key: 'news', label: '뉴스룸', title: '속보와 종목별 뉴스' }],
   },
   {
     label: '도구',
-    options: [
-      { key: 'fees', label: '수수료', title: '증권사 비용 계산' },
-      { key: 'screening', label: '스크리닝', title: '자동매매 후보 거르기' },
-    ],
+    options: [{ key: 'screening', label: '스크리닝', title: '자동매매 후보 거르기' }],
   },
 ];
 
@@ -490,43 +425,8 @@ const MACRO_FILTER_OPTIONS: Array<{ key: MacroFilter; label: string }> = [
   { key: 'all', label: '전체' },
   { key: 'energy', label: '에너지' },
   { key: 'metals', label: '금속' },
-  { key: 'agriculture', label: '농산물' },
-  { key: 'rates', label: '금리' },
   { key: 'fx', label: '환율' },
   { key: 'indices', label: '지수' },
-  { key: 'crypto', label: '코인' },
-];
-
-const CALENDAR_REGION_OPTIONS: Array<{ key: CalendarRegionFilter; label: string }> = [
-  { key: 'all', label: '전체' },
-  { key: 'domestic', label: '국내' },
-  { key: 'global', label: '해외' },
-];
-
-const CALENDAR_IMPACT_OPTIONS: Array<{ key: CalendarImpactFilter; label: string }> = [
-  { key: 'all', label: '전체' },
-  { key: '최고', label: '최고' },
-  { key: '높음', label: '높음' },
-  { key: '보통', label: '보통' },
-];
-
-/*
- * 세율은 @invest/shared에서 가져온다. 예전엔 여기 0.002, 백테스트에 0.0018이 따로
- * 박혀 있어 같은 세금을 앱이 두 값으로 들고 있었다. 둘 다 출처가 없었다.
- *
- * ETF 칸이 따로 있는 이유: **국내 상장 ETF는 매도 거래세가 면제다(종류 무관).**
- * 예전에는 ETF를 사고팔면서 `코스피`로 계산해 없는 0.20%를 물고 있었다.
- * 종류별로 갈리는 것은 거래세가 아니라 매매차익 과세인데, 그건 보유기간 과세라
- * 과표증분을 우리가 모른다 — 그래서 넣지 않았다(아래 가정 줄에 적어 둔다).
- */
-const FEE_MARKET_OPTIONS: Array<{ key: FeeMarket; label: string; taxRate: number; unit: string }> = [
-  { key: 'kospi', label: '코스피', taxRate: KR_SELL_TAX_RATE, unit: 'KRW' },
-  { key: 'kosdaq', label: '코스닥', taxRate: KR_SELL_TAX_RATE, unit: 'KRW' },
-  { key: 'kr_etf', label: '국내 ETF', taxRate: 0, unit: 'KRW' },
-  { key: 'konex', label: '코넥스', taxRate: KR_KONEX_SELL_TAX_RATE, unit: 'KRW' },
-  { key: 'us_stock', label: '미국주식', taxRate: 0, unit: 'USD' },
-  { key: 'kospi200_future', label: 'KOSPI200 선물', taxRate: 0, unit: 'KRW' },
-  { key: 'kospi200_option', label: 'KOSPI200 옵션', taxRate: 0, unit: 'KRW' },
 ];
 
 
@@ -576,50 +476,12 @@ const MACRO_BOARD_GROUPS: Array<{ label: string; items: MacroBoardItem[] }> = [
     items: [
       { key: 'silver', label: '은', detail: 'COMEX 연속선물', filter: 'metals', instrumentId: 'GLOBAL:TV_COMMODITY:SILVER' },
       { key: 'natgas', label: '천연가스', detail: 'NYMEX 연속선물', filter: 'energy', instrumentId: 'GLOBAL:TV_COMMODITY:NATGAS' },
-      { key: 'brent', label: '브렌트유', detail: '권한 연동 대기', filter: 'energy', fallback: '-' },
-      { key: 'copper', label: '구리', detail: '권한 연동 대기', filter: 'metals', fallback: '-' },
-      { key: 'corn', label: '옥수수', detail: '농산물 지표 예정', filter: 'agriculture', fallback: '-' },
-      { key: 'soybean', label: '대두', detail: '농산물 지표 예정', filter: 'agriculture', fallback: '-' },
     ],
   },
   {
-    label: '환율·금리',
-    items: [
-      { key: 'usdkrw', label: 'USD/KRW', detail: '환율 시세 대기', filter: 'fx', fallback: '-' },
-      { key: 'eurusd', label: 'EUR/USD', detail: '환율 지표 예정', filter: 'fx', fallback: '-' },
-      { key: 'dxy', label: '달러인덱스', detail: '글로벌 지표 예정', filter: 'fx', fallback: '-' },
-      { key: 'us10y', label: '미10년금리', detail: '금리 지표 예정', filter: 'rates', fallback: '-' },
-      { key: 'us2y', label: '미2년금리', detail: '금리 지표 예정', filter: 'rates', fallback: '-' },
-      { key: 'vix', label: 'VIX', detail: '변동성 지수 예정', filter: 'indices', fallback: '-' },
-    ],
+    label: '환율',
+    items: [{ key: 'usdkrw', label: 'USD/KRW', detail: '환율 시세 대기', filter: 'fx' }],
   },
-  {
-    label: '글로벌',
-    items: [
-      { key: 'nasdaq-future', label: '나스닥100F', detail: '해외선물 탐색 연동', filter: 'indices', fallback: '-' },
-      { key: 'kospi-index', label: '코스피 지수', detail: '국내 지수 API 예정', filter: 'indices', fallback: '-' },
-      { key: 'kosdaq-index', label: '코스닥 지수', detail: '국내 지수 API 예정', filter: 'indices', fallback: '-' },
-      { key: 'kosdaq150-night', label: '코스닥150 야간', detail: '야간선물 마스터 미수신', filter: 'indices', fallback: '-' },
-      { key: 'skhynix-night', label: 'SK하이닉스 야간', detail: 'GDR 환산 소스 확인 대기', filter: 'indices', fallback: '-' },
-      { key: 'sp500', label: 'S&P500', detail: '지수 지표 예정', filter: 'indices', fallback: '-' },
-      { key: 'ewy', label: 'MSCI Korea', detail: '한국 ETF 지표 예정', filter: 'indices', fallback: '-' },
-      { key: 'btc', label: '비트코인', detail: '코인 지표 예정', filter: 'crypto', fallback: '-' },
-      { key: 'eth', label: '이더리움', detail: '코인 지표 예정', filter: 'crypto', fallback: '-' },
-    ],
-  },
-];
-
-const ECONOMIC_EVENTS: EconomicEvent[] = [
-  { date: '2026-07-13', time: '08:50', region: '일본', title: '생산자물가지수', impact: '보통', scope: 'global' },
-  { date: '2026-07-14', time: '21:30', region: '미국', title: '소비자물가지수 CPI', impact: '최고', scope: 'global' },
-  { date: '2026-07-15', time: '10:00', region: '한국', title: '수출입물가지수', impact: '보통', scope: 'domestic' },
-  { date: '2026-07-15', time: '21:30', region: '미국', title: '생산자물가지수 PPI', impact: '높음', scope: 'global' },
-  { date: '2026-07-16', time: '10:00', region: '한국', title: '금융통화위원회 의사록', impact: '높음', scope: 'domestic' },
-  { date: '2026-07-16', time: '21:30', region: '미국', title: '소매판매', impact: '높음', scope: 'global' },
-  { date: '2026-07-17', time: '23:00', region: '미국', title: '미시간대 소비심리', impact: '보통', scope: 'global' },
-  { date: '2026-07-23', time: '08:00', region: '한국', title: '2분기 GDP 속보치', impact: '최고', scope: 'domestic' },
-  { date: '2026-07-29', time: '03:00', region: '미국', title: 'FOMC 금리 결정', impact: '최고', scope: 'global' },
-  { date: '2026-07-31', time: '21:30', region: '미국', title: 'PCE 물가지수', impact: '최고', scope: 'global' },
 ];
 
 /*
@@ -630,57 +492,6 @@ const ECONOMIC_EVENTS: EconomicEvent[] = [
  *
  * 지금 테마 탭은 `GET /api/themes`(302개)와 `GET /api/themes/pulse`가 그린다.
  */
-
-/*
- * 히트맵에 올릴 종목.
- *
- * 예전에는 `change`에 지어낸 등락률이 박혀 있었다 — 실존 종목에 가짜 숫자를
- * 붙여 색까지 입히고 있었다. 이제 등락률은 시세에서 받아온다.
- *
- * `weight`는 타일 크기일 뿐이다. 시총 비중을 재서 넣은 값이 아니라 화면을
- * 채우는 비율이라, 이건 그대로 둔다(화면에도 그렇게 적는다).
- */
-const HEATMAP_ITEMS: HeatmapItem[] = [
-  { symbol: '005930', name: '삼성전자', sector: 'semiconductor', weight: 18 },
-  { symbol: '000660', name: 'SK하이닉스', sector: 'semiconductor', weight: 14 },
-  { symbol: '373220', name: 'LG에너지솔루션', sector: 'battery', weight: 8 },
-  { symbol: '207940', name: '삼성바이오로직스', sector: 'bio', weight: 7 },
-  { symbol: '012450', name: '한화에어로스페이스', sector: 'defense', weight: 6 },
-  { symbol: '329180', name: 'HD현대중공업', sector: 'shipbuilding', weight: 5 },
-  { symbol: '005380', name: '현대차', sector: 'auto', weight: 5 },
-  { symbol: '035420', name: 'NAVER', sector: 'platform', weight: 4 },
-  { symbol: '035720', name: '카카오', sector: 'platform', weight: 3 },
-  { symbol: '051910', name: 'LG화학', sector: 'battery', weight: 3 },
-  { symbol: '068270', name: '셀트리온', sector: 'bio', weight: 3 },
-  { symbol: '000270', name: '기아', sector: 'auto', weight: 3 },
-];
-
-/** 히트맵 종목의 시세 조회용 id. 전부 KOSPI다. */
-const HEATMAP_INSTRUMENT_IDS = HEATMAP_ITEMS.map((item) => `KR:KOSPI:${item.symbol}`);
-
-
-
-/*
- * 증권사 수수료율.
- *
- * 확인된 값이 아니다. 어디서 언제 가져왔다는 기록 없이 들어와 있었고, 실제
- * 요율은 상품·이벤트·계좌 개설 경로에 따라 다르고 수시로 바뀐다. 그런데
- * 화면은 실존 증권사 이름 옆에 소수 넷째 자리까지 적고 `BEST`까지 붙여
- * 추천처럼 보였다 — 초보자가 이걸 보고 계좌를 열 수 있는 자리다.
- *
- * 지우지는 않는다. 계산기 자체는 쓸모가 있고, 값을 바꿔 가며 비교하는 데
- * 출발점이 필요하다. 대신 화면에서 확인된 값이 아니라고 밝힌다.
- */
-const FEE_BROKERS: FeeBroker[] = [
-  { name: '대신증권', product: '표준', commissionRate: 0.00008, institutionRate: 0.00003, supportsDerivatives: true },
-  { name: '미래에셋증권', product: '온라인', commissionRate: 0.00014, institutionRate: 0.00003, supportsDerivatives: true },
-  { name: '한국투자증권', product: '온라인', commissionRate: 0.00014, institutionRate: 0.00003, supportsDerivatives: true },
-  { name: 'NH투자증권', product: '나무', commissionRate: 0.00014, institutionRate: 0.00003, supportsDerivatives: true },
-  { name: '키움증권', product: '영웅문', commissionRate: 0.00015, institutionRate: 0.00003, supportsDerivatives: true },
-  { name: '삼성증권', product: 'mPOP', commissionRate: 0.00015, institutionRate: 0.00003, supportsDerivatives: true },
-  { name: 'KB증권', product: 'M-able', commissionRate: 0.00015, institutionRate: 0.00003, supportsDerivatives: true },
-  { name: '토스증권', product: '모바일', commissionRate: 0.00015, institutionRate: 0.00003, supportsDerivatives: false },
-];
 
 const OVERSEAS_REFRESH_MS = 5_000;
 const LIST_QUOTE_REFRESH_MS = 60_000;
@@ -778,22 +589,6 @@ function orderLogSymbolLabel(symbol?: string, requestedInstrumentId?: string): s
 }
 
 
-/**
- * 이 숫자는 실제 시세가 아니라는 표시.
- *
- * 화면 구성을 보려고 넣어 둔 상수가 몇 군데 있는데, 종목명이 진짜라서
- * 등락률·점수도 진짜로 읽힌다. 실제로 히트맵은 `삼성전자 +0.22%`처럼
- * 실존 종목에 지어낸 값을 붙여 보여주고 있었다. 값을 지우면 화면 구성을
- * 볼 수 없으니, 지우는 대신 어디까지가 예시인지 밝힌다.
- */
-function SampleBadge({ note }: { note: string }): JSX.Element {
-  return (
-    <span className="sample-badge" title={note}>
-      예시 데이터
-    </span>
-  );
-}
-
 function CollapsibleRows({
   rows,
   limit = 8,
@@ -855,7 +650,7 @@ function ThemePulseCard({ pulse }: { pulse: ThemePulse }): JSX.Element {
   const turnoverKnownCount = pulse.turnoverCount + pulse.turnoverZeroSymbols.length;
 
   return (
-    <article className="theme-pulse" data-tone={measured ? feeImpactTone(pulse.changeRateMedian as number) : 'flat'}>
+    <article className="theme-pulse" data-tone={measured ? profitTone(pulse.changeRateMedian as number) : 'flat'}>
       <header className="theme-pulse__head">
         <div>
           <strong>{theme.name}</strong>
@@ -869,7 +664,7 @@ function ThemePulseCard({ pulse }: { pulse: ThemePulse }): JSX.Element {
             거래대금 {turnoverKnownCount}
           </span>
         </div>
-        <em data-tone={measured ? feeImpactTone(pulse.changeRateMedian as number) : undefined}>
+        <em data-tone={measured ? profitTone(pulse.changeRateMedian as number) : undefined}>
           {measured ? formatRate(pulse.changeRateMedian as number) : '잴 수 없음'}
         </em>
       </header>
@@ -990,7 +785,7 @@ function ThemePulseCard({ pulse }: { pulse: ThemePulse }): JSX.Element {
                   <small>{member.symbol}</small>
                 </span>
                 <span role="cell">{member.price.toLocaleString('ko-KR')}원</span>
-                <span data-tone={feeImpactTone(member.changeRate)} role="cell">
+                <span data-tone={profitTone(member.changeRate)} role="cell">
                   {formatRate(member.changeRate)}
                 </span>
                 {/* 거래대금이 없는 것을 0억으로 적지 않는다. */}
@@ -1579,37 +1374,6 @@ function terminalNewsCardFromItem(item: NewsItem): TerminalNewsCard {
     filters: newsFiltersForTitle(cleanTitle),
     url: newsSearchUrl(item),
   };
-}
-
-function formatEventDay(date: string): string {
-  const parsed = new Date(`${date}T00:00:00+09:00`);
-  return new Intl.DateTimeFormat('ko-KR', {
-    month: '2-digit',
-    day: '2-digit',
-    weekday: 'short',
-    timeZone: 'Asia/Seoul',
-  }).format(parsed);
-}
-
-function parseAmountInput(value: string, fallback: number): number {
-  const parsed = Number(value.replaceAll(',', ''));
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function feeImpactTone(value: number): 'up' | 'down' | 'flat' {
-  if (value > 0) return 'up';
-  if (value < 0) return 'down';
-  return 'flat';
-}
-
-function heatmapTone(change: number): 'up' | 'down' | 'flat' {
-  if (change > 0.1) return 'up';
-  if (change < -0.1) return 'down';
-  return 'flat';
-}
-
-function heatmapArea(weight: number): string {
-  return `${Math.max(0.75, Math.min(2.5, weight / 6))}fr`;
 }
 
 function formatNumber(n: number | undefined): string {
@@ -2241,7 +2005,6 @@ export function App(): JSX.Element {
   const [watchSort, setWatchSort] = useState<WatchSortKey>(() =>
     readStoredValue('watchSort', 'custom', WATCH_SORT_OPTIONS.map((option) => option.key)),
   );
-  const [activeTool, setActiveTool] = useState<ChartTool>('crosshair');
   const [chartCommand, setChartCommand] = useState<ChartCommand | undefined>(undefined);
   const [showMovingAverage, setShowMovingAverage] = useState(() => readStoredBoolean('showMovingAverage', false));
   const [showRsi, setShowRsi] = useState(() => readStoredBoolean('showRsi', false));
@@ -2271,11 +2034,6 @@ export function App(): JSX.Element {
   );
   const [newsFilter, setNewsFilter] = useState<NewsFilter>('all');
   const [macroFilter, setMacroFilter] = useState<MacroFilter>('all');
-  const [calendarRegionFilter, setCalendarRegionFilter] = useState<CalendarRegionFilter>('all');
-  const [calendarImpactFilter, setCalendarImpactFilter] = useState<CalendarImpactFilter>('all');
-  const [feeMarket, setFeeMarket] = useState<FeeMarket>('kospi');
-  const [feeAmount, setFeeAmount] = useState('1000000');
-  const [feeExpectedReturn, setFeeExpectedReturn] = useState('5');
   const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>(() =>
     readStoredValue('sidePanelTab', 'discover', SIDE_PANEL_OPTIONS.map((option) => option.key)),
   );
@@ -3032,16 +2790,6 @@ export function App(): JSX.Element {
     if (selectedInstrument?.country === 'KR') add(selectedInstrument);
     if (activePage === 'terminal') {
       for (const instrument of terminalItems) add(instrument);
-      /*
-       * 히트맵 12종목. 그 탭이 열려 있을 때만 넣는다 — 발견 화면에 머무는
-       * 동안 계속 12건을 더 부르면 KIS 조회 한도를 그만큼 빨리 쓴다.
-       *
-       * 테마 탭은 여기 없다. 예전에는 이 12종목을 테마 보드가 나눠 썼지만,
-       * 지금 테마 등락률은 DB 명단으로 사용자가 누를 때만 잰다.
-       */
-      if (terminalTab === 'heatmap') {
-        for (const id of HEATMAP_INSTRUMENT_IDS) addId(id);
-      }
     }
     for (const instrument of recentInstruments) add(instrument);
     for (const instrument of watchlist) add(instrument);
@@ -3061,7 +2809,6 @@ export function App(): JSX.Element {
     sidePanelTab,
     symbolResults,
     terminalItems,
-    terminalTab,
     visibleCategoryQuoteIds,
     watchlist,
   ]);
@@ -3197,7 +2944,6 @@ export function App(): JSX.Element {
   const selectedCurrency = selectedInstrument?.currency ?? 'KRW';
   const selectedKrwConversion = formatConvertedKrw(snapshot?.price, selectedInstrument?.currency, usdKrwRate);
   const realtimeChartLabel = realtimeChartStatusLabel(selectedInstrument, selectedTrade);
-  const activeToolOption = TOOL_OPTIONS.find((tool) => tool.key === activeTool) ?? TOOL_OPTIONS[1];
   /*
    * 서버가 준 시각으로 잰다. 값이 서버 캐시에서 나왔으면 그 나이가 여기 그대로
    * 드러난다 — 예전에는 응답을 받은 시각을 찍어서 최대 45초를 감췄다.
@@ -3429,20 +3175,6 @@ export function App(): JSX.Element {
     () => new Map(terminalItems.map((instrument) => [instrument.id, instrument])),
     [terminalItems],
   );
-  /*
-   * 히트맵에 올릴 값. 등락률은 시세에서 가져온다.
-   * 아직 안 온 종목은 숫자를 만들지 않고 비운 채로 둔다 — 예전에는 여기에
-   * 지어낸 값이 박혀 있었고, 색까지 입혀 진짜처럼 보였다.
-   */
-  const heatmapRows = useMemo(
-    () =>
-      HEATMAP_ITEMS.map((item) => {
-        const snapshot = toSnapshot(undefined, quotesByCode[`KR:KOSPI:${item.symbol}`]);
-        return { ...item, changeRate: snapshot?.changeRate };
-      }),
-    [quotesByCode],
-  );
-
   const macroBoardGroups = useMemo(
     () =>
       MACRO_BOARD_GROUPS.map((group) => ({
@@ -3457,24 +3189,6 @@ export function App(): JSX.Element {
           }),
       })).filter((group) => group.items.length > 0),
     [macroFilter, quotesByCode, stream.trades, terminalInstrumentById, usdKrwRate],
-  );
-  /*
-   * `다가오는 일정 N건` 라벨에만 쓴다. 목록은 calendarEvents가 그린다.
-   * 여기 `.slice(0, 6)`이 붙어 있어서 8건이 남아도 라벨이 6건에서 멈췄다 —
-   * 세는 값에 상한을 걸면 개수가 개수가 아니게 된다.
-   */
-  const upcomingEvents = useMemo(
-    () =>
-      ECONOMIC_EVENTS.filter((event) => new Date(`${event.date}T23:59:59+09:00`).getTime() >= nowMs)
-        .filter((event) => calendarRegionFilter === 'all' || event.scope === calendarRegionFilter)
-        .filter((event) => calendarImpactFilter === 'all' || event.impact === calendarImpactFilter),
-    [calendarImpactFilter, calendarRegionFilter, nowMs],
-  );
-  const calendarEvents = useMemo(
-    () =>
-      ECONOMIC_EVENTS.filter((event) => calendarRegionFilter === 'all' || event.scope === calendarRegionFilter)
-        .filter((event) => calendarImpactFilter === 'all' || event.impact === calendarImpactFilter),
-    [calendarImpactFilter, calendarRegionFilter],
   );
   /*
    * 테마 목록에서 지금 보고 있는 것만 추린다. 302개를 한 번에 늘어놓으면
@@ -3536,72 +3250,6 @@ export function App(): JSX.Element {
 
     return { ranked, pending: scored.filter((item) => !item.snapshot) };
   }, [categoryItems, quotesByCode, recentInstruments, stream.trades, terminalItems, watchlist]);
-  /*
-   * 종목 요약.
-   *
-   * 예전에는 `마법공식 82 · 그레이엄 76 · DCF 69 · 다모다란 71`이었다. 이름은
-   * 실제 가치평가 방법인데 계산은 그 방법이 아니었다 — 넷 다
-   * `고정 기본값 + 거래량항 - 등락률항 - 순번`이라 같은 값에 상수만 달랐고
-   * 순서가 절대 바뀌지 않았다. 재무제표가 없으면 그 모델들은 계산할 수 없다.
-   *
-   * 지금 가진 것으로 계산되는 값만 둔다. 막대 길이도 실제 비율이 있는 값
-   * (당일 범위 위치)에만 준다 — 등락률·거래량은 0~100 스케일이 아니다.
-   */
-  const selectedReportRows = useMemo(() => {
-    if (!snapshot) return [];
-    const rangePosition = getRangePosition(snapshot.price, snapshot.low, snapshot.high);
-    return [
-      {
-        key: 'changeRate',
-        label: '전일 대비',
-        value: formatRate(snapshot.changeRate),
-        detail: `전일 종가 대비 ${formatSignedCurrencyPrice(snapshot.change, selectedCurrency)}`,
-        bar: undefined,
-      },
-      {
-        key: 'range',
-        label: '당일 범위 위치',
-        value: rangePosition === null ? '-' : `${Math.round(rangePosition)}%`,
-        detail:
-          rangePosition === null
-            ? '고가와 저가가 같아 위치를 낼 수 없습니다'
-            : `저가 ${formatCurrencyPrice(snapshot.low, selectedCurrency)} · 고가 ${formatCurrencyPrice(snapshot.high, selectedCurrency)}`,
-        bar: rangePosition ?? undefined,
-      },
-      {
-        key: 'volume',
-        label: '누적 거래량',
-        value: formatVolume(snapshot.accVolume),
-        detail: '오늘 지금까지 체결된 수량',
-        bar: undefined,
-      },
-    ];
-  }, [selectedCurrency, snapshot]);
-  const feeAmountNumber = parseAmountInput(feeAmount, 1_000_000);
-  const feeExpectedReturnNumber = Number(feeExpectedReturn);
-  const feeMarketOption = FEE_MARKET_OPTIONS.find((option) => option.key === feeMarket) ?? FEE_MARKET_OPTIONS[0];
-  const feeRows = useMemo(() => {
-    const returnRate = Number.isFinite(feeExpectedReturnNumber) ? feeExpectedReturnNumber / 100 : 0;
-    const grossSellAmount = feeAmountNumber * (1 + returnRate);
-    const isDerivative = feeMarket === 'kospi200_future' || feeMarket === 'kospi200_option';
-    return FEE_BROKERS.filter((broker) => !isDerivative || broker.supportsDerivatives).map((broker) => {
-      /*
-       * 국내 주식 요율에 곱하는 배수. 어디서 온 값인지 기록이 없다 — 해외주식과
-       * 옵션은 요율 체계가 아예 달라서 국내 요율에 배수를 곱하는 것 자체가
-       * 근사다. 화면에도 그렇게 적는다.
-       */
-      const marketMultiplier = feeMarket === 'us_stock' ? 10 : feeMarket === 'kospi200_option' ? 1.4 : 1;
-      const buyCommission = feeAmountNumber * broker.commissionRate * marketMultiplier;
-      const sellCommission = grossSellAmount * broker.commissionRate * marketMultiplier;
-      const institutionFee = (feeAmountNumber + grossSellAmount) * broker.institutionRate;
-      const transactionTax = grossSellAmount * feeMarketOption.taxRate;
-      const totalFee = buyCommission + sellCommission + institutionFee + transactionTax;
-      const netPnl = grossSellAmount - feeAmountNumber - totalFee;
-      return { broker, totalFee, netPnl };
-    }).sort((a, b) => a.totalFee - b.totalFee);
-  }, [feeAmountNumber, feeExpectedReturnNumber, feeMarket, feeMarketOption.taxRate]);
-  const bestFeeRow = feeRows[0];
-  const worstFeeRow = feeRows[feeRows.length - 1];
   const watchlistSummary = useMemo(
     () => summarizeInstrumentMoves(watchlist, getSnapshotForInstrument),
     [quotesByCode, stream.trades, watchlist],
@@ -4285,20 +3933,6 @@ export function App(): JSX.Element {
               )}
             </div>
             {activePage === 'market' && <div className="chart-commandbar__actions">
-              <div className="chart-tool-strip" role="toolbar" aria-label="차트 도구">
-                {TOOL_OPTIONS.map((tool) => (
-                  <button
-                    aria-label={tool.title}
-                    aria-pressed={tool.key === activeTool}
-                    key={tool.key}
-                    onClick={() => setActiveTool(tool.key)}
-                    title={tool.title}
-                    type="button"
-                  >
-                    {tool.label}
-                  </button>
-                ))}
-              </div>
               <div className="layout-presets" role="tablist" aria-label="레이아웃 프리셋">
                 {LAYOUT_PRESET_OPTIONS.map((option) => (
                   <button
@@ -4314,8 +3948,7 @@ export function App(): JSX.Element {
                 ))}
               </div>
               <button onClick={() => runChartCommand('fit')} title="전체 차트 맞춤 (F)" type="button">맞춤</button>
-              {/* 이름이 `+`·`−`뿐이라 낭독기에는 기호로만 들렸다. 옆의 도구 줄은
-                  이미 aria-label={tool.title}을 쓰고 있어 그 방식에 맞춘다. */}
+              {/* 이름이 `+`·`−`뿐이라 낭독기에는 기호로만 들렸다. */}
               <button aria-label="차트 확대" onClick={() => runChartCommand('zoomIn')} title="차트 확대 (+)" type="button">+</button>
               <button aria-label="차트 축소" onClick={() => runChartCommand('zoomOut')} title="차트 축소 (-)" type="button">−</button>
               <button
@@ -4706,10 +4339,9 @@ export function App(): JSX.Element {
                 <section className="terminal-page terminal-page--macro" aria-label="매크로 대시보드">
                   <div className="terminal-page__header">
                     <div>
-                      <span>원자재 · 환율 · 금리 · 글로벌 지수</span>
+                      <span>원자재 · 환율 · 지수</span>
                       <strong>매크로 대시보드</strong>
                     </div>
-                    <small>조회 가능 항목 우선 표시</small>
                   </div>
                   <div className="terminal-filterbar" role="tablist" aria-label="매크로 필터">
                     {MACRO_FILTER_OPTIONS.map((option) => (
@@ -4725,258 +4357,45 @@ export function App(): JSX.Element {
                     ))}
                   </div>
                   <div className="terminal-macro-grid">
-                    {macroBoardGroups.map((group) => {
-                      /*
-                       * 값이 들어온 항목만 먼저 보여주고 나머지는 접는다. 이 화면은
-                       * 25개 행 중 값이 있는 게 2개뿐이라, 전부 펼쳐 두면 `-`만 스무 줄
-                       * 넘게 이어져 처음 보는 사람에게는 고장난 화면으로 읽힌다.
-                       * 숨기지는 않는다 — 무엇이 왜 안 되는지는 펼쳐서 볼 수 있다.
-                       */
-                      const hasValue = (item: (typeof group.items)[number]): boolean =>
-                        Boolean(item.snapshot || item.exchangeRate);
-                      const ordered = [...group.items].sort(
-                        (a, b) => Number(hasValue(b)) - Number(hasValue(a)),
-                      );
-                      const readyCount = ordered.filter(hasValue).length;
-
-                      return (
-                        <section className="terminal-panel" key={group.label}>
-                          <div className="terminal-panel__header">
-                            <strong>{group.label}</strong>
-                            <span>{readyCount}/{group.items.length}</span>
-                          </div>
-                          <div className="terminal-macro-list">
-                            <CollapsibleRows
-                              limit={readyCount}
-                              moreLabel={(hidden) => `아직 값을 받지 못한 항목 ${hidden}개 보기`}
-                              rows={ordered.map((item) => {
-                                const itemTone = item.exchangeRate
-                                  ? feeImpactTone(item.exchangeRate.changeRate)
-                                  : moveTone(item.snapshot?.sign);
-                                return (
-                                  <button
-                                    data-tone={itemTone}
-                                    disabled={!item.instrument && !item.exchangeRate}
-                                    key={item.key}
-                                    onClick={() => item.instrument && selectInstrument(item.instrument)}
-                                    type="button"
-                                  >
-                                    <span>{item.label}</span>
-                                    <strong>
-                                      {item.exchangeRate
-                                        ? formatExchangeRate(item.exchangeRate.rate)
-                                        : item.snapshot
-                                          ? formatCurrencyPrice(item.snapshot.price, item.instrument?.currency)
-                                          : (item.fallback ?? '-')}
-                                    </strong>
-                                    <em>
-                                      {item.exchangeRate
-                                        ? formatRate(item.exchangeRate.changeRate)
-                                        : item.snapshot
-                                          ? formatRate(item.snapshot.changeRate)
-                                          : item.detail}
-                                    </em>
-                                  </button>
-                                );
-                              })}
-                            />
-                          </div>
-                        </section>
-                      );
-                    })}
-                  </div>
-                </section>
-              )}
-
-              {terminalTab === 'calendar' && (
-                <section className="terminal-page terminal-page--calendar" aria-label="경제 캘린더">
-                  <div className="terminal-page__header">
-                    <div>
-                      {/*
-                        `KST · 2026년 7월`이 고정 문자열이었다. 달이 바뀌어도
-                        7월이라고 적는다. 지금 달을 계산해서 쓴다.
-                      */}
-                      <span>
-                        KST · {new Date(nowMs).getFullYear()}년 {new Date(nowMs).getMonth() + 1}월
-                        {' · 다가오는 일정 '}{upcomingEvents.length}건
-                      </span>
-                      <strong>경제 캘린더</strong>
-                    </div>
-                    {/* 일정도 등급도 확인된 값이 아니다. 안내가 맨 아래 패널에만 있었다. */}
-                    <SampleBadge note="일정과 중요도는 확인된 값이 아닙니다. 화면 구성을 보여주려고 넣어 둔 것이라 실제 발표 일정은 따로 확인하세요." />
-                  </div>
-                  {/*
-                    지역과 중요도가 한 줄에 섞여 있었다. 두 갈래 모두 첫 항목이
-                    `전체`라 같은 글씨의 버튼이 나란히 눌린 채로 있었고, 어느 쪽이
-                    무엇을 거르는지 화면에 적혀 있지 않았다. 화면 낭독기에는 더
-                    나빴다 — 한 tablist 안에서 `전체, 탭, 선택됨`이 두 번 났다.
-                    tablist는 선택이 하나라는 뜻이라 무엇이 켜져 있는지 알 수 없다.
-                    갈래마다 이름을 붙이고 tablist도 따로 둔다.
-                  */}
-                  <div className="terminal-filterbar terminal-filterbar--grouped">
-                    <div className="terminal-filterbar__group">
-                      <span className="terminal-filterbar__label" id="calendar-region-label">
-                        지역
-                      </span>
-                      <div aria-labelledby="calendar-region-label" role="tablist">
-                        {CALENDAR_REGION_OPTIONS.map((option) => (
-                          <button
-                            /* 두 갈래 모두 `전체`가 있어 버튼 이름만으로는 구별되지
-                               않는다. 갈래 이름을 붙여야 버튼만 훑어도 알 수 있다. */
-                            aria-label={`지역 ${option.label}`}
-                            aria-selected={calendarRegionFilter === option.key}
-                            key={option.key}
-                            onClick={() => setCalendarRegionFilter(option.key)}
-                            role="tab"
-                            type="button"
-                          >
-                            {option.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="terminal-filterbar__group">
-                      <span className="terminal-filterbar__label" id="calendar-impact-label">
-                        중요도
-                      </span>
-                      <div aria-labelledby="calendar-impact-label" role="tablist">
-                        {CALENDAR_IMPACT_OPTIONS.map((option) => (
-                          <button
-                            aria-label={`중요도 ${option.label}`}
-                            aria-selected={calendarImpactFilter === option.key}
-                            key={option.key}
-                            onClick={() => setCalendarImpactFilter(option.key)}
-                            role="tab"
-                            type="button"
-                          >
-                            {option.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="terminal-calendar-grid">
-                    {/*
-                      지난 일정과 앞으로의 일정이 똑같이 보였다. 오늘이 07-26인데
-                      07-13 발표가 같은 모양으로 떠 있으니, 위의 `다가오는 일정 2건`과
-                      아래 10줄이 왜 다른지 알 수 없었다. 지난 줄을 눌러 둔다.
-                    */}
-                    {calendarEvents.map((event) => {
-                      const isPast = new Date(`${event.date}T23:59:59+09:00`).getTime() < nowMs;
-                      return (
-                        <article
-                          data-impact={event.impact}
-                          data-past={isPast ? 'true' : undefined}
-                          key={`${event.date}-${event.title}`}
-                        >
+                    {macroBoardGroups.map((group) => (
+                      <section className="terminal-panel" key={group.label}>
+                        <div className="terminal-panel__header">
+                          <strong>{group.label}</strong>
                           <span>
-                            {formatEventDay(event.date)} · {event.time}
-                            {isPast && ' · 지남'}
+                            {group.items.filter((item) => item.snapshot || item.exchangeRate).length}/{group.items.length}
                           </span>
-                          <strong>{event.title}</strong>
-                          <em>{event.region} · 중요도 {event.impact}</em>
-                        </article>
-                      );
-                    })}
-                  </div>
-                  <div className="terminal-panel terminal-panel--notice">
-                    <div className="terminal-panel__header">
-                      <strong>운영 기준</strong>
-                      <span>Asia/Seoul</span>
-                    </div>
-                    <p>이 캘린더는 화면 구성용 기본 일정입니다. 실제 발표치·컨센서스·이전치는 별도 경제지표 API 연동 단계에서 붙입니다.</p>
-                  </div>
-                </section>
-              )}
-
-              {terminalTab === 'reports' && (
-                <section className="terminal-page terminal-page--reports" aria-label="종목 요약">
-                  <div className="terminal-page__header">
-                    <div>
-                      <span>고른 종목의 오늘 수치 · 전일 종가 대비</span>
-                      <strong>종목 요약</strong>
-                    </div>
-                    <small>{selectedInstrument?.name ?? '종목 선택 대기'}</small>
-                  </div>
-                  {/*
-                    가치평가 모델 이름(마법공식·그레이엄·DCF·다모다란)을 걷어냈다.
-                    이름은 실제 방법인데 계산은 그 방법이 아니었다. 재무제표가
-                    없으면 못 내는 값이라, 지금 가진 시세로 계산되는 것만 둔다.
-                  */}
-                  <div className="terminal-report-grid">
-                    {selectedReportRows.map((row) => (
-                      <article key={row.key}>
-                        <span>{row.label}</span>
-                        <strong>{row.value}</strong>
-                        <em>{row.detail}</em>
-                        {row.bar !== undefined && <i style={{ width: `${row.bar}%` }} />}
-                      </article>
+                        </div>
+                        <div className="terminal-macro-list">
+                          {group.items.map((item) => (
+                            <button
+                              data-tone={
+                                item.exchangeRate ? profitTone(item.exchangeRate.changeRate) : moveTone(item.snapshot?.sign)
+                              }
+                              disabled={!item.instrument && !item.exchangeRate}
+                              key={item.key}
+                              onClick={() => item.instrument && selectInstrument(item.instrument)}
+                              type="button"
+                            >
+                              <span>{item.label}</span>
+                              <strong>
+                                {item.exchangeRate
+                                  ? formatExchangeRate(item.exchangeRate.rate)
+                                  : item.snapshot
+                                    ? formatCurrencyPrice(item.snapshot.price, item.instrument?.currency)
+                                    : '-'}
+                              </strong>
+                              <em>
+                                {item.exchangeRate
+                                  ? formatRate(item.exchangeRate.changeRate)
+                                  : item.snapshot
+                                    ? formatRate(item.snapshot.changeRate)
+                                    : item.detail}
+                              </em>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
                     ))}
-                    {selectedReportRows.length === 0 && (
-                      <p>{selectedInstrument ? pendingQuoteLabel(selectedInstrument) : '종목을 고르면 오늘 수치를 보여줍니다'}</p>
-                    )}
-                  </div>
-                  <div className="terminal-report-layout">
-                    <section className="terminal-panel">
-                      <div className="terminal-panel__header">
-                        <strong>이 화면이 보여주는 것</strong>
-                        <span>{selectedInstrument?.symbol ?? '-'}</span>
-                      </div>
-                      <p>
-                        {selectedInstrument
-                          ? `${selectedInstrument.name}의 오늘 시세에서 바로 읽은 값입니다. 재무제표가 있어야 하는 가치평가(마법공식·그레이엄·DCF 등)는 아직 계산하지 않습니다.`
-                          : '종목을 고르면 그 종목의 오늘 수치를 보여줍니다.'}
-                      </p>
-                    </section>
-                    <section className="terminal-panel">
-                      <div className="terminal-panel__header">
-                        <strong>다음 연동 항목</strong>
-                        <span>재무 데이터</span>
-                      </div>
-                      <div className="terminal-sources">
-                        <a href={topicNewsUrl(`${selectedInstrument?.name ?? '국내 주식'} 실적 재무제표`)} rel="noreferrer" target="_blank">
-                          <strong>실적 뉴스</strong>
-                          <span>재무제표·컨센서스 검색</span>
-                        </a>
-                        <a href={topicNewsUrl(`${selectedInstrument?.name ?? '국내 주식'} 밸류에이션`)} rel="noreferrer" target="_blank">
-                          <strong>밸류에이션</strong>
-                          <span>PER·PBR·DCF 참고 검색</span>
-                        </a>
-                      </div>
-                    </section>
-                  </div>
-                </section>
-              )}
-
-              {terminalTab === 'heatmap' && (
-                <section className="terminal-page terminal-page--heatmap" aria-label="섹터 히트맵">
-                  <div className="terminal-page__header">
-                    <div>
-                      <span>시총 상위 12종목 · 전일 종가 대비 · -5% ~ +5%로 색을 입힘</span>
-                      <strong>섹터 히트맵</strong>
-                    </div>
-                    {/* 등락률은 이제 실제 시세다. 고정값인 타일 크기만 밝힌다. */}
-                    <SampleBadge note="등락률은 실제 시세입니다. 타일 크기는 시총 비중이 아니라 화면을 채우는 고정 비율입니다." />
-                  </div>
-                  <div className="terminal-heatmap">
-                    {heatmapRows.map((item) => (
-                      <article
-                        data-pending={item.changeRate === undefined ? 'true' : undefined}
-                        data-tone={item.changeRate === undefined ? 'flat' : heatmapTone(item.changeRate)}
-                        key={item.symbol}
-                        style={{ flexGrow: Number(heatmapArea(item.weight).replace('fr', '')) }}
-                      >
-                        <strong>{item.name}</strong>
-                        <span>{item.symbol} · {item.sector}</span>
-                        <em>{item.changeRate === undefined ? '시세 대기' : formatRate(item.changeRate)}</em>
-                      </article>
-                    ))}
-                  </div>
-                  <div className="terminal-heatmap-legend">
-                    <span>-5%</span>
-                    <i />
-                    <span>+5%</span>
-                    <em>실시간 시총 TOP100 API 연동 전까지 대표 종목 구성으로 표시합니다.</em>
                   </div>
                 </section>
               )}
@@ -5411,94 +4830,6 @@ export function App(): JSX.Element {
                   )}
                 </section>
               )}
-
-              {terminalTab === 'fees' && (
-                <section className="terminal-page terminal-page--fees" aria-label="수수료 계산기">
-                  <div className="terminal-page__header">
-                    <div>
-                      <span>왕복 거래 기준 · {feeMarketOption.label} · {feeMarketOption.unit}</span>
-                      <strong>수수료 비교 계산기</strong>
-                    </div>
-                    <SampleBadge note="증권사 요율도 세율도 확인된 값이 아닙니다. 상품·이벤트·개설 경로에 따라 다르고 세율은 법으로 바뀌니, 실제 값은 본인 계좌와 최신 세법에서 확인하세요." />
-                  </div>
-                  {/* 계산에 쓴 가정을 적는다. 결과만 보여주면 무엇을 넣어 나온 값인지 알 수 없다. */}
-                  <p className="terminal-fee-assumptions">
-                    계산에 쓴 값 — 매도 세율 {(feeMarketOption.taxRate * 100).toFixed(3)}%
-                    · 유관기관 수수료 {(FEE_BROKERS[0].institutionRate * 100).toFixed(3)}%
-                    {feeMarket === 'us_stock' && ' · 해외주식은 국내 요율의 10배로 잡음(근사)'}
-                    {feeMarket === 'kospi200_option' && ' · 옵션은 국내 요율의 1.4배로 잡음(근사)'}
-                    {/*
-                      면제라는 사실만 넣고 차익과세는 넣지 않았다. 안 넣은 것을 화면에도 밝힌다 —
-                      해외·파생형 ETF는 이 계산이 실제보다 싸게 나온다.
-                    */}
-                    {feeMarket === 'kr_etf'
-                      && ' · 국내 상장 ETF는 매도 거래세가 면제입니다(종류 무관)'
-                        + ' · 해외지수·채권·원자재·파생형 ETF의 매매차익 15.4%는 넣지 않았습니다'
-                        + ' (과세표준 증분을 알 수 없어 이 계산은 그만큼 싸게 나옵니다)'}
-                  </p>
-                  <div className="terminal-filterbar" role="tablist" aria-label="수수료 시장 선택">
-                    {FEE_MARKET_OPTIONS.map((option) => (
-                      <button
-                        aria-selected={feeMarket === option.key}
-                        key={option.key}
-                        onClick={() => setFeeMarket(option.key)}
-                        role="tab"
-                        type="button"
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="terminal-fee-controls">
-                    <label>
-                      <span>매수금액</span>
-                      <input
-                        inputMode="numeric"
-                        onChange={(event) => setFeeAmount(event.target.value)}
-                        value={feeAmount}
-                      />
-                    </label>
-                    <label>
-                      <span>예상 수익률 %</span>
-                      <input
-                        inputMode="decimal"
-                        onChange={(event) => setFeeExpectedReturn(event.target.value)}
-                        value={feeExpectedReturn}
-                      />
-                    </label>
-                    <div>
-                      <span>이 표에서 최저</span>
-                      <strong>{bestFeeRow ? bestFeeRow.broker.name : '-'}</strong>
-                      <em>{bestFeeRow ? `${formatPrice(Math.round(bestFeeRow.totalFee))}원` : '-'}</em>
-                    </div>
-                    <div>
-                      <span>이 표에서 최고</span>
-                      <strong>{worstFeeRow ? worstFeeRow.broker.name : '-'}</strong>
-                      <em>{worstFeeRow && bestFeeRow ? `${formatPrice(Math.round(worstFeeRow.totalFee - bestFeeRow.totalFee))}원 차이` : '-'}</em>
-                    </div>
-                  </div>
-                  <div className="terminal-fee-table">
-                    <div className="terminal-fee-table__head">
-                      <span>증권사</span>
-                      <span>수수료율</span>
-                      <span>총 비용</span>
-                      <span>실손익</span>
-                    </div>
-                    {feeRows.map((row, index) => (
-                      <div className="terminal-fee-table__row" key={row.broker.name}>
-                        {/* `BEST`는 추천으로 읽힌다. 확인 안 된 요율로 추천할 수 없다. */}
-                        <strong>{index === 0 ? '이 표에서 최저 · ' : ''}{row.broker.name}<em>{row.broker.product}</em></strong>
-                        <span>{(row.broker.commissionRate * 100).toFixed(4)}%</span>
-                        <span>{formatPrice(Math.round(row.totalFee))}원</span>
-                        <span data-tone={feeImpactTone(row.netPnl)}>{formatSignedPrice(Math.round(row.netPnl))}원</span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
-
-
-
             </section>
           )}
 
@@ -5667,7 +4998,7 @@ export function App(): JSX.Element {
             </div>
           </div>}
 
-          {activePage === 'market' && <div className="chart-frame" data-tool={activeTool}>
+          {activePage === 'market' && <div className="chart-frame">
             <div className="chart-readout">
               <strong>{selectedName || '-'}</strong>
               <span>{activeChartReadout ? activeChartReadout.date : '-'}</span>
@@ -5705,7 +5036,6 @@ export function App(): JSX.Element {
                   {realtimeChartLabel}
                 </span>
               )}
-              <span className="chart-readout__tool">{activeToolOption.title}</span>
             </div>
             {selectedInstrument && (
               <div className="chart-watermark" aria-hidden="true">
