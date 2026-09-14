@@ -6,7 +6,7 @@
  * **국내 상장 ETF는 매도 시 증권거래세가 면제다. 종류와 무관하다.** 그런데
  * 백테스트는 조건 없이 주식 세율을 물렸고, 주문 티켓은 `market`(코넥스인가)만
  * 보고 있었다. 세율을 정하는 자리가 여럿이라 한 곳만 고치면 화면과 측정이
- * 조용히 갈라진다 — 그래서 판정은 `shared`의 `krSellTaxRate` 하나뿐이고,
+ * 조용히 갈라진다 — 그래서 면제 판정은 `shared`의 `isKrSellTaxExempt` 하나뿐이고,
  * 여기서 그 하나를 시험한다.
  *
  * 이 시험이 지키는 것은 **면제 여부**지 세율 숫자가 아니다. 숫자는
@@ -16,13 +16,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import {
-  isKrSellTaxExempt,
-  krSellTaxRate,
-  KR_KONEX_SELL_TAX_RATE,
-  KR_SELL_TAX_RATE,
-  type Instrument,
-} from '@invest/shared';
+import { isKrSellTaxExempt, type Instrument } from '@invest/shared';
 
 function instrument(overrides: Partial<Instrument> = {}): Instrument {
   return {
@@ -42,28 +36,12 @@ function instrument(overrides: Partial<Instrument> = {}): Instrument {
 }
 
 describe('매도 세율 — ETF 면제', () => {
-  it('ETF는 매도 거래세가 0이다', () => {
-    assert.equal(krSellTaxRate(instrument({ assetType: 'etf' })), 0);
+  it('ETF는 매도 거래세가 면제다', () => {
     assert.equal(isKrSellTaxExempt(instrument({ assetType: 'etf' })), true);
   });
 
-  it('일반 주식은 그대로 붙는다', () => {
-    assert.equal(krSellTaxRate(instrument()), KR_SELL_TAX_RATE);
+  it('일반 주식은 면제가 아니다', () => {
     assert.equal(isKrSellTaxExempt(instrument()), false);
-  });
-
-  it('코넥스 주식은 코넥스 세율이다', () => {
-    assert.equal(krSellTaxRate(instrument({ market: 'KONEX' })), KR_KONEX_SELL_TAX_RATE);
-  });
-
-  it('면제가 시장보다 먼저다 — ETF면 어느 시장이든 0', () => {
-    assert.equal(krSellTaxRate(instrument({ assetType: 'etf', market: 'KOSDAQ' })), 0);
-    assert.equal(krSellTaxRate(instrument({ assetType: 'etf', market: 'KONEX' })), 0);
-  });
-
-  it('종목을 모르면 면제를 가정하지 않는다 — 모르는 쪽은 비용이 큰 쪽에 둔다', () => {
-    assert.equal(krSellTaxRate(null), KR_SELL_TAX_RATE);
-    assert.equal(krSellTaxRate(undefined), KR_SELL_TAX_RATE);
   });
 
   it('ETN은 면제로 넣지 않았다 — 확인된 출처가 없어서다', () => {
@@ -73,7 +51,7 @@ describe('매도 세율 — ETF 면제', () => {
      * 고르면 반은 틀린다 — 지금 동작을 시험으로 고정해 두고, 확인되면 여기와
      * `isKrSellTaxExempt`를 함께 고친다.
      */
-    assert.equal(krSellTaxRate(instrument({ assetType: 'etn' })), KR_SELL_TAX_RATE);
+    assert.equal(isKrSellTaxExempt(instrument({ assetType: 'etn' })), false);
   });
 
   it('해외·파생형 ETF의 매매차익 15.4%는 넣지 않았다 — 여기서 재는 것은 거래세뿐이다', () => {
@@ -87,7 +65,7 @@ describe('매도 세율 — ETF 면제', () => {
      */
     const domestic = instrument({ assetType: 'etf', name: 'KODEX 200' });
     const overseas = instrument({ assetType: 'etf', name: 'TIGER 미국나스닥100' });
-    assert.equal(krSellTaxRate(domestic), krSellTaxRate(overseas));
-    assert.equal(krSellTaxRate(overseas), 0);
+    assert.equal(isKrSellTaxExempt(domestic), isKrSellTaxExempt(overseas));
+    assert.equal(isKrSellTaxExempt(overseas), true);
   });
 });

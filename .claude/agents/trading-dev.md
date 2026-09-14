@@ -98,7 +98,7 @@ npm run build                   # frontend 프로덕션 빌드
 비용·오류처럼 **켜야 드러나는 것은 켜고 재는 시험이 따로 있어야 한다.**
 
 값이 있는 쪽을 화면으로 못 태울 때(실계좌가 비어 있어 자주 그렇다)는 `shared`에 순수 함수를
-두고 시험으로 덮어라 — `riskRuleBlockers`·`settledRealized` 선례가 있다.
+두고 시험으로 덮어라 — `settledRealized`·`quoteFreshnessState` 선례가 있다.
 
 ## 보고
 

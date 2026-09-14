@@ -1,7 +1,7 @@
 /**
  * 화면이 시세의 나이를 다루는 규칙 검증 (`shared`의 순수 함수 둘).
  *
- * 프런트에는 시험 러너가 없어서 `riskRuleBlockers`·`settledRealized`처럼 판단을
+ * 프런트에는 시험 러너가 없어서 `settledRealized`처럼 판단을
  * `shared`의 순수 함수로 빼고 여기서 덮는다. 실계좌·장중이 아니면 화면으로 태워
  * 볼 수 없는 자리라 더 그렇다.
  *
@@ -79,7 +79,7 @@ describe('oldestFetchedAt', () => {
  * 화면 세 자리(헤더 칩·종목 정보 띠·하단 도크)가 이 판정으로 말한다.
  *
  * 실패 쪽은 실계좌·장중에도 화면으로 태우기 어렵다 — 502를 흉내 내야 나온다.
- * 그래서 `riskRuleBlockers`처럼 판정만 떼어 여기서 덮는다.
+ * 그래서 `settledRealized`처럼 판정만 떼어 여기서 덮는다.
  */
 describe('quoteFreshnessState', () => {
   const STALE_MS = 120_000;

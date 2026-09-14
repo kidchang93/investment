@@ -665,71 +665,6 @@ export const KRX_SESSION_MINUTES = {
 } as const;
 
 /**
- * 주문을 내기 전에 **화면이 미리 걸러 보는** 리스크 룰.
- *
- * **서버가 최종 판정자다**(`backend/src/db/riskRules.ts`의 `checkRiskRules`).
- * 이건 오발주를 줄이려고 같은 항목을 화면에서도 먼저 보는 것이고, 여기를
- * 통과했다고 주문이 나간다는 뜻이 아니다.
- *
- * **서버만 아는 것은 일부러 안 본다** — 거래 시간대·휴장일·오늘 누적 한도.
- * 화면이 흉내 내면 서버와 어긋난 순간 거짓말이 된다(`docs/CODE_STYLE.md`).
- * 그래서 이 함수는 서버 검사의 **부분집합**이다. 나중에 "빠졌다"고 채우지 말 것.
- *
- * 룰을 모르면 막힌 쪽에 둔다. 받아 둔 값이 있어도 마지막 조회가 실패했으면
- * 아는 것이 아니다 — 그 사이 룰이 조여졌으면 낡은 값으로 "괜찮습니다"라고
- * 말하게 된다.
- *
- * 수동 주문과 예약주문이 각자 따로 검사하다 예약주문 쪽이 통째로 빠져 있었다.
- * (자동매매도 자기 것을 따로 갖고 있는데, 그쪽은 검사 대상이 룰 자체라 다르다.)
- * 한 곳에서 만들어 둘 다 쓴다. 네 번째가 생겨도 여기만 부르면 된다.
- */
-export function riskRuleBlockers({
-  rules,
-  error,
-  symbol,
-  orderType,
-  quantity,
-  price,
-}: {
-  rules: RiskRuleSet | null;
-  error: string | null;
-  symbol: string | undefined;
-  /** 예약주문은 언제나 지정가다 */
-  orderType: OrderType;
-  quantity: number;
-  /** 금액 한도를 재는 데 쓸 단가. 시장가면 현재가로 어림한다(서버와 같은 방식) */
-  price: number;
-}): string[] {
-  if (!rules || error) {
-    return [
-      error
-        ? `리스크 룰을 확인하지 못했습니다. 확인 전에는 주문이 나가지 않습니다 (${error})`
-        : '리스크 룰을 확인하는 중입니다.',
-    ];
-  }
-
-  const blockers: string[] = [];
-  if (!rules.enabled) blockers.push('이 계좌는 리스크 룰에서 실주문이 꺼져 있습니다.');
-  if (orderType === 'market' && !rules.allowMarketOrder) {
-    blockers.push('이 계좌는 시장가 주문이 막혀 있습니다. 지정가로 내거나 리스크 룰을 고치세요.');
-  }
-  if (symbol) {
-    if (rules.symbolBlocklist.includes(symbol)) blockers.push(`차단 종목입니다 (${symbol}).`);
-    if (rules.symbolAllowlist.length > 0 && !rules.symbolAllowlist.includes(symbol)) {
-      blockers.push(`허용 종목 목록에 없습니다 (${symbol}). 허용: ${rules.symbolAllowlist.join(', ')}`);
-    }
-  }
-  if (Number.isFinite(quantity) && quantity > rules.maxOrderQuantity) {
-    blockers.push(`1회 주문 수량 한도 ${rules.maxOrderQuantity.toLocaleString('ko-KR')}주를 넘습니다.`);
-  }
-  const notional = price * quantity;
-  if (Number.isFinite(notional) && notional > rules.maxOrderNotional) {
-    blockers.push(`1회 주문 금액 한도 ${rules.maxOrderNotional.toLocaleString('ko-KR')}원을 넘습니다.`);
-  }
-  return blockers;
-}
-
-/**
  * KRX 하루 운영 구간.
  *
  * 예전에는 정규장(09:00~15:30)과 동시호가만 알았고 나머지는 전부 `장외`였다.
@@ -756,30 +691,6 @@ export function krxSessionKind(minutesOfDay: number): KrxSessionKind {
   if (minutesOfDay >= s.postOffHoursOpen && minutesOfDay < s.singlePriceOpen) return 'postOffHours';
   if (minutesOfDay >= s.singlePriceOpen && minutesOfDay < s.singlePriceClose) return 'singlePrice';
   return 'closed';
-}
-
-/** 동시호가 구간 종류. 정규장·장외면 null. */
-export type KrxAuctionWindow = 'pre' | 'close';
-
-/**
- * 지금이 동시호가 구간인지 **시계로** 판단한다.
- *
- * KIS 장운영 구분 코드가 더 정확하지만 호가를 받아야 알 수 있고, 호가는 주문
- * 패널이 열려 있을 때만 받는다(종목당 호출 1회). 장 상태 한 줄을 적자고
- * 관심목록 전체에 호출을 붙이면 `EGW00201`에 걸린다. 그래서 이 판정은 시계로
- * 하고, 호가를 이미 받아 둔 자리에서는 그 값을 쓴다.
- *
- * **왜 이걸 봐야 하는가**: 동시호가에는 연속 체결이 없어 현재가가 굳는다.
- * 2026-07-27 15:26:18에 `000660` 큰 글씨가 1,820,000원(+3.47%, 15:19:59에
- * 멈춤)인 동안 동시호가는 1,836,000원(+4.38%)에 지시되고 있었다 —
- * 16,000원 차이를 화면이 `정규장 거래 중`이라고만 적었다.
- */
-export function krxAuctionWindow(minutesOfDay: number): KrxAuctionWindow | null {
-  // 판정은 krxSessionKind 한 곳에서만 한다. 두 함수가 각자 경계를 들면 갈라진다.
-  const kind = krxSessionKind(minutesOfDay);
-  if (kind === 'preAuction') return 'pre';
-  if (kind === 'closeAuction') return 'close';
-  return null;
 }
 
 /**
@@ -1157,18 +1068,6 @@ export interface TradingFill {
   createdAt: number;
 }
 
-/** 현금 증감 원장 */
-export interface CashLedgerEntry {
-  id: string;
-  accountId: string;
-  orderId?: string;
-  amount: number;
-  balanceAfter: number;
-  currency: string;
-  reason: 'paper_buy' | 'paper_sell' | 'adjustment';
-  createdAt: number;
-}
-
 export interface TradingOverview {
   accounts: TradingAccount[];
   positions: Position[];
@@ -1454,8 +1353,7 @@ export interface BrokerTradeProfitSnapshot {
  * **수수료·세금·거래대금에는 쓰지 않는다.** 거래가 없었으면 그 셋은 정말로
  * 0원이다. 성질이 다르니 같이 지우지 않는다.
  *
- * 화면(App.tsx)이 아니라 여기 있는 이유는 `riskRuleBlockers`와 같다 — 시험으로
- * 경계를 못 박기 위해서다. 실계좌에 확정 매도가 한 건도 없어 **값이 있는 쪽을
+ * 화면(App.tsx)이 아니라 여기 있는 이유는 시험으로 경계를 못 박기 위해서다. 실계좌에 확정 매도가 한 건도 없어 **값이 있는 쪽을
  * 화면으로는 태울 수 없었다.**
  */
 export function settledRealized(profit: BrokerTradeProfitSnapshot): number | undefined {
@@ -1889,8 +1787,8 @@ export interface StrategySignal {
  * 쪽이 틀렸다.** 수수료 계산기가 쓰던 0.002가 지금 맞는 값이다. 출처 없이
  * 두 값 중 하나를 고르면 반은 틀린다는 걸 이 자리가 보여준다.
  *
- * 세율은 법으로 바뀐다. 바뀌면 이 값 하나만 고치면 주문 티켓·수수료 계산기·
- * 백테스트·신호 채점이 함께 따라온다.
+ * 세율은 법으로 바뀐다. 바뀌면 이 값 하나만 고치면 백테스트·후보 거르기가 함께
+ * 따라온다.
  */
 export const KR_SELL_TAX_RATE = 0.002;
 
@@ -1925,22 +1823,6 @@ export const KR_KONEX_SELL_TAX_RATE = 0.001;
  */
 export function isKrSellTaxExempt(instrument: Pick<Instrument, 'assetType'>): boolean {
   return instrument.assetType === 'etf';
-}
-
-/**
- * 이 종목을 팔 때 실제로 붙는 매도 세율.
- *
- * 주문 티켓·백테스트·후보 거르기가 같은 판단을 쓰도록 한 곳에 둔다.
- * 종목을 모르면(`undefined`) 면제를 가정하지 않고 일반 주식 세율로 둔다 —
- * 모르는 쪽은 비용이 큰 쪽에 둔다.
- */
-export function krSellTaxRate(
-  instrument: Pick<Instrument, 'assetType' | 'market'> | null | undefined,
-): number {
-  if (!instrument) return KR_SELL_TAX_RATE;
-  if (isKrSellTaxExempt(instrument)) return 0;
-  if (instrument.market === 'KONEX') return KR_KONEX_SELL_TAX_RATE;
-  return KR_SELL_TAX_RATE;
 }
 
 /**
