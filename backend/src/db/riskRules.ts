@@ -7,6 +7,7 @@ import {
 } from './orderUsage.js';
 import { config, marketOpenDayHint } from '../config.js';
 import { isDomesticMarketOpenDay } from '../kis/rest.js';
+import { kstMinutesOfDay, sessionMinutes } from '../trading/session.js';
 import type { OrderSide, OrderType, RiskRuleSet, RiskVerdict } from '@invest/shared';
 
 /**
@@ -228,28 +229,6 @@ export async function getTodayUsage(accountId: string): Promise<DailyOrderUsage>
   );
 }
 
-/** 'HH:MM' 문자열을 분 단위로. 형식이 깨지면 null. */
-function toMinutes(value: string): number | null {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
-  if (!match) return null;
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  if (hours > 23 || minutes > 59) return null;
-  return hours * 60 + minutes;
-}
-
-/** 지금이 KST 기준 몇 분인지. 서버 타임존과 무관해야 하므로 Intl로 뽑는다. */
-function kstNowMinutes(): number {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Seoul',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(new Date());
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return Number(values.hour) * 60 + Number(values.minute);
-}
-
 export interface RiskCheckInput {
   accountId: string;
   symbol: string;
@@ -349,12 +328,12 @@ export async function checkRiskRules(input: RiskCheckInput): Promise<RiskVerdict
   }
 
   if (!input.skipSessionCheck) {
-    const start = toMinutes(rules.sessionStart);
-    const end = toMinutes(rules.sessionEnd);
+    const start = sessionMinutes(rules.sessionStart);
+    const end = sessionMinutes(rules.sessionEnd);
     if (start === null || end === null) {
       violations.push('거래 시간 설정이 올바르지 않습니다 (HH:MM).');
     } else {
-      const now = kstNowMinutes();
+      const now = kstMinutesOfDay(new Date());
       if (now < start || now > end) {
         violations.push(`허용 시간(${rules.sessionStart}~${rules.sessionEnd}, KST) 밖입니다.`);
       }
