@@ -32,7 +32,7 @@
  *    여기서는 **적정가라는 잣대를 먼저 통과**해야 정정하고, 통과 못 하면 취소한다.
  *    근거가 사라진 주문을 걸어 두는 것이 더 위험하다.
  *
- *   npx tsx src/scripts/manageOpenOrders.ts [계좌id] [--execute] [--minutes 5]
+ *   npx tsx src/scripts/manageOpenOrders.ts [계좌id] [--execute]
  *     ★ `--execute` 없이는 **판정만** 한다.
  */
 
@@ -42,13 +42,12 @@ import { getKisAccount } from '../config.js';
 import { closeDb, pool } from '../db/client.js';
 import { getDomesticQuotes, getKisDomesticAmendableOrders } from '../kis/rest.js';
 import { markAgentActivity } from '../db/agentActivity.js';
+import { won } from '../notify/slack.js';
 
 /** 이만큼 지나도 안 붙으면 손댄다 */
-const DEFAULT_STALE_MINUTES = 5;
+const STALE_MINUTES = 5;
 /** 적정가가 이보다 오래되면 못 믿는다. 분석가가 5분마다 도므로 넉넉하다 */
 const FAIR_VALUE_MAX_AGE_MIN = 30;
-
-const won = (n: number): string => `${Math.round(n).toLocaleString('ko-KR')}원`;
 
 interface FairRow {
   symbol: string;
@@ -121,9 +120,7 @@ async function main(): Promise<void> {
   await markAgentActivity('sweeper', 'screening', '미체결을 살피는 중').catch(() => {});
   const args = process.argv.slice(2);
   const execute = args.includes('--execute');
-  const minArg = args.indexOf('--minutes');
-  const staleMinutes = minArg >= 0 ? Number(args[minArg + 1]) : DEFAULT_STALE_MINUTES;
-  const accountId = args.find((a) => !a.startsWith('--') && a !== String(staleMinutes)) ?? 'VTS-ORDINARY';
+  const accountId = args.find((a) => !a.startsWith('--')) ?? 'VTS-ORDINARY';
 
   const account = getKisAccount(accountId);
   if (!account) { console.error(`등록되지 않은 계좌: ${accountId}`); process.exitCode = 1; return; }
@@ -132,11 +129,11 @@ async function main(): Promise<void> {
   const stale = open.filter((o) => {
     const mins = minutesSince(o.orderDate, o.orderTime);
     // ★ 주문 시각을 모르면 **손대지 않는다.** 방금 낸 것일 수 있다.
-    return mins !== null && mins >= staleMinutes && o.amendableQuantity > 0;
+    return mins !== null && mins >= STALE_MINUTES && o.amendableQuantity > 0;
   });
 
   console.log(
-    `미체결 ${open.length}건 · ${staleMinutes}분 넘은 것 ${stale.length}건`
+    `미체결 ${open.length}건 · ${STALE_MINUTES}분 넘은 것 ${stale.length}건`
     + `${execute ? '' : '   [판정만 — 실제로 내려면 --execute]'}`,
   );
   if (stale.length === 0) return;
