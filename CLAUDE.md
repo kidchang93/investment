@@ -96,7 +96,7 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 | `PORT` | | 백엔드 포트 (기본 4000) |
 | `DATABASE_URL` | | 종목 마스터·매매 기록용 Postgres (기본 `postgresql://kis:kis_local@localhost:55432/kis`) |
 | `WATCHLIST` | | `005930:삼성전자,000660:SK하이닉스` 형식. 비우면 기본 감시목록 사용 |
-| `VITE_API_BASE` | | 프론트가 바라볼 백엔드 주소 (기본 `http://localhost:4000`) |
+| `VITE_API_BASE` | | 프론트가 바라볼 백엔드 주소. **비우는 것이 기본이다** — 같은 오리진을 부르고, `:4000`은 백엔드가 화면을 함께 내며 `npm run dev:web`(:5173)은 vite 프록시가 `/api`·`/stream`을 `:4000`으로 넘긴다(`frontend/vite.config.ts`). 백엔드에 CORS가 없으므로 **다른 오리진을 적으면 브라우저가 REST를 막는다** |
 | `SLACK_WEBHOOK_URL` | | 슬랙 Incoming Webhook. 넣으면 **손절 집행·경보·자동 주문**이 채널로 간다. 이 시스템은 사용자의 맥에서만 돌아 macOS 알림은 맥 앞에 있어야 보인다 — 자리를 비우면 손절이 나가도 모른다. **URL 자체가 자격증명이다**(가진 사람은 누구나 그 채널에 글을 쓴다). 없으면 조용히 안 보낸다 |
 
 ---

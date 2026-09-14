@@ -7,7 +7,6 @@ import {
 } from './automation/scheduler.js';
 import { getDeliberations } from './db/deliberations.js';
 import { getAgentActivities } from './db/agentActivity.js';
-import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
@@ -308,7 +307,6 @@ async function main(): Promise<void> {
   assertCredentials();
 
   const app = Fastify({ logger: true });
-  await app.register(cors, { origin: true });
   await ensureInstrumentSchema();
   await ensureDomesticAssetTypes();
   await ensureThemeSchema();
@@ -1906,7 +1904,8 @@ async function main(): Promise<void> {
    *   이유를 모르는 것이 가장 나쁘다 — `npm run build`를 하면 생긴다.
    *
    * ★ 개발 중에는 `npm run dev:web`(:5173)이 그대로 낫다(HMR). 그쪽은
-   *   `VITE_API_BASE`로 이 서버를 부르므로 둘이 공존한다.
+   *   vite 프록시(`frontend/vite.config.ts`)로 이 서버를 부르므로 둘이 공존한다.
+   *   화면은 늘 같은 오리진만 불러 CORS를 두지 않는다.
    */
   const webRoot = resolvePath(process.cwd(), process.cwd().endsWith('backend') ? '../frontend/dist' : 'frontend/dist');
   if (existsSync(webRoot)) {

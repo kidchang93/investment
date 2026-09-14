@@ -7,7 +7,8 @@
  *   확인해야 하고, 그것이 곧 명령어를 치는 일이 된다.
  *
  * `npm run dev:web`(:5173)도 같은 오리진을 부른다 — vite가 `/api`·`/stream`을
- * :4000으로 넘긴다(`vite.config.ts`). 다른 주소는 `VITE_API_BASE`로 덮는다.
+ * :4000으로 넘긴다(`vite.config.ts`). `VITE_API_BASE`로 덮을 수 있지만 백엔드에
+ * CORS가 없어 **다른 오리진을 적으면 브라우저가 REST를 막는다.**
  */
 export const API_BASE = (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '');
 
