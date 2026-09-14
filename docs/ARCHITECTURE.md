@@ -611,8 +611,8 @@ reversal 계열의 우위는 **상한**이다. ★ 그 종목들의 봉은 **아
 줄은 지우지 않고 `annotateWalkforwardDependencyNote()`가 그 사실만 `note`에 덧붙인다
 (`measureWalkForward.ts --annotate-legacy`, 줄 수는 안 늘어난다).
 
-후보에서 빠진 사유(`ScreeningVerdict`)는 **자동매매와 화면이 같은 함수**로 낸다 —
-`verdictFor(quote, elapsed, cash)`. 예전에는 `loadAutoTraderCandidates`와
+후보에서 빠진 사유(`ScreeningVerdict`)는 **화면과 측정 스크립트가 같은 함수**로 낸다 —
+`verdictFor(quote, elapsed, cash)`. 예전에는 러너의 `loadAutoTraderCandidates`와
 `runScreening`이 순서를 각자 들고 있어, 한쪽만 고치면 화면의 사유와 실행 기록의
 사유가 조용히 갈라졌다. 순서는 `noOrderBook` → `tooExpensive` → `illiquid` →
 `costHeavy`이고 근거는 `docs/DESIGN.md`의 「호가가 없는 종목」 절에 있다.
