@@ -3,14 +3,12 @@ import { STREAM_URL } from './config';
 import type {
   ClientMessage,
   ClientSubscribeInstrument,
-  OrderNotice,
   ServerMessage,
   Trade,
 } from '@invest/shared';
 
 const RECONNECT_MS = 3_000;
 const MAX_RECENT_TRADES = 80;
-const MAX_ORDER_NOTICES = 50;
 
 function assertNever(value: never): never {
   throw new Error(`처리하지 않은 스트림 메시지입니다: ${JSON.stringify(value)}`);
@@ -25,8 +23,6 @@ export interface StreamState {
   trades: Record<string, Trade>;
   /** 최근 체결 테이프. 하단 패널에서 최신순으로 보여준다. */
   recentTrades: Trade[];
-  /** 실시간 주문·체결 통보. 최신순. HTS ID가 없으면 항상 빈 배열이다. */
-  orderNotices: OrderNotice[];
   /** 상태/에러 메시지 (있을 때) */
   message?: string;
   /** 국내 종목 실시간 체결 구독 추가 */
@@ -43,7 +39,6 @@ export function useStream(): StreamState {
     socketOpen: false,
     trades: {},
     recentTrades: [],
-    orderNotices: [],
     subscribe: () => undefined,
   });
   // 재접속·언마운트 사이에서 소켓/타이머를 안전하게 정리하기 위한 ref
@@ -102,14 +97,9 @@ export function useStream(): StreamState {
             }));
             break;
           }
-          case 'orderNotice': {
-            const notice = msg.data;
-            setState((s) => ({
-              ...s,
-              orderNotices: [notice, ...s.orderNotices].slice(0, MAX_ORDER_NOTICES),
-            }));
+          // 주문·체결 통보는 화면이 쓰지 않는다. 유니언을 다 다뤄야 assertNever가 통과한다.
+          case 'orderNotice':
             break;
-          }
           case 'status':
             setState((s) => ({
               ...s,

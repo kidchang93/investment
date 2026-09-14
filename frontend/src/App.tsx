@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import {
   addWatchlistItem,
   createWatchlist,
@@ -337,9 +345,6 @@ const GLOSSARY: Record<string, string> = {
   '주식 평가': '보유 주식만 지금 값으로 계산한 금액입니다.',
   '평가 손익': '지금 팔면 생기는 이익이나 손실입니다. 팔기 전까지는 확정된 값이 아닙니다.',
   미체결: '주문은 냈지만 아직 사거나 팔리지 않은 것입니다. 값을 고치거나 취소할 수 있습니다.',
-  지정가: '살(팔) 값을 직접 정하는 주문입니다. 그 값이 와야 체결됩니다.',
-  시장가: '지금 시장에 나와 있는 값으로 바로 사고파는 주문입니다. 즉시 체결되지만 값을 고를 수 없습니다.',
-  예약주문: '장이 닫혀 있을 때 미리 넣어 두는 주문입니다. 다음 개장일에 나갑니다.',
   중앙값: '값을 순서대로 늘어놓았을 때 한가운데 오는 값입니다. 한 종목이 크게 튀어도 끌려가지 않습니다.',
   '거래대금 가중': '거래된 돈이 많은 종목의 등락률에 더 큰 무게를 준 평균입니다. 대형주 한 종목이 값을 좌우할 수 있습니다.',
   거래대금: '오늘 그 종목에서 사고팔린 금액의 합입니다. 거래량(주식 수)과 다릅니다.',
@@ -977,35 +982,36 @@ function isOrderableDomesticInstrument(instrument: Instrument | null): boolean {
   );
 }
 
-function readStoredValue<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
-  const value = window.localStorage.getItem(`${STORAGE_PREFIX}${key}`);
-  return allowed.includes(value as T) ? (value as T) : fallback;
-}
-
 /**
- * 허용 목록을 **마운트 시점에 알 수 없는** 값을 읽는다.
+ * localStorage에 저장되는 화면 상태. 바뀔 때마다 다시 쓴다.
  *
- * 종목 탐색 카테고리는 목록이 서버에서 온다(22개). `readStoredValue`처럼
- * 프론트에 배열을 박아 두면 서버가 카테고리를 늘릴 때마다 갈라진다. 그래서
- * 여기서는 검사 없이 읽고, **목록이 도착한 뒤에** 그 목록으로 걸러낸다.
+ * - boolean은 `'true'`/`'false'`만 읽고 나머지는 `fallback`.
+ * - 문자열은 `allowed`가 있으면 그 안의 값만 읽는다. **없으면 검사 없이 읽는다** —
+ *   종목 탐색 카테고리는 목록이 서버에서 와서(22개) 마운트 시점에 허용 목록을
+ *   알 수 없다. 프론트에 배열을 박아 두면 서버가 카테고리를 늘릴 때마다 갈라지므로
+ *   **목록이 도착한 뒤에** 부르는 쪽이 그 목록으로 걸러낸다.
  */
-function readStoredString(key: string, fallback: string): string {
-  return window.localStorage.getItem(`${STORAGE_PREFIX}${key}`) ?? fallback;
+function useStoredState<T extends string | boolean>(
+  key: string,
+  fallback: T,
+  allowed?: readonly T[],
+): [T, Dispatch<SetStateAction<T>>] {
+  const [value, setValue] = useState<T>(() => {
+    const stored = window.localStorage.getItem(`${STORAGE_PREFIX}${key}`);
+    if (typeof fallback === 'boolean') {
+      if (stored === 'true') return true as T;
+      if (stored === 'false') return false as T;
+      return fallback;
+    }
+    if (stored === null) return fallback;
+    return !allowed || allowed.includes(stored as T) ? (stored as T) : fallback;
+  });
+  useEffect(() => window.localStorage.setItem(`${STORAGE_PREFIX}${key}`, String(value)), [key, value]);
+  return [value, setValue];
 }
 
 /** 탐색 패널을 처음 열 때 보여줄 카테고리. 주문할 수 있는 국내 종목이 나온다. */
 const DEFAULT_DISCOVER_CATEGORY = 'kr-major';
-
-function readStoredBoolean(key: string, fallback: boolean): boolean {
-  const value = window.localStorage.getItem(`${STORAGE_PREFIX}${key}`);
-  if (value === 'true') return true;
-  if (value === 'false') return false;
-  return fallback;
-}
-
-function writeStoredValue(key: string, value: string | boolean): void {
-  window.localStorage.setItem(`${STORAGE_PREFIX}${key}`, String(value));
-}
 
 function isStoredInstrument(value: unknown): value is Instrument {
   if (!value || typeof value !== 'object') return false;
@@ -1895,9 +1901,7 @@ function InstrumentRow({
 export function App(): JSX.Element {
   const [watchlist, setWatchlist] = useState<Instrument[]>([]);
   const [savedWatchlists, setSavedWatchlists] = useState<WatchlistGroup[]>([]);
-  const [activeSavedWatchlistId, setActiveSavedWatchlistId] = useState(
-    () => window.localStorage.getItem(`${STORAGE_PREFIX}activeSavedWatchlistId`) ?? 'default',
-  );
+  const [activeSavedWatchlistId, setActiveSavedWatchlistId] = useStoredState<string>('activeSavedWatchlistId', 'default');
   const [categories, setCategories] = useState<InstrumentCategory[]>([]);
   /*
    * 탐색 패널 기본 카테고리.
@@ -1907,9 +1911,7 @@ export function App(): JSX.Element {
    * 종목 1개**만 보여준다 — 새로 열면 "탐색이 비어 있다"로 읽혔다(실측 `1개 후보`).
    * 국내 대표주로 연다.
    */
-  const [activeCategory, setActiveCategory] = useState<string>(() =>
-    readStoredString('activeCategory', DEFAULT_DISCOVER_CATEGORY),
-  );
+  const [activeCategory, setActiveCategory] = useStoredState<string>('activeCategory', DEFAULT_DISCOVER_CATEGORY);
   const [categoryItems, setCategoryItems] = useState<Instrument[]>([]);
   const [terminalItems, setTerminalItems] = useState<Instrument[]>([]);
   /** 터미널 지표 fetch가 끝났는지. 초기 종목을 고를 때 순서를 정하는 데 쓴다. */
@@ -1931,53 +1933,29 @@ export function App(): JSX.Element {
   const [activeSymbolResultIndex, setActiveSymbolResultIndex] = useState(0);
   const [isSymbolSearching, setIsSymbolSearching] = useState(false);
   const [hasSymbolSearchCompleted, setHasSymbolSearchCompleted] = useState(false);
-  const [range, setRange] = useState<RangeKey>(() =>
-    readStoredValue('range', '3M', RANGE_OPTIONS.map((option) => option.key)),
-  );
-  const [timeframe, setTimeframe] = useState<TimeframeKey>(() =>
-    readStoredValue('timeframe', '1D', TIMEFRAME_OPTIONS.map((option) => option.key)),
-  );
-  const [watchGroup, setWatchGroup] = useState<WatchGroup>(() =>
-    readStoredValue('watchGroup', 'all', WATCH_GROUP_OPTIONS.map((option) => option.key)),
-  );
-  const [moveFilter, setMoveFilter] = useState<MoveFilter>(() =>
-    readStoredValue('moveFilter', 'all', MOVE_FILTER_OPTIONS.map((option) => option.key)),
-  );
-  const [watchSort, setWatchSort] = useState<WatchSortKey>(() =>
-    readStoredValue('watchSort', 'custom', WATCH_SORT_OPTIONS.map((option) => option.key)),
-  );
+  const [range, setRange] = useStoredState<RangeKey>('range', '3M', RANGE_OPTIONS.map((option) => option.key));
+  const [timeframe, setTimeframe] = useStoredState<TimeframeKey>('timeframe', '1D', TIMEFRAME_OPTIONS.map((option) => option.key));
+  const [watchGroup, setWatchGroup] = useStoredState<WatchGroup>('watchGroup', 'all', WATCH_GROUP_OPTIONS.map((option) => option.key));
+  const [moveFilter, setMoveFilter] = useStoredState<MoveFilter>('moveFilter', 'all', MOVE_FILTER_OPTIONS.map((option) => option.key));
+  const [watchSort, setWatchSort] = useStoredState<WatchSortKey>('watchSort', 'custom', WATCH_SORT_OPTIONS.map((option) => option.key));
   const [chartCommand, setChartCommand] = useState<ChartCommand | undefined>(undefined);
-  const [showMovingAverage, setShowMovingAverage] = useState(() => readStoredBoolean('showMovingAverage', false));
-  const [showRsi, setShowRsi] = useState(() => readStoredBoolean('showRsi', false));
-  const [showPriceLevels, setShowPriceLevels] = useState(() => readStoredBoolean('showPriceLevels', false));
-  const [showComparePanel, setShowComparePanel] = useState(() => readStoredBoolean('showComparePanel', false));
-  const [isFocusMode, setIsFocusMode] = useState(() => readStoredBoolean('focusMode', false));
-  const [isCompactList, setIsCompactList] = useState(() => readStoredBoolean('compactList', false));
-  const [layoutPreset, setLayoutPreset] = useState<LayoutPreset>(() =>
-    readStoredValue('layoutPreset', 'balanced', LAYOUT_PRESET_OPTIONS.map((option) => option.key)),
-  );
-  const [isWatchlistCollapsed, setIsWatchlistCollapsed] = useState(() =>
-    readStoredBoolean('watchlistCollapsed', false),
-  );
+  const [showMovingAverage, setShowMovingAverage] = useStoredState<boolean>('showMovingAverage', false);
+  const [showRsi, setShowRsi] = useStoredState<boolean>('showRsi', false);
+  const [showPriceLevels, setShowPriceLevels] = useStoredState<boolean>('showPriceLevels', false);
+  const [showComparePanel, setShowComparePanel] = useStoredState<boolean>('showComparePanel', false);
+  const [isFocusMode, setIsFocusMode] = useStoredState<boolean>('focusMode', false);
+  const [isCompactList, setIsCompactList] = useStoredState<boolean>('compactList', false);
+  const [layoutPreset, setLayoutPreset] = useStoredState<LayoutPreset>('layoutPreset', 'balanced', LAYOUT_PRESET_OPTIONS.map((option) => option.key));
+  const [isWatchlistCollapsed, setIsWatchlistCollapsed] = useStoredState<boolean>('watchlistCollapsed', false);
   const [hoveredChartReadout, setHoveredChartReadout] = useState<ChartReadout | null>(null);
-  const [bottomDockTab, setBottomDockTab] = useState<BottomDockTab>(() =>
-    readStoredValue('bottomDockTab', 'volume', ['volume', 'trades', 'news', 'financials']),
-  );
-  const [bottomDockMode, setBottomDockMode] = useState<BottomDockMode>(() =>
-    readStoredValue('bottomDockMode', 'normal', BOTTOM_DOCK_MODE_OPTIONS.map((option) => option.key)),
-  );
-  const [activePage, setActivePage] = useState<AppPage>(() =>
-    readStoredValue('activePage', 'goal', APP_PAGE_OPTIONS.map((option) => option.key)),
-  );
+  const [bottomDockTab, setBottomDockTab] = useStoredState<BottomDockTab>('bottomDockTab', 'volume', ['volume', 'trades', 'news', 'financials']);
+  const [bottomDockMode, setBottomDockMode] = useStoredState<BottomDockMode>('bottomDockMode', 'normal', BOTTOM_DOCK_MODE_OPTIONS.map((option) => option.key));
+  const [activePage, setActivePage] = useStoredState<AppPage>('activePage', 'goal', APP_PAGE_OPTIONS.map((option) => option.key));
   const terminalTabsRef = useRef<HTMLElement | null>(null);
-  const [terminalTab, setTerminalTab] = useState<TerminalTab>(() =>
-    readStoredValue('terminalTab', 'overview', TERMINAL_TAB_OPTIONS.map((option) => option.key)),
-  );
+  const [terminalTab, setTerminalTab] = useStoredState<TerminalTab>('terminalTab', 'overview', TERMINAL_TAB_OPTIONS.map((option) => option.key));
   const [newsFilter, setNewsFilter] = useState<NewsFilter>('all');
   const [macroFilter, setMacroFilter] = useState<MacroFilter>('all');
-  const [sidePanelTab, setSidePanelTab] = useState<SidePanelTab>(() =>
-    readStoredValue('sidePanelTab', 'discover', SIDE_PANEL_OPTIONS.map((option) => option.key)),
-  );
+  const [sidePanelTab, setSidePanelTab] = useStoredState<SidePanelTab>('sidePanelTab', 'discover', SIDE_PANEL_OPTIONS.map((option) => option.key));
   const [kisAccounts, setKisAccounts] = useState<BrokerAccountRef[]>([]);
   const [kisAccountId, setKisAccountId] = useState<string | null>(null);
   /** 선택한 종목에서 우리가 실제로 체결한 자리. 차트 마커의 재료다 */
@@ -2097,24 +2075,6 @@ export function App(): JSX.Element {
   const selectedTrade =
     selectedInstrument?.country === 'KR' ? stream.trades[selectedInstrument.providerSymbol] : undefined;
 
-  useEffect(() => writeStoredValue('range', range), [range]);
-  useEffect(() => writeStoredValue('timeframe', timeframe), [timeframe]);
-  useEffect(() => writeStoredValue('watchGroup', watchGroup), [watchGroup]);
-  useEffect(() => writeStoredValue('moveFilter', moveFilter), [moveFilter]);
-  useEffect(() => writeStoredValue('watchSort', watchSort), [watchSort]);
-  useEffect(() => writeStoredValue('showMovingAverage', showMovingAverage), [showMovingAverage]);
-  useEffect(() => writeStoredValue('showRsi', showRsi), [showRsi]);
-  useEffect(() => writeStoredValue('showPriceLevels', showPriceLevels), [showPriceLevels]);
-  useEffect(() => writeStoredValue('showComparePanel', showComparePanel), [showComparePanel]);
-  useEffect(() => writeStoredValue('focusMode', isFocusMode), [isFocusMode]);
-  useEffect(() => writeStoredValue('compactList', isCompactList), [isCompactList]);
-  useEffect(() => writeStoredValue('layoutPreset', layoutPreset), [layoutPreset]);
-  useEffect(() => writeStoredValue('watchlistCollapsed', isWatchlistCollapsed), [isWatchlistCollapsed]);
-  useEffect(() => writeStoredValue('bottomDockTab', bottomDockTab), [bottomDockTab]);
-  useEffect(() => writeStoredValue('bottomDockMode', bottomDockMode), [bottomDockMode]);
-  useEffect(() => writeStoredValue('activePage', activePage), [activePage]);
-  useEffect(() => writeStoredValue('terminalTab', terminalTab), [terminalTab]);
-  useEffect(() => writeStoredValue('sidePanelTab', sidePanelTab), [sidePanelTab]);
 
   /*
    * ★ **선택한 종목에서 우리가 사고판 자리.** 차트에 화살표로 찍는다(2026-08-24).
@@ -2144,7 +2104,6 @@ export function App(): JSX.Element {
     };
   }, [selectedInstrument?.providerSymbol, selectedInstrument?.country, kisAccountId]);
 
-  useEffect(() => writeStoredValue('activeSavedWatchlistId', activeSavedWatchlistId), [activeSavedWatchlistId]);
   useEffect(() => writeStoredJson('recentInstruments', recentInstruments), [recentInstruments]);
   useEffect(() => setHoveredChartReadout(null), [range, selectedInstrument?.id, timeframe]);
 
@@ -2270,7 +2229,6 @@ export function App(): JSX.Element {
       .catch((e) => setError(toErrorMessage(e)));
   }, []);
 
-  useEffect(() => writeStoredValue('activeCategory', activeCategory), [activeCategory]);
 
   /*
    * 목록이 도착하면 저장된 카테고리가 아직 있는 값인지 본다.

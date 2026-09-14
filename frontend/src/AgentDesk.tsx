@@ -17,6 +17,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import type { AutomationStatus, AutomationTaskState } from '@invest/shared';
+
 import { getJson } from './api';
 import { formatHhmm, formatWon } from './format';
 
@@ -145,25 +147,6 @@ function PixelSprite({ id, size = 6, frame = 0 }: {
 }
 
 // ── 서버가 주는 것 ───────────────────────────────────────────────────────
-
-interface TaskState {
-  name: string;
-  label: string;
-  window: [number, number];
-  trading: boolean;
-  daily: boolean;
-  doneToday: boolean;
-  lastRunAt: string | null;
-  running: boolean;
-  inWindow: boolean;
-}
-
-interface AutomationStatus {
-  settings: { enabled: boolean; tradingEnabled: boolean };
-  ticking: boolean;
-  now: string;
-  tasks: TaskState[];
-}
 
 interface Decision {
   symbol: string;
@@ -304,7 +287,7 @@ const STANCE_LABEL: Record<Stance, string> = {
   loading: '확인 중',
 };
 
-function stanceOf(task: TaskState | undefined, status: AutomationStatus): Stance {
+function stanceOf(task: AutomationTaskState | undefined, status: AutomationStatus): Stance {
   if (!task) return 'off';
   if (!status.ticking || !status.settings.enabled) return 'off';
   if (task.trading && !status.settings.tradingEnabled) return 'off';

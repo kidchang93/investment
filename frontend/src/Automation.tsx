@@ -20,50 +20,10 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import type { AutomationStatus } from '@invest/shared';
+
 import { getJson, jsonBody, request } from './api';
 import { formatHhmm } from './format';
-
-interface TaskState {
-  name: string;
-  label: string;
-  window: [number, number];
-  trading: boolean;
-  daily: boolean;
-  everyMinutes?: number;
-  doneToday: boolean;
-  /**
-   * 백그라운드 작업이 **끝까지 갔나**. 백그라운드가 아니면 null이다.
-   *
-   * ★ `doneToday`는 백그라운드에서 **시작하자마자** 참이 된다(중복 실행을
-   *   막으려는 의도다). 그것만 보고 '오늘 함'이라 찍었더니 일봉 수집이
-   *   6거래일 중 4일 도중에 죽었는데도 화면은 계속 정상이었다(2026-09-10).
-   */
-  finishedToday: boolean | null;
-  lastRunAt: string | null;
-  running: boolean;
-  inWindow: boolean;
-  skipped: 'trading-off' | null;
-  noHeartbeat?: boolean;
-  background?: boolean;
-}
-
-interface RecentRun {
-  name: string;
-  startedAt: number;
-  finishedAt: number | null;
-  ok: boolean | null;
-  output: string;
-}
-
-interface AutomationStatus {
-  settings: { enabled: boolean; tradingEnabled: boolean };
-  ticking: boolean;
-  lastTickAt: number | null;
-  now: string;
-  weekday: number;
-  tasks: TaskState[];
-  recent: RecentRun[];
-}
 
 function timeLabel(ms: number): string {
   return new Date(ms).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });

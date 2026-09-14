@@ -1934,6 +1934,53 @@ export interface AutomationHeartbeat {
   note: string;
 }
 
+/**
+ * 스케줄러 작업 하나의 지금 상태 (`GET /api/automation/status`의 `tasks[]`).
+ *
+ * 화면(`Automation`·`AgentDesk`)이 읽는 칸만 적는다. 서버의 `TaskState`는 실행
+ * 명령 같은 칸을 더 들고 있다.
+ */
+export interface AutomationTaskState {
+  name: string;
+  label: string;
+  /** 실행 가능한 시각 창 `[시작, 끝]` (`HHMM` 정수). 끝은 포함하지 않는다 */
+  window: [number, number];
+  /** 새로 사고파는 일인가. 매매 스위치가 꺼지면 건너뛴다 */
+  trading: boolean;
+  /** 하루 한 번인가. `false`면 창 안에서 `everyMinutes`마다 돈다 */
+  daily: boolean;
+  everyMinutes?: number;
+  doneToday: boolean;
+  /**
+   * 백그라운드 작업이 **끝까지 갔나**. 백그라운드가 아니면 null이다.
+   *
+   * ★ `doneToday`는 백그라운드에서 **시작하자마자** 참이 된다(중복 실행을
+   *   막으려는 의도다). 그것만 보고 '오늘 함'이라 찍었더니 일봉 수집이
+   *   6거래일 중 4일 도중에 죽었는데도 화면은 계속 정상이었다(2026-09-10).
+   */
+  finishedToday: boolean | null;
+  /** 오늘 마지막으로 한 시각 `HH:MM` */
+  lastRunAt: string | null;
+  running: boolean;
+  inWindow: boolean;
+  /** 지금 모드에서 이 작업이 꺼져 있나 */
+  skipped: 'trading-off' | null;
+  noHeartbeat?: boolean;
+  background?: boolean;
+}
+
+export interface AutomationStatus {
+  settings: { enabled: boolean; tradingEnabled: boolean };
+  /** 스케줄러 루프가 살아 있나 */
+  ticking: boolean;
+  lastTickAt: number | null;
+  /** KST 지금 */
+  now: string;
+  weekday: number;
+  tasks: AutomationTaskState[];
+  recent: Array<{ name: string; startedAt: number; finishedAt: number | null; ok: boolean | null; output: string }>;
+}
+
 /** 지금 사람이 해야 할 일 하나. **없으면 없다고 적는다** */
 export interface TradingAlert {
   /**
