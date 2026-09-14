@@ -52,7 +52,7 @@ Postgres가 없으면 백엔드가 아예 안 뜬다(`ECONNREFUSED 127.0.0.1:554
 | 그 밖 (밤·주말·휴장일) | 1번으로 간다. 측정·구현·문서를 한다 |
 
 주말·공휴일 판정은 시계로 하지 않는다 — `GET /api/broker/kis/risk-rules`가 아니라
-러너의 회차 기록이나 `chk-holiday`가 답한다. **애매하면 서버에 물어본다.**
+`chk-holiday`(리스크 룰의 개장일 판정)가 답한다. **애매하면 서버에 물어본다.**
 
 ### 왜 이 절이 생겼나 (2026-08-05)
 
@@ -66,14 +66,14 @@ Postgres가 없으면 백엔드가 아예 안 뜬다(`ECONNREFUSED 127.0.0.1:554
 ### 아침 루틴 — 이 순서로
 
 1. **자동화가 도는지 본다.** `GET /api/automation/status` — `settings.enabled`·
-   `tradingEnabled`와 작업별 `doneToday`·`lastRunAt`. 러너는 영구 정지 상태이고
+   `tradingEnabled`와 작업별 `doneToday`·`lastRunAt`. 러너는 2026-09-07에 지웠고
    판단은 판단자 회차가 한다(`GET /api/deliberations?accountId=<id>`)
    - 꺼져 있거나 오늘 돌아야 할 작업이 안 돌았으면 **왜 그런지부터 본다**
      (`GET /api/trading/health`의 하트비트·경보)
 2. **뉴스**(`market-researcher`)와 **측정**(`data-analyst`)을 병렬로 띄운다.
    프롬프트에 어제까지의 확인된 사실을 넣는다 — 없으면 에이전트가 처음부터 찾는다
 3. **판단**(`quant-strategist`). *"오늘은 사지 마라"도 정당한 답이다.*
-4. **★판단을 러너 설정에 반영한다★** — 아래 절
+4. **★판단을 설정에 반영한다★** — 아래 절
 5. **누가 무엇을 왜 골랐는지 + 출처 URL**은 판단자 회차(`trading_deliberations`의
    `decisions`·`sources`)에 남는다. 사람이 손으로 정한 것도 그 회차로 남긴다
 
@@ -99,20 +99,25 @@ Postgres가 없으면 백엔드가 아예 안 뜬다(`ECONNREFUSED 127.0.0.1:554
 `POST /api/broker/kis/orders`가 같은 관문으로 건다. DB에 남아 **서버가 죽었다 떠도
 그대로다.**
 
-## 0-3. 장중에는 러너를 지켜본다
+## 0-3. 장중에는 주문 기록을 지켜본다
 
-측정을 하더라도 **회차 기록을 주기적으로 본다.** 2026-08-03~04에 장중 관측으로만
+측정을 하더라도 **나간 주문을 주기적으로 본다.** 2026-08-03~04에 장중 관측으로만
 잡힌 결함이 여섯이다 — 전액 몰빵 · 같은 종목 4회 매수 · 예수금 오인 · 매도를
 막던 한도 넷 · 미체결 매도 · 러너 자동 정지. **전부 장이 열려 주문이 실제로
-나가야 보였다.**
+나가야 보였다.** (그때 보던 러너 회차 기록 `trading_auto_runs`는 러너를 지운 뒤로
+새 행이 쌓이지 않는다.)
 
 ```sql
-SELECT to_char(created_at AT TIME ZONE 'Asia/Seoul','HH24:MI:SS'), left(message,120)
-FROM trading_auto_runs WHERE account_id='<id>' ORDER BY created_at DESC LIMIT 6;
+SELECT to_char(created_at AT TIME ZONE 'Asia/Seoul','HH24:MI:SS'), status, side, symbol, left(message,100)
+FROM trading_broker_orders WHERE account_id='<id>' ORDER BY created_at DESC LIMIT 10;
 ```
 
-**`backend/src`를 고치면 `tsx watch`가 서버를 재시작한다.** 러너는 자동 복구되지만
-그 사이 회차를 건너뛴다 — 장중 수정은 그 값을 치를 만한 것인지 보고 한다.
+판단자 회차는 `GET /api/deliberations?accountId=<id>`, 작업별 실행은 `GET /api/automation/status`다.
+
+**`backend/src`를 고치면 `tsx watch`가 서버를 재시작한다.** 스케줄러는 백엔드 안에서
+돌아 재시작하는 동안 매 분 손절 감시가 빠지고, 스케줄러가 띄운 백그라운드 작업(일봉
+수집)도 함께 죽는 것으로 보인다(`scripts/morning.sh`의 2026-09-10 기록) — 장중·수집 중
+수정은 그 값을 치를 만한 것인지 보고 한다.
 
 ## 1. 이번 바퀴를 고른다 — 이 순서로
 
@@ -163,7 +168,7 @@ FROM trading_auto_runs WHERE account_id='<id>' ORDER BY created_at DESC LIMIT 6;
 - 실제로 화면이 바뀌었는가 — `clientHeight`/`scrollHeight`까지
 - **막히는 쪽과 안 막히는 쪽을 둘 다 태웠는가.** 실계좌가 비어 있어(예수금 소액·보유 0종목·
   확정 매도 0건) **값이 있는 쪽을 화면으로 못 태우는 일이 잦다.** 그럴 땐 `shared`에 함수를
-  두고 시험으로 덮어라 — `riskRuleBlockers`·`settledRealized` 선례
+  두고 시험으로 덮어라 — `settledRealized`·`quoteFreshnessState` 선례
 - **계산한 값을 구성 요소로 검산했는가.** 이걸로 백테스트 버그를 잡았다 — 거래별 손익의 합이
   실제 현금 변화보다 정확히 매수 수수료만큼 컸다
 - **새로 넣은 시험이 어떤 조건으로 도는가.** 승률 시험이 `NO_COSTS`로 돌아서, 백테스트와
@@ -214,8 +219,9 @@ FROM trading_auto_runs WHERE account_id='<id>' ORDER BY created_at DESC LIMIT 6;
 - 더 돌려도 나아지지 않을 때 — **억지로 요구사항을 만들지 않는다.**
   "지금은 고칠 게 없다"가 정직한 결과일 수 있다
 - 사람의 판단이 필요한 갈림길에 닿았을 때. 대표적으로 **자동감시주문** — KIS 오픈API에
-  서버측 스탑로스가 없어 직접 폴링해야 하고, 그건 "러너는 재시작하면 멈춘다"는 의도된 결정과
-  부딪힌다. **이런 건 물어보고 멈춘다**
+  서버측 스탑로스가 없어 직접 폴링해야 한다. 지금은 백엔드 스케줄러가 손절을 매 분 폴링하지만
+  (`enforceStops.ts`) 백엔드가 꺼지면 함께 멈춘다 — 그 공백을 어떻게 메울지 같은 것은
+  **물어보고 멈춘다**
 
 ## 이 앱이 일부러 안 하는 것
 

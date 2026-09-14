@@ -388,7 +388,7 @@ zsh scripts/status.sh   # ── 주문이 어디로 나가나 ──
 
 | 무엇이 궁금한가 | 문서 |
 |---|---|
-| 웹 화면 사용법 (주문 티켓·차트·호가) | `docs/MANUAL.md` |
+| 웹 화면 사용법 (차트·계좌·안전 장치 — 화면에서 주문은 내지 않는다) | `docs/MANUAL.md` |
 | 사람이 정한 기준 (목표·층·자동화 범위) | `docs/USER_DECISIONS.md` |
 | 전략을 언제 무엇을 근거로 바꿀 수 있나 | `docs/STRATEGY_DISCIPLINE.md` |
 | 모듈 구조·데이터 흐름 | `docs/ARCHITECTURE.md` |

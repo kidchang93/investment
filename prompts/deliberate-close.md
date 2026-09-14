@@ -41,7 +41,7 @@
 
 ```
 cd backend
-npx tsx src/scripts/readBriefing.ts                  # 슬랙 브리핑·장중 시황
+npx tsx src/scripts/readBriefing.ts                  # 슬랙 정기 브리핑 (장중 시황은 9/3부터 안 옵니다)
 npx tsx src/scripts/deliberationState.ts <계좌id>     # 계좌·보유·지수·보유종목 뉴스
 npx tsx src/scripts/showFairValues.ts <계좌id>        # 분석가 적정가 표
 ```

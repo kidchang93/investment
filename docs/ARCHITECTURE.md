@@ -249,7 +249,7 @@ backend/src/trading/
 | 축 | 재는 것 | 받는 것 |
 |------|------|------|
 | 일봉 | `scripts/measureStrategies.ts` | 같은 스크립트 (그때그때 받는다) · 21년치는 `db/dailyBars.ts`(아래) |
-| **1분봉 — 러너가 도는 축** | `scripts/measureStrategiesIntraday.ts` | `scripts/collectMinuteCandles.ts` |
+| **1분봉 — 러너가 돌던 축** | `scripts/measureStrategiesIntraday.ts` | `scripts/collectMinuteCandles.ts` |
 
 분봉 쪽이 갈라져 있는 것은 종목·하루당 5회이기 때문이다. 20종목 × 15거래일이면
 1,500회다. 두 수집기 모두 **일봉 고가·저가와 대조해** 창을 놓친 날을 버리고, 버린
@@ -269,7 +269,7 @@ backend/src/trading/
 | 무엇 | 어떻게 | 왜 |
 |------|------|------|
 | 봉이 모자람 | 표본에서 **뺀다** | 신호가 날 수 없다. 성적이 아니라 잴 수 없는 조건이다 |
-| 현금으로 1주도 못 삼 | 표본에서 **뺀다** | 러너 자신의 후보 필터(`tooExpensive`)가 거르는 종목이다. 두면 `매매 0건 · 정확히 0.00%`가 되는데 전부 마이너스인 분포에서 0은 맨 위라 중앙값을 끌어올린다 |
+| 현금으로 1주도 못 삼 | 표본에서 **뺀다** | 후보 판정(`verdictFor`)의 `tooExpensive`가 거르는 종목이다. 두면 `매매 0건 · 정확히 0.00%`가 되는데 전부 마이너스인 분포에서 0은 맨 위라 중앙값을 끌어올린다 |
 | 매매 0건 · 미청산 | **세기만 한다** | 뺄지는 판단이 갈린다. 몇 건인지 안 보이는 것이 제일 나쁘다 |
 
 `Strategy.minBars`에 **하나를 더하는 것도 여기 한 곳**이다 — `backtest()`가 마지막
@@ -283,11 +283,11 @@ backend/src/trading/
 
 ```
 표집틀(DB 활성 국내 주식·ETF·ETN 전부)
-  → verdictFor로 거르기 (러너 자신의 필터)
+  → verdictFor로 거르기 (후보 판정과 같은 필터)
   → 거래대금 내림차순 5층 → 층마다 등간격으로 뽑기
 ```
 
-거래대금을 층의 기준으로 삼은 것은 그것이 **러너 자신이 보는 축**이라서다 —
+거래대금을 층의 기준으로 삼은 것은 그것이 **후보 판정이 보는 축**이라서다 —
 `screenQuote`의 `illiquid` 문턱이 거래대금이고, 체결 비용(스프레드 한 칸)이 갈리는
 축도 유동성이다. **층의 기준·층 수·층마다 몇 종목을 뽑았는지가 결과에 남는다.**
 표본이 무엇인지 모르면 그 중앙값은 읽을 수 없다.
@@ -492,7 +492,7 @@ scripts/measureWalkForward.ts  절차를 돌린다 (DB만, KIS 0회, 주문 없�
 판정문이 말하지 않아서** 생겼다. 판정문은 결론을 사람에게 넘기는 마지막 자리라
 여기가 틀리면 계산이 맞아도 결론이 틀린다. 스크립트 안 헬퍼로 두면 시험이 못
 덮으므로 순수 함수로 빼고 `walkForwardReport.test.ts`가 덮는다 —
-`riskRuleBlockers`·`settledRealized`와 같은 이유다.
+`settledRealized`·`quoteFreshnessState`와 같은 이유다.
 
 **두 결함이 이 구조를 정했다.**
 

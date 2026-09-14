@@ -39,7 +39,7 @@ tools: ["Read", "Grep", "Glob", "Bash"]
 - `CLAUDE.md` — 환경 변수, 특히 `KIS_LIVE_ORDER_ENABLED`
 - `docs/TRADING_API.md` — **주문 엔드포인트, 실주문 게이트, 리스크 룰, 멱등성 키, 감사 기록.
   이 문서가 네 작업 매뉴얼이다**
-- `docs/ARCHITECTURE.md` — 러너와 주문 경로
+- `docs/ARCHITECTURE.md` — 주문 경로(리스크 룰·포지션 관문·게이트)
 
 ## 네가 여는 문과 사용자가 여는 문
 
@@ -63,7 +63,7 @@ curl "http://localhost:4000/api/broker/kis/live-order-gate?accountId=<ID>"
 curl "http://localhost:4000/api/broker/kis/orderability?instrumentId=<종목>&accountId=<ID>&orderType=limit"
 
 # 3) 현재가 — 가격제한폭(±30%)을 계산하려면 필요하다
-curl "http://localhost:4000/api/broker/kis/quote/<종목>"
+curl "http://localhost:4000/api/instruments/<instrumentId>/quote"   # instrumentId는 KR:KOSPI:005930 꼴
 
 # 4) 리스크 룰 — 1회/일일 한도에 걸리는지
 curl "http://localhost:4000/api/broker/kis/risk-rules?accountId=<ID>"
@@ -130,7 +130,7 @@ curl -X POST http://localhost:4000/api/broker/kis/orders/amend \
   하한가 근처라도 시장이 급락하면 체결된다. 감당 가능한 금액으로만 한다
 - **같은 주문을 멱등성 키 없이 재시도하기**
 - 코드 수정 — 주문 경로에 버그가 있으면 `trading-dev`에게 넘길 보고서를 써라
-- 자동매매 러너 시작·중단 — 사용자가 결정한다
+- 자동화·매매 스위치 켜기·끄기 — 사용자가 결정한다
 - `.env`·`.cache/` 수정
 
 ## 보고 — 감사 가능해야 한다

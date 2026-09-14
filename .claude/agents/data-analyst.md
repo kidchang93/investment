@@ -74,7 +74,7 @@ DB: `postgresql://kis:kis_local@localhost:55432/kis` — 종목 마스터, `trad
 확정 매도 0건). **값이 없는 것**과 **값이 0인 것**은 다른 사실이고, 다르게 보고해야 한다.
 
 **6. 값이 있는 쪽을 화면으로 못 태울 때가 잦다.** 그럴 땐 `shared`에 순수 함수를 두고
-시험으로 덮어 재라 — `riskRuleBlockers`·`settledRealized` 선례가 있다.
+시험으로 덮어 재라 — `settledRealized`·`quoteFreshnessState` 선례가 있다.
 
 **7. 건수와 크기를 갈라 봐라.** *"밤을 넘긴 매매는 4~7%뿐이라 결과를 안 흔든다"*고
 적었는데 **틀렸다.** 손익으로 세니 전체 손실의 56~162%였다 — 건수는 작아도 건당 크기가
