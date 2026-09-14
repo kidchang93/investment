@@ -54,7 +54,6 @@ import {
 } from './trading/layers.js';
 import { ensureMarketSnapshotSchema } from './db/marketSnapshot.js';
 import { startDailySnapshot } from './trading/dailySnapshot.js';
-import { ensureSignalScoreSchema, getSignalScoreSummary } from './db/signalScores.js';
 import {
   claimClientOrderId,
   completeClaimedOrder,
@@ -334,7 +333,6 @@ async function main(): Promise<void> {
    * 뒤집었고(20일 기준선 +10.3% → −5.7%), 그걸 없애려면 이 자료가 필요하다.
    */
   startDailySnapshot((message) => app.log.info(message));
-  await ensureSignalScoreSchema();
   await seedDefaultWatchlist(WATCHLIST);
 
   // ── REST ────────────────────────────────────────────────
@@ -1900,25 +1898,6 @@ async function main(): Promise<void> {
    * 해외는 KIS 재무 API 대상이 아니다. 없는 것을 빈 배열로 주면 "재무가
    * 나쁘다"로 읽히므로 사유와 함께 404로 돌려준다.
    */
-  /*
-   * 신호 채점 누적 성적.
-   *
-   * 백테스트는 과거를 말하고 이 숫자는 실제로 낸 신호가 어땠는지를 말한다.
-   * 아직 채점된 신호가 없으면 빈 배열이 온다 — 화면은 그걸 0%로 채우지 말고
-   * `아직 채점된 신호가 없습니다`로 적어야 한다.
-   */
-  app.get<{ Querystring: { accountId?: string } }>('/api/trading/signal-scores', async (req, reply) => {
-    const account = resolveAccount(req.query.accountId);
-    if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
-    if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
-    try {
-      return await getSignalScoreSummary(account.id);
-    } catch (err) {
-      req.log.warn({ err, accountId: account.id }, '신호 채점 성적 조회 실패');
-      return reply.code(502).send({ message: '채점 성적을 조회하지 못했습니다.' });
-    }
-  });
-
   /*
    * 거래소 등락률 순위. **상위 30만 온다 — 전 종목이 아니다.**
    *

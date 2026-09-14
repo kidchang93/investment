@@ -390,8 +390,8 @@ db/dailyBars.ts               trading_daily_bars · trading_daily_bar_cursor
 쓰지 않고 `getDailyCandleWindow`(창 하나)로 직접 돈다. 60쪽을 통째로 안고 있으면
 중간에 소켓이 끊길 때 그때까지 받은 것이 전부 버려지고, **60쪽 안에 한 번이라도
 끊기는 종목은 영영 끝나지 않는다**(2026-08-11 실측: 네 쪽짜리에서도 끊겼다).
-`getDailyCandleHistory`의 기본값(5)은 화면 경로(`trading/scoring.ts`)가 쓰므로
-그대로 둔다 — 올리면 화면 한 번에 KIS 호출이 폭증한다.
+`getDailyCandleHistory`의 기본값(5)은 측정 스크립트들(`measureStrategies.ts`·
+`compareStrategies.ts`)이 기대고 있어 그대로 둔다.
 
 **다시 보내면 될 오류인지는 `kis/errorCodes.ts`가 가른다**(`isRetriableTransportError`).
 소켓 절단·5xx는 재시도하고, `EGW02006`처럼 그 서버에 없는 기능은 500으로 와도

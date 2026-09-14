@@ -67,9 +67,8 @@ import { DAILY_PAGE_CALENDAR_DAYS, getDailyCandleWindow, isRateLimitedError } fr
 /**
  * 한 종목에 받을 최대 페이지 수. 페이지가 130달력일이라 60쪽 = **21.4년**이다.
  *
- * ⚠ `getDailyCandleHistory`의 기본값(5)은 건드리지 않는다 — 화면 경로
- * (`trading/scoring.ts`)가 그 함수를 부르므로 기본값을 올리면 화면 한 번에
- * KIS 호출이 폭증한다. 여기서만 인자로 넘긴다.
+ * `getDailyCandleHistory`의 기본값(5)은 건드리지 않고 여기서만 인자로 넘긴다 —
+ * 그 함수를 부르는 측정 스크립트들이 기본값에 기대고 있다.
  */
 const DEFAULT_MAX_PAGES = 60;
 

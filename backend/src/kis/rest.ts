@@ -639,7 +639,7 @@ export const DAILY_PAGE_CALENDAR_DAYS = 130;
  * `UND_ERR_SOCKET`으로 끊었고, 60페이지 안에 한 번이라도 끊기면 그 종목은
  * 영영 끝나지 않는다. 그래서 수집기는 창 단위로 받아 **페이지마다** 재시도한다.
  *
- * 화면 경로는 그대로 `getDailyCandles`(1회)·`getDailyCandleHistory`(5회)를 쓴다.
+ * 화면 경로는 그대로 `getDailyCandles`(1회)를 쓴다.
  */
 export async function getDailyCandleWindow(
   code: string,
