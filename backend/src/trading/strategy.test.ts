@@ -10,10 +10,10 @@ import { describe, it } from 'node:test';
 
 import type { Candle, Instrument } from '@invest/shared';
 
-import { RUNNER_CANDLE_AXIS } from './runCandles.js';
 import {
   MeanReversionStrategy,
   MovingAverageCrossStrategy,
+  RUNNER_CANDLE_AXIS,
   VolatilityBreakoutStrategy,
   listStrategies,
   movingAverage,

@@ -10,13 +10,22 @@
 
 import type {
   Candle,
+  CandleAxis,
   Instrument,
   StrategyListResponse,
   StrategyMeasurement,
   StrategySignal,
 } from '@invest/shared';
 
-import { RUNNER_CANDLE_AXIS } from './runCandles.js';
+/**
+ * 러너(자동매매)가 전략에 넣던 봉 — 1분봉. 판정문 맨 앞의 축이고 분봉 축 측정
+ * (`scripts/measureStrategiesIntraday.ts`)이 이 값으로 잰다.
+ *
+ * 전략 판정문이 다른 축에서 잰 것이면 화면이 그 사실을 말해야 한다. 예전에는 축이
+ * 어디에도 값으로 없어서, 일봉으로 잰 판정문이 자동매매 시작 버튼 옆에 아무 표시
+ * 없이 떠 있었다.
+ */
+export const RUNNER_CANDLE_AXIS: CandleAxis = 'minute';
 
 /** 전략이 판단에 쓰는 재료. 러너가 채워서 넘긴다. */
 export interface StrategyContext {

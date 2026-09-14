@@ -48,9 +48,8 @@ import {
   emptySampleTally,
   sampleExclusion,
 } from '../trading/measurementSample.js';
-import { RUNNER_CANDLE_AXIS } from '../trading/runCandles.js';
 import { quantile } from '../trading/rangeExpansion.js';
-import { getStrategy, listStrategies } from '../trading/strategy.js';
+import { getStrategy, listStrategies, RUNNER_CANDLE_AXIS } from '../trading/strategy.js';
 import type { CollectSummary, MinuteDayRecord } from './collectMinuteCandles.js';
 
 const IN = process.argv[2] ?? process.env.MINUTE_OUT ?? '/tmp/minute-candles.jsonl';

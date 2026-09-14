@@ -1062,7 +1062,7 @@ NXT의 하루는 08:00~20:00이라 고저 범위가 구조적으로 넓다. 그�
 집계와 한도 판정은 `backend/src/db/orderUsage.ts`에 **순수 함수로 떼어 뒀다.** 질의에
 붙여 두면 시험할 수가 없다 — 이 표에 `submitted` 행이 0건이라(2026-08-01: 17행 전부
 `blocked`·`rejected`) DB를 조회해서는 이 계산이 맞는지 볼 방법이 없었기 때문이다.
-`quoteCache.ts`·`runCandles.ts`와 같은 방식이고, 시험은 `orderUsage.test.ts`에 있다.
+`quoteCache.ts`와 같은 방식이고, 시험은 `orderUsage.test.ts`에 있다.
 
 ## 자동매매 최소 보유 시간 — 리스크 룰이 아니다
 
