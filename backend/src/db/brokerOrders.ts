@@ -102,7 +102,14 @@ export async function ensureBrokerOrderSchema(): Promise<void> {
       order_type text,
       quantity numeric(24, 8),
       limit_price numeric(20, 6),
-      -- 시장가 주문의 판정 시점 추정 단가 (지정가에는 없다). 아래 ALTER의 주석 참고.
+      /*
+       * 시장가 주문의 판정 시점 추정 단가. 지정가 주문에는 비어 있다.
+       *
+       * limit_price에 넣지 않는다 — 그 컬럼은 "지정가 단가"라는 뜻이고, 거기 추정치를
+       * 넣으면 이 기록을 읽는 사람(화면의 "실계좌 주문 기록" 포함)이 지정가로 낸
+       * 주문이라고 오해한다. 리스크 룰의 일일 금액 한도는 이 값으로 센다(orderUsage.ts) —
+       * 예전에는 limit_price만 더해서 시장가 주문이 영원히 0원으로 잡혔다.
+       */
       estimated_price numeric(20, 6),
       order_no text,
       order_branch_no text,
@@ -112,18 +119,7 @@ export async function ensureBrokerOrderSchema(): Promise<void> {
       created_at timestamptz NOT NULL DEFAULT now()
     );
 
-    ALTER TABLE trading_broker_orders ADD COLUMN IF NOT EXISTS requested_instrument_id text;
     ALTER TABLE trading_broker_orders ADD COLUMN IF NOT EXISTS client_order_id text;
-
-    /*
-     * 시장가 주문의 판정 시점 추정 단가. 지정가 주문에는 비어 있다.
-     *
-     * limit_price에 넣지 않는다 — 그 컬럼은 "지정가 단가"라는 뜻이고, 거기 추정치를
-     * 넣으면 이 기록을 읽는 사람(화면의 "실계좌 주문 기록" 포함)이 지정가로 낸
-     * 주문이라고 오해한다. 리스크 룰의 일일 금액 한도는 이 값으로 센다(orderUsage.ts) —
-     * 예전에는 limit_price만 더해서 시장가 주문이 영원히 0원으로 잡혔다.
-     */
-    ALTER TABLE trading_broker_orders ADD COLUMN IF NOT EXISTS estimated_price numeric(20, 6);
 
     /*
      * 스톱가(스톱지정가 주문의 조건가격). 그 주문에만 값이 있다.
@@ -196,41 +192,46 @@ export async function recordBrokerOrderAttempt(attempt: BrokerOrderAttempt): Pro
     await pool.query(
       `
         INSERT INTO trading_broker_orders (
-          id, account_id, action, status, side, instrument_id, requested_instrument_id, symbol,
-          order_type, quantity, limit_price, estimated_price, stop_price, order_no, order_branch_no,
-          original_order_no, message, blockers, client_order_id, layer, currency, fx_to_krw
+          id, account_id, action, client_order_id, status, side, instrument_id, requested_instrument_id,
+          symbol, order_type, quantity, limit_price, estimated_price, stop_price, order_no, order_branch_no,
+          original_order_no, message, blockers, layer, currency, fx_to_krw
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19, $20, $21, $22)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22)
       `,
-      [
-        randomUUID(),
-        attempt.accountId,
-        attempt.action,
-        attempt.status,
-        attempt.side ?? null,
-        attempt.instrumentId ?? null,
-        attempt.requestedInstrumentId ?? attempt.instrumentId ?? null,
-        attempt.symbol ?? null,
-        attempt.orderType ?? null,
-        attempt.quantity ?? null,
-        attempt.limitPrice ?? null,
-        attempt.estimatedPrice ?? null,
-        attempt.stopPrice ?? null,
-        attempt.orderNo ?? null,
-        attempt.orderBranchNo ?? null,
-        attempt.originalOrderNo ?? null,
-        attempt.message,
-        JSON.stringify(attempt.blockers ?? []),
-        attempt.clientOrderId ?? null,
-        attempt.layer ?? null,
-        attempt.currency ?? null,
-        attempt.fxToKrw ?? null,
-      ],
+      [randomUUID(), attempt.accountId, attempt.action, attempt.clientOrderId ?? null, ...attemptValues(attempt)],
     );
     return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * 결과 칸들의 값. `recordBrokerOrderAttempt`의 INSERT와 `completeClaimedOrder`의 UPDATE가
+ * **같은 순서로** 쓴다 — 두 곳에 칸을 따로 적던 동안 한쪽만 늘어 멱등성 경로의 층이
+ * 빠진 적이 있다(2026-08-21). 칸을 더하면 여기와 두 SQL의 칸 목록을 함께 고친다.
+ */
+function attemptValues(attempt: Omit<BrokerOrderAttempt, 'accountId' | 'action' | 'clientOrderId'>): unknown[] {
+  return [
+    attempt.status,
+    attempt.side ?? null,
+    attempt.instrumentId ?? null,
+    attempt.requestedInstrumentId ?? attempt.instrumentId ?? null,
+    attempt.symbol ?? null,
+    attempt.orderType ?? null,
+    attempt.quantity ?? null,
+    attempt.limitPrice ?? null,
+    attempt.estimatedPrice ?? null,
+    attempt.stopPrice ?? null,
+    attempt.orderNo ?? null,
+    attempt.orderBranchNo ?? null,
+    attempt.originalOrderNo ?? null,
+    attempt.message,
+    JSON.stringify(attempt.blockers ?? []),
+    attempt.layer ?? null,
+    attempt.currency ?? null,
+    attempt.fxToKrw ?? null,
+  ];
 }
 
 /**
@@ -348,31 +349,7 @@ export async function completeClaimedOrder(
           blockers = $16::jsonb, layer = $17, currency = $18, fx_to_krw = $19
         WHERE client_order_id = $1
       `,
-      [
-        clientOrderId,
-        attempt.status,
-        attempt.side ?? null,
-        attempt.instrumentId ?? null,
-        attempt.requestedInstrumentId ?? attempt.instrumentId ?? null,
-        attempt.symbol ?? null,
-        attempt.orderType ?? null,
-        attempt.quantity ?? null,
-        attempt.limitPrice ?? null,
-        attempt.estimatedPrice ?? null,
-        attempt.stopPrice ?? null,
-        attempt.orderNo ?? null,
-        attempt.orderBranchNo ?? null,
-        attempt.originalOrderNo ?? null,
-        attempt.message,
-        JSON.stringify(attempt.blockers ?? []),
-        attempt.layer ?? null,
-        /*
-         * ★ 멱등성 경로도 통화·환율을 쓴다 — 이 UPDATE가 칸을 따로 적는 곳이라
-         *   여기서 빠지면 판단자·집행기(멱등성 키를 쓴다)의 해외 주문만 원화로 쌓인다.
-         */
-        attempt.currency ?? null,
-        attempt.fxToKrw ?? null,
-      ],
+      [clientOrderId, ...attemptValues(attempt)],
     );
     return true;
   } catch {

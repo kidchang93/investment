@@ -159,6 +159,74 @@ describe('감사 기록 — 스톱가는 지정가와 갈라서 남는다', () =
     assert.equal(records[0].stopPrice, 26_000);
   });
 
+  it('★ 전송 기록과 선점 완료가 모든 칸에 같은 값을 적는다 — 한쪽만 늘리면 층·통화가 빠진다', async (t) => {
+    if (!usable) return t.skip('DB에 붙지 못해 건너뜀');
+    const recordedKey = `test-${randomUUID()}`;
+    const claimedKey = `test-${randomUUID()}`;
+    const accountId = `test-map-${randomUUID()}`;
+    created.push(recordedKey, claimedKey);
+
+    const { rows: [instrument] } = await pool.query<{ id: string }>('SELECT id FROM instruments LIMIT 1');
+    const fields = {
+      status: 'rejected' as const,
+      message: '시험용 기록 — 주문은 보내지 않았습니다',
+      side: 'sell' as const,
+      instrumentId: instrument?.id,
+      requestedInstrumentId: 'REQ:원문',
+      symbol: '005930',
+      orderType: 'limit' as const,
+      quantity: 3,
+      limitPrice: 27_000,
+      estimatedPrice: 26_900,
+      stopPrice: 26_000,
+      orderNo: 'N-1',
+      orderBranchNo: 'B-1',
+      originalOrderNo: 'O-1',
+      blockers: ['사유1', '사유2'],
+      layer: 'bet',
+      currency: 'USD',
+      fxToKrw: 1_350.5,
+    };
+    assert.equal(await recordBrokerOrderAttempt({ accountId, action: 'amend', clientOrderId: recordedKey, ...fields }), true);
+    assert.equal(await claimClientOrderId(accountId, claimedKey, 'amend'), true);
+    assert.equal(await completeClaimedOrder(claimedKey, fields), true);
+
+    const { rows } = await pool.query<Record<string, unknown>>(
+      `SELECT client_order_id, account_id, action, status, side, instrument_id, requested_instrument_id,
+              symbol, order_type, quantity::float8 AS quantity, limit_price::float8 AS limit_price,
+              estimated_price::float8 AS estimated_price, stop_price::float8 AS stop_price, order_no,
+              order_branch_no, original_order_no, message, blockers, layer, currency,
+              fx_to_krw::float8 AS fx_to_krw
+         FROM trading_broker_orders WHERE client_order_id = ANY($1)`,
+      [[recordedKey, claimedKey]],
+    );
+    const byKey = new Map(rows.map(({ client_order_id: key, ...row }) => [key, row]));
+    const expected = {
+      account_id: accountId,
+      action: 'amend',
+      status: 'rejected',
+      side: 'sell',
+      instrument_id: instrument?.id ?? null,
+      requested_instrument_id: 'REQ:원문',
+      symbol: '005930',
+      order_type: 'limit',
+      quantity: 3,
+      limit_price: 27_000,
+      estimated_price: 26_900,
+      stop_price: 26_000,
+      order_no: 'N-1',
+      order_branch_no: 'B-1',
+      original_order_no: 'O-1',
+      message: '시험용 기록 — 주문은 보내지 않았습니다',
+      blockers: ['사유1', '사유2'],
+      layer: 'bet',
+      currency: 'USD',
+      fx_to_krw: 1_350.5,
+    };
+    assert.deepEqual(byKey.get(recordedKey), expected, '전송 기록');
+    assert.deepEqual(byKey.get(claimedKey), expected, '선점 완료');
+  });
+
   it('스톱가가 없는 주문에는 그 칸이 비어 있다 — 0으로 채우지 않는다', async (t) => {
     if (!usable) return t.skip('DB에 붙지 못해 건너뜀');
     const key = `test-${randomUUID()}`;
