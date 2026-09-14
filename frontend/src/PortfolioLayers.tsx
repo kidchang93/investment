@@ -16,7 +16,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import type { PortfolioLayerSummary, PortfolioLayersSnapshot } from '@invest/shared';
 
-import { API_BASE } from './config';
+import { getJson } from './api';
 
 function formatWon(value: number): string {
   return `${Math.round(value).toLocaleString('ko-KR')}원`;
@@ -83,9 +83,12 @@ export function PortfolioLayers({ accountId }: { accountId: string | null }): JS
     if (!accountId) return;
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/trading/layers?accountId=${encodeURIComponent(accountId)}`);
-      if (!response.ok) throw new Error(`3층 성과를 불러오지 못했습니다 (${response.status})`);
-      setSnapshot((await response.json()) as PortfolioLayersSnapshot);
+      setSnapshot(
+        await getJson<PortfolioLayersSnapshot>(
+          `/api/trading/layers?accountId=${encodeURIComponent(accountId)}`,
+          (status) => `3층 성과를 불러오지 못했습니다 (${status})`,
+        ),
+      );
       // 성공하면 오류를 지운다 — 일시적 실패가 저절로 낫는다.
       setError(null);
     } catch (err) {

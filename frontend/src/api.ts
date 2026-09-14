@@ -1,54 +1,69 @@
 import { API_BASE } from './config';
 import type {
-  AmendLiveOrderRequest,
-  CancelReservedOrderRequest,
-  PlaceReservedOrderRequest,
   BrokerAccountRef,
   BrokerAccountSnapshot,
-  BrokerAmendableOrder,
-  BrokerListSnapshot,
   BrokerOrderRecord,
-  BrokerReservedOrder,
-  BrokerSellability,
   BrokerTradeProfitSnapshot,
   LiveOrderGate,
-  PlaceLiveOrderRequest,
-  PlaceLiveOrderResult,
   RiskRuleSet,
   BrokerExecutionSnapshot,
-  BrokerOrderability,
   CandlesResponse,
   ChartTradeMark,
-  CreateOrderRequest,
-  CreateOrderResponse,
   ExchangeRate,
   FinancialSnapshot,
   Instrument,
   InstrumentCategory,
   MarketMoversSnapshot,
   NewsItem,
-  OrderBook,
-  OrderType,
-  SignalScoreSummary,
   Quote,
   ScreeningResult,
   ThemeList,
   ThemePulseBatch,
-  TradingOverview,
-  WatchItem,
   WatchlistGroup,
 } from '@invest/shared';
 
-export async function fetchWatchlist(): Promise<WatchItem[]> {
-  const res = await fetch(`${API_BASE}/api/watchlist`);
-  if (!res.ok) throw new Error(`watchlist 조회 실패: ${res.status}`);
-  return res.json();
+interface RequestOptions {
+  init?: RequestInit;
+  /** 실패하면 서버가 보낸 `message`를 먼저 쓴다. 없으면 `failure(status)` */
+  serverMessage?: boolean;
 }
 
-export async function fetchCandles(code: string): Promise<CandlesResponse> {
-  const res = await fetch(`${API_BASE}/api/candles/${code}`);
-  if (!res.ok) throw new Error(`candles 조회 실패: ${res.status}`);
-  return res.json();
+/**
+ * fetch → 실패면 던진다. 화면이 부르는 REST는 전부 이 길을 탄다.
+ *
+ * 실패 문구는 부르는 쪽이 상태 코드로 짓는다(`failure`). 자리마다 문구 형식이
+ * 달라(`…: 502` · `… (HTTP 502)` · `… (502)`) 하나로 묶으면 화면 글이 바뀐다.
+ * `serverMessage`도 같은 이유로 원래 서버 message를 읽던 자리에서만 켠다.
+ */
+export async function request(
+  path: string,
+  failure: (status: number) => string,
+  { init, serverMessage = false }: RequestOptions = {},
+): Promise<Response> {
+  const res = await fetch(`${API_BASE}${path}`, init);
+  if (res.ok) return res;
+  const message = serverMessage
+    ? ((await res.json().catch(() => ({}))) as { message?: string }).message
+    : undefined;
+  throw new Error(message ?? failure(res.status));
+}
+
+export async function getJson<T>(
+  path: string,
+  failure: (status: number) => string,
+  options?: RequestOptions,
+): Promise<T> {
+  return (await request(path, failure, options)).json() as Promise<T>;
+}
+
+/** JSON 본문을 싣는 요청 */
+export function jsonBody(body: unknown, method = 'POST'): RequestInit {
+  return { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
+}
+
+/** accountId를 생략하면 서버 기본 계좌를 쓴다. */
+function accountQuery(accountId?: string): string {
+  return accountId ? `?accountId=${encodeURIComponent(accountId)}` : '';
 }
 
 /**
@@ -63,100 +78,27 @@ export async function fetchTradeMarks(
 ): Promise<ChartTradeMark[]> {
   const query = new URLSearchParams({ symbol });
   if (accountId) query.set('accountId', accountId);
-  const res = await fetch(`${API_BASE}/api/trading/trade-marks?${query.toString()}`);
-  if (!res.ok) throw new Error(`매매 표시 조회 실패: ${res.status}`);
-  const body = (await res.json()) as { marks?: ChartTradeMark[] };
+  const body = await getJson<{ marks?: ChartTradeMark[] }>(
+    `/api/trading/trade-marks?${query.toString()}`,
+    (status) => `매매 표시 조회 실패: ${status}`,
+  );
   return body.marks ?? [];
 }
 
-export async function fetchQuote(code: string): Promise<Quote> {
-  const res = await fetch(`${API_BASE}/api/quote/${code}`);
-  if (!res.ok) throw new Error(`quote 조회 실패: ${res.status}`);
-  return res.json();
+export function fetchKisAccounts(): Promise<BrokerAccountRef[]> {
+  return getJson('/api/broker/kis/accounts', (status) => `KIS 계좌 목록 조회 실패: ${status}`);
 }
 
-export async function fetchTradingOverview(): Promise<TradingOverview> {
-  const res = await fetch(`${API_BASE}/api/trading/overview`);
-  if (!res.ok) throw new Error(`매매 개요 조회 실패: ${res.status}`);
-  return res.json();
+export function fetchKisAccountSnapshot(accountId?: string): Promise<BrokerAccountSnapshot> {
+  return getJson(`/api/broker/kis/account${accountQuery(accountId)}`, (status) => `KIS 계좌 조회 실패: ${status}`);
 }
 
-export async function fetchKisAccounts(): Promise<BrokerAccountRef[]> {
-  const res = await fetch(`${API_BASE}/api/broker/kis/accounts`);
-  if (!res.ok) throw new Error(`KIS 계좌 목록 조회 실패: ${res.status}`);
-  return res.json();
-}
-
-export async function fetchKisAccountSnapshot(accountId?: string): Promise<BrokerAccountSnapshot> {
-  const res = await fetch(`${API_BASE}/api/broker/kis/account${accountQuery(accountId)}`);
-  if (!res.ok) throw new Error(`KIS 계좌 조회 실패: ${res.status}`);
-  return res.json();
-}
-
-/** accountId를 생략하면 서버 기본 계좌를 쓴다. */
-function accountQuery(accountId?: string): string {
-  return accountId ? `?accountId=${encodeURIComponent(accountId)}` : '';
-}
-
-export async function fetchKisExecutions(days?: number, accountId?: string): Promise<BrokerExecutionSnapshot> {
+export function fetchKisExecutions(days?: number, accountId?: string): Promise<BrokerExecutionSnapshot> {
   const params = new URLSearchParams();
   if (days !== undefined && Number.isFinite(days)) params.set('days', String(days));
   if (accountId) params.set('accountId', accountId);
   const suffix = params.size > 0 ? `?${params.toString()}` : '';
-  const res = await fetch(`${API_BASE}/api/broker/kis/executions${suffix}`);
-  if (!res.ok) throw new Error(`KIS 체결내역 조회 실패: ${res.status}`);
-  return res.json();
-}
-
-export async function fetchKisOrderability(
-  instrumentId: string,
-  orderType: OrderType,
-  price?: number,
-  accountId?: string,
-): Promise<BrokerOrderability> {
-  const params = new URLSearchParams({ instrumentId, orderType });
-  // 시장가는 단가 없이 조회해야 브로커가 최대 수량을 제대로 계산한다.
-  if (orderType === 'limit' && price !== undefined && Number.isFinite(price) && price > 0) {
-    params.set('price', String(Math.floor(price)));
-  }
-  if (accountId) params.set('accountId', accountId);
-  const res = await fetch(`${API_BASE}/api/broker/kis/orderability?${params.toString()}`);
-  if (!res.ok) throw new Error(`KIS 매수가능금액 조회 실패: ${res.status}`);
-  return res.json();
-}
-
-export async function fetchKisSellability(
-  instrumentId: string,
-  accountId?: string,
-): Promise<BrokerSellability> {
-  const params = new URLSearchParams({ instrumentId });
-  if (accountId) params.set('accountId', accountId);
-  const res = await fetch(`${API_BASE}/api/broker/kis/sellability?${params.toString()}`);
-  if (!res.ok) throw new Error(`KIS 매도가능수량 조회 실패: ${res.status}`);
-  return res.json();
-}
-
-/*
- * 두 조회는 **모의 서버에 아예 없는 기능**이다(`EGW02006`). 그래서 목록과 함께
- * `unavailable`이 올 수 있고, 그건 오류가 아니라 이 환경의 사실이다.
- *
- * 예전에는 성공이 배열, 실패가 `{message}`라 모양이 갈렸다. 읽는 쪽이 실패를
- * 빈 목록으로 착각하기 딱 좋았고 실제로 그런 오독이 났다.
- */
-export async function fetchKisOpenOrders(
-  accountId?: string,
-): Promise<BrokerListSnapshot<BrokerAmendableOrder>> {
-  const res = await fetch(`${API_BASE}/api/broker/kis/open-orders${accountQuery(accountId)}`);
-  if (!res.ok) throw new Error(`KIS 미체결 주문 조회 실패: ${res.status}`);
-  return res.json();
-}
-
-export async function fetchKisReservedOrders(
-  accountId?: string,
-): Promise<BrokerListSnapshot<BrokerReservedOrder>> {
-  const res = await fetch(`${API_BASE}/api/broker/kis/reserved-orders${accountQuery(accountId)}`);
-  if (!res.ok) throw new Error(`KIS 예약주문 조회 실패: ${res.status}`);
-  return res.json();
+  return getJson(`/api/broker/kis/executions${suffix}`, (status) => `KIS 체결내역 조회 실패: ${status}`);
 }
 
 /**
@@ -166,149 +108,47 @@ export async function fetchKisReservedOrders(
  * 배열만 와서, 화면이 `50건`을 보여주면서 그게 전부인지 잘린 것인지 말할
  * 방법이 없었다.
  */
-export async function fetchKisOrderLog(
+export function fetchKisOrderLog(
   accountId?: string,
 ): Promise<{ records: BrokerOrderRecord[]; hasMore: boolean }> {
-  const res = await fetch(`${API_BASE}/api/broker/kis/order-log${accountQuery(accountId)}`);
-  if (!res.ok) throw new Error(`실주문 기록 조회 실패: ${res.status}`);
-  return res.json();
+  return getJson(`/api/broker/kis/order-log${accountQuery(accountId)}`, (status) => `실주문 기록 조회 실패: ${status}`);
 }
 
-/**
- * 예약주문 취소. KIS가 요구하는 예약주문조직번호는 등록·조회 응답에 없어 비워 보낸다.
- * 실패하면 KIS HTS/MTS 앱에서 직접 취소해야 한다.
- */
-export async function cancelKisReservedOrder(
-  request: CancelReservedOrderRequest,
-): Promise<{ accepted: boolean; processed: boolean; message: string }> {
-  const res = await fetch(`${API_BASE}/api/broker/kis/reserved-orders/cancel`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(request),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(String((body as { message?: string }).message ?? `예약주문 취소 실패: ${res.status}`));
-  return body as { accepted: boolean; processed: boolean; message: string };
-}
-
-export async function placeKisReservedOrder(
-  request: PlaceReservedOrderRequest,
-): Promise<{ accepted: boolean; reservationSeq: string; message: string }> {
-  const res = await fetch(`${API_BASE}/api/broker/kis/reserved-orders`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(request),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(String((body as { message?: string }).message ?? `예약주문 등록 실패: ${res.status}`));
-  return body as { accepted: boolean; reservationSeq: string; message: string };
-}
-
-export async function fetchKisTradeProfit(accountId?: string, days?: number): Promise<BrokerTradeProfitSnapshot> {
+export function fetchKisTradeProfit(accountId?: string, days?: number): Promise<BrokerTradeProfitSnapshot> {
   const params = new URLSearchParams();
   if (accountId) params.set('accountId', accountId);
   if (days !== undefined && Number.isFinite(days)) params.set('days', String(days));
   const suffix = params.size > 0 ? `?${params.toString()}` : '';
-  const res = await fetch(`${API_BASE}/api/broker/kis/trade-profit${suffix}`);
-  if (!res.ok) throw new Error(`기간별 매매손익 조회 실패: ${res.status}`);
-  return res.json();
+  return getJson(`/api/broker/kis/trade-profit${suffix}`, (status) => `기간별 매매손익 조회 실패: ${status}`);
 }
 
-export async function fetchKisRiskRules(accountId?: string): Promise<RiskRuleSet> {
-  const res = await fetch(`${API_BASE}/api/broker/kis/risk-rules${accountQuery(accountId)}`);
-  if (!res.ok) throw new Error(`리스크 룰 조회 실패: ${res.status}`);
-  return res.json();
+export function fetchKisRiskRules(accountId?: string): Promise<RiskRuleSet> {
+  return getJson(`/api/broker/kis/risk-rules${accountQuery(accountId)}`, (status) => `리스크 룰 조회 실패: ${status}`);
 }
 
 /** 부분 수정. 서버가 현재 값과 병합한 뒤 유효성을 다시 본다. */
-export async function updateKisRiskRules(
-  rules: Partial<RiskRuleSet>,
-  accountId?: string,
-): Promise<RiskRuleSet> {
-  const res = await fetch(`${API_BASE}/api/broker/kis/risk-rules${accountQuery(accountId)}`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(rules),
+export function updateKisRiskRules(rules: Partial<RiskRuleSet>, accountId?: string): Promise<RiskRuleSet> {
+  return getJson(`/api/broker/kis/risk-rules${accountQuery(accountId)}`, (status) => `리스크 룰 저장 실패: ${status}`, {
+    init: jsonBody(rules, 'PUT'),
+    serverMessage: true,
   });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(String((body as { message?: string }).message ?? `리스크 룰 저장 실패: ${res.status}`));
-  return body as RiskRuleSet;
 }
 
-export async function fetchKisLiveOrderGate(): Promise<LiveOrderGate> {
-  const res = await fetch(`${API_BASE}/api/broker/kis/live-order-gate`);
-  if (!res.ok) throw new Error(`실주문 게이트 조회 실패: ${res.status}`);
-  return res.json();
+export function fetchKisLiveOrderGate(): Promise<LiveOrderGate> {
+  return getJson('/api/broker/kis/live-order-gate', (status) => `실주문 게이트 조회 실패: ${status}`);
 }
 
-/**
- * 실계좌 주문 전송. 서버 게이트가 열려 있고 리스크 룰을 통과해야 접수된다.
- * paper 주문(`createOrder`)과 의도적으로 분리된 경로다.
- */
-export async function placeKisLiveOrder(request: PlaceLiveOrderRequest): Promise<PlaceLiveOrderResult> {
-  const res = await fetch(`${API_BASE}/api/broker/kis/orders`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(request),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(String((body as { message?: string }).message ?? `실주문 전송 실패: ${res.status}`));
-  return body as PlaceLiveOrderResult;
+export function fetchUsdKrwExchangeRate(): Promise<ExchangeRate> {
+  return getJson('/api/exchange-rates/usd-krw', (status) => `USD/KRW 환율 조회 실패: ${status}`);
 }
 
-export async function amendKisLiveOrder(request: AmendLiveOrderRequest): Promise<{ accepted: boolean; message: string }> {
-  const res = await fetch(`${API_BASE}/api/broker/kis/orders/amend`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(request),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(String((body as { message?: string }).message ?? `정정·취소 실패: ${res.status}`));
-  return body as { accepted: boolean; message: string };
-}
-
-export async function fetchUsdKrwExchangeRate(): Promise<ExchangeRate> {
-  const res = await fetch(`${API_BASE}/api/exchange-rates/usd-krw`);
-  if (!res.ok) throw new Error(`USD/KRW 환율 조회 실패: ${res.status}`);
-  return res.json();
-}
-
-export async function createOrder(request: CreateOrderRequest): Promise<CreateOrderResponse> {
-  const res = await fetch(`${API_BASE}/api/trading/orders`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(request),
-  });
-  if (!res.ok) throw new Error(`주문 생성 실패: ${res.status}`);
-  return res.json();
-}
-
-export async function searchInstruments(query: string): Promise<Instrument[]> {
+export function searchInstruments(query: string): Promise<Instrument[]> {
   const params = new URLSearchParams({ q: query });
-  const res = await fetch(`${API_BASE}/api/instruments/search?${params.toString()}`);
-  if (!res.ok) throw new Error(`종목 검색 실패: ${res.status}`);
-  return res.json();
+  return getJson(`/api/instruments/search?${params.toString()}`, (status) => `종목 검색 실패: ${status}`);
 }
 
-export async function fetchInstrumentCandles(id: string): Promise<CandlesResponse> {
-  const res = await fetch(`${API_BASE}/api/instruments/${encodeURIComponent(id)}/candles`);
-  if (!res.ok) throw new Error(`종목 차트 조회 실패: ${res.status}`);
-  return res.json();
-}
-
-/**
- * 자동매매 신호 채점 성적.
- *
- * 아직 채점된 신호가 없으면 빈 배열이 온다. 화면은 그걸 0%로 채우지 말고
- * 아직 없다고 적어야 한다 — 빈 성적표와 0점은 다르다.
- */
-export async function fetchSignalScores(accountId?: string): Promise<SignalScoreSummary[]> {
-  const res = await fetch(`${API_BASE}/api/trading/signal-scores${accountQuery(accountId)}`);
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { message?: string };
-    throw new Error(body.message ?? `채점 성적 조회 실패: ${res.status}`);
-  }
-  return res.json();
+export function fetchInstrumentCandles(id: string): Promise<CandlesResponse> {
+  return getJson(`/api/instruments/${encodeURIComponent(id)}/candles`, (status) => `종목 차트 조회 실패: ${status}`);
 }
 
 /**
@@ -319,12 +159,12 @@ export async function fetchSignalScores(accountId?: string): Promise<SignalScore
  * 구별해야 한다.
  */
 export async function fetchScreening(accountId?: string): Promise<ScreeningResult | null> {
-  const res = await fetch(`${API_BASE}/api/trading/screening${accountQuery(accountId)}`);
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { message?: string };
-    throw new Error(body.message ?? `후보 거르기 조회 실패: ${res.status}`);
-  }
-  return ((await res.json()) as { result: ScreeningResult | null }).result;
+  const body = await getJson<{ result: ScreeningResult | null }>(
+    `/api/trading/screening${accountQuery(accountId)}`,
+    (status) => `후보 거르기 조회 실패: ${status}`,
+    { serverMessage: true },
+  );
+  return body.result;
 }
 
 /**
@@ -333,37 +173,30 @@ export async function fetchScreening(accountId?: string): Promise<ScreeningResul
  * 종목을 하나도 못 찾은 테마는 `emptyThemes`로 갈라져 온다. 지워서 오지 않는
  * 이유는 이 목록이 낡았다는 사실 자체이기 때문이다.
  */
-export async function fetchThemes(): Promise<ThemeList> {
-  const res = await fetch(`${API_BASE}/api/themes`);
-  if (!res.ok) throw new Error(`테마 목록 조회 실패: ${res.status}`);
-  return res.json();
+export function fetchThemes(): Promise<ThemeList> {
+  return getJson('/api/themes', (status) => `테마 목록 조회 실패: ${status}`);
 }
 
 /**
  * 테마들의 지금 등락률. **사용자가 누를 때만 부를 것** — 30종목마다 시세 조회
  * 1회가 나간다. 실제로 몇 회가 나갔는지는 응답의 `quoteCalls`에 온다.
  */
-export async function fetchThemePulses(codes: string[]): Promise<ThemePulseBatch> {
-  const res = await fetch(`${API_BASE}/api/themes/pulse?codes=${encodeURIComponent(codes.join(','))}`);
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { message?: string };
-    throw new Error(body.message ?? `테마 등락률 조회 실패: ${res.status}`);
-  }
-  return res.json();
+export function fetchThemePulses(codes: string[]): Promise<ThemePulseBatch> {
+  return getJson(
+    `/api/themes/pulse?codes=${encodeURIComponent(codes.join(','))}`,
+    (status) => `테마 등락률 조회 실패: ${status}`,
+    { serverMessage: true },
+  );
 }
 
 /** 다시 훑는다. **사용자가 누를 때만 부를 것** — 종목 수만큼 KIS 호출이 나간다. */
 export async function runScreening(accountId?: string, lookups?: number): Promise<ScreeningResult> {
-  const res = await fetch(`${API_BASE}/api/trading/screening/run`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ accountId, lookups }),
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { message?: string };
-    throw new Error(body.message ?? `후보 거르기 실행 실패: ${res.status}`);
-  }
-  return ((await res.json()) as { result: ScreeningResult }).result;
+  const body = await getJson<{ result: ScreeningResult }>(
+    '/api/trading/screening/run',
+    (status) => `후보 거르기 실행 실패: ${status}`,
+    { init: jsonBody({ accountId, lookups }), serverMessage: true },
+  );
+  return body.result;
 }
 
 /**
@@ -373,34 +206,14 @@ export async function runScreening(accountId?: string, lookups?: number): Promis
  * 종목이 대상이다. 다만 **상위 30만 온다.** 화면이 "시장 전체를 봤다"고
  * 읽히지 않게 몇 개를 받은 값인지 밝혀야 한다.
  */
-export async function fetchMarketMovers(direction: 'up' | 'down'): Promise<MarketMoversSnapshot> {
-  const res = await fetch(`${API_BASE}/api/market/movers?direction=${direction}`);
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { message?: string };
-    throw new Error(body.message ?? `등락률 순위 조회 실패: ${res.status}`);
-  }
-  return res.json();
+export function fetchMarketMovers(direction: 'up' | 'down'): Promise<MarketMoversSnapshot> {
+  return getJson(`/api/market/movers?direction=${direction}`, (status) => `등락률 순위 조회 실패: ${status}`, {
+    serverMessage: true,
+  });
 }
 
-export async function fetchInstrumentQuote(id: string): Promise<Quote> {
-  const res = await fetch(`${API_BASE}/api/instruments/${encodeURIComponent(id)}/quote`);
-  if (!res.ok) throw new Error(`종목 현재가 조회 실패: ${res.status}`);
-  return res.json();
-}
-
-/**
- * 호가 10단계와 동시호가 예상 체결.
- *
- * 국내 주식·ETF만 대상이라 그 밖의 종목은 서버가 404에 사유를 담아 준다.
- * "없다"와 "이 종목은 대상이 아니다"를 구별해야 하므로 상태 코드를 함께 던진다.
- */
-export async function fetchOrderBook(id: string): Promise<OrderBook> {
-  const res = await fetch(`${API_BASE}/api/instruments/${encodeURIComponent(id)}/order-book`);
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { message?: string };
-    throw new Error(body.message ?? `호가 조회 실패: ${res.status}`);
-  }
-  return res.json();
+export function fetchInstrumentQuote(id: string): Promise<Quote> {
+  return getJson(`/api/instruments/${encodeURIComponent(id)}/quote`, (status) => `종목 현재가 조회 실패: ${status}`);
 }
 
 /**
@@ -434,127 +247,63 @@ export async function fetchInstrumentFinancials(id: string): Promise<FinancialsR
   return { kind: 'ok', rows: (await res.json()) as FinancialSnapshot[] };
 }
 
-export async function fetchInstrumentIntradayCandles(id: string): Promise<CandlesResponse> {
-  const res = await fetch(`${API_BASE}/api/instruments/${encodeURIComponent(id)}/intraday-candles`);
-  if (!res.ok) throw new Error(`종목 분봉 조회 실패: ${res.status}`);
-  return res.json();
+export function fetchInstrumentIntradayCandles(id: string): Promise<CandlesResponse> {
+  return getJson(`/api/instruments/${encodeURIComponent(id)}/intraday-candles`, (status) => `종목 분봉 조회 실패: ${status}`);
 }
 
-export async function fetchInstrumentNews(id: string): Promise<NewsItem[]> {
-  const res = await fetch(`${API_BASE}/api/instruments/${encodeURIComponent(id)}/news`);
-  if (!res.ok) throw new Error(`종목 뉴스 조회 실패: ${res.status}`);
-  return res.json();
+export function fetchInstrumentNews(id: string): Promise<NewsItem[]> {
+  return getJson(`/api/instruments/${encodeURIComponent(id)}/news`, (status) => `종목 뉴스 조회 실패: ${status}`);
 }
 
-export async function fetchInstrumentQuotes(ids: string[]): Promise<Quote[]> {
-  const res = await fetch(`${API_BASE}/api/instruments/quotes`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ ids }),
+export function fetchInstrumentQuotes(ids: string[]): Promise<Quote[]> {
+  return getJson('/api/instruments/quotes', (status) => `종목 현재가 배치 조회 실패: ${status}`, {
+    init: jsonBody({ ids }),
   });
-  if (!res.ok) throw new Error(`종목 현재가 배치 조회 실패: ${res.status}`);
-  return res.json();
 }
 
-export async function fetchInstrumentCategories(): Promise<InstrumentCategory[]> {
-  const res = await fetch(`${API_BASE}/api/instruments/categories`);
-  if (!res.ok) throw new Error(`종목 카테고리 조회 실패: ${res.status}`);
-  return res.json();
+export function fetchInstrumentCategories(): Promise<InstrumentCategory[]> {
+  return getJson('/api/instruments/categories', (status) => `종목 카테고리 조회 실패: ${status}`);
 }
 
-export async function fetchCategoryInstruments(id: string, query = ''): Promise<Instrument[]> {
+export function fetchCategoryInstruments(id: string, query = ''): Promise<Instrument[]> {
   const params = new URLSearchParams();
   if (query.trim()) params.set('q', query.trim());
   const suffix = params.size > 0 ? `?${params.toString()}` : '';
-  const res = await fetch(`${API_BASE}/api/instruments/categories/${encodeURIComponent(id)}${suffix}`);
-  if (!res.ok) throw new Error(`종목 리스트 조회 실패: ${res.status}`);
-  return res.json();
+  return getJson(`/api/instruments/categories/${encodeURIComponent(id)}${suffix}`, (status) => `종목 리스트 조회 실패: ${status}`);
 }
 
-export async function fetchTerminalInstruments(): Promise<Instrument[]> {
-  const res = await fetch(`${API_BASE}/api/instruments/terminal`);
-  if (!res.ok) throw new Error(`터미널 종목 조회 실패: ${res.status}`);
-  return res.json();
+export function fetchTerminalInstruments(): Promise<Instrument[]> {
+  return getJson('/api/instruments/terminal', (status) => `터미널 종목 조회 실패: ${status}`);
 }
 
-export async function fetchDefaultWatchlist(): Promise<Instrument[]> {
-  const res = await fetch(`${API_BASE}/api/watchlists/default`);
-  if (!res.ok) throw new Error(`관심종목 조회 실패: ${res.status}`);
-  return res.json();
+export function fetchWatchlists(): Promise<WatchlistGroup[]> {
+  return getJson('/api/watchlists', (status) => `관심그룹 조회 실패: ${status}`);
 }
 
-export async function fetchWatchlists(): Promise<WatchlistGroup[]> {
-  const res = await fetch(`${API_BASE}/api/watchlists`);
-  if (!res.ok) throw new Error(`관심그룹 조회 실패: ${res.status}`);
-  return res.json();
-}
-
-export async function createWatchlist(name: string): Promise<WatchlistGroup> {
-  const res = await fetch(`${API_BASE}/api/watchlists`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name }),
-  });
-  if (!res.ok) throw new Error(`관심그룹 생성 실패: ${res.status}`);
-  return res.json();
+export function createWatchlist(name: string): Promise<WatchlistGroup> {
+  return getJson('/api/watchlists', (status) => `관심그룹 생성 실패: ${status}`, { init: jsonBody({ name }) });
 }
 
 export async function deleteWatchlist(watchlistId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/watchlists/${encodeURIComponent(watchlistId)}`, {
-    method: 'DELETE',
+  await request(`/api/watchlists/${encodeURIComponent(watchlistId)}`, (status) => `관심그룹 삭제 실패: ${status}`, {
+    init: { method: 'DELETE' },
   });
-  if (!res.ok) throw new Error(`관심그룹 삭제 실패: ${res.status}`);
 }
 
-export async function fetchWatchlistItems(watchlistId: string): Promise<Instrument[]> {
-  const res = await fetch(`${API_BASE}/api/watchlists/${encodeURIComponent(watchlistId)}/items`);
-  if (!res.ok) throw new Error(`관심그룹 종목 조회 실패: ${res.status}`);
-  return res.json();
+export function fetchWatchlistItems(watchlistId: string): Promise<Instrument[]> {
+  return getJson(`/api/watchlists/${encodeURIComponent(watchlistId)}/items`, (status) => `관심그룹 종목 조회 실패: ${status}`);
 }
 
-export async function addDefaultWatchlistItem(instrumentId: string): Promise<Instrument> {
-  const res = await fetch(`${API_BASE}/api/watchlists/default/items`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ instrumentId }),
+export function addWatchlistItem(watchlistId: string, instrumentId: string): Promise<Instrument> {
+  return getJson(`/api/watchlists/${encodeURIComponent(watchlistId)}/items`, (status) => `관심그룹 종목 추가 실패: ${status}`, {
+    init: jsonBody({ instrumentId }),
   });
-  if (!res.ok) throw new Error(`관심종목 추가 실패: ${res.status}`);
-  return res.json();
-}
-
-export async function addWatchlistItem(watchlistId: string, instrumentId: string): Promise<Instrument> {
-  const res = await fetch(`${API_BASE}/api/watchlists/${encodeURIComponent(watchlistId)}/items`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ instrumentId }),
-  });
-  if (!res.ok) throw new Error(`관심그룹 종목 추가 실패: ${res.status}`);
-  return res.json();
-}
-
-export async function removeDefaultWatchlistItem(instrumentId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/watchlists/default/items/${encodeURIComponent(instrumentId)}`, {
-    method: 'DELETE',
-  });
-  if (!res.ok) throw new Error(`관심종목 삭제 실패: ${res.status}`);
 }
 
 export async function removeWatchlistItem(watchlistId: string, instrumentId: string): Promise<void> {
-  const res = await fetch(
-    `${API_BASE}/api/watchlists/${encodeURIComponent(watchlistId)}/items/${encodeURIComponent(instrumentId)}`,
-    { method: 'DELETE' },
+  await request(
+    `/api/watchlists/${encodeURIComponent(watchlistId)}/items/${encodeURIComponent(instrumentId)}`,
+    (status) => `관심그룹 종목 삭제 실패: ${status}`,
+    { init: { method: 'DELETE' } },
   );
-  if (!res.ok) throw new Error(`관심그룹 종목 삭제 실패: ${res.status}`);
 }
-
-/* ── 자동매매 ─────────────────────────────────────────────────────────── */
-
-
-
-/**
- * 자동매매 시작.
- *
- * 서버가 거절하면 그 이유를 그대로 올린다 — 실주문 모드인데 게이트가 닫혀
- * 있으면 여기서 막힌다. 이유를 삼키면 화면에서 왜 시작이 안 되는지 알 수 없다.
- */
-

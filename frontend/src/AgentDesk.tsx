@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-import { API_BASE } from './config';
+import { getJson } from './api';
 
 // ── 픽셀 캐릭터 ──────────────────────────────────────────────────────────
 //
@@ -395,21 +395,17 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
      * ★ 활동은 **자주 본다**(아래 8초). 30초로 두면 2~3분짜리 빠른 회차가
      *   통째로 지나가 화면이 그 자세를 한 번도 못 그린다.
      */
-    fetch(`${API_BASE}/api/agents/activity`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((d: { activities: Activity[] }) =>
-        setActivities(new Map(d.activities.map((a) => [a.agent, a]))))
+    getJson<{ activities: Activity[] }>('/api/agents/activity', String)
+      .then((d) => setActivities(new Map(d.activities.map((a) => [a.agent, a]))))
       .catch(() => setActivities(new Map()));
 
-    fetch(`${API_BASE}/api/automation/status`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`상태 조회 실패: ${r.status}`))))
-      .then((d: AutomationStatus) => { setStatus(d); setError(null); })
+    getJson<AutomationStatus>('/api/automation/status', (status) => `상태 조회 실패: ${status}`)
+      .then((d) => { setStatus(d); setError(null); })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
 
     const query = accountId ? `?accountId=${encodeURIComponent(accountId)}&limit=12` : '?limit=12';
-    fetch(`${API_BASE}/api/deliberations${query}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`판단 기록 조회 실패: ${r.status}`))))
-      .then((d: { rounds: Round[] }) => setRounds(d.rounds))
+    getJson<{ rounds: Round[] }>(`/api/deliberations${query}`, (status) => `판단 기록 조회 실패: ${status}`)
+      .then((d) => setRounds(d.rounds))
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
 
   }, [accountId]);
@@ -431,9 +427,8 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
     if (!accountId) return undefined;
     let disposed = false;
     const pull = (): void => {
-      fetch(`${API_BASE}/api/broker/kis/open-orders?accountId=${encodeURIComponent(accountId)}`)
-        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-        .then((d: { items?: OpenOrder[] }) => { if (!disposed) setOpenOrders(d.items ?? []); })
+      getJson<{ items?: OpenOrder[] }>(`/api/broker/kis/open-orders?accountId=${encodeURIComponent(accountId)}`, String)
+        .then((d) => { if (!disposed) setOpenOrders(d.items ?? []); })
         .catch(() => { if (!disposed) setOpenOrders(null); });
     };
     pull();

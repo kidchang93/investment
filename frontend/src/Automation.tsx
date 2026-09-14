@@ -20,7 +20,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-import { API_BASE } from './config';
+import { getJson, jsonBody, request } from './api';
 
 interface TaskState {
   name: string;
@@ -80,9 +80,9 @@ export function Automation(): JSX.Element {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/automation/status`);
-      if (!res.ok) throw new Error(`상태를 불러오지 못했습니다 (HTTP ${res.status})`);
-      setStatus((await res.json()) as AutomationStatus);
+      setStatus(
+        await getJson<AutomationStatus>('/api/automation/status', (status) => `상태를 불러오지 못했습니다 (HTTP ${status})`),
+      );
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : '상태를 불러오지 못했습니다');
@@ -99,12 +99,9 @@ export function Automation(): JSX.Element {
   const toggle = useCallback(async (key: 'enabled' | 'tradingEnabled', value: boolean) => {
     setBusy(key);
     try {
-      const res = await fetch(`${API_BASE}/api/automation/settings`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ [key]: value }),
+      await request('/api/automation/settings', (status) => `바꾸지 못했습니다 (HTTP ${status})`, {
+        init: jsonBody({ [key]: value }),
       });
-      if (!res.ok) throw new Error(`바꾸지 못했습니다 (HTTP ${res.status})`);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : '바꾸지 못했습니다');
@@ -116,13 +113,10 @@ export function Automation(): JSX.Element {
   const runNow = useCallback(async (task: string) => {
     setBusy(task);
     try {
-      const res = await fetch(`${API_BASE}/api/automation/run`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ task }),
+      await request('/api/automation/run', (status) => `실행하지 못했습니다 (HTTP ${status})`, {
+        init: jsonBody({ task }),
+        serverMessage: true,
       });
-      const body = (await res.json()) as { message?: string };
-      if (!res.ok) throw new Error(body.message ?? `실행하지 못했습니다 (HTTP ${res.status})`);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : '실행하지 못했습니다');

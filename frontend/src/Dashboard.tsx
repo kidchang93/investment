@@ -22,7 +22,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import type { PortfolioLayersSnapshot, TradingHealthSnapshot } from '@invest/shared';
 
-import { API_BASE } from './config';
+import { getJson } from './api';
 
 const won = (v: number): string => `${Math.round(v).toLocaleString('ko-KR')}원`;
 const signed = (v: number): string => `${v >= 0 ? '+' : ''}${Math.round(v).toLocaleString('ko-KR')}원`;
@@ -53,9 +53,7 @@ export function Dashboard({ accountId }: { accountId: string | null }): JSX.Elem
      */
     const load = async <T,>(path: string, apply: (v: T) => void): Promise<string | null> => {
       try {
-        const res = await fetch(`${API_BASE}${path}?${q}`);
-        if (!res.ok) return `${path} (${res.status})`;
-        apply((await res.json()) as T);
+        apply(await getJson<T>(`${path}?${q}`, (status) => `${path} (${status})`));
         return null;
       } catch (err) {
         // 받아 둔 값은 그대로 두고 사유만 돌려준다 — 빈 값으로 바꾸면 "아무것도 없다"가 지어진다.
