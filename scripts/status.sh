@@ -67,7 +67,15 @@ if pgrep -f "daemon.sh __loop" >/dev/null 2>&1; then
   bad "   그 파일은 2026-09-07에 지웠다 — 되살린 것이면 kill 한다"
 fi
 if pgrep -f "tsx watch src/server.ts" >/dev/null 2>&1; then
-  ok "백엔드     pid $(pgrep -f 'tsx watch src/server.ts' | head -1)  :4000"
+  backend_pid=$(pgrep -f 'tsx watch src/server.ts' | head -1)
+  ok "백엔드     pid $backend_pid  :4000"
+  # ★ **살아 있다는 말과 계속 돈다는 말은 다르다.** 맥이 자면 백엔드도 스케줄러도
+  #   함께 멈춘다 — 9/7~9/11 5거래일이 장중에 19~90분씩 잤다(`morning.sh` 절전 차단).
+  if pgrep -f "^caffeinate -i -s -w ${backend_pid}\$" >/dev/null 2>&1; then
+    ok "절전 차단  걸려 있음 — 맥이 유휴로 잠들지 않는다 (뚜껑을 닫으면 잔다)"
+  else
+    bad "절전 차단  없음 — 맥이 자면 손절 감시도 멈춘다. zsh scripts/morning.sh 로 붙인다"
+  fi
 else
   bad "백엔드     죽음 — npm run dev:api"
 fi
