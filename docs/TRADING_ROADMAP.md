@@ -115,7 +115,9 @@
 
 ## DB 설계
 
-현재 구현된 첫 단계 테이블:
+첫 단계 테이블 — **코드에서 걷어냈다(2026-09-14). 표는 DB에 남아 있다.** 화면의 paper
+주문은 2026-09-07에 사라졌고 이 표를 채우던 `db/trading.ts`와 두 라우트
+(`GET /api/trading/overview`·`POST /api/trading/orders`)도 부르는 곳이 없어 지웠다.
 
 - `trading_accounts`: paper/live 계정의 화면용 메타, 주문 가능 금액, 1회 주문 한도, live 잠금 플래그
 - `trading_positions`: 계정별 포지션 스냅샷

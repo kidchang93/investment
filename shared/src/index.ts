@@ -1004,76 +1004,8 @@ export interface ConnectionStatus {
   message?: string;
 }
 
-export type TradingMode = 'paper' | 'live_disabled' | 'live';
 export type OrderSide = 'buy' | 'sell';
 export type OrderType = 'market' | 'limit';
-export type OrderTimeInForce = 'day' | 'ioc';
-export type OrderStatus = 'blocked' | 'accepted' | 'submitted' | 'filled' | 'canceled' | 'rejected';
-
-/** 매매 계정. 실계좌 정보는 프론트로 노출하지 않고 화면용 별칭과 모드만 제공한다. */
-export interface TradingAccount {
-  id: string;
-  label: string;
-  broker: 'paper' | 'kis';
-  mode: TradingMode;
-  baseCurrency: string;
-  cashBalance: number;
-  buyingPower: number;
-  maxOrderNotional: number;
-  liveEnabled: boolean;
-}
-
-/** 보유 포지션 스냅샷 */
-export interface Position {
-  id: string;
-  accountId: string;
-  instrument: Instrument;
-  quantity: number;
-  averagePrice: number;
-  currency: string;
-  marketValue?: number;
-  unrealizedPnl?: number;
-  unrealizedPnlRate?: number;
-}
-
-/** 서버에 저장된 주문 의도. 브로커 전송 전후 모두 같은 감사 단위로 관리한다. */
-export interface OrderIntent {
-  id: string;
-  accountId: string;
-  instrument: Instrument;
-  side: OrderSide;
-  orderType: OrderType;
-  timeInForce: OrderTimeInForce;
-  quantity: number;
-  limitPrice?: number;
-  estimatedPrice: number;
-  estimatedNotional: number;
-  currency: string;
-  status: OrderStatus;
-  riskMessages: string[];
-  createdAt: number;
-}
-
-/** paper/live 공통 체결 기록 */
-export interface TradingFill {
-  id: string;
-  orderId: string;
-  accountId: string;
-  instrument: Instrument;
-  side: OrderSide;
-  quantity: number;
-  price: number;
-  notional: number;
-  currency: string;
-  createdAt: number;
-}
-
-export interface TradingOverview {
-  accounts: TradingAccount[];
-  positions: Position[];
-  recentOrders: OrderIntent[];
-  recentFills: TradingFill[];
-}
 
 /**
  * 조회 가능한 KIS 계좌 하나. KIS는 앱키에 등록된 계좌만 허용하므로
@@ -1458,7 +1390,7 @@ export interface LiveOrderGate {
   blockers: string[];
 }
 
-/** 실주문 전송 요청. paper 주문(`CreateOrderRequest`)과 의도적으로 분리한다. */
+/** 실주문 전송 요청. */
 export interface PlaceLiveOrderRequest {
   accountId: string;
   /*
@@ -1705,23 +1637,6 @@ export interface CancelReservedOrderRequest {
   /** 예약주문 주문일자 YYYYMMDD */
   reservationOrderDate: string;
   reservationOrgNo?: string;
-}
-
-export interface CreateOrderRequest {
-  accountId: string;
-  instrumentId: string;
-  side: OrderSide;
-  orderType: OrderType;
-  timeInForce: OrderTimeInForce;
-  quantity: number;
-  limitPrice?: number;
-  estimatedPrice: number;
-  userAcknowledged: boolean;
-}
-
-export interface CreateOrderResponse {
-  order: OrderIntent;
-  fill?: TradingFill;
 }
 
 /* ── 자동매매 ─────────────────────────────────────────────────────────── */

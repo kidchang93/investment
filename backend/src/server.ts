@@ -44,7 +44,6 @@ import {
 import { ensureThemeSchema, getThemeList, getThemeMembers } from './db/themes.js';
 import { QuoteCache } from './quoteCache.js';
 import { getThemePulses, THEME_PULSE_MAX_THEMES } from './themes/pulse.js';
-import { createOrderIntent, ensureTradingSchema, getFillByOrderId, getTradingOverview } from './db/trading.js';
 import { ensureDailySelectionSchema } from './db/dailySelection.js';
 import { getLastBuySubmittedAt } from './db/brokerOrders.js';
 import { checkPositionGuard } from './trading/positionGuard.js';
@@ -197,7 +196,6 @@ import type {
   TradingHealthSnapshot,
   ClientMessage,
   ClientSubscribeInstrument,
-  CreateOrderRequest,
   Instrument,
   InstrumentAssetType,
   LiveOrderGate,
@@ -325,7 +323,6 @@ async function main(): Promise<void> {
   await ensureInstrumentSchema();
   await ensureDomesticAssetTypes();
   await ensureThemeSchema();
-  await ensureTradingSchema();
   await ensureBrokerOrderSchema();
   await ensureRiskRuleSchema();
   await ensureDailySelectionSchema();
@@ -407,10 +404,6 @@ async function main(): Promise<void> {
     return result;
   });
   app.get('/api/watchlist', async () => WATCHLIST);
-
-  app.get('/api/trading/overview', async () => {
-    return getTradingOverview();
-  });
 
   app.get('/api/broker/kis/accounts', async () => {
     return config.kisAccounts.map((account) => ({
@@ -1702,49 +1695,6 @@ async function main(): Promise<void> {
       app.log.warn({ err }, 'USD/KRW 환율 조회 실패');
       return reply.code(502).send({ message: 'USD/KRW 환율을 조회할 수 없습니다.' });
     }
-  });
-
-  app.post<{ Body: Partial<CreateOrderRequest> }>('/api/trading/orders', async (req, reply) => {
-    const {
-      accountId,
-      instrumentId,
-      side,
-      orderType,
-      timeInForce,
-      quantity,
-      limitPrice,
-      userAcknowledged,
-    } = req.body;
-
-    if (!accountId || !instrumentId || !side || !orderType || !timeInForce || typeof quantity !== 'number') {
-      return reply.code(400).send({ message: '주문 필수 값이 부족합니다.' });
-    }
-    if ((side !== 'buy' && side !== 'sell') || (orderType !== 'market' && orderType !== 'limit')) {
-      return reply.code(400).send({ message: '주문 방향 또는 주문 유형이 올바르지 않습니다.' });
-    }
-    if (timeInForce !== 'day' && timeInForce !== 'ioc') {
-      return reply.code(400).send({ message: '주문 유효기간이 올바르지 않습니다.' });
-    }
-
-    const instrument = await getInstrument(instrumentId);
-    if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
-
-    const quote = await getInstrumentQuote(instrument);
-    const order = await createOrderIntent({
-      accountId,
-      instrumentId,
-      side,
-      orderType,
-      timeInForce,
-      quantity,
-      limitPrice,
-      estimatedPrice: quote.price,
-      userAcknowledged: userAcknowledged === true,
-    });
-
-    if (!order) return reply.code(404).send({ message: '매매 계정 또는 종목을 찾을 수 없습니다.' });
-    const fill = await getFillByOrderId(order.id);
-    return fill ? { order, fill } : { order };
   });
 
   app.get<{ Querystring: { q?: string } }>('/api/instruments/search', async (req) => {
