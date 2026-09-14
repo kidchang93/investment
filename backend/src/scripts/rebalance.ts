@@ -21,23 +21,17 @@
  *
  *   npx tsx src/scripts/rebalance.ts                 # 계획만 본다 (기본)
  *   npx tsx src/scripts/rebalance.ts --execute       # 실제로 낸다
- *   npx tsx src/scripts/rebalance.ts --account 21 --bucket 0.8
  *
- * ── 적립 매수 (매달 넣는 돈) ─────────────────────────────────────────────
- *
- *   npx tsx src/scripts/rebalance.ts --budget 1000000 --min-leg 200000
- *
- * ★ **팔지 않는다.** 미달이 큰 종목부터 예산이 닿는 데까지 산다. 적립액을
- * 다섯 종목에 쪼개면 종목당 20만원이라 문턱에 전부 걸리고, 판 뒤 다시 사면
- * 수수료와 세금만 든다. **미달 쪽에 넣으면 파는 일 없이 비중이 맞춰진다.**
- * 초기 몇 년은 수익률보다 납입이 자산을 좌우한다(자산 6천만~1억이 되기
- * 전까지는 `연 납입액 > 연 수익`).
+ * 계좌는 `VTS-ORDINARY`, ETF 묶음 비중은 `BUCKET_WEIGHT`로 고정이다. 모르는
+ * 옵션은 거부한다 — 옛 옵션(`--budget`·`--liquidate` 등)을 주면 조용히 비중
+ * 복원으로 돌지 않고 멈춘다.
  *
  * ★ **기본이 계획 보기다.** `--execute`를 적어야 나간다 — 실수로 돌려도 주문이
  * 나가지 않는 쪽이 기본이어야 한다.
  */
 
 import { spawn } from 'node:child_process';
+import { parseArgs } from 'node:util';
 
 import { config, getKisAccount } from '../config.js';
 import { closeDb } from '../db/client.js';
@@ -60,94 +54,16 @@ const TARGET_WEIGHTS: ReadonlyArray<{ symbol: string; weight: number; label: str
   { symbol: '411060', weight: 0.150, label: 'ACE KRX금현물' },
 ];
 
+const ACCOUNT_ID = 'VTS-ORDINARY';
+
 /** 총자산 중 ETF 묶음의 비중. ETF 50% + 단기 30%(ETF로 대체) = 80% */
-const DEFAULT_BUCKET_WEIGHT = 0.80;
+const BUCKET_WEIGHT = 0.80;
 
 /** 지정가를 현재가에서 띄우는 폭. ETF 왕복 실측 비용이 0.085%라 그 안쪽이다 */
 const SLIP_RATE = 0.002;
 
 /** 이보다 작은 다리는 만들지 않는다. 잔돈 매매는 비용만 든다 */
 const MIN_LEG_AMOUNT = 500_000;
-
-interface Options {
-  accountId: string;
-  execute: boolean;
-  bucketWeight: number;
-  /** 적립 모드 — 팔지 않고 미달한 것만 산다 */
-  buyOnly: boolean;
-  /** 이번에 넣을 돈(원). 없으면 D+2 현금 전부를 쓸 수 있다고 본다 */
-  budget: number | null;
-  /** 다리 하나의 최소 금액(원). 적립액이 작으면 낮춰야 한다 */
-  minLeg: number;
-  /** 멱등 키에 들어갈 날짜 `YYYYMMDD`. 하루에 한 번만 복원한다 */
-  day: string;
-  /**
-   * **전량 매도.** 보유한 것을 전부 팔아 현금으로 만든다.
-   *
-   * ★ 목표 비중을 0으로 두는 것과 같다 — `planRebalance`가 그대로 계산한다.
-   * 별도 경로를 만들지 않는 이유는 **매도 수량이 보유를 넘지 않는 가드**와
-   * 멱등 키를 그대로 물려받기 위해서다(2026-08-14 중복 체결 사고가 그 자리다).
-   *
-   * ★ 목표 비중 표에 없는 종목도 판다 — 전량 매도의 뜻이 그것이다.
-   *   비중 복원에서는 반대로 "모르는 것을 팔지 않는다"가 옳다.
-   */
-  liquidate: boolean;
-}
-
-function parseArgs(argv: string[]): Options {
-  const options: Options = {
-    accountId: 'VTS-ORDINARY',
-    execute: false,
-    bucketWeight: DEFAULT_BUCKET_WEIGHT,
-    buyOnly: false,
-    budget: null,
-    minLeg: MIN_LEG_AMOUNT,
-    day: new Date().toISOString().slice(0, 10).replace(/-/g, ''),
-    liquidate: false,
-  };
-  for (let i = 0; i < argv.length; i += 1) {
-    switch (argv[i]) {
-      case '--account':
-        options.accountId = argv[++i] ?? options.accountId;
-        break;
-      case '--execute':
-        options.execute = true;
-        break;
-      case '--bucket': {
-        const value = Number(argv[++i]);
-        if (!(value > 0 && value <= 1)) throw new Error('--bucket은 0보다 크고 1 이하여야 합니다');
-        options.bucketWeight = value;
-        break;
-      }
-      case '--buy-only':
-        options.buyOnly = true;
-        break;
-      case '--liquidate':
-        options.liquidate = true;
-        break;
-      case '--budget': {
-        const value = Number(argv[++i]);
-        if (!(value > 0)) throw new Error('--budget은 0보다 커야 합니다');
-        options.budget = value;
-        // 적립은 파는 일이 아니다. 예산을 주면 매수만 하는 것이 자연스럽다.
-        options.buyOnly = true;
-        break;
-      }
-      case '--min-leg': {
-        const value = Number(argv[++i]);
-        if (!(value > 0)) throw new Error('--min-leg는 0보다 커야 합니다');
-        options.minLeg = value;
-        break;
-      }
-      case '--day':
-        options.day = argv[++i] ?? options.day;
-        break;
-      default:
-        if (argv[i].startsWith('--')) throw new Error(`모르는 옵션입니다: ${argv[i]}`);
-    }
-  }
-  return options;
-}
 
 const won = (n: number): string => Math.round(n).toLocaleString('ko-KR');
 const pct = (n: number): string => `${(n * 100).toFixed(1)}%`;
@@ -162,14 +78,13 @@ const padL = (t: string, n: number): string => ' '.repeat(Math.max(1, n - width(
  * 부른 쪽이 같은 키로 다시 실행하면 되고, 그때 서버가 "이미 처리된 주문"이라고
  * 답한다. 2026-08-14에 없던 것이 정확히 이 성질이다.
  */
-async function placeLeg(leg: RebalanceLeg, options: Options): Promise<string> {
-  const kind = options.liquidate ? 'liquidate' : options.buyOnly ? 'deposit' : 'rebalance';
-  const clientOrderId = `${kind}-${options.day}-${leg.symbol}-${leg.side}`;
+async function placeLeg(leg: RebalanceLeg, day: string): Promise<string> {
+  const clientOrderId = `rebalance-${day}-${leg.symbol}-${leg.side}`;
   const response = await fetch(`http://127.0.0.1:${config.port}/api/broker/kis/orders`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      accountId: options.accountId,
+      accountId: ACCOUNT_ID,
       instrumentId: `KR:KOSPI:${leg.symbol}`,
       side: leg.side,
       orderType: 'limit',
@@ -188,16 +103,21 @@ async function placeLeg(leg: RebalanceLeg, options: Options): Promise<string> {
 }
 
 async function main(): Promise<void> {
-  const options = parseArgs(process.argv.slice(2));
-  const account = getKisAccount(options.accountId);
-  if (!account) throw new Error(`등록되지 않은 계좌: ${options.accountId}`);
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    strict: true,
+    allowPositionals: true,
+    options: { execute: { type: 'boolean', default: false } },
+  });
+  const { execute } = values;
+  /** 멱등 키에 들어갈 날짜 `YYYYMMDD`. 하루에 한 번만 복원한다 */
+  const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const account = getKisAccount(ACCOUNT_ID);
+  if (!account) throw new Error(`등록되지 않은 계좌: ${ACCOUNT_ID}`);
 
   console.log(
-    `${options.liquidate ? '★ 전량 매도' : options.buyOnly ? '적립 매수' : '비중 복원'}`
-    + ` · 계좌 ${options.accountId}`
-    + (options.liquidate ? ' · 보유 전부를 현금으로' : ` · ETF 묶음 목표 ${pct(options.bucketWeight)}`)
-    + (options.budget === null ? '' : ` · 이번 예산 ${won(options.budget)}원`)
-    + ` · ${options.execute ? '★ 실제로 낸다' : '계획만 본다(--execute로 집행)'}`,
+    `비중 복원 · 계좌 ${ACCOUNT_ID} · ETF 묶음 목표 ${pct(BUCKET_WEIGHT)}`
+    + ` · ${execute ? '★ 실제로 낸다' : '계획만 본다(--execute로 집행)'}`,
   );
 
   const snapshot = await getKisDomesticAccountSnapshot(account);
@@ -215,28 +135,13 @@ async function main(): Promise<void> {
    * 현금 비중이 17.3%인데 37.5%로 보였다).
    */
   const cash = snapshot.settlementCash ?? 0;
-  /*
-   * ★ 전량 매도는 **보유한 모든 종목**의 목표를 0으로 둔다. `TARGET_WEIGHTS`를
-   * 쓰지 않는 이유는 그 표에 없는 종목이 남아 버리기 때문이다 — 비중 복원에서는
-   * "모르는 것을 팔지 않는다"가 옳지만, 전량 매도에서는 그것이 곧 누락이다.
-   */
-  const targets = options.liquidate
-    ? holdings.map((h) => ({ symbol: h.symbol, weight: 0 }))
-    : TARGET_WEIGHTS.map(({ symbol, weight }) => ({ symbol, weight }));
   const plan = planRebalance({
     holdings,
-    targets,
+    targets: TARGET_WEIGHTS.map(({ symbol, weight }) => ({ symbol, weight })),
     cash,
-    bucketWeight: options.bucketWeight,
+    bucketWeight: BUCKET_WEIGHT,
     slipRate: SLIP_RATE,
-    /*
-     * ★ **전량 매도에는 문턱을 두지 않는다.** 잔돈 매매를 막는 문턱이
-     * 여기서는 곧 누락이다 — 50만원 미만 자리가 남으면 "전부 현금"이
-     * 아니게 되는데, 화면에는 현금화한 것처럼 보인다.
-     */
-    minLegAmount: options.liquidate ? 1 : options.minLeg,
-    buyOnly: options.buyOnly,
-    ...(options.budget === null ? {} : { buyBudget: options.budget }),
+    minLegAmount: MIN_LEG_AMOUNT,
   });
 
   console.log(
@@ -278,7 +183,7 @@ async function main(): Promise<void> {
   }
   for (const s of plan.skipped) console.log(`  건너뜀 ${s.symbol} — ${s.reason}`);
 
-  if (!options.execute) {
+  if (!execute) {
     console.log('\n계획만 봤다. 실제로 내려면 --execute를 붙인다.');
     return;
   }
@@ -291,7 +196,7 @@ async function main(): Promise<void> {
   const guard = await new Promise<number>((resolve) => {
     const child = spawn(
       'npx',
-      ['tsx', 'src/scripts/checkAlerts.ts', options.accountId],
+      ['tsx', 'src/scripts/checkAlerts.ts', ACCOUNT_ID],
       { stdio: 'inherit' },
     );
     child.on('close', (code) => resolve(code ?? 1));
@@ -303,12 +208,12 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log(`\n집행 · 멱등 키 rebalance-${options.day}-<종목>-<방향>`);
+  console.log(`\n집행 · 멱등 키 rebalance-${day}-<종목>-<방향>`);
   console.log('★ 중간에 끊겨도 같은 명령을 다시 돌리면 이어진다 — 같은 키는 두 번 안 나간다.\n');
   for (const leg of plan.legs) {
     const label = `${leg.side === 'sell' ? '매도' : '매수'} ${leg.symbol} ${leg.quantity}주 @ ${won(leg.limitPrice)}원`;
     try {
-      console.log(`  ${label} → ${await placeLeg(leg, options)}`);
+      console.log(`  ${label} → ${await placeLeg(leg, day)}`);
     } catch (error) {
       /*
        * 응답을 못 받았다. **주문이 나갔는지 모른다** — 나갔다고도 안 나갔다고도
