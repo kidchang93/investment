@@ -300,22 +300,6 @@ export function buildCellSeriesFromScores(
   };
 }
 
-/** 신호 하나·축 하나. 점수판을 그 자리에서 만든다. */
-export function buildCellSeries(
-  panel: Panel,
-  signal: SignalCandidate,
-  horizon: number,
-  universe: UniverseMask,
-  entryBasis: EntryBasis,
-  buckets = 10,
-  minNamesPerDay = 200,
-): CellSeries {
-  const scores = buildScoreMatrix(panel, signal);
-  return buildCellSeriesFromScores(
-    panel, scores, signal.key, horizon, universe, entryBasis, buckets, minNamesPerDay,
-  );
-}
-
 /**
  * 신호 하나 · 축 여럿. **점수판을 한 번만 만든다** — 점수는 축과 무관하다.
  *

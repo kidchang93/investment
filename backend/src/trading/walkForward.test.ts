@@ -29,7 +29,7 @@ import { buildPanel, buildUniverseMask, type PanelBar, type UniverseMask, type P
 import type { SignalCandidate } from './signals.js';
 import {
   blockBootstrapT,
-  buildCellSeries,
+  buildCellSeriesSet,
   clusterMeanSe,
   clusterT,
   excludeUnusableSignals,
@@ -118,8 +118,8 @@ describe('진입 basis — 종가로 점수를 내고 그 종가에 살 수 없�
   });
 
   it('익일 시가 진입은 종가 진입과 다른 값을 낸다', () => {
-    const nextOpen = buildCellSeries(panel, signal, 5, universe, 'nextOpen', 10, 30);
-    const sameClose = buildCellSeries(panel, signal, 5, universe, 'sameClose', 10, 30);
+    const [nextOpen] = buildCellSeriesSet(panel, signal, [5], universe, 'nextOpen', 10, 30);
+    const [sameClose] = buildCellSeriesSet(panel, signal, [5], universe, 'sameClose', 10, 30);
     assert.ok(nextOpen.topLeg.length > 5, `진입일이 ${nextOpen.topLeg.length}개뿐이다`);
     /*
      * 익일 시가 진입은 **마지막 신호일을 못 쓴다** — 살 봉이 없다. 그 하루가 줄어드는
@@ -134,8 +134,8 @@ describe('진입 basis — 종가로 점수를 내고 그 종가에 살 수 없�
   });
 
   it('basis가 계열에 값으로 남는다 — 표를 섞어 읽지 못하게', () => {
-    assert.equal(buildCellSeries(panel, signal, 5, universe, 'nextOpen', 10, 30).entryBasis, 'nextOpen');
-    assert.equal(buildCellSeries(panel, signal, 5, universe, 'sameClose', 10, 30).entryBasis, 'sameClose');
+    assert.equal(buildCellSeriesSet(panel, signal, [5], universe, 'nextOpen', 10, 30)[0].entryBasis, 'nextOpen');
+    assert.equal(buildCellSeriesSet(panel, signal, [5], universe, 'sameClose', 10, 30)[0].entryBasis, 'sameClose');
   });
 
   it('신호일 종가는 진입가가 아니다 — 다음 봉 시가로 산다', () => {
@@ -161,8 +161,8 @@ describe('진입 basis — 종가로 점수를 내고 그 종가에 살 수 없�
       namesMedian: 2,
       namesMin: 2,
     };
-    const nextOpen = buildCellSeries(one, scoreOf((_c, i) => i), 1, mask, 'nextOpen', 1, 2);
-    const sameClose = buildCellSeries(one, scoreOf((_c, i) => i), 1, mask, 'sameClose', 1, 2);
+    const [nextOpen] = buildCellSeriesSet(one, scoreOf((_c, i) => i), [1], mask, 'nextOpen', 1, 2);
+    const [sameClose] = buildCellSeriesSet(one, scoreOf((_c, i) => i), [1], mask, 'sameClose', 1, 2);
     // 0일에 신호 → 1일 시가 110에 사서 2일 시가 121에 판다 = +10%
     assert.equal(Math.round(nextOpen.market[0] * 1000) / 1000, 10);
     // 종가 기준이면 100 → 120 = +20%. 이 값은 **살 수 없는 값**이다.
@@ -200,7 +200,7 @@ describe('강제청산 — 청산봉이 없다고 버리지 않는다', () => {
       scoreGateSignals: [signal],
       eligibleSymbols: new Set(panel.symbols),
     });
-    const series = buildCellSeries(panel, signal, 5, universe, 'nextOpen', 10, 20);
+    const [series] = buildCellSeriesSet(panel, signal, [5], universe, 'nextOpen', 10, 20);
     const truncated = [...series.truncated].reduce((a, b) => a + b, 0);
     assert.ok(truncated > 0, '강제청산이 한 건도 안 세어졌다');
   });
@@ -221,7 +221,7 @@ describe('강제청산 — 청산봉이 없다고 버리지 않는다', () => {
       minTurnover: 100_000_000, turnoverBottomFraction: 0, minNamesPerDay: 20,
       scoreGateSignals: [signal], eligibleSymbols: new Set(panel.symbols),
     });
-    const series = buildCellSeries(panel, signal, 1, universe, 'nextOpen', 10, 20);
+    const [series] = buildCellSeriesSet(panel, signal, [1], universe, 'nextOpen', 10, 20);
     const missed = [...series.noEntry].reduce((a, b) => a + b, 0);
     assert.ok(missed > 0, '진입 못 한 자리가 한 건도 안 세어졌다');
   });
