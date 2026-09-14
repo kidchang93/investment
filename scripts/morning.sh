@@ -233,13 +233,5 @@ b = d.get('blockers') or []
 print(f\"  enabled={d.get('enabled')} · isProdEnv={d.get('isProdEnv')} · 차단사유 {b if b else '없음'}\")
 " 2>&1
 
-log "── 자동매매 ──"
-curl -s -m 8 "http://localhost:4000/api/broker/kis/auto-trader?accountId=VTS-ORDINARY" \
-  | python3 -c "
-import json,sys
-d = json.load(sys.stdin)
-print(f\"  status={d.get('status','?')}  (영구 정지가 현재 설계다 — 판단자는 에이전트 회의)\")
-" 2>&1
-
 echo
 log "환경 준비 끝. 다음: zsh scripts/scan.sh 로 시장을 훑고, 조사·측정·판단 에이전트를 소집한다"

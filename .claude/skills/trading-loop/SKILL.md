@@ -65,38 +65,39 @@ Postgres가 없으면 백엔드가 아예 안 뜬다(`ECONNREFUSED 127.0.0.1:554
 
 ### 아침 루틴 — 이 순서로
 
-1. **러너가 도는지 본다.** `GET /api/broker/kis/auto-trader?accountId=<id>`
-   - `stopped`면 **왜 멈췄는지부터 본다**(`trading_auto_runs`의 `정지:` 줄).
-     스스로 멈춘 것(목표 도달·중단선·연속 실패)은 `trading_auto_desired`가
-     지워지므로 **부팅해도 안 살아난다** — 그게 맞는 동작이고, 다시 켤지는
-     사유를 보고 정한다
+1. **자동화가 도는지 본다.** `GET /api/automation/status` — `settings.enabled`·
+   `tradingEnabled`와 작업별 `doneToday`·`lastRunAt`. 러너는 영구 정지 상태이고
+   판단은 판단자 회차가 한다(`GET /api/deliberations?accountId=<id>`)
+   - 꺼져 있거나 오늘 돌아야 할 작업이 안 돌았으면 **왜 그런지부터 본다**
+     (`GET /api/trading/health`의 하트비트·경보)
 2. **뉴스**(`market-researcher`)와 **측정**(`data-analyst`)을 병렬로 띄운다.
    프롬프트에 어제까지의 확인된 사실을 넣는다 — 없으면 에이전트가 처음부터 찾는다
 3. **판단**(`quant-strategist`). *"오늘은 사지 마라"도 정당한 답이다.*
 4. **★판단을 러너 설정에 반영한다★** — 아래 절
-5. `trading_daily_selection`에 **누가 무엇을 왜 골랐는지 + 출처 URL**을 남긴다.
-   러너의 숫자 선정(`numeric`)이 같은 날 자동으로 쌓이므로 나중에 견줄 수 있다
+5. **누가 무엇을 왜 골랐는지 + 출처 URL**은 판단자 회차(`trading_deliberations`의
+   `decisions`·`sources`)에 남는다. 사람이 손으로 정한 것도 그 회차로 남긴다
 
-## 0-2. ★판단을 러너에 반영하는 법★
+## 0-2. ★판단을 설정에 반영하는 법★
 
-**판단만 하고 끝내면 아무 일도 안 일어난다.** 러너는 설정대로 돈다.
+**판단만 하고 끝내면 아무 일도 안 일어난다.** 판단자·집행기는 설정대로 돈다.
 
 | 판단 | 설정 |
 |------|------|
 | 오늘 이 종목들을 산다 | 리스크 룰 `symbolAllowlist`에 종목코드 |
-| **오늘은 새로 사지 않는다** | `maxPositions: 0` — **매수만 멈추고 매도는 계속된다** |
+| **오늘은 새로 사고팔지 않는다** | 자동화 매매 스위치 `tradingEnabled: false`(`POST /api/automation/settings`) — 판단자·미체결 정리·종가 매매가 멈추고 **손절 감시는 계속 돈다** |
 | 회전이 너무 빠르다 | `minHoldMinutes` |
-| 자리를 줄인다 | `maxPositions` |
+| 자리를 줄인다 | `maxPositions` (1 이상) |
 
-`maxPositions: 0`이 핵심이다. **러너를 통째로 끄면 데드크로스 청산도 같이 멈춰
-보유 종목이 아무도 안 보는 채로 남는다.** 전략은 매도 신호를 먼저 만들고 그
-뒤에 살 자리를 계산하므로, 0이면 새로 안 사되 청산은 그대로 나간다.
+★ **`maxPositions: 0`은 매수 금지가 아니라 검사 끔이다**(`trading/positionGuard.ts` —
+0 이하면 보유 수를 안 본다). 러너 시절에는 0이 새 매수를 멈췄지만 지금 관문에서는
+한도가 사라진다.
 
 ★ **허용목록은 매도를 막지 않는다**(2026-08-04에 고쳤다). 어제 산 종목이 오늘
 목록에 없는 것은 정상이고, 그때 매도가 막히면 계좌가 하루 만에 얼어붙는다.
 
-시작은 `POST /api/broker/kis/auto-trader/start`. 설정은 `trading_auto_desired`에
-남아 **서버가 죽었다 떠도 스스로 돌아온다.**
+리스크 룰 값은 `PUT /api/broker/kis/risk-rules`로 저장되고, 누가 주문하든
+`POST /api/broker/kis/orders`가 같은 관문으로 건다. DB에 남아 **서버가 죽었다 떠도
+그대로다.**
 
 ## 0-3. 장중에는 러너를 지켜본다
 

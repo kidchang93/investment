@@ -44,7 +44,6 @@ import {
 import { ensureThemeSchema, getThemeList, getThemeMembers } from './db/themes.js';
 import { QuoteCache } from './quoteCache.js';
 import { getThemePulses, THEME_PULSE_MAX_THEMES } from './themes/pulse.js';
-import { ensureDailySelectionSchema } from './db/dailySelection.js';
 import { getLastBuySubmittedAt } from './db/brokerOrders.js';
 import { checkPositionGuard } from './trading/positionGuard.js';
 import { getLayerPositions, getLayerTradeStats, getRealizedByLayer, getTradeMarks } from './db/layers.js';
@@ -324,7 +323,6 @@ async function main(): Promise<void> {
   await ensureThemeSchema();
   await ensureBrokerOrderSchema();
   await ensureRiskRuleSchema();
-  await ensureDailySelectionSchema();
   await ensureAgentActivitySchema();
   await ensureMarketSnapshotSchema();
   /*
