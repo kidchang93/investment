@@ -11,6 +11,7 @@
  */
 
 import { getKisAccount } from '../config.js';
+import { kstToday } from '../kis/normalize.js';
 import { getDeliberations } from '../db/deliberations.js';
 import {
   DOMESTIC_INDEX_CODES,
@@ -99,9 +100,7 @@ const newFills = (executionSnapshot?.executions ?? [])
  *
  * 오늘 것만 본다. 어제 미체결은 그날 장 마감에 이미 실효됐다.
  */
-const todayKst = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul' })
-  .format(new Date())
-  .replace(/-/g, '');
+const todayKst = kstToday();
 const openOrders = (executionSnapshot?.executions ?? [])
   /*
    * ★ **`status`만 보면 안 된다.** 취소된 원주문이 `open`인 채 잔량만 0으로

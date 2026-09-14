@@ -33,6 +33,7 @@ import {
   getKisDomesticAmendableOrders,
   getKisDomesticOrderability,
 } from '../kis/rest.js';
+import { won } from '../notify/slack.js';
 
 /** 이보다 오래된 적정가는 낡았다고 알린다. 분석가가 5분마다 도므로 넉넉한 값이다 */
 const STALE_MINUTES = 20;
@@ -46,8 +47,6 @@ const STALE_MINUTES = 20;
 const CANDIDATE_SHOWN = 25;
 /** 📈에서 "상한가 근처"로 표시하는 등락률(%). KRX 가격제한폭은 ±30%다 */
 const LIMIT_UP_WARN = 25;
-
-const won = (n: number): string => `${Math.round(n).toLocaleString('ko-KR')}원`;
 
 /** 분석가가 붙인 뉴스 한 칸. 배열이면 받은 기사, `{failed}`면 못 받은 것 */
 type NewsCell = Array<{ title: string; source: string; publishedAt?: number }> | { failed: string };

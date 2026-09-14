@@ -24,6 +24,7 @@
  */
 
 import { getKisAccount, config } from '../config.js';
+import { kstToday } from '../kis/normalize.js';
 import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
 import { getLayerTradeStats, getRecentClosedTrades } from '../db/layers.js';
 import { getRiskRules } from '../db/riskRules.js';
@@ -72,12 +73,7 @@ const [snapshot, executionSnapshot, rules, orderability] = await Promise.all([
  * 빼먹으면 이미 매도가 나간 물량을 또 팔라고 하게 된다.
  */
 const allExecutions = executionSnapshot?.executions ?? [];
-const todayKey = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Asia/Seoul',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-}).format(at).replace(/-/g, '');
+const todayKey = kstToday(at.getTime());
 const executions = allExecutions.filter((e) => e.orderDate === todayKey);
 
 /*
