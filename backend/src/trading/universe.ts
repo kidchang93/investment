@@ -16,6 +16,7 @@ import type { Instrument, Quote, ScreeningVerdict } from '@invest/shared';
 import { hasEmptyOrderBook, KRX_SESSION_MINUTES } from '@invest/shared';
 
 import { roundTripCostRate } from './backtest.js';
+import { kstSecondsOfDay } from './session.js';
 
 /*
  * 유동성 문턱 — 하루 거래대금이 이만큼은 돼야 후보로 본다.
@@ -108,15 +109,7 @@ const SESSION_SECONDS = SESSION_CLOSE_SECONDS - SESSION_OPEN_SECONDS;
  *  종목은 여전히 여기서 걸러야 한다.)
  */
 export function sessionElapsedRatio(now = new Date()): number {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Seoul',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).formatToParts(now);
-  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  const seconds = Number(map.hour) * 3600 + Number(map.minute) * 60 + Number(map.second);
+  const seconds = kstSecondsOfDay(now);
   // 09:00:00은 장 시작 **후**다. 여기를 `<=`로 두면 개장 첫 순간이 장 밖이 된다.
   if (seconds < SESSION_OPEN_SECONDS || seconds >= SESSION_CLOSE_SECONDS) return 1;
   return Math.max(seconds - SESSION_OPEN_SECONDS, 1) / SESSION_SECONDS;

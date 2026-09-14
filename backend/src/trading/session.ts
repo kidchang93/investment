@@ -17,16 +17,22 @@ export function sessionMinutes(value: string): number | null {
   return hours * 60 + minutes;
 }
 
-/** 지금이 KST 기준 몇 분인지. 서버 타임존과 무관해야 하므로 Intl로 뽑는다. */
-export function kstMinutesOfDay(at: Date): number {
+/** 지금이 KST 기준 자정부터 몇 초인지. 서버 타임존과 무관해야 하므로 Intl로 뽑는다. */
+export function kstSecondsOfDay(at: Date): number {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Seoul',
     hour: '2-digit',
     minute: '2-digit',
+    second: '2-digit',
     hour12: false,
   }).formatToParts(at);
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return Number(values.hour) * 60 + Number(values.minute);
+  return Number(values.hour) * 3600 + Number(values.minute) * 60 + Number(values.second);
+}
+
+/** 지금이 KST 기준 몇 분인지. */
+export function kstMinutesOfDay(at: Date): number {
+  return Math.floor(kstSecondsOfDay(at) / 60);
 }
 
 /**

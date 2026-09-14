@@ -36,16 +36,6 @@ const SNAPSHOT_AFTER_MINUTES = 9 * 60 + 5;
 /** 이 시각을 넘기면 그날은 안 찍는다. 늦게 찍은 값은 그날 아침의 정보가 아니다 */
 const SNAPSHOT_BEFORE_MINUTES = 10 * 60;
 
-/** KST 달력 날짜 `YYYY-MM-DD`. */
-function kstDay(at: Date): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Seoul',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(at);
-}
-
 /**
  * 지금 찍어야 하면 찍는다. 이미 찍었거나 시각이 아니면 아무것도 안 한다.
  *
@@ -61,7 +51,8 @@ export async function captureDailySnapshotIfDue(
     return { captured: false, reason: '오늘은 시각을 놓쳤다 — 늦게 찍은 순위는 그날 아침의 정보가 아니다' };
   }
 
-  const day = kstDay(at);
+  // KST 달력 날짜 `YYYY-MM-DD`. `kstToday`(`YYYYMMDD`)와 형식이 달라 그대로 못 쓴다
+  const day = at.toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' });
   const existing = await getEarliestSnapshot(day, 'turnoverRanking').catch(() => null);
   if (existing) return { captured: false, reason: '오늘 이미 찍었다' };
 
