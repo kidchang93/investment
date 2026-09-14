@@ -35,7 +35,7 @@ export interface StrategyContext {
    * 이미 자리를 차지한 종목.
    *
    * **`quantity`가 0일 수 있다.** 매수 주문을 냈는데 아직 잔고에 안 잡힌
-   * 종목이다(`pendingBuys.ts`). 자리는 먹지만 **팔 수는 없다** — 없는 주식을
+   * 종목이다. 자리는 먹지만 **팔 수는 없다** — 없는 주식을
    * 파는 주문이 나가면 KIS가 거부한다. 그래서 매도 후보는 `sellablePositions`로
    * 거르고, 자리 계산(`maxPositions`)은 이 목록 전체로 한다.
    */
