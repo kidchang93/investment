@@ -57,7 +57,7 @@ import {
 import { getMainNews } from '../naver/finance.js';
 import { escapeMrkdwn, sendSlackBot, slackBotConfigured } from '../notify/slack.js';
 import {
-  CHEAP_GATE, composeNote, crossesGate, freshCatalysts, freshRisers, gateSignature, splitNote, type GateInput,
+  CHEAP_GATE, composeNote, crossesGate, freshNames, gateSignature, splitNote, type GateInput,
 } from '../trading/judgeGate.js';
 import { markAgentActivity } from '../db/agentActivity.js';
 import {
@@ -1350,7 +1350,7 @@ async function maybeCallJudge(
    * ★ **같은 신호로 다시 부르지 않는다.** 직전 호출 때 넘어 있던 종목 묶음과
    *   같으면 새 정보가 아니다 — 5분 전과 상황이 같다는 뜻이다.
    *
-   * ★★ 📈는 **오늘 이미 보여 준 이름**을 다시 세지 않는다(`judgeGate.freshRisers`).
+   * ★★ 📈는 **오늘 이미 보여 준 이름**을 다시 세지 않는다(`judgeGate.freshNames`).
    *    그래서 오늘 기록을 전부 읽는다 — 직전 한 줄만 보면 5등·6등이 자리를 바꿀
    *    때마다 부른다.
    */
@@ -1365,10 +1365,10 @@ async function maybeCallJudge(
   const riserSymbols = (risers ?? []).map((r) => r.symbol);
   const notes = today.map((r) => r.note);
   // ★ 지금은 꺼 뒀다 — `RISERS_WAKE_JUDGE` 주석.
-  const fresh = RISERS_WAKE_JUDGE ? freshRisers(riserSymbols, notes) : [];
+  const fresh = RISERS_WAKE_JUDGE ? freshNames('risers', riserSymbols, notes) : [];
   // ★ 📣는 오늘 처음 보는 이름이면 부른다 — 📈 대신 "오를만한 것"을 대는 자리다.
   const catalystSymbols = (catalysts ?? []).map((c) => c.symbol);
-  const freshCat = freshCatalysts(catalystSymbols, notes);
+  const freshCat = freshNames('catalysts', catalystSymbols, notes);
 
   if (!fairChanged && fresh.length === 0 && freshCat.length === 0) {
     console.log(crossed.length === 0

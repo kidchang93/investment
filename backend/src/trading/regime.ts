@@ -200,9 +200,5 @@ export function buildRegimeSeries(panel: Panel, universe: UniverseMask): RegimeS
  * 그 국면의 표본에 성질이 다른 날이 섞인다.
  */
 export function regimeMaskOf(series: RegimeSeries, keep: 'trend' | 'chop'): Uint8Array {
-  const mask = new Uint8Array(series.regimes.length);
-  for (let d = 0; d < series.regimes.length; d += 1) {
-    mask[d] = series.regimes[d] === keep ? 1 : 0;
-  }
-  return mask;
+  return Uint8Array.from(series.regimes, (r) => (r === keep ? 1 : 0));
 }

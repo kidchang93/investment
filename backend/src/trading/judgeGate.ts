@@ -169,17 +169,16 @@ export function splitNote(note: string | undefined): NoteParts {
 }
 
 /**
- * 오늘 판단자에게 **아직 안 보여 준** 📈 이름.
+ * 오늘 판단자에게 **아직 안 보여 준** 📈(`risers`)·📣(`catalysts`) 이름.
+ * 두 표시는 서로 섞이지 않는다 — 📈에 있던 이름도 📣로는 새것이다.
  *
  * ★ 들어온 순서(많이 오른 순)를 지킨다 — 로그에 그대로 찍는다.
  */
-export function freshRisers(current: string[], notesToday: string[]): string[] {
-  const seen = new Set(notesToday.flatMap((note) => splitNote(note).risers));
-  return current.filter((symbol) => !seen.has(symbol));
-}
-
-/** 오늘 판단자에게 **아직 안 보여 준** 📣 이름. `freshRisers`와 같은 규칙이다 */
-export function freshCatalysts(current: string[], notesToday: string[]): string[] {
-  const seen = new Set(notesToday.flatMap((note) => splitNote(note).catalysts));
+export function freshNames(
+  part: 'risers' | 'catalysts',
+  current: string[],
+  notesToday: string[],
+): string[] {
+  const seen = new Set(notesToday.flatMap((note) => splitNote(note)[part]));
   return current.filter((symbol) => !seen.has(symbol));
 }

@@ -10,7 +10,7 @@ import { describe as suite, it } from 'node:test';
 
 import {
   CHEAP_GATE, RICH_GATE, SIGNATURE_TOP_CANDIDATES,
-  composeNote, crossesGate, freshCatalysts, freshRisers, gateSignature, splitNote, type GateInput,
+  composeNote, crossesGate, freshNames, gateSignature, splitNote, type GateInput,
 } from './judgeGate.js';
 
 const row = (symbol: string, gap: number | null, held = false, falling = false): GateInput =>
@@ -166,14 +166,14 @@ suite('📈 오늘 오르는 후보', () => {
 
   it('★★ 오늘 이미 보여 준 이름은 새 신호가 아니다 — 5등·6등이 자리를 바꿔도 안 부른다', () => {
     const notes = [composeNote('', ['A', 'B', 'C', 'D', 'E'])];
-    assert.deepEqual(freshRisers(['A', 'B', 'C', 'D', 'F'], notes), ['F']);
+    assert.deepEqual(freshNames('risers', ['A', 'B', 'C', 'D', 'F'], notes), ['F']);
     notes.push(composeNote('', ['A', 'B', 'C', 'D', 'F']));
     // E가 다시 들어와도 오늘 이미 보여 줬다
-    assert.deepEqual(freshRisers(['A', 'B', 'C', 'D', 'E'], notes), []);
+    assert.deepEqual(freshNames('risers', ['A', 'B', 'C', 'D', 'E'], notes), []);
   });
 
   it('옛 기록(📈 표시 없음)만 있으면 전부 새 이름이다', () => {
-    assert.deepEqual(freshRisers(['Z', 'A', 'M'], ['005930:-2']), ['Z', 'A', 'M']);
+    assert.deepEqual(freshNames('risers', ['Z', 'A', 'M'], ['005930:-2']), ['Z', 'A', 'M']);
   });
 
   it('📣를 📈와 함께 적고 도로 가른다 — 둘은 서로 섞이지 않는다', () => {
@@ -184,11 +184,11 @@ suite('📈 오늘 오르는 후보', () => {
 
   it('★ 📣도 오늘 이미 보여 준 이름은 새 신호가 아니다 — 📈에 있던 이름은 📣로는 새것이다', () => {
     const notes = [composeNote('', ['A'], ['B'])];
-    assert.deepEqual(freshCatalysts(['B', 'C'], notes), ['C']);
-    assert.deepEqual(freshCatalysts(['A'], notes), ['A']);
+    assert.deepEqual(freshNames('catalysts', ['B', 'C'], notes), ['C']);
+    assert.deepEqual(freshNames('catalysts', ['A'], notes), ['A']);
   });
 
   it('들어온 순서를 지킨다 — 많이 오른 순 그대로', () => {
-    assert.deepEqual(freshRisers(['Z', 'A', 'M'], [composeNote('', ['A'])]), ['Z', 'M']);
+    assert.deepEqual(freshNames('risers', ['Z', 'A', 'M'], [composeNote('', ['A'])]), ['Z', 'M']);
   });
 });

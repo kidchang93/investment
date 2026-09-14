@@ -424,12 +424,7 @@ export function describeSelectedSignals(result: WalkForwardResult): string {
 /** 표본이 어느 해에 얼마나 있나. **반쪽이 비어 있는 것을 부호로만 말하면 안 보인다** */
 export function describeYearSpan(result: WalkForwardResult): string {
   if (result.oosYearCluster.length === 0) return '—(표본 없음)';
-  const perYear = new Map<number, number>();
-  for (let i = 0; i < result.oosYearCluster.length; i += 1) {
-    const year = result.oosYearCluster[i];
-    perYear.set(year, (perYear.get(year) ?? 0) + 1);
-  }
-  const years = [...perYear.keys()].sort((a, b) => a - b);
+  const years = [...new Set(result.oosYearCluster)].sort((a, b) => a - b);
   return `${years[0]}~${years[years.length - 1]} · 해 ${years.length}개`;
 }
 
