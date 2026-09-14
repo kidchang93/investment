@@ -80,7 +80,7 @@ export interface Strategy {
    * 평균 회귀의 *"승률 70.8%로 셋 중 압도적 1위"*(일봉)가 시작 버튼 옆에 아무
    * 표시 없이 떠 있었다 — 러너 축에서는 19.00%다.
    *
-   * 순서는 `strategyMeasurements()`가 강제하고 시험이 못 박는다.
+   * 순서는 시험(`strategy.test.ts`)이 못 박는다.
    */
   measurements: StrategyMeasurement[];
   /**
@@ -219,27 +219,6 @@ const MINUTE_AXIS_WHY =
   + ' 다만 비용만의 문제도 아니다: 비용을 전부 0으로 놓고 다시 재도 중앙값이 0 이하이고'
   + ' 플러스는 5~8/20종목이다. 이 축에서 세 전략은 동전 던지기에 가깝다.';
 
-/**
- * 축을 붙이고 **러너 축을 맨 앞에 둔다.**
- *
- * 전략마다 배열을 손으로 쓰면 축을 잘못 적거나 순서가 어긋난다. 그게 이번에 고친
- * 결함의 뿌리라 — 축이 값으로 없어서 아무도 못 봤다 — 자리를 함수가 정한다.
- * `RUNNER_CANDLE_AXIS`가 바뀌면 여기서 순서도 따라 바뀐다.
- */
-function strategyMeasurements(
-  minute: Omit<StrategyMeasurement, 'axis'>,
-  daily: Omit<StrategyMeasurement, 'axis'>,
-): StrategyMeasurement[] {
-  const measured: StrategyMeasurement[] = [
-    { axis: 'minute', ...minute },
-    { axis: 'daily', ...daily },
-  ];
-  return [
-    ...measured.filter((item) => item.axis === RUNNER_CANDLE_AXIS),
-    ...measured.filter((item) => item.axis !== RUNNER_CANDLE_AXIS),
-  ];
-}
-
 /** 단순 이동평균. 캔들이 모자라면 undefined. */
 export function movingAverage(candles: Candle[], period: number): number | undefined {
   if (candles.length < period) return undefined;
@@ -258,8 +237,9 @@ export class MovingAverageCrossStrategy implements Strategy {
   readonly key = 'ma_cross';
   readonly label = '이동평균 교차';
   readonly verdict = 'unproven' as const;
-  readonly measurements = strategyMeasurements(
+  readonly measurements: StrategyMeasurement[] = [
     {
+      axis: 'minute',
       measuredOn: '2026-08-01',
       sample: MINUTE_AXIS_SAMPLE,
       result:
@@ -270,6 +250,7 @@ export class MovingAverageCrossStrategy implements Strategy {
         + MINUTE_AXIS_WHY,
     },
     {
+      axis: 'daily',
       measuredOn: '2026-08-01',
       sample: DAILY_AXIS_SAMPLE,
       result:
@@ -283,7 +264,7 @@ export class MovingAverageCrossStrategy implements Strategy {
         + ' 남은 576개 중 매매가 한 건도 없던 것이 52개, 들고 끝난 것이 225개다.'
         + DAILY_AXIS_WIN_RATE_CAVEAT,
     },
-  );
+  ];
 
   constructor(
     private readonly shortPeriod = 5,
@@ -390,8 +371,9 @@ export class VolatilityBreakoutStrategy implements Strategy {
   readonly key = 'volatility_breakout';
   readonly label = '변동성 돌파';
   readonly verdict = 'no_edge' as const;
-  readonly measurements = strategyMeasurements(
+  readonly measurements: StrategyMeasurement[] = [
     {
+      axis: 'minute',
       measuredOn: '2026-08-01',
       sample: MINUTE_AXIS_SAMPLE,
       result:
@@ -402,6 +384,7 @@ export class VolatilityBreakoutStrategy implements Strategy {
         + MINUTE_AXIS_WHY,
     },
     {
+      axis: 'daily',
       measuredOn: '2026-08-01',
       sample: DAILY_AXIS_SAMPLE,
       result:
@@ -415,7 +398,7 @@ export class VolatilityBreakoutStrategy implements Strategy {
         + ' 남은 576개 중 매매가 한 건도 없던 것이 19개, 들고 끝난 것이 107개다.'
         + DAILY_AXIS_WIN_RATE_CAVEAT,
     },
-  );
+  ];
 
   constructor(
     private readonly k = 0.5,
@@ -490,8 +473,9 @@ export class MeanReversionStrategy implements Strategy {
   readonly key = 'mean_reversion';
   readonly label = '평균 회귀';
   readonly verdict = 'unproven' as const;
-  readonly measurements = strategyMeasurements(
+  readonly measurements: StrategyMeasurement[] = [
     {
+      axis: 'minute',
       measuredOn: '2026-08-01',
       sample: MINUTE_AXIS_SAMPLE,
       result:
@@ -503,6 +487,7 @@ export class MeanReversionStrategy implements Strategy {
         + MINUTE_AXIS_WHY,
     },
     {
+      axis: 'daily',
       measuredOn: '2026-08-01',
       sample: DAILY_AXIS_SAMPLE,
       result:
@@ -517,7 +502,7 @@ export class MeanReversionStrategy implements Strategy {
         + ' 이 전략은 회복해야 파는 규칙이라 들고 끝난 표본이 특히 많다.'
         + DAILY_AXIS_WIN_RATE_CAVEAT,
     },
-  );
+  ];
 
   constructor(
     private readonly period = 20,
