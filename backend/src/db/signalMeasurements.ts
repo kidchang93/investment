@@ -27,8 +27,6 @@
  * ── 이 표가 답하는 질문 ──────────────────────────────────────────────────
  *
  *   "지금까지 몇 칸을 쟀나"        → `cumulativeCellCount()` (본페로니의 분모)
- *   "이 신호는 이미 죽였나"        → `findMeasurements({ signalKey })`
- *   "살아남은 것이 있나"           → `findMeasurements({ survivedOnly: true })`
  *
  * ── ★ 반증 요구는 세지 않는다 (2026-08-12) ───────────────────────────────
  *
@@ -444,96 +442,6 @@ export async function countKnownSignatures(
     [datasetKey, testUnit, signatures],
   );
   return Number(rows[0]?.n ?? 0);
-}
-
-/** 이미 재 본 것을 되짚는다. 같은 신호를 모르고 또 재는 일을 막는다. */
-export async function findMeasurements(filter: {
-  signalKey?: string;
-  periodKey?: string;
-  datasetKey?: string;
-  testUnit?: string;
-  survivedOnly?: boolean;
-  limit?: number;
-}): Promise<SignalMeasurement[]> {
-  await ensureSignalMeasurementSchema();
-  const where: string[] = [];
-  const values: unknown[] = [];
-  if (filter.signalKey) {
-    values.push(filter.signalKey);
-    where.push(`signal_key = $${values.length}`);
-  }
-  if (filter.periodKey) {
-    values.push(filter.periodKey);
-    where.push(`period_key = $${values.length}`);
-  }
-  if (filter.datasetKey) {
-    values.push(filter.datasetKey);
-    where.push(`dataset_key = $${values.length}`);
-  }
-  if (filter.testUnit) {
-    values.push(filter.testUnit);
-    where.push(`test_unit = $${values.length}`);
-  }
-  if (filter.survivedOnly) where.push('survived = TRUE');
-  values.push(Math.min(500, Math.max(1, filter.limit ?? 200)));
-
-  const { rows } = await pool.query<Record<string, string | number | boolean>>(
-    `SELECT * FROM trading_signal_measurements
-     ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
-     ORDER BY measured_at DESC, id DESC
-     LIMIT $${values.length}`,
-    values,
-  );
-  return rows.map((row) => ({
-    measuredAt: Number(row.measured_at),
-    signalKey: String(row.signal_key),
-    rationale: String(row.rationale),
-    horizonDays: Number(row.horizon_days),
-    periodKey: String(row.period_key),
-    periodFrom: String(row.period_from),
-    periodTo: String(row.period_to),
-    universe: String(row.universe),
-    symbolsCount: Number(row.symbols_count),
-    daysCount: Number(row.days_count),
-    samples: Number(row.samples),
-    spreadMean: Number(row.spread_mean),
-    spreadMedian: Number(row.spread_median),
-    tStat: Number(row.t_stat),
-    alpha: Number(row.alpha),
-    alphaT: Number(row.alpha_t),
-    beta: Number(row.beta),
-    runCellCount: Number(row.run_cell_count),
-    bonferroniT: Number(row.bonferroni_t),
-    survived: Boolean(row.survived),
-    note: String(row.note),
-    topLegMean: row.top_leg_mean === null ? undefined : Number(row.top_leg_mean),
-    topLegT: row.top_leg_t === null ? undefined : Number(row.top_leg_t),
-    topLegTrimmed10: row.top_leg_trimmed10 === null ? undefined : Number(row.top_leg_trimmed10),
-    topLegTop5Share: row.top_leg_top5_share === null ? undefined : Number(row.top_leg_top5_share),
-    verdictBasis: row.verdict_basis === null ? undefined : String(row.verdict_basis),
-    topLegAlpha: row.top_leg_alpha === null ? undefined : Number(row.top_leg_alpha),
-    topLegAlphaT: row.top_leg_alpha_t === null ? undefined : Number(row.top_leg_alpha_t),
-    topLegBeta: row.top_leg_beta === null ? undefined : Number(row.top_leg_beta),
-    datasetKey: row.dataset_key === null ? undefined : String(row.dataset_key),
-    testUnit: row.test_unit === null ? undefined : String(row.test_unit),
-    entryBasis: row.entry_basis === null ? undefined : String(row.entry_basis),
-    costRoundTrip: row.cost_round_trip === null ? undefined : Number(row.cost_round_trip),
-    oosYears: row.oos_years === null ? undefined : Number(row.oos_years),
-    tNeweyWest: row.t_newey_west === null ? undefined : Number(row.t_newey_west),
-    tBlockBoot: row.t_block_boot === null ? undefined : Number(row.t_block_boot),
-    tNonOverlap: row.t_non_overlap === null ? undefined : Number(row.t_non_overlap),
-    verdictT: row.verdict_t === null ? undefined : Number(row.verdict_t),
-    selectionTurnover: row.selection_turnover === null ? undefined : Number(row.selection_turnover),
-    half1Sign: row.half1_sign === null ? undefined : Number(row.half1_sign),
-    half2Sign: row.half2_sign === null ? undefined : Number(row.half2_sign),
-    antiT: row.anti_t === null ? undefined : Number(row.anti_t),
-    mirrorT: row.mirror_t === null ? undefined : Number(row.mirror_t),
-    placeboMaxT: row.placebo_max_t === null ? undefined : Number(row.placebo_max_t),
-    survivorshipExposed:
-      row.survivorship_exposed === null ? undefined : Boolean(row.survivorship_exposed),
-    truncatedExits: row.truncated_exits === null ? undefined : Number(row.truncated_exits),
-    abstainSkillT: row.abstain_skill_t === null ? undefined : Number(row.abstain_skill_t),
-  }));
 }
 
 /**
