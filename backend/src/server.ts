@@ -207,8 +207,8 @@ import type {
  * `/api/instruments/quotes` 한 요청의 종목 수 상한.
  *
  * 예전에는 360이었다 — 뜻은 "시세 조회 12회"인데 숫자로는 종목 수뿐이라 몇 회가
- * 나가는지 아무도 몰랐다. 스크리닝·후보 고르기는 이미 호출 수로 상한을 잡는다
- * (`MAX_SCREENING_CALLS` · `MAX_PRICE_LOOKUP_CALLS`). 여기만 종목 수였다.
+ * 나가는지 아무도 몰랐다. 스크리닝은 이미 호출 수로 상한을 잡는다
+ * (`MAX_SCREENING_CALLS`). 여기만 종목 수였다.
  *
  * 상한을 10회로 낮춘 이유: 실측해 본 최대가 10묶음 300종목 1.08초다
  * (`docs/DESIGN.md`). 12회는 재 보지 않은 값이었다.
@@ -712,7 +712,7 @@ async function main(): Promise<void> {
         alerts.push({
           level: 'warn',
           message: '평일 개장 뒤인데 오늘 자동 실행 기록이 없습니다',
-          action: '터미널에서 zsh scripts/daemon.sh status 로 확인하세요.',
+          action: '「목표」 탭 맨 위 자동화 스위치가 켜져 있는지 확인하세요.',
         });
       }
 

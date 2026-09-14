@@ -3,7 +3,7 @@
  *
  * 질의(`riskRules.ts`)에서 떼어 둔 이유는 시험이다. `trading_broker_orders`에
  * `status='submitted'`인 행이 **0건**이라(2026-08-01 확인: 17행 전부 blocked·rejected)
- * DB를 조회해서는 이 계산이 맞는지 확인할 방법이 없다. `runCandles.ts`·`quoteCache.ts`와
+ * DB를 조회해서는 이 계산이 맞는지 확인할 방법이 없다. `quoteCache.ts`와
  * 같은 방식으로, 재료를 인자로 받아 값으로 못 박는다.
  *
  * 여기서 못 박는 두 가지:

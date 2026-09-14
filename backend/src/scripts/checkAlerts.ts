@@ -186,7 +186,7 @@ async function main(): Promise<void> {
       key: 'daemon-idle',
       digest: '',
       message: '평일 개장 뒤인데 오늘 자동 실행 기록이 없다',
-      action: 'zsh scripts/daemon.sh status 로 확인하고 멈춰 있으면 start.',
+      action: 'localhost:4000 「목표」 탭 맨 위 자동화 스위치를 확인하고, 백엔드가 꺼져 있으면 zsh scripts/morning.sh.',
     });
   }
 

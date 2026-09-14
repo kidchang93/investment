@@ -51,7 +51,6 @@ import type {
  *
  * 실측된 상한은 10묶음(300종목 1.08초, `docs/DESIGN.md`)이고 그보다 낮게 잡는다.
  * 8이면 가장 큰 테마인 반도체(101종목 4회)에 다른 테마 하나를 더 얹을 수 있다.
- * `universe.ts`의 `MAX_PRICE_LOOKUP_CALLS`와 같은 값이다.
  */
 export const THEME_PULSE_MAX_CALLS = 8;
 

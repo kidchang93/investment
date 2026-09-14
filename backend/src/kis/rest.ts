@@ -889,11 +889,9 @@ export async function getDomesticDayMinuteCandles(
 }
 
 /**
- * 국내주식 1분봉 시세 — **오늘 것 한 창(최대 120봉)**. 러너와 화면이 쓴다.
+ * 국내주식 1분봉 시세 — **오늘 것 한 창(최대 120봉)**. 화면 차트가 쓴다.
  *
- * 날짜를 안 거른다. 그 날짜에 봉이 없으면 전날 것이 오는데, 그 판정은
- * `trading/runCandles.ts`가 마지막 봉의 KST 날짜로 한다 — 거기 계약이 시험으로
- * 못 박혀 있어 여기서 또 거르지 않는다.
+ * 날짜를 안 거른다. 그 날짜에 봉이 없으면(개장 전·휴장일) KIS가 전날 것을 준다.
  */
 async function getDomesticIntradayCandles(instrument: Instrument): Promise<CandlesResponse> {
   const candles = await fetchDomesticMinuteWindow(instrument, '235959', kstToday());
