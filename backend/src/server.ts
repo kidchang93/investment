@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import type { FastifyBaseLogger, FastifyReply } from 'fastify';
 import {
   getStatus as getAutomationStatus,
   runNow as runAutomationTask,
@@ -279,6 +280,48 @@ function resolveAccount(accountId?: string): KisAccountConfig | null | 'unknown'
   const account = getKisAccount(accountId);
   if (accountId && !account) return 'unknown';
   return account;
+}
+
+/**
+ * 멱등성 키를 주문 **전에** 선점한다. 국내·해외 주문 라우트가 같은 것을 쓴다.
+ *
+ * 주문 후에 잡으면 그 사이 재시도가 들어와 같은 주문이 두 번 나간다. 잡지 못했다면
+ * 이미 처리된 요청이므로 앞선 결과를 그대로 돌려주고 새로 보내지 않는다.
+ *
+ * 선점 자체가 DB 오류로 실패하면 중복인지 알 수 없으므로 보내지 않는다 —
+ * 모르면 보내지 않는 쪽이 안전하다.
+ *
+ * **무엇이든 돌려주면 그것으로 응답하고 주문을 보내지 않는다.** 키가 없거나 이
+ * 요청이 키를 잡았으면 `undefined`다.
+ */
+async function claimOrderKey(
+  log: FastifyBaseLogger,
+  reply: FastifyReply,
+  clientOrderId: string | undefined,
+  order: Pick<PlaceLiveOrderResult, 'accountId' | 'symbol' | 'side' | 'quantity'>,
+): Promise<PlaceLiveOrderResult | FastifyReply | undefined> {
+  if (!clientOrderId) return undefined;
+  let claimed: boolean;
+  try {
+    claimed = await claimClientOrderId(order.accountId, clientOrderId, 'place');
+  } catch (err) {
+    log.error({ err, clientOrderId }, '멱등성 키 선점 실패');
+    return reply.code(503).send({ message: '주문 중복 여부를 확인할 수 없어 보내지 않았습니다. 잠시 후 같은 요청을 다시 보내세요.' });
+  }
+  if (claimed) return undefined;
+  const previous = await getOrderByClientOrderId(clientOrderId);
+  log.warn({ clientOrderId }, '같은 주문 키로 재요청 — 새로 보내지 않음');
+  return {
+    accepted: previous?.status === 'submitted',
+    accountId: order.accountId,
+    symbol: order.symbol,
+    side: order.side,
+    quantity: order.quantity,
+    orderNo: previous?.orderNo ?? '',
+    orderBranchNo: previous?.orderBranchNo ?? '',
+    acceptedAt: '',
+    message: `이미 처리된 주문입니다 · ${previous?.message ?? '앞선 결과를 확인하세요'}`,
+  } satisfies PlaceLiveOrderResult;
 }
 
 /*
@@ -1261,38 +1304,10 @@ async function main(): Promise<void> {
       }
     }
 
-    /*
-      * 멱등성 키를 주문 **전에** 선점한다. 주문 후에 잡으면 그 사이 재시도가 들어와
-      * 같은 주문이 두 번 나간다. 잡지 못했다면 이미 처리된 요청이므로 앞선 결과를
-      * 그대로 돌려주고 새로 보내지 않는다.
-      *
-      * 선점 자체가 DB 오류로 실패하면 중복인지 알 수 없으므로 보내지 않는다 —
-      * 모르면 보내지 않는 쪽이 안전하다.
-      */
-    if (clientOrderId) {
-      let claimed: boolean;
-      try {
-        claimed = await claimClientOrderId(account.id, clientOrderId, 'place');
-      } catch (err) {
-        req.log.error({ err, clientOrderId }, '멱등성 키 선점 실패');
-        return reply.code(503).send({ message: '주문 중복 여부를 확인할 수 없어 보내지 않았습니다. 잠시 후 같은 요청을 다시 보내세요.' });
-      }
-      if (!claimed) {
-        const previous = await getOrderByClientOrderId(clientOrderId);
-        req.log.warn({ clientOrderId }, '같은 주문 키로 재요청 — 새로 보내지 않음');
-        return {
-          accepted: previous?.status === 'submitted',
-          accountId: account.id,
-          symbol: instrument.providerSymbol,
-          side,
-          quantity,
-          orderNo: previous?.orderNo ?? '',
-          orderBranchNo: previous?.orderBranchNo ?? '',
-          acceptedAt: '',
-          message: `이미 처리된 주문입니다 · ${previous?.message ?? '앞선 결과를 확인하세요'}`,
-        } satisfies PlaceLiveOrderResult;
-      }
-    }
+    const settled = await claimOrderKey(req.log, reply, clientOrderId, {
+      accountId: account.id, symbol: instrument.providerSymbol, side, quantity,
+    });
+    if (settled) return settled;
 
     /*
      * 스톱지정가는 **아직 이 레포가 접수시켜 본 적 없는 주문구분**이다
@@ -1486,30 +1501,10 @@ async function main(): Promise<void> {
       return reply.code(403).send({ message: '리스크 룰에 막혔습니다.', verdict });
     }
 
-    if (clientOrderId) {
-      let claimed: boolean;
-      try {
-        claimed = await claimClientOrderId(account.id, clientOrderId, 'place');
-      } catch (err) {
-        req.log.error({ err, clientOrderId }, '멱등성 키 선점 실패');
-        return reply.code(503).send({ message: '주문 중복 여부를 확인할 수 없어 보내지 않았습니다. 잠시 후 같은 요청을 다시 보내세요.' });
-      }
-      if (!claimed) {
-        const previous = await getOrderByClientOrderId(clientOrderId);
-        req.log.warn({ clientOrderId }, '같은 주문 키로 재요청 — 새로 보내지 않음');
-        return {
-          accepted: previous?.status === 'submitted',
-          accountId: account.id,
-          symbol: instrument.providerSymbol,
-          side,
-          quantity,
-          orderNo: previous?.orderNo ?? '',
-          orderBranchNo: previous?.orderBranchNo ?? '',
-          acceptedAt: '',
-          message: `이미 처리된 주문입니다 · ${previous?.message ?? '앞선 결과를 확인하세요'}`,
-        } satisfies PlaceLiveOrderResult;
-      }
-    }
+    const settled = await claimOrderKey(req.log, reply, clientOrderId, {
+      accountId: account.id, symbol: instrument.providerSymbol, side, quantity,
+    });
+    if (settled) return settled;
 
     const guardNote = ' · 계좌 상태 관문(보유 수·최소 보유·중단선)은 국내 잔고만 읽어 적용하지 않았습니다';
     try {
