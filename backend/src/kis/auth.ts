@@ -172,14 +172,8 @@ export async function getAccessToken(credentials: KisCredentials = primaryCreden
   if (cached && cached.expiresAt > Date.now() + 60_000) {
     return cached.accessToken;
   }
-
-  const key = tokenCacheKey(credentials.id, credentialServer(credentials));
-  const pending = inFlightTokens.get(key);
-  if (pending) return pending;
-
-  const issuing = issueAccessToken(credentials).finally(() => inFlightTokens.delete(key));
-  inFlightTokens.set(key, issuing);
-  return issuing;
+  // 캐시가 없거나 곧 만료다. 발급 중인 것이 있으면 그것을 함께 기다린다.
+  return reissueAccessToken(credentials);
 }
 
 /**

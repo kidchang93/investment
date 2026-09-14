@@ -15,9 +15,66 @@
  */
 
 import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 
-import { appKeyFingerprint, isSameAppKey, tokenCacheFileName, tokenCacheKey } from './auth.js';
+import {
+  appKeyFingerprint,
+  getAccessToken,
+  isSameAppKey,
+  reissueAccessToken,
+  tokenCacheFileName,
+  tokenCacheKey,
+} from './auth.js';
+
+/*
+ * 발급 횟수 제한이 있어 토큰은 파일 캐시로 재사용하고, 동시에 온 요청은 발급 하나를
+ * 함께 기다린다(CLAUDE.md 2번). fetch를 가로채 발급 횟수만 센다.
+ *
+ * ★ 캐시는 `process.cwd()/.cache`에 쓰인다. 이 레포의 `backend/.cache`에는 실제
+ *   토큰이 있으므로 **작업 디렉터리를 임시 폴더로 옮긴 뒤에만** 부른다. 자격증명 id도
+ *   실제와 겹치지 않게 짓는다.
+ */
+describe('토큰 발급 — 한 번으로 묶고 캐시를 다시 쓴다', () => {
+  it('동시에 셋이 물어도 한 번 발급하고, 그 뒤로는 캐시를 쓰며, 재발급만 새로 받는다', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kis-auth-test-'));
+    const cwd = process.cwd();
+    const realFetch = globalThis.fetch;
+    let issued = 0;
+    globalThis.fetch = (async () => {
+      issued += 1;
+      const token = `token-${issued}`;
+      await delay(50);
+      return new Response(JSON.stringify({ access_token: token, expires_in: 86_400 }));
+    }) as typeof fetch;
+    process.chdir(dir);
+    try {
+      const credentials = { id: 'auth-test-only', appKey: 'key', appSecret: 'secret', server: 'vts' as const };
+
+      const first = await Promise.all([
+        getAccessToken(credentials),
+        getAccessToken(credentials),
+        getAccessToken(credentials),
+      ]);
+      assert.deepEqual(first, ['token-1', 'token-1', 'token-1']);
+      assert.equal(issued, 1, '동시 요청이 토큰을 따로 발급했다');
+
+      assert.equal(await getAccessToken(credentials), 'token-1');
+      assert.equal(issued, 1, '유효한 캐시가 있는데 다시 발급했다');
+
+      assert.equal(await reissueAccessToken(credentials), 'token-2');
+      assert.equal(await getAccessToken(credentials), 'token-2', '재발급한 토큰이 캐시에 안 남았다');
+      assert.equal(issued, 2);
+    } finally {
+      process.chdir(cwd);
+      globalThis.fetch = realFetch;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('토큰 캐시 파일 이름', () => {
   it('같은 자격증명이라도 서버가 다르면 다른 파일이다', () => {
