@@ -3844,14 +3844,6 @@ button {
   transition: width 0.18s ease, height 0.18s ease;
 }
 
-/*
- * 주문 탭은 폼이라 목록보다 넓어야 한다. 312px에서는 수량·가격 입력과
- * 주문가능 금액이 같은 줄에 들어가지 못하고 계속 접혔다.
- */
-.watchlist[data-panel='order'] {
-  width: 384px;
-}
-
 .watchlist.is-collapsed {
   width: 48px;
 }
@@ -4972,22 +4964,6 @@ button {
     max-height: none;
     writing-mode: horizontal-tb;
   }
-}
-
-/* 예약주문 등록 폼의 select도 입력칸과 같은 높이로 */
-.risk-rules select {
-  height: 29px;
-  padding: 0 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: 5px;
-  outline: none;
-  background: #090d14;
-  color: var(--text);
-  font-size: 12px;
-}
-
-.risk-rules input[readonly] {
-  color: var(--muted);
 }
 
 /* 접힌 목록을 펼치는 줄. 표의 마지막 행처럼 보이게 둔다. */

@@ -140,7 +140,7 @@ interface MarketSession {
   /** 국내 종목일 때의 KRX 구간. 주문이 나갈 수 있는 때인지 판단하는 데 쓴다 */
   krxKind?: KrxSessionKind;
   /** 큰 글씨가 멈춰 있을 때 옆에 적을 말 */
-  frozenNote?: { headline: string; hint: string };
+  frozenNote?: { headline: string; hint?: string };
 }
 
 interface MoveSummary {
@@ -246,7 +246,7 @@ const KRX_SESSION_TEXT: Record<
     /** 큰 글씨 가격이 멈춰 있는가. 멈춰 있으면 왜 그런지 함께 적는다 */
     frozen: boolean;
     /** 멈춰 있을 때 큰 글씨 옆에 적을 말. `frozen`이면 반드시 있다 */
-    frozenNote?: { headline: string; hint: string };
+    frozenNote?: { headline: string; hint?: string };
     orderable: boolean;
   }
 > = {
@@ -255,10 +255,7 @@ const KRX_SESSION_TEXT: Record<
     detail: '체결 없이 주문만 모입니다',
     tone: 'pre',
     frozen: true,
-    frozenNote: {
-      headline: '이 값은 마지막 체결가에 멈춰 있습니다',
-      hint: '예상 체결가는 주문 탭 호가창에서 봅니다',
-    },
+    frozenNote: { headline: '이 값은 마지막 체결가에 멈춰 있습니다' },
     orderable: false,
   },
   regular: { label: '정규장', detail: '거래 중', tone: 'open', frozen: false, orderable: true },
@@ -267,10 +264,7 @@ const KRX_SESSION_TEXT: Record<
     detail: '체결 없이 주문만 모입니다',
     tone: 'pre',
     frozen: true,
-    frozenNote: {
-      headline: '이 값은 마지막 체결가에 멈춰 있습니다',
-      hint: '예상 체결가는 주문 탭 호가창에서 봅니다',
-    },
+    frozenNote: { headline: '이 값은 마지막 체결가에 멈춰 있습니다' },
     orderable: false,
   },
   postOffHours: {
@@ -322,7 +316,7 @@ const LAYOUT_PRESET_OPTIONS: Array<{ key: LayoutPreset; label: string; title: st
 const APP_PAGE_OPTIONS: Array<{ key: AppPage; label: string; title: string }> = [
   // ★ 목표가 첫 화면이다. 무엇을 하려는 앱인지 열자마자 보여야 한다.
   { key: 'goal', label: '목표', title: '연 15~20%까지 어디쯤인가 · 지금 할 일' },
-  { key: 'market', label: '종목', title: '차트와 주문을 한 화면에서' },
+  { key: 'market', label: '종목', title: '차트와 관심·탐색을 한 화면에서' },
   { key: 'portfolio', label: '내 계좌', title: '잔고·주문내역·손익·리스크 룰' },
   { key: 'terminal', label: '발견', title: '뉴스·매크로·랭킹' },
 ];
@@ -3962,7 +3956,7 @@ export function App(): JSX.Element {
                   */}
                   <p className="terminal-board__intro">
                     이 앱은 <b>한국투자증권 실계좌로 국내 주식을 사고팔 수 있는 도구</b>입니다 —
-                    주문은 <b>종목</b> 화면에서 내고, 잔고·손익은 <b>내 계좌</b>에서 봅니다.
+                    화면에서는 주문을 내지 않고, 잔고·손익은 <b>내 계좌</b>에서 봅니다.
                     {!liveOrderGate
                       ? ` 지금 실주문을 보낼 수 있는지는 ${gateUnknownLabel === '확인 실패' ? '확인하지 못했습니다' : '확인하는 중입니다'}.`
                       : liveOrderArmed
@@ -4733,7 +4727,7 @@ export function App(): JSX.Element {
               {/*
                 동시호가에는 연속 체결이 없어 이 숫자가 멈춘다. 큰 글씨는
                 그대로 두되(마지막 체결가인 것은 맞다) 멈췄다는 것을 옆에
-                적는다. 예상 체결가는 호가창(주문 탭)에서 볼 수 있다.
+                적는다.
               */}
               {snapshot && marketSession.isAuction && (
                 <span className="quote-header__auction">
