@@ -37,7 +37,7 @@
 
 import type { PoolClient } from 'pg';
 
-import { pool } from './client.js';
+import { pool, withTransaction } from './client.js';
 
 /** 저장하는 일봉 한 줄. 날짜는 KST 거래일 `YYYYMMDD`다. */
 export interface DailyBar {
@@ -162,18 +162,10 @@ export async function replaceSymbolBars(
   vintage: string,
   fetchedAt: number,
 ): Promise<void> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     await client.query('DELETE FROM trading_daily_bars WHERE symbol = $1', [symbol]);
     await insertBars(client, symbol, bars, vintage, fetchedAt);
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**
@@ -190,17 +182,7 @@ export async function appendSymbolBars(
   fetchedAt: number,
 ): Promise<void> {
   if (bars.length === 0) return;
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await insertBars(client, symbol, bars, vintage, fetchedAt);
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  await withTransaction((client) => insertBars(client, symbol, bars, vintage, fetchedAt));
 }
 
 /** 한 번에 여러 줄. 21년치는 5,300줄이라 한 줄씩 왕복하면 느리다. */

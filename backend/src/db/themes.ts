@@ -1,4 +1,4 @@
-import { pool } from './client.js';
+import { pool, withTransaction } from './client.js';
 import { instrumentColumns, rowToInstrument, type InstrumentRow } from './instruments.js';
 import type { Theme, ThemeList, ThemeMembers } from '@invest/shared';
 
@@ -99,9 +99,7 @@ export async function replaceThemes(
   members: Array<{ themeCode: string; symbol: string }>,
   sourceModifiedAt: Date,
 ): Promise<ThemeSyncSummary> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  return withTransaction(async (client) => {
     // theme_instruments는 ON DELETE CASCADE로 함께 지워진다.
     await client.query('DELETE FROM themes');
 
@@ -134,8 +132,6 @@ export async function replaceThemes(
       [members.map((m) => m.themeCode), members.map((m) => m.symbol)],
     );
 
-    await client.query('COMMIT');
-
     const linkedMemberCount = inserted.rows.filter(
       (row: { instrument_id: string | null }) => row.instrument_id !== null,
     ).length;
@@ -153,12 +149,7 @@ export async function replaceThemes(
       missingSymbolCount: missing.size,
       sourceModifiedAt,
     };
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /**

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { inferDomesticAssetType } from './assetTypes.js';
-import { pool } from './client.js';
+import { pool, withTransaction } from './client.js';
 import type {
   Instrument,
   InstrumentCategory,
@@ -393,9 +393,7 @@ export async function insertInactiveInstruments(
   let skippedNoMarket = 0;
   let alreadyPresent = 0;
 
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     for (const seed of seeds) {
       if (!seed.market) {
         skippedNoMarket += 1;
@@ -427,13 +425,7 @@ export async function insertInactiveInstruments(
       );
       inserted += result.rowCount ?? 0;
     }
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 
   return { inserted, skippedNoMarket, alreadyPresent };
 }

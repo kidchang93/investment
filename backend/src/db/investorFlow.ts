@@ -43,7 +43,7 @@
 
 import type { PoolClient } from 'pg';
 
-import { pool } from './client.js';
+import { pool, withTransaction } from './client.js';
 
 /**
  * 저장하는 하루. 날짜는 KST 거래일 `YYYYMMDD`, 순매수는 **수량(주)**이다.
@@ -155,18 +155,10 @@ export async function replaceSymbolFlow(
   vintage: string,
   fetchedAt: number,
 ): Promise<void> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  await withTransaction(async (client) => {
     await client.query('DELETE FROM trading_investor_flow WHERE symbol = $1', [symbol]);
     await insertFlow(client, symbol, days, vintage, fetchedAt);
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /** 새 거래일만 덧붙인다. **대조를 통과한 뒤에만 부른다**(계약 ②). */
@@ -177,17 +169,7 @@ export async function appendSymbolFlow(
   fetchedAt: number,
 ): Promise<void> {
   if (days.length === 0) return;
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await insertFlow(client, symbol, days, vintage, fetchedAt);
-    await client.query('COMMIT');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  await withTransaction((client) => insertFlow(client, symbol, days, vintage, fetchedAt));
 }
 
 /** 한 번에 여러 줄. 21년치는 5,000줄이라 한 줄씩 왕복하면 느리다. */

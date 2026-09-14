@@ -172,6 +172,18 @@ describe('저장소 (DB가 있을 때만)', () => {
     assert.deepEqual(vintages.rows.map((row) => row.vintage), ['20260811']);
   });
 
+  it('넣다가 실패하면 지운 것까지 되돌린다 — 반쯤 갈아 끼운 종목을 남기지 않는다', async (t) => {
+    if (!usable) return t.skip('DB에 붙지 못했습니다');
+
+    await replaceSymbolBars(TEST_SYMBOL, [bar('20260806', 100)], '20260810', 9);
+    // open은 NOT NULL이라 INSERT가 실패한다. 그때 DELETE는 이미 나간 뒤다.
+    const broken = bar('20260807', 101, { open: null as unknown as number });
+    await assert.rejects(replaceSymbolBars(TEST_SYMBOL, [broken], '20260811', 10));
+
+    const rows = await getDailyBars(TEST_SYMBOL);
+    assert.deepEqual(rows.map((row) => row.close), [100]);
+  });
+
   it('안 온 값을 0으로 채우지 않는다', async (t) => {
     if (!usable) return t.skip('DB에 붙지 못했습니다');
 

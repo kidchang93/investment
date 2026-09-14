@@ -8,7 +8,7 @@
  * 계산은 `trading/layers.ts`가 한다(순수 함수). 이 모듈은 읽고 쓰기만 한다.
  */
 
-import { pool } from './client.js';
+import { pool, withTransaction } from './client.js';
 import {
   applyTrade,
   tradeStampFor,
@@ -105,9 +105,7 @@ export async function recordLayerTrade(
   tradedOn?: string,
 ): Promise<{ realizedPnl: number | null; shortfall: number }> {
   await ensureLayerSchema();
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  return withTransaction(async (client) => {
     const { rows } = await client.query<{ quantity: string; cost: string }>(
       `SELECT quantity::text, cost::text FROM trading_layer_positions
         WHERE account_id = $1 AND layer = $2 AND symbol = $3 FOR UPDATE`,
@@ -139,14 +137,8 @@ export async function recordLayerTrade(
         result.realizedPnl, note, stampedAt,
       ],
     );
-    await client.query('COMMIT');
     return { realizedPnl: result.realizedPnl, shortfall: result.shortfall };
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 /** 단기 층 판정에 쓰는 것 — 승률과 손익비는 실현된 매도에서만 나온다 */
