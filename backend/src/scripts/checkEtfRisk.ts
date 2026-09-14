@@ -193,9 +193,4 @@ async function main(): Promise<void> {
   console.log('★ 순자산이 큰 것이 수익률을 보장하지는 않는다. 이 검사가 답하는 것은 **사라질 위험** 하나다.');
 }
 
-main()
-  .catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  })
-  .finally(() => closeDb());
+await main().finally(closeDb);

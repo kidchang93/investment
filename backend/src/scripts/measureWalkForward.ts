@@ -1152,9 +1152,4 @@ async function main(): Promise<void> {
   console.log(`\n전체 ${elapsed(startedAt)} · 최대 힙 ${heapMb()}MB`);
 }
 
-main()
-  .catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  })
-  .finally(() => closeDb());
+await main().finally(closeDb);

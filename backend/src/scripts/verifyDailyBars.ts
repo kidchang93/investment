@@ -561,9 +561,4 @@ async function main(): Promise<void> {
   console.log('  어떻게 다루는지가 결과에 남는다(파탄 앞 구간 버림 · 생존편향 표시).');
 }
 
-main()
-  .catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  })
-  .finally(() => closeDb());
+await main().finally(closeDb);

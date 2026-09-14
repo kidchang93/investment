@@ -225,9 +225,4 @@ async function main(): Promise<void> {
   void byQuintile;
 }
 
-main()
-  .catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  })
-  .finally(() => closeDb());
+await main().finally(closeDb);

@@ -505,9 +505,4 @@ async function main(): Promise<void> {
   console.log('\n★ 같은 판단을 되풀이하지 마세요. 위 회차가 이미 정한 것은 그대로 둡니다.');
 }
 
-main()
-  .catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  })
-  .finally(() => closeDb());
+await main().finally(closeDb);

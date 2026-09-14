@@ -125,9 +125,4 @@ async function main(): Promise<void> {
   console.log(`받음 ${ok} · 재무 없음 ${empty} · 실패 ${failed} · ${tookMin}분 걸렸다`);
 }
 
-main()
-  .catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  })
-  .finally(() => closeDb());
+await main().finally(closeDb);

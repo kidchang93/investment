@@ -527,11 +527,4 @@ function encodeInstrumentSymbol(symbol: string): string {
   return Buffer.from(symbol).toString('base64url');
 }
 
-main()
-  .catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  })
-  .finally(() => {
-    void closeDb();
-  });
+await main().finally(closeDb);
