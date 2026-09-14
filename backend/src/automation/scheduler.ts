@@ -157,9 +157,8 @@ function kstNow(): { clock: Clock; weekday: number; hhmm: string } {
  */
 async function doneToday(name: string): Promise<boolean | null> {
   try {
-    const { rows } = await pool.query<{ n: string; at: string | null }>(
-      `SELECT count(*)::text AS n,
-              to_char(max(ran_at) AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at
+    const { rows } = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n
          FROM trading_heartbeats
         WHERE name = $1 AND status = 'ok'
           AND (ran_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date`,
@@ -300,6 +299,13 @@ async function runTask(task: TaskSpec, clock: Clock, hhmm: string): Promise<void
 
 // ── 루프 ─────────────────────────────────────────────────────────────────
 
+/** 창 안이고, 매매 스위치가 막지 않고, 이미 돌고 있지 않은가. 두 트랙이 같이 쓴다 */
+function eligible(task: TaskSpec, clock: Clock): boolean {
+  return isInWindow(task, clock)
+    && !(task.trading && !settings.tradingEnabled)
+    && !running.has(task.name);
+}
+
 async function tick(): Promise<void> {
   lastTickAt = Date.now();
   if (!settings.enabled) return;
@@ -328,20 +334,14 @@ async function tick(): Promise<void> {
 
   // ── 트랙 A: 손절처럼 매 분 도는 것 ──
   for (const task of TASKS) {
-    if (!task.noHeartbeat) continue;
-    if (!isInWindow(task, clock)) continue;
-    if (task.trading && !settings.tradingEnabled) continue;
-    if (running.has(task.name)) continue;
+    if (!task.noHeartbeat || !eligible(task, clock)) continue;
     if (task.guard && (await isRunningOutside(task.guard))) continue;
     void runTask(task, clock, hhmm);
   }
 
   // ── 트랙 B: 나머지 중 하나 ──
   for (const task of TASKS) {
-    if (task.noHeartbeat) continue;
-    if (!isInWindow(task, clock)) continue;
-    if (task.trading && !settings.tradingEnabled) continue;
-    if (running.has(task.name)) continue;
+    if (task.noHeartbeat || !eligible(task, clock)) continue;
 
     const name = heartbeatName(task, clock);
     const done = await doneToday(name);
@@ -388,7 +388,7 @@ export interface AutomationStatus {
   now: string;
   weekday: number;
   tasks: TaskState[];
-  recent: Array<{ name: string; startedAt: number; finishedAt: number | null; ok: boolean | null; output: string }>;
+  recent: RunLog[];
 }
 
 export async function getStatus(): Promise<AutomationStatus> {
@@ -445,9 +445,4 @@ export async function startScheduler(): Promise<void> {
   timer = setInterval(() => { void tick(); }, 60_000);
   // 뜨자마자 한 번 본다 — 창 안이면 바로 시작한다.
   void tick();
-}
-
-export function stopScheduler(): void {
-  if (timer) clearInterval(timer);
-  timer = null;
 }

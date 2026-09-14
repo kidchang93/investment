@@ -497,10 +497,6 @@ export async function getTerminalInstruments(): Promise<Instrument[]> {
   return getByIds([...TERMINAL_INSTRUMENT_IDS]);
 }
 
-export function getInstrumentCategories(): InstrumentCategory[] {
-  return INSTRUMENT_CATEGORIES;
-}
-
 export async function getCategoryInstruments(categoryId: string, limit = 300, query = ''): Promise<Instrument[]> {
   switch (categoryId) {
     case 'kr-major':

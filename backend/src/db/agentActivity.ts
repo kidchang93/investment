@@ -61,7 +61,11 @@ export function ensureAgentActivitySchema(): Promise<void> {
       detail     TEXT NOT NULL DEFAULT '',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
-  `).then(() => undefined);
+  `).then(
+    () => undefined,
+    // 실패는 기억하지 않는다 — 한 번 끊긴 것이 프로세스가 사는 동안 계속 실패로 남으면 안 된다.
+    (err: unknown) => { ready = null; throw err; },
+  );
   return ready;
 }
 

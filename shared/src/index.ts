@@ -914,7 +914,7 @@ export interface ClientSubscribeInstrument {
 }
 
 /** 프론트 → 백엔드 WebSocket 제어 메시지 */
-export type ClientMessage = { type: 'subscribe'; codes?: string[]; instruments?: ClientSubscribeInstrument[] };
+export type ClientMessage = { type: 'subscribe'; instruments?: ClientSubscribeInstrument[] };
 
 /** KIS 실시간 연결 상태 */
 export interface ConnectionStatus {

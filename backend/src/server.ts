@@ -6,7 +6,7 @@ import {
   startScheduler,
 } from './automation/scheduler.js';
 import { getDeliberations } from './db/deliberations.js';
-import { ensureAgentActivitySchema, getAgentActivities } from './db/agentActivity.js';
+import { getAgentActivities } from './db/agentActivity.js';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
@@ -30,7 +30,7 @@ import {
   ensureInstrumentSchema,
   getCategoryInstruments,
   getInstrument,
-  getInstrumentCategories,
+  INSTRUMENT_CATEGORIES,
   getTerminalInstruments,
   getWatchlistItems,
   getWatchlists,
@@ -290,12 +290,10 @@ function resolveAccount(accountId?: string): KisAccountConfig | null | 'unknown'
 const quoteCache = new QuoteCache();
 
 function normalizeSubscribeInstruments(msg: ClientMessage): ClientSubscribeInstrument[] {
-  const legacy = (msg.codes ?? []).map((code) => ({ code, market: 'KOSPI', assetType: 'stock' as const }));
-  const instruments = [...legacy, ...(msg.instruments ?? [])];
   const seen = new Set<string>();
   const result: ClientSubscribeInstrument[] = [];
 
-  for (const instrument of instruments) {
+  for (const instrument of msg.instruments ?? []) {
     const code = instrument.code.trim().toUpperCase();
     if (!/^[0-9A-Z]{6,9}$/.test(code) || seen.has(code)) continue;
     seen.add(code);
@@ -316,7 +314,6 @@ async function main(): Promise<void> {
   await ensureThemeSchema();
   await ensureBrokerOrderSchema();
   await ensureRiskRuleSchema();
-  await ensureAgentActivitySchema();
   await ensureMarketSnapshotSchema();
   /*
    * 그날의 시장 상태를 그날 찍어 둔다. **러너와 따로 돈다** — 러너가 꺼진 날도
@@ -1664,9 +1661,7 @@ async function main(): Promise<void> {
     return searchInstruments(req.query.q ?? '');
   });
 
-  app.get('/api/instruments/categories', async () => {
-    return getInstrumentCategories();
-  });
+  app.get('/api/instruments/categories', async () => INSTRUMENT_CATEGORIES);
 
   app.get<{ Params: { id: string }; Querystring: { q?: string } }>('/api/instruments/categories/:id', async (req) => {
     return getCategoryInstruments(req.params.id, 300, req.query.q ?? '');
