@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   config,
   orderServerMismatch,
@@ -206,12 +207,6 @@ const kisCallChains: Record<KisServer, Promise<unknown>> = {
   prod: Promise.resolve(),
   vts: Promise.resolve(),
 };
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
 
 /**
  * KIS REST 호출을 줄 세워 최소 간격을 둔다.
@@ -466,6 +461,77 @@ function yyyymmdd(d: Date): string {
   return `${y}${m}${day}`;
 }
 
+/** KIS 날짜 `YYYYMMDD` → 그날 00:00 UTC epoch 초 (`Candle.time`의 일봉 규약) */
+function ymdToUtcSec(ymd: string): number {
+  return Math.floor(Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(4, 6)) - 1, Number(ymd.slice(6, 8))) / 1000);
+}
+
+/** 시각이 숫자이고 시고저종이 양수, 거래량이 음수가 아닌 봉만 남긴다 */
+function isValidCandle(c: Candle): boolean {
+  return (
+    Number.isFinite(c.time) &&
+    isPositiveFinite(c.open) &&
+    isPositiveFinite(c.high) &&
+    isPositiveFinite(c.low) &&
+    isPositiveFinite(c.close) &&
+    isNonNegativeFinite(c.volume ?? 0)
+  );
+}
+
+/** 계좌 조회 응답이 실패(`rt_cd`가 있고 `0`이 아님)면 KIS가 한 말을 담아 던진다 */
+function assertRtOk(body: Record<string, unknown>, label: string): void {
+  if (body.rt_cd && body.rt_cd !== '0') {
+    throw new Error(`KIS ${label} 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
+  }
+}
+
+/**
+ * 계좌 조회의 페이지 넘김. `tr_cont`가 `M`/`F`인 동안 `CTX_AREA_FK100`·`NK100`을
+ * 물려 이어 받는다(최대 10쪽). 쪽마다 `rt_cd`를 보고, 행은 쪽 순서대로 이어 붙인다.
+ * 합계 줄(`output2`)은 배열·객체 어느 모양으로 와도 한 줄로 받고, 마지막으로 온 것을 쓴다.
+ */
+async function kisPages(
+  account: KisAccountConfig,
+  path: string,
+  trId: string,
+  params: Record<string, string>,
+  label: string,
+  rowsKey: 'output1' | 'output' = 'output1',
+): Promise<{ rows: Array<Record<string, string>>; summary: Record<string, string> }> {
+  const rows: Array<Record<string, string>> = [];
+  let summary: Record<string, string> = {};
+  let fk100 = '';
+  let nk100 = '';
+  let trCont = '';
+
+  for (let depth = 0; depth < 10; depth += 1) {
+    const { body, headers } = await kisGetWithHeaders(
+      path,
+      trId,
+      { ...params, CTX_AREA_FK100: fk100, CTX_AREA_NK100: nk100 },
+      trCont,
+      toCredentials(account),
+    );
+    assertRtOk(body, label);
+
+    const pageRows = body[rowsKey];
+    if (Array.isArray(pageRows)) rows.push(...(pageRows as Array<Record<string, string>>));
+    const output2 = Array.isArray(body.output2)
+      ? (body.output2[0] as Record<string, string> | undefined)
+      : body.output2 && typeof body.output2 === 'object'
+        ? (body.output2 as Record<string, string>)
+        : undefined;
+    summary = output2 ?? summary;
+
+    trCont = headers.get('tr_cont') ?? '';
+    fk100 = String(body.ctx_area_fk100 ?? '');
+    nk100 = String(body.ctx_area_nk100 ?? '');
+    if (trCont !== 'M' && trCont !== 'F') break;
+  }
+
+  return { rows, summary };
+}
+
 function signFromChange(change: number): PriceSign {
   if (change > 0) return '2';
   if (change < 0) return '5';
@@ -525,16 +591,13 @@ async function fetchDailyCandlePage(
   const candles: Candle[] = output2
     .filter((r) => r.stck_bsop_date)
     .map((r) => {
-      const y = Number(r.stck_bsop_date.slice(0, 4));
-      const m = Number(r.stck_bsop_date.slice(4, 6));
-      const d = Number(r.stck_bsop_date.slice(6, 8));
       /*
        * 거래대금(`acml_tr_pbmn`)은 **없으면 undefined로 둔다.** 0으로 채우면
        * "그날 한 주도 안 거래됐다"가 지어진다 — `toNumberOrNaN`이 있는 이유다.
        */
       const turnover = toNumberOrNaN(r.acml_tr_pbmn);
       return {
-        time: Math.floor(Date.UTC(y, m - 1, d) / 1000),
+        time: ymdToUtcSec(r.stck_bsop_date),
         open: toNumber(r.stck_oprc),
         high: toNumber(r.stck_hgpr),
         low: toNumber(r.stck_lwpr),
@@ -543,15 +606,7 @@ async function fetchDailyCandlePage(
         turnover: isNonNegativeFinite(turnover) ? turnover : undefined,
       };
     })
-    .filter(
-      (c) =>
-        Number.isFinite(c.time) &&
-        isPositiveFinite(c.open) &&
-        isPositiveFinite(c.high) &&
-        isPositiveFinite(c.low) &&
-        isPositiveFinite(c.close) &&
-        isNonNegativeFinite(c.volume ?? 0),
-    )
+    .filter(isValidCandle)
     .sort((a, b) => a.time - b.time);
 
   return { name, candles };
@@ -712,40 +767,38 @@ const COMMODITY_CANDLE_SPECS: Record<string, Pick<Instrument, 'providerSymbol' |
 };
 
 async function fetchTradingViewQuote(symbol: string): Promise<TradingViewQuote> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
   const url = new URL('https://scanner.tradingview.com/symbol');
   url.searchParams.set('symbol', symbol);
   url.searchParams.set('fields', 'close,change,change_abs,open,high,low,volume,currency');
 
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) {
-      throw new Error(`TradingView 조회 실패 (${res.status})`);
-    }
-    const json = (await res.json()) as Partial<TradingViewFields> & { code?: string; errmsg?: string };
-    const fetchedAt = Date.now();
-    if (json.code || !Number.isFinite(json.close)) {
-      throw new Error(`TradingView 응답이 올바르지 않습니다: ${symbol}`);
-    }
-    return { ...(json as TradingViewFields), fetchedAt };
-  } finally {
-    clearTimeout(timeout);
+  // 신호는 본문을 다 읽을 때까지 살아 있다 — 응답 머리만 오고 본문이 멈춰도 5초에 끊긴다.
+  const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+  if (!res.ok) {
+    throw new Error(`TradingView 조회 실패 (${res.status})`);
   }
+  const json = (await res.json()) as Partial<TradingViewFields> & { code?: string; errmsg?: string };
+  const fetchedAt = Date.now();
+  if (json.code || !Number.isFinite(json.close)) {
+    throw new Error(`TradingView 응답이 올바르지 않습니다: ${symbol}`);
+  }
+  return { ...(json as TradingViewFields), fetchedAt };
+}
+
+/** TradingView 값의 전일 대비. `change_abs`·`change`가 없으면 시가 대비로 물러선다 */
+function tradingViewChange(quote: TradingViewQuote): { change: number; changeRate: number } {
+  const change = Number((quote.change_abs ?? quote.close - (quote.open ?? quote.close)).toFixed(4));
+  const changeRate = Number((quote.change ?? (quote.open ? change / quote.open * 100 : 0)).toFixed(2));
+  return { change, changeRate };
 }
 
 export async function getUsdKrwExchangeRate(): Promise<ExchangeRate> {
   const quote = await fetchTradingViewQuote('FX_IDC:USDKRW');
-  const rate = quote.close;
-  const change = Number((quote.change_abs ?? rate - (quote.open ?? rate)).toFixed(4));
-  const changeRate = Number((quote.change ?? (quote.open ? change / quote.open * 100 : 0)).toFixed(2));
   return {
     pair: 'USD/KRW',
     baseCurrency: 'USD',
     quoteCurrency: 'KRW',
-    rate,
-    change,
-    changeRate,
+    rate: quote.close,
+    ...tradingViewChange(quote),
     // 응답을 받은 시각. `Date.now()`를 여기서 다시 부르면 계산 시간만큼 새 값처럼 보인다.
     fetchedAt: quote.fetchedAt,
   };
@@ -803,15 +856,7 @@ async function fetchDomesticMinuteWindow(
       close: toNumber(r.stck_prpr),
       volume: toNumber(r.cntg_vol),
     }))
-    .filter(
-      (c) =>
-        Number.isFinite(c.time) &&
-        isPositiveFinite(c.open) &&
-        isPositiveFinite(c.high) &&
-        isPositiveFinite(c.low) &&
-        isPositiveFinite(c.close) &&
-        isNonNegativeFinite(c.volume ?? 0),
-    )
+    .filter(isValidCandle)
     .sort((a, b) => a.time - b.time);
 }
 
@@ -854,7 +899,7 @@ export async function getDomesticDayMinuteCandles(
       byTime.set(candle.time, candle);
     }
     if (index < MINUTE_WINDOW_HOURS.length - 1 && gapMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, gapMs));
+      await delay(gapMs);
     }
   }
   return [...byTime.values()].sort((a, b) => a.time - b.time);
@@ -896,15 +941,7 @@ async function getOverseasIntradayCandles(instrument: Instrument): Promise<Candl
       close: toNumber(r.last),
       volume: toNumber(r.evol),
     }))
-    .filter(
-      (c) =>
-        Number.isFinite(c.time) &&
-        isPositiveFinite(c.open) &&
-        isPositiveFinite(c.high) &&
-        isPositiveFinite(c.low) &&
-        isPositiveFinite(c.close) &&
-        isNonNegativeFinite(c.volume ?? 0),
-    )
+    .filter(isValidCandle)
     .sort((a, b) => a.time - b.time);
 
   return { code: instrument.id, name: instrument.name, candles };
@@ -1742,8 +1779,7 @@ async function getCommodityIndicatorCandles(
 async function getTradingViewInstrumentQuote(instrument: Instrument): Promise<Quote> {
   const quote = await fetchTradingViewQuote(instrument.providerSymbol);
   const price = quote.close;
-  const change = Number((quote.change_abs ?? price - (quote.open ?? price)).toFixed(4));
-  const changeRate = Number((quote.change ?? (quote.open ? change / quote.open * 100 : 0)).toFixed(2));
+  const { change, changeRate } = tradingViewChange(quote);
   return {
     code: instrument.id,
     fetchedAt: quote.fetchedAt,
@@ -1872,28 +1908,15 @@ async function getDomesticFutureDailyCandles(
   const output2 = (json.output2 ?? []) as Array<Record<string, string>>;
   const candles: Candle[] = output2
     .filter((r) => /^\d{8}$/.test(r.stck_bsop_date ?? ''))
-    .map((r) => {
-      const y = Number(r.stck_bsop_date.slice(0, 4));
-      const m = Number(r.stck_bsop_date.slice(4, 6));
-      const d = Number(r.stck_bsop_date.slice(6, 8));
-      return {
-        time: Math.floor(Date.UTC(y, m - 1, d) / 1000),
-        open: toNumber(r.futs_oprc),
-        high: toNumber(r.futs_hgpr),
-        low: toNumber(r.futs_lwpr),
-        close: toNumber(r.futs_prpr),
-        volume: toNumber(r.acml_vol),
-      };
-    })
-    .filter(
-      (c) =>
-        Number.isFinite(c.time) &&
-        isPositiveFinite(c.open) &&
-        isPositiveFinite(c.high) &&
-        isPositiveFinite(c.low) &&
-        isPositiveFinite(c.close) &&
-        isNonNegativeFinite(c.volume ?? 0),
-    )
+    .map((r) => ({
+      time: ymdToUtcSec(r.stck_bsop_date),
+      open: toNumber(r.futs_oprc),
+      high: toNumber(r.futs_hgpr),
+      low: toNumber(r.futs_lwpr),
+      close: toNumber(r.futs_prpr),
+      volume: toNumber(r.acml_vol),
+    }))
+    .filter(isValidCandle)
     .sort((a, b) => a.time - b.time);
 
   return { code: instrument.id, name: instrument.name, candles };
@@ -1918,28 +1941,15 @@ async function getOverseasFutureDailyCandles(instrument: Instrument): Promise<Ca
   const output2 = (json.output2 ?? []) as Array<Record<string, string>>;
   const candles: Candle[] = output2
     .filter((r) => /^\d{8}$/.test(r.data_date ?? ''))
-    .map((r) => {
-      const y = Number(r.data_date.slice(0, 4));
-      const m = Number(r.data_date.slice(4, 6));
-      const d = Number(r.data_date.slice(6, 8));
-      return {
-        time: Math.floor(Date.UTC(y, m - 1, d) / 1000),
-        open: toNumber(r.open_price),
-        high: toNumber(r.high_price),
-        low: toNumber(r.low_price),
-        close: toNumber(r.last_price),
-        volume: toNumber(r.vol),
-      };
-    })
-    .filter(
-      (c) =>
-        Number.isFinite(c.time) &&
-        isPositiveFinite(c.open) &&
-        isPositiveFinite(c.high) &&
-        isPositiveFinite(c.low) &&
-        isPositiveFinite(c.close) &&
-        isNonNegativeFinite(c.volume ?? 0),
-    )
+    .map((r) => ({
+      time: ymdToUtcSec(r.data_date),
+      open: toNumber(r.open_price),
+      high: toNumber(r.high_price),
+      low: toNumber(r.low_price),
+      close: toNumber(r.last_price),
+      volume: toNumber(r.vol),
+    }))
+    .filter(isValidCandle)
     .sort((a, b) => a.time - b.time);
 
   return { code: instrument.id, name: instrument.name, candles };
@@ -1961,52 +1971,24 @@ export async function getKisDomesticAccountSnapshot(
   }
 
   const trId = config.env === 'prod' ? 'TTTC8434R' : 'VTTC8434R';
-  const positions: BrokerPosition[] = [];
-  let summary: Record<string, string> = {};
-  let fk100 = '';
-  let nk100 = '';
-  let trCont = '';
-
-  for (let depth = 0; depth < 10; depth += 1) {
-    const { body, headers } = await kisGetWithHeaders(
-      '/uapi/domestic-stock/v1/trading/inquire-balance',
-      trId,
-      {
-        CANO: account.cano,
-        ACNT_PRDT_CD: account.productCode,
-        AFHR_FLPR_YN: 'N',
-        OFL_YN: '',
-        INQR_DVSN: '01',
-        UNPR_DVSN: '01',
-        FUND_STTL_ICLD_YN: 'N',
-        FNCG_AMT_AUTO_RDPT_YN: 'N',
-        PRCS_DVSN: '00',
-        CTX_AREA_FK100: fk100,
-        CTX_AREA_NK100: nk100,
-      },
-      trCont,
-      toCredentials(account),
-    );
-
-    if (body.rt_cd && body.rt_cd !== '0') {
-      throw new Error(`KIS 주식잔고조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
-    }
-
-    const output1 = Array.isArray(body.output1) ? (body.output1 as Array<Record<string, string>>) : [];
-    const output2 = Array.isArray(body.output2)
-      ? (body.output2 as Array<Record<string, string>>)
-      : body.output2 && typeof body.output2 === 'object'
-        ? [body.output2 as Record<string, string>]
-        : [];
-
-    positions.push(...output1.map(rowToBrokerPosition).filter((position) => position.quantity > 0));
-    summary = output2[0] ?? summary;
-
-    trCont = headers.get('tr_cont') ?? '';
-    fk100 = String(body.ctx_area_fk100 ?? '');
-    nk100 = String(body.ctx_area_nk100 ?? '');
-    if (trCont !== 'M' && trCont !== 'F') break;
-  }
+  const { rows, summary } = await kisPages(
+    account,
+    '/uapi/domestic-stock/v1/trading/inquire-balance',
+    trId,
+    {
+      CANO: account.cano,
+      ACNT_PRDT_CD: account.productCode,
+      AFHR_FLPR_YN: 'N',
+      OFL_YN: '',
+      INQR_DVSN: '01',
+      UNPR_DVSN: '01',
+      FUND_STTL_ICLD_YN: 'N',
+      FNCG_AMT_AUTO_RDPT_YN: 'N',
+      PRCS_DVSN: '00',
+    },
+    '주식잔고조회',
+  );
+  const positions = rows.map(rowToBrokerPosition).filter((position) => position.quantity > 0);
 
   return {
     broker: 'kis',
@@ -2228,9 +2210,7 @@ export async function getKisDomesticOrderability(
     toCredentials(account),
   );
 
-  if (body.rt_cd && body.rt_cd !== '0') {
-    throw new Error(`KIS 매수가능조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
-  }
+  assertRtOk(body, '매수가능조회');
 
   const output = (body.output ?? {}) as Record<string, string>;
   return {
@@ -2346,57 +2326,28 @@ export async function getKisDomesticExecutions(
   // 3개월 이내 조회용 현행 tr_id. 구 TTTC8001R도 아직 응답하지만 문서상 현행은 이쪽이다.
   // 3개월 이전 구간은 CTSC9215R / VTSC9215R로 갈라진다.
   const trId = config.env === 'prod' ? 'TTTC0081R' : 'VTTC0081R';
-  const executions: BrokerExecution[] = [];
-  let summary: Record<string, string> = {};
-  let fk100 = '';
-  let nk100 = '';
-  let trCont = '';
-
-  for (let depth = 0; depth < 10; depth += 1) {
-    const { body, headers } = await kisGetWithHeaders(
-      '/uapi/domestic-stock/v1/trading/inquire-daily-ccld',
-      trId,
-      {
-        CANO: account.cano,
-        ACNT_PRDT_CD: account.productCode,
-        INQR_STRT_DT: from,
-        INQR_END_DT: to,
-        SLL_BUY_DVSN_CD: '00',
-        INQR_DVSN: '00',
-        PDNO: '',
-        CCLD_DVSN: '00',
-        ORD_GNO_BRNO: '',
-        ODNO: '',
-        INQR_DVSN_3: '00',
-        INQR_DVSN_1: '',
-        CTX_AREA_FK100: fk100,
-        CTX_AREA_NK100: nk100,
-      },
-      trCont,
-      toCredentials(account),
-    );
-
-    if (body.rt_cd && body.rt_cd !== '0') {
-      throw new Error(`KIS 주문체결조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
-    }
-
-    const output1 = Array.isArray(body.output1) ? (body.output1 as Array<Record<string, string>>) : [];
-    const output2 = Array.isArray(body.output2)
-      ? (body.output2[0] as Record<string, string> | undefined)
-      : body.output2 && typeof body.output2 === 'object'
-        ? (body.output2 as Record<string, string>)
-        : undefined;
-
-    // 페이지가 이어지므로 id 인덱스는 누적 개수를 기준으로 잡는다.
-    const offset = executions.length;
-    output1.forEach((row, index) => executions.push(rowToBrokerExecution(row, offset + index)));
-    summary = output2 ?? summary;
-
-    trCont = headers.get('tr_cont') ?? '';
-    fk100 = String(body.ctx_area_fk100 ?? '');
-    nk100 = String(body.ctx_area_nk100 ?? '');
-    if (trCont !== 'M' && trCont !== 'F') break;
-  }
+  const { rows, summary } = await kisPages(
+    account,
+    '/uapi/domestic-stock/v1/trading/inquire-daily-ccld',
+    trId,
+    {
+      CANO: account.cano,
+      ACNT_PRDT_CD: account.productCode,
+      INQR_STRT_DT: from,
+      INQR_END_DT: to,
+      SLL_BUY_DVSN_CD: '00',
+      INQR_DVSN: '00',
+      PDNO: '',
+      CCLD_DVSN: '00',
+      ORD_GNO_BRNO: '',
+      ODNO: '',
+      INQR_DVSN_3: '00',
+      INQR_DVSN_1: '',
+    },
+    '주문체결조회',
+  );
+  // 행이 쪽 순서대로 이어 붙어 오므로 id 인덱스가 쪽을 넘어 누적된다.
+  const executions = rows.map(rowToBrokerExecution);
 
   return {
     broker: 'kis',
@@ -2446,71 +2397,41 @@ export async function getKisDomesticTradeProfit(
     };
   }
 
-  const rows: BrokerTradeProfitRow[] = [];
-  let summary: Record<string, string> = {};
-  let fk100 = '';
-  let nk100 = '';
-  let trCont = '';
-
-  for (let depth = 0; depth < 10; depth += 1) {
-    const { body, headers } = await kisGetWithHeaders(
-      '/uapi/domestic-stock/v1/trading/inquire-period-trade-profit',
-      'TTTC8715R',
-      {
-        CANO: account.cano,
-        ACNT_PRDT_CD: account.productCode,
-        SORT_DVSN: '00',
-        INQR_STRT_DT: from,
-        INQR_END_DT: to,
-        CBLC_DVSN: '00',
-        PDNO: '',
-        CTX_AREA_FK100: fk100,
-        CTX_AREA_NK100: nk100,
-      },
-      trCont,
-      toCredentials(account),
-    );
-
-    if (body.rt_cd && body.rt_cd !== '0') {
-      throw new Error(`KIS 기간별매매손익조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
-    }
-
-    const output1 = Array.isArray(body.output1) ? (body.output1 as Array<Record<string, string>>) : [];
-    const output2 = Array.isArray(body.output2)
-      ? (body.output2[0] as Record<string, string> | undefined)
-      : body.output2 && typeof body.output2 === 'object'
-        ? (body.output2 as Record<string, string>)
-        : undefined;
-
-    const offset = rows.length;
-    output1.forEach((row, index) => {
-      rows.push({
-        id: `${row.trad_dt ?? ''}-${row.pdno ?? ''}-${offset + index}`,
-        tradeDate: row.trad_dt ?? '',
-        symbol: row.pdno ?? '',
-        name: row.prdt_name ?? row.pdno ?? '',
-        tradeTypeLabel: row.trad_dvsn_name ?? '',
-        sellQuantity: optionalNumber(row.sll_qty) ?? 0,
-        sellPrice: optionalNumber(row.sll_pric) ?? 0,
-        sellAmount: optionalNumber(row.sll_amt) ?? 0,
-        buyQuantity: optionalNumber(row.buy_qty) ?? 0,
-        buyPrice: optionalNumber(row.pchs_unpr) ?? 0,
-        buyAmount: optionalNumber(row.buy_amt) ?? 0,
-        realizedProfit: optionalNumber(row.rlzt_pfls) ?? 0,
-        profitRate: optionalNumber(row.pfls_rt) ?? 0,
-        fee: optionalNumber(row.fee) ?? 0,
-        tax: optionalNumber(row.tl_tax) ?? 0,
-        loanInterest: optionalNumber(row.loan_int) ?? 0,
-        currency: 'KRW',
-      });
-    });
-    summary = output2 ?? summary;
-
-    trCont = headers.get('tr_cont') ?? '';
-    fk100 = String(body.ctx_area_fk100 ?? '');
-    nk100 = String(body.ctx_area_nk100 ?? '');
-    if (trCont !== 'M' && trCont !== 'F') break;
-  }
+  const page = await kisPages(
+    account,
+    '/uapi/domestic-stock/v1/trading/inquire-period-trade-profit',
+    'TTTC8715R',
+    {
+      CANO: account.cano,
+      ACNT_PRDT_CD: account.productCode,
+      SORT_DVSN: '00',
+      INQR_STRT_DT: from,
+      INQR_END_DT: to,
+      CBLC_DVSN: '00',
+      PDNO: '',
+    },
+    '기간별매매손익조회',
+  );
+  const summary = page.summary;
+  const rows = page.rows.map((row, index): BrokerTradeProfitRow => ({
+    id: `${row.trad_dt ?? ''}-${row.pdno ?? ''}-${index}`,
+    tradeDate: row.trad_dt ?? '',
+    symbol: row.pdno ?? '',
+    name: row.prdt_name ?? row.pdno ?? '',
+    tradeTypeLabel: row.trad_dvsn_name ?? '',
+    sellQuantity: optionalNumber(row.sll_qty) ?? 0,
+    sellPrice: optionalNumber(row.sll_pric) ?? 0,
+    sellAmount: optionalNumber(row.sll_amt) ?? 0,
+    buyQuantity: optionalNumber(row.buy_qty) ?? 0,
+    buyPrice: optionalNumber(row.pchs_unpr) ?? 0,
+    buyAmount: optionalNumber(row.buy_amt) ?? 0,
+    realizedProfit: optionalNumber(row.rlzt_pfls) ?? 0,
+    profitRate: optionalNumber(row.pfls_rt) ?? 0,
+    fee: optionalNumber(row.fee) ?? 0,
+    tax: optionalNumber(row.tl_tax) ?? 0,
+    loanInterest: optionalNumber(row.loan_int) ?? 0,
+    currency: 'KRW',
+  }));
 
   return {
     broker: 'kis',
@@ -2656,9 +2577,7 @@ export async function isDomesticMarketOpenDay(date = kstToday()): Promise<boolea
     { ...lookup.credentials, server: lookup.server, crossServerRead: true },
   );
 
-  if (body.rt_cd && body.rt_cd !== '0') {
-    throw new Error(`KIS 휴장일조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
-  }
+  assertRtOk(body, '휴장일조회');
 
   const rows = Array.isArray(body.output) ? (body.output as Array<Record<string, string>>) : [];
   const today = rows.find((row) => row.bass_dt === date);
@@ -2693,9 +2612,7 @@ export async function getKisDomesticSellability(
     toCredentials(account),
   );
 
-  if (body.rt_cd && body.rt_cd !== '0') {
-    throw new Error(`KIS 매도가능수량조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
-  }
+  assertRtOk(body, '매도가능수량조회');
 
   const rows = Array.isArray(body.output)
     ? (body.output as Array<Record<string, string>>)
@@ -2784,11 +2701,6 @@ export async function getKisDomesticAmendableOrders(
 ): Promise<BrokerAmendableOrder[]> {
   if (!account) return [];
 
-  const orders: BrokerAmendableOrder[] = [];
-  let fk100 = '';
-  let nk100 = '';
-  let trCont = '';
-
   /*
    * ★★ **모의 서버에는 이 TR이 없다.** `VTTC0084R`로 바꿔 봤지만 *"없는 서비스
    *    코드"*가 온다(2026-09-03 실측) — 이름 문제가 아니라 **기능이 없는 것**이다
@@ -2811,58 +2723,40 @@ export async function getKisDomesticAmendableOrders(
     return amendableFromExecutions(account);
   }
 
-  for (let depth = 0; depth < 10; depth += 1) {
-    const { body, headers } = await kisGetWithHeaders(
-      '/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl',
-      'TTTC0084R',
-      {
-        CANO: account.cano,
-        ACNT_PRDT_CD: account.productCode,
-        // 조회구분1: 0 주문 / 1 종목, 조회구분2: 0 전체 / 1 매도 / 2 매수
-        INQR_DVSN_1: '1',
-        INQR_DVSN_2: '0',
-        CTX_AREA_FK100: fk100,
-        CTX_AREA_NK100: nk100,
-      },
-      trCont,
-      toCredentials(account),
-    );
+  const { rows } = await kisPages(
+    account,
+    '/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl',
+    'TTTC0084R',
+    {
+      CANO: account.cano,
+      ACNT_PRDT_CD: account.productCode,
+      // 조회구분1: 0 주문 / 1 종목, 조회구분2: 0 전체 / 1 매도 / 2 매수
+      INQR_DVSN_1: '1',
+      INQR_DVSN_2: '0',
+    },
+    '정정취소가능주문조회',
+    'output',
+  );
 
-    if (body.rt_cd && body.rt_cd !== '0') {
-      throw new Error(`KIS 정정취소가능주문조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
-    }
-
-    const rows = Array.isArray(body.output) ? (body.output as Array<Record<string, string>>) : [];
-    const offset = orders.length;
-    rows.forEach((row, index) => {
-      orders.push({
-        id: `${row.ord_gno_brno ?? ''}-${row.odno ?? ''}-${offset + index}`,
-        orderNo: row.odno ?? '',
-        orderDate: /^\d{8}$/.test(row.ord_dt ?? '') ? row.ord_dt : undefined,
-        originalOrderNo: /^0*$/.test(row.orgn_odno ?? '') ? undefined : row.orgn_odno,
-        orderBranchNo: row.ord_gno_brno ?? '',
-        symbol: row.pdno ?? '',
-        name: row.prdt_name ?? row.pdno ?? '',
-        side: row.sll_buy_dvsn_cd === '01' ? 'sell' : 'buy',
-        orderTypeLabel: row.ord_dvsn_name ?? '',
-        orderTypeCode: row.ord_dvsn_cd ?? '00',
-        orderQuantity: optionalNumber(row.ord_qty) ?? 0,
-        orderPrice: optionalNumber(row.ord_unpr) ?? 0,
-        filledQuantity: optionalNumber(row.tot_ccld_qty) ?? 0,
-        // 이 응답에는 잔여수량(rmn_qty)이 없다. psbl_qty(가능수량)가 정정·취소 대상 수량이다.
-        amendableQuantity: optionalNumber(row.psbl_qty) ?? 0,
-        orderTime: /^\d{6}$/.test(row.ord_tmd ?? '') ? row.ord_tmd : undefined,
-        currency: 'KRW',
-      });
-    });
-
-    trCont = headers.get('tr_cont') ?? '';
-    fk100 = String(body.ctx_area_fk100 ?? '');
-    nk100 = String(body.ctx_area_nk100 ?? '');
-    if (trCont !== 'M' && trCont !== 'F') break;
-  }
-
-  return orders;
+  return rows.map((row, index): BrokerAmendableOrder => ({
+    id: `${row.ord_gno_brno ?? ''}-${row.odno ?? ''}-${index}`,
+    orderNo: row.odno ?? '',
+    orderDate: /^\d{8}$/.test(row.ord_dt ?? '') ? row.ord_dt : undefined,
+    originalOrderNo: /^0*$/.test(row.orgn_odno ?? '') ? undefined : row.orgn_odno,
+    orderBranchNo: row.ord_gno_brno ?? '',
+    symbol: row.pdno ?? '',
+    name: row.prdt_name ?? row.pdno ?? '',
+    side: row.sll_buy_dvsn_cd === '01' ? 'sell' : 'buy',
+    orderTypeLabel: row.ord_dvsn_name ?? '',
+    orderTypeCode: row.ord_dvsn_cd ?? '00',
+    orderQuantity: optionalNumber(row.ord_qty) ?? 0,
+    orderPrice: optionalNumber(row.ord_unpr) ?? 0,
+    filledQuantity: optionalNumber(row.tot_ccld_qty) ?? 0,
+    // 이 응답에는 잔여수량(rmn_qty)이 없다. psbl_qty(가능수량)가 정정·취소 대상 수량이다.
+    amendableQuantity: optionalNumber(row.psbl_qty) ?? 0,
+    orderTime: /^\d{6}$/.test(row.ord_tmd ?? '') ? row.ord_tmd : undefined,
+    currency: 'KRW',
+  }));
 }
 
 /** 국내주식 예약주문 조회 (tr_id: CTSC0004R, 모의투자 미지원). */
@@ -2891,9 +2785,7 @@ export async function getKisDomesticReservedOrders(
     toCredentials(account),
   );
 
-  if (body.rt_cd && body.rt_cd !== '0') {
-    throw new Error(`KIS 예약주문조회 실패: ${String(body.msg1 ?? body.msg_cd ?? '알 수 없는 오류')}`);
-  }
+  assertRtOk(body, '예약주문조회');
 
   // 예약주문 응답은 일반 주문과 필드명이 다르다.
   // 수량·단가에 rsvn 접두어가 붙고(ord_rsvn_qty / ord_rsvn_unpr), 종목명은 kor_item_shtn_name,
@@ -3254,28 +3146,15 @@ async function getOverseasDailyCandles(
   const output2 = (json.output2 ?? []) as Array<Record<string, string>>;
   const candles: Candle[] = output2
     .filter((r) => r.xymd)
-    .map((r) => {
-      const y = Number(r.xymd.slice(0, 4));
-      const m = Number(r.xymd.slice(4, 6));
-      const d = Number(r.xymd.slice(6, 8));
-      return {
-        time: Math.floor(Date.UTC(y, m - 1, d) / 1000),
-        open: toNumber(r.open),
-        high: toNumber(r.high),
-        low: toNumber(r.low),
-        close: toNumber(r.clos),
-        volume: toNumber(r.tvol),
-      };
-    })
-    .filter(
-      (c) =>
-        Number.isFinite(c.time) &&
-        isPositiveFinite(c.open) &&
-        isPositiveFinite(c.high) &&
-        isPositiveFinite(c.low) &&
-        isPositiveFinite(c.close) &&
-        isNonNegativeFinite(c.volume ?? 0),
-    )
+    .map((r) => ({
+      time: ymdToUtcSec(r.xymd),
+      open: toNumber(r.open),
+      high: toNumber(r.high),
+      low: toNumber(r.low),
+      close: toNumber(r.clos),
+      volume: toNumber(r.tvol),
+    }))
+    .filter(isValidCandle)
     .sort((a, b) => a.time - b.time)
     .slice(-days);
 
