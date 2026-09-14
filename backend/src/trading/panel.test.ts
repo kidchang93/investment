@@ -14,6 +14,7 @@ import {
   buildScoreMatrix,
   buildUniverseMask,
   localAt,
+  lowerBound,
   priceLimitFor,
   quickSelect,
   scanAdjustmentBreaks,
@@ -250,6 +251,18 @@ describe('quickSelect', () => {
     assert.equal(quickSelect(values.slice(), 5, 0), 1);
     assert.equal(quickSelect(values.slice(), 5, 2), 5);
     assert.equal(quickSelect(values.slice(), 5, 4), 9);
+  });
+});
+
+describe('lowerBound', () => {
+  it('target 이상이 처음 나오는 자리 — 같은 값이 여럿이면 맨 앞, 없으면 길이', () => {
+    const days = Int32Array.from([2, 4, 4, 4, 9]);
+    assert.equal(lowerBound(days, 1), 0);
+    assert.equal(lowerBound(days, 4), 1);
+    assert.equal(lowerBound(days, 5), 4);
+    assert.equal(lowerBound(days, 10), 5);
+    assert.equal(lowerBound([], 3), 0);
+    assert.equal(lowerBound(['20110103', '20110104'], '20110104'), 1);
   });
 });
 

@@ -79,7 +79,7 @@
  * 이 모듈은 DB도 KIS도 부르지 않는다. 순수 계산이라 시험이 네트워크 없이 돈다.
  */
 
-import { buildScoreMatrix, quickSelect, type Panel, type UniverseMask } from './panel.js';
+import { buildScoreMatrix, lowerBound, quickSelect, type Panel, type UniverseMask } from './panel.js';
 import type { SignalCandidate } from './signals.js';
 
 /**
@@ -796,17 +796,7 @@ function regimeValues(
 
 /** `dayIndex`(오름차순)에서 `[from, to]` 구간의 자리. 이진탐색이다. */
 function rangeBounds(dayIndex: Int32Array, from: number, to: number): [number, number] {
-  const lower = (target: number): number => {
-    let lo = 0;
-    let hi = dayIndex.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (dayIndex[mid] < target) lo = mid + 1;
-      else hi = mid;
-    }
-    return lo;
-  };
-  return [lower(from), lower(to + 1)];
+  return [lowerBound(dayIndex, from), lowerBound(dayIndex, to + 1)];
 }
 
 /** 학습·검증에 쓰는 다리. 거울은 하위분위를 산다. */
@@ -853,17 +843,6 @@ function monthOf(day: string): number {
   return Number(day.slice(0, 6));
 }
 
-function firstDayAtOrAfter(days: string[], target: string): number {
-  let lo = 0;
-  let hi = days.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (days[mid] < target) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo;
-}
-
 function runProcedure(spec: WalkForwardSpec, options: ProcedureOptions): WalkForwardResult {
   const { panel, cellSeries } = spec;
   const entryBasis = cellSeries[0]?.entryBasis ?? 'nextOpen';
@@ -905,10 +884,10 @@ function runProcedure(spec: WalkForwardSpec, options: ProcedureOptions): WalkFor
   const abstainedHorizonEntries = new Map<number, number>();
 
   for (let w = 0; w < spec.validationStarts.length; w += 1) {
-    const validFromIndex = firstDayAtOrAfter(panel.days, spec.validationStarts[w]);
+    const validFromIndex = lowerBound(panel.days, spec.validationStarts[w]);
     if (validFromIndex >= panel.days.length) continue;
     const validToIndex = w + 1 < spec.validationStarts.length
-      ? Math.min(panel.days.length - 1, firstDayAtOrAfter(panel.days, spec.validationStarts[w + 1]) - 1)
+      ? Math.min(panel.days.length - 1, lowerBound(panel.days, spec.validationStarts[w + 1]) - 1)
       : panel.days.length - 1;
     if (validToIndex < validFromIndex) continue;
 

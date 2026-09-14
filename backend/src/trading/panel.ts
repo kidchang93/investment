@@ -493,6 +493,18 @@ export function quickSelect(values: Float64Array, length: number, k: number): nu
   return values[k];
 }
 
+/** 오름차순 `sorted`에서 `target` 이상이 처음 나오는 자리. 없으면 길이. */
+export function lowerBound<T extends number | string>(sorted: ArrayLike<T>, target: T): number {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid] < target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 /**
  * 유니버스 마스크를 만든다. **점수 게이트 때문에 신호를 한 번씩 훑는다.**
  *

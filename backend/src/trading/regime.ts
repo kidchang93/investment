@@ -36,7 +36,7 @@
  *   사람만 고를 수 있는 값이다.
  */
 
-import { localAt, type Panel, type UniverseMask } from './panel.js';
+import { localAt, lowerBound, type Panel, type UniverseMask } from './panel.js';
 
 /** 국면 둘. `unknown`은 아직 판정할 표본이 모자란 날이다. */
 export type Regime = 'trend' | 'chop' | 'unknown';
@@ -135,14 +135,7 @@ export function efficiencyRatio(
  * O(n² log n)이다. 이 규모에서는 삽입 쪽이 충분히 빠르다.
  */
 function insertSorted(sorted: number[], value: number): void {
-  let lo = 0;
-  let hi = sorted.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (sorted[mid] < value) lo = mid + 1;
-    else hi = mid;
-  }
-  sorted.splice(lo, 0, value);
+  sorted.splice(lowerBound(sorted, value), 0, value);
 }
 
 /** 정렬된 배열의 중앙값. 짝수면 가운데 둘의 평균. */
