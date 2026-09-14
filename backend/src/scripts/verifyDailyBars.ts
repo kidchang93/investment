@@ -19,8 +19,11 @@
  *   npx tsx src/scripts/verifyDailyBars.ts [--breaks 40] [--mismatch 40]
  */
 
+import { parseArgs } from 'node:util';
+
 import { closeDb, pool } from '../db/client.js';
 import { DEFAULT_ADJUSTMENT_SCAN, PRICE_LIMIT_ERAS } from '../trading/panel.js';
+import { formatDay as day } from './collectCommon.js';
 
 /** 정리매매 면제 폭. 측정과 같은 값을 봐야 이 검사가 측정을 설명한다 */
 const FINAL_RUN_EXEMPT_BARS = DEFAULT_ADJUSTMENT_SCAN.finalRunExemptBars;
@@ -33,26 +36,18 @@ interface Options {
 }
 
 function parseOptions(argv: string[]): Options {
-  const options: Options = { breaks: 40, mismatch: 40 };
-  for (let index = 0; index < argv.length; index += 1) {
-    const next = (): string => argv[(index += 1)] ?? '';
-    switch (argv[index]) {
-      case '--breaks':
-        options.breaks = Number(next());
-        break;
-      case '--mismatch':
-        options.mismatch = Number(next());
-        break;
-      default:
-        throw new Error(`모르는 인자입니다: ${argv[index]}`);
-    }
-  }
-  return options;
-}
-
-function day(value: string | null): string {
-  if (!value) return '-';
-  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
+  const { values } = parseArgs({
+    args: argv,
+    strict: true,
+    options: {
+      breaks: { type: 'string' },
+      mismatch: { type: 'string' },
+    },
+  });
+  return {
+    breaks: values.breaks === undefined ? 40 : Number(values.breaks),
+    mismatch: values.mismatch === undefined ? 40 : Number(values.mismatch),
+  };
 }
 
 function number(value: number): string {

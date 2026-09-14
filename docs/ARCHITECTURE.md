@@ -370,6 +370,10 @@ db/dailyBars.ts               trading_daily_bars · trading_daily_bar_cursor
 소켓 절단·5xx는 재시도하고, `EGW02006`처럼 그 서버에 없는 기능은 500으로 와도
 재시도하지 않는다. 한도(`EGW00201`)는 성질이 달라 `rest.ts`의 `isRateLimitedError`다.
 
+세 수집기(일봉·수급·폐지 일봉)가 같이 쓰는 인자 해석·재시도(`withRetry`)·오류
+설명·표기는 `scripts/collectCommon.ts` 한 곳에 있다(실행 스크립트가 아니다). 세 벌을
+따로 들고 있던 동안에는 한쪽만 고쳐질 수 있었다 — 소비자가 둘이 되면 옮긴다.
+
 ### 수급 저장소 — 가격 밖의 정보를 처음으로 쌓는다
 
 ```

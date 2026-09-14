@@ -43,14 +43,17 @@
  *
  *   npx tsx src/scripts/collectDelistedBars.ts [--limit N] [--symbols 005600,012460]
  *                                              [--from 20050101] [--gap-ms 1200]
- *                                              [--pages 60] [--force] [--dry-run]
+ *                                              [--pages 60] [--credential <계좌 id>] [--force] [--dry-run]
  */
+
+import { setTimeout as sleep } from 'node:timers/promises';
+import { parseArgs } from 'node:util';
 
 import { closeDb } from '../db/client.js';
 import { config, getKisAccount, kisServerLabel } from '../config.js';
 import { credentialServer, type KisCredentials } from '../kis/auth.js';
-import { isRetriableTransportError } from '../kis/errorCodes.js';
-import { getDailyMarketBars, isRateLimitedError, toCredentials, type DailyMarketBar } from '../kis/rest.js';
+import { kstToday } from '../kis/normalize.js';
+import { getDailyMarketBars, toCredentials, type DailyMarketBar } from '../kis/rest.js';
 import {
   getDailyBarCursors,
   recordDailyBarFailure,
@@ -68,6 +71,16 @@ import {
   trimTrailingZeroVolumeBars,
   type DelistedCollectionTarget,
 } from '../db/delistings.js';
+import {
+  DEFAULT_SYMBOL_GAP_MS,
+  assertGapAndPages,
+  describeError,
+  formatDay,
+  formatDuration,
+  previousDay,
+  splitSymbols,
+  withRetry,
+} from './collectCommon.js';
 
 /**
  * 일봉 저장소가 덮는 구간의 시작. 더 옛날은 활성 종목도 안 받아 두었다
@@ -84,12 +97,6 @@ const ROWS_PER_CALL = 100;
 
 /** 종목당 최대 쪽. 100거래일 × 60쪽 = 6,000거래일 ≒ 24년이라 2005년까지 닿는다. */
 const DEFAULT_MAX_PAGES = 60;
-
-/** 종목 사이 간격. `collectDailyBars.ts`와 같은 값이다 — 같은 서버를 두드린다. */
-const DEFAULT_SYMBOL_GAP_MS = 1_200;
-
-/** 소켓 절단·한도는 일시적 실패라 종목을 건너뛰지 않는다. */
-const RETRY_DELAYS_MS = [3_000, 10_000, 30_000];
 
 const HEARTBEAT_EVERY = 50;
 
@@ -118,120 +125,40 @@ interface SymbolResult {
 }
 
 function parseOptions(argv: string[]): Options {
-  const options: Options = {
-    limit: null,
-    symbols: [],
-    fromDay: DEFAULT_FROM_DAY,
-    symbolGapMs: DEFAULT_SYMBOL_GAP_MS,
-    maxPages: DEFAULT_MAX_PAGES,
-    force: false,
-    dryRun: false,
-    credentialId: null,
-  };
-  for (let index = 0; index < argv.length; index += 1) {
-    const next = (): string => argv[(index += 1)] ?? '';
-    switch (argv[index]) {
-      case '--limit':
-        options.limit = Number(next());
-        break;
-      case '--symbols':
-        options.symbols = next().split(',').map((s) => s.trim()).filter(Boolean);
-        break;
-      case '--from':
-        options.fromDay = next();
-        break;
-      case '--gap-ms':
-        options.symbolGapMs = Number(next());
-        break;
-      case '--pages':
-        options.maxPages = Number(next());
-        break;
-      case '--credential':
-        options.credentialId = next();
-        break;
-      case '--force':
-        options.force = true;
-        break;
-      case '--dry-run':
-        options.dryRun = true;
-        break;
-      default:
-        throw new Error(`모르는 인자입니다: ${argv[index]}`);
-    }
-  }
-  if (!/^\d{8}$/.test(options.fromDay)) throw new Error(`--from은 YYYYMMDD입니다: ${options.fromDay}`);
-  if (!Number.isFinite(options.symbolGapMs) || options.symbolGapMs < 0) {
-    throw new Error('--gap-ms는 0 이상의 숫자여야 합니다');
-  }
-  if (!Number.isInteger(options.maxPages) || options.maxPages < 1) {
-    throw new Error('--pages는 1 이상의 정수여야 합니다');
-  }
-  return options;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
+  const { values } = parseArgs({
+    args: argv,
+    strict: true,
+    options: {
+      limit: { type: 'string' },
+      symbols: { type: 'string', default: '' },
+      from: { type: 'string', default: DEFAULT_FROM_DAY },
+      'gap-ms': { type: 'string' },
+      pages: { type: 'string' },
+      credential: { type: 'string' },
+      force: { type: 'boolean', default: false },
+      'dry-run': { type: 'boolean', default: false },
+    },
   });
-}
-
-function kstToday(): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date()).replace(/-/g, '');
-}
-
-function formatDay(day: string | null): string {
-  if (!day) return '-';
-  return `${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6, 8)}`;
+  const options: Options = {
+    limit: values.limit === undefined ? null : Number(values.limit),
+    symbols: splitSymbols(values.symbols),
+    fromDay: values.from,
+    symbolGapMs: values['gap-ms'] === undefined ? DEFAULT_SYMBOL_GAP_MS : Number(values['gap-ms']),
+    maxPages: values.pages === undefined ? DEFAULT_MAX_PAGES : Number(values.pages),
+    force: values.force,
+    dryRun: values['dry-run'],
+    credentialId: values.credential ?? null,
+  };
+  if (!/^\d{8}$/.test(options.fromDay)) throw new Error(`--from은 YYYYMMDD입니다: ${options.fromDay}`);
+  assertGapAndPages(options.symbolGapMs, options.maxPages);
+  return options;
 }
 
 function count(value: number): string {
   return value.toLocaleString('ko-KR');
 }
 
-function formatDuration(ms: number): string {
-  const totalMinutes = Math.round(ms / 60_000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (hours === 0) return `${minutes}분`;
-  return `${hours}시간 ${minutes}분`;
-}
-
-/** `YYYYMMDD`의 하루 전. 다음 쪽의 끝을 잡는 데 쓴다. */
-function previousDay(day: string): string {
-  const date = new Date(Date.UTC(Number(day.slice(0, 4)), Number(day.slice(4, 6)) - 1, Number(day.slice(6, 8))));
-  date.setUTCDate(date.getUTCDate() - 1);
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const dayOfMonth = String(date.getUTCDate()).padStart(2, '0');
-  return `${date.getUTCFullYear()}${month}${dayOfMonth}`;
-}
-
-function describeError(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
-  const cause = (error as Error & { cause?: unknown }).cause;
-  const causeText = cause instanceof Error ? ` (${cause.message})` : '';
-  return `${error.message}${causeText}`.slice(0, 200);
-}
-
 let stopRequested = false;
-
-async function withRetry<T>(label: string, run: () => Promise<T>): Promise<{ value: T; calls: number }> {
-  let calls = 0;
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      calls += 1;
-      return { value: await run(), calls };
-    } catch (error) {
-      const transient = isRetriableTransportError(error) || isRateLimitedError(error);
-      if (!transient || attempt >= RETRY_DELAYS_MS.length || stopRequested) throw error;
-      const wait = RETRY_DELAYS_MS[attempt];
-      console.log(
-        `    ${label} 일시적 실패 (${attempt + 1}/${RETRY_DELAYS_MS.length}) · ${Math.round(wait / 1000)}초 뒤 다시`
-        + ` — ${describeError(error)}`,
-      );
-      await delay(wait);
-    }
-  }
-}
 
 /**
  * 받은 하루 → 저장할 줄.
@@ -278,6 +205,7 @@ async function fetchDelistedHistory(
     const attempt = await withRetry(
       `${target.symbol} ${page + 1}쪽`,
       () => getDailyMarketBars(target.symbol, target.from, to, credentials),
+      () => stopRequested,
     );
     calls += attempt.calls;
     const bars = attempt.value;
@@ -503,7 +431,7 @@ async function main(): Promise<void> {
       );
     }
 
-    if (options.symbolGapMs > 0 && !stopRequested) await delay(options.symbolGapMs);
+    if (options.symbolGapMs > 0 && !stopRequested) await sleep(options.symbolGapMs);
   }
 
   const elapsed = Date.now() - startedAt;

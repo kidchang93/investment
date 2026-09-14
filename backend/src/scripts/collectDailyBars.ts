@@ -33,11 +33,13 @@
  *
  * **주문은 내지 않는다. 조회만 한다.**
  *
- *   npx tsx src/scripts/collectDailyBars.ts [--limit N] [--resume] [--refresh]
+ *   npx tsx src/scripts/collectDailyBars.ts [--limit N] [--refresh]
  *                                           [--stock] [--etf] [--symbols 005930,000660]
  *                                           [--gap-ms 1200] [--pages 60]
  *                                           [--force]   ← 장중에도 돌린다(기본은 막힘)
  */
+
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import type { Candle, Instrument } from '@invest/shared';
 
@@ -61,8 +63,16 @@ import { marketHoursBlock } from '../trading/session.js';
 import { closeDb } from '../db/client.js';
 import { config, kisServerLabel } from '../config.js';
 import { credentialServer, primaryCredentials } from '../kis/auth.js';
-import { isRetriableTransportError } from '../kis/errorCodes.js';
-import { DAILY_PAGE_CALENDAR_DAYS, getDailyCandleWindow, isRateLimitedError } from '../kis/rest.js';
+import { kstToday } from '../kis/normalize.js';
+import { DAILY_PAGE_CALENDAR_DAYS, getDailyCandleWindow } from '../kis/rest.js';
+import {
+  describeError,
+  formatDay,
+  formatDuration,
+  parseCollectOptions,
+  withRetry,
+  type CollectOptions as Options,
+} from './collectCommon.js';
 
 /**
  * 한 종목에 받을 최대 페이지 수. 페이지가 130달력일이라 60쪽 = **21.4년**이다.
@@ -71,21 +81,6 @@ import { DAILY_PAGE_CALENDAR_DAYS, getDailyCandleWindow, isRateLimitedError } fr
  * 그 함수를 부르는 측정 스크립트들이 기본값에 기대고 있다.
  */
 const DEFAULT_MAX_PAGES = 60;
-
-/**
- * 종목 사이 간격. 오늘 1.2초로 8종목이 통과했다.
- *
- * KIS 호출 자체는 `scheduleKisCall`이 서버별 최소 간격(실전 70ms · 모의 1,100ms)을
- * 이미 지킨다. 이 간격은 그 위에 얹는 여유다 — 종목을 연달아 받을 때 그것만으로는
- * 끊겼기 때문이다.
- */
-const DEFAULT_SYMBOL_GAP_MS = 1_200;
-
-/**
- * 재시도 간격. 소켓 절단·타임아웃·한도는 **일시적 실패**라 종목을 건너뛰지 않는다.
- * 세 번 다 실패하면 그때 `last_error`에 적고 다음 종목으로 간다(`done=false`로 남는다).
- */
-const RETRY_DELAYS_MS = [3_000, 10_000, 30_000];
 
 /**
  * 빈 페이지가 몇 번 연속이면 그만둘까.
@@ -102,17 +97,6 @@ const REFRESH_WINDOW_DAYS = DAILY_PAGE_CALENDAR_DAYS;
 /** 진행 요약을 몇 종목마다 찍을까. 밤새 도는 로그를 아침에 훑을 때 기준이 된다. */
 const HEARTBEAT_EVERY = 50;
 
-interface Options {
-  limit: number | null;
-  refresh: boolean;
-  assetTypes: Array<'stock' | 'etf'>;
-  symbols: string[];
-  symbolGapMs: number;
-  maxPages: number;
-  /** 장중에도 돌린다. **기본은 막는다** — 이유는 `assertOutsideMarketHours` */
-  force: boolean;
-}
-
 interface SymbolResult {
   /** 이번에 저장한 봉 수. 증분 갱신에서는 새로 붙인 것만 센다 */
   bars: number;
@@ -123,72 +107,6 @@ interface SymbolResult {
   cursor: DailyBarCursor | null;
   /** 수정주가가 바뀌어 전체를 다시 받았나 (증분 갱신에서만) */
   refetched: boolean;
-}
-
-function parseOptions(argv: string[]): Options {
-  const options: Options = {
-    limit: null,
-    refresh: false,
-    assetTypes: [],
-    symbols: [],
-    symbolGapMs: DEFAULT_SYMBOL_GAP_MS,
-    maxPages: DEFAULT_MAX_PAGES,
-    force: false,
-  };
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    const next = (): string => argv[(index += 1)] ?? '';
-    switch (arg) {
-      case '--limit':
-        options.limit = Number(next());
-        break;
-      case '--resume':
-        // 기본 동작이 곧 이어받기다. 명시할 수 있게 받아 두되 아무것도 바꾸지 않는다.
-        break;
-      case '--refresh':
-        options.refresh = true;
-        break;
-      case '--stock':
-        options.assetTypes.push('stock');
-        break;
-      case '--etf':
-        options.assetTypes.push('etf');
-        break;
-      case '--symbols':
-        options.symbols = next().split(',').map((s) => s.trim()).filter(Boolean);
-        break;
-      case '--force':
-        options.force = true;
-        break;
-      case '--gap-ms':
-        options.symbolGapMs = Number(next());
-        break;
-      case '--pages':
-        options.maxPages = Number(next());
-        break;
-      default:
-        throw new Error(`모르는 인자입니다: ${arg}`);
-    }
-  }
-  if (options.assetTypes.length === 0) options.assetTypes = ['stock', 'etf'];
-  if (!Number.isFinite(options.symbolGapMs) || options.symbolGapMs < 0) {
-    throw new Error('--gap-ms는 0 이상의 숫자여야 합니다');
-  }
-  if (!Number.isInteger(options.maxPages) || options.maxPages < 1) {
-    throw new Error('--pages는 1 이상의 정수여야 합니다');
-  }
-  return options;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-/** KST 오늘 `YYYYMMDD`. 오늘 봉을 걸러 내는 잣대다. */
-function kstToday(): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date()).replace(/-/g, '');
 }
 
 /**
@@ -226,38 +144,6 @@ function toDailyBar(candle: Candle): DailyBar {
 let stopRequested = false;
 
 /**
- * 일시적 실패면 쉬었다 다시. 아니면 그대로 던진다.
- *
- * **가르는 것이 핵심이다.** 소켓 절단으로 종목을 건너뛰면 밤샘 수집이 구멍 뚫린
- * 채 끝나고, 반대로 "그 서버에 없는 기능"을 재시도하면 같은 답을 세 번 듣는다.
- */
-async function withRetry<T>(label: string, run: () => Promise<T>): Promise<{ value: T; calls: number }> {
-  let calls = 0;
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      calls += 1;
-      return { value: await run(), calls };
-    } catch (error) {
-      const transient = isRetriableTransportError(error) || isRateLimitedError(error);
-      if (!transient || attempt >= RETRY_DELAYS_MS.length || stopRequested) throw error;
-      const wait = RETRY_DELAYS_MS[attempt];
-      console.log(
-        `    ${label} 일시적 실패 (${attempt + 1}/${RETRY_DELAYS_MS.length}) · ${Math.round(wait / 1000)}초 뒤 다시`
-        + ` — ${describeError(error)}`,
-      );
-      await delay(wait);
-    }
-  }
-}
-
-function describeError(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
-  const cause = (error as Error & { cause?: unknown }).cause;
-  const causeText = cause instanceof Error ? ` (${cause.message})` : '';
-  return `${error.message}${causeText}`.slice(0, 200);
-}
-
-/**
  * 한 종목의 이력을 **한 세션에서 통째로** 받는다.
  *
  * 창을 과거로 옮겨 가며 부르고, 받은 것 중 가장 오래된 날의 하루 전으로 다음 창의
@@ -280,7 +166,11 @@ async function fetchSymbolHistory(
     const start = new Date(end);
     start.setDate(start.getDate() - DAILY_PAGE_CALENDAR_DAYS);
 
-    const attempt = await withRetry(`${symbol} ${page + 1}쪽`, () => getDailyCandleWindow(symbol, start, end));
+    const attempt = await withRetry(
+      `${symbol} ${page + 1}쪽`,
+      () => getDailyCandleWindow(symbol, start, end),
+      () => stopRequested,
+    );
     calls += attempt.calls;
     const candles = attempt.value.candles;
 
@@ -359,7 +249,11 @@ async function collectRefresh(symbol: string, options: Options, today: string): 
   const start = new Date(end);
   start.setDate(start.getDate() - REFRESH_WINDOW_DAYS);
 
-  const attempt = await withRetry(`${symbol} 대조`, () => getDailyCandleWindow(symbol, start, end));
+  const attempt = await withRetry(
+    `${symbol} 대조`,
+    () => getDailyCandleWindow(symbol, start, end),
+    () => stopRequested,
+  );
   const fetched = attempt.value.candles
     .map(toDailyBar)
     .filter((bar) => bar.tradingDay < today)
@@ -397,21 +291,8 @@ async function collectRefresh(symbol: string, options: Options, today: string): 
   };
 }
 
-function formatDuration(ms: number): string {
-  const totalMinutes = Math.round(ms / 60_000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (hours === 0) return `${minutes}분`;
-  return `${hours}시간 ${minutes}분`;
-}
-
-function formatDay(day: string | null): string {
-  if (!day) return '-';
-  return `${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6, 8)}`;
-}
-
 async function main(): Promise<void> {
-  const options = parseOptions(process.argv.slice(2));
+  const options = parseCollectOptions(process.argv.slice(2), DEFAULT_MAX_PAGES);
   const today = kstToday();
 
   const block = options.force ? null : marketHoursBlock(new Date());
@@ -549,7 +430,7 @@ async function main(): Promise<void> {
       );
     }
 
-    if (options.symbolGapMs > 0 && !stopRequested) await delay(options.symbolGapMs);
+    if (options.symbolGapMs > 0 && !stopRequested) await sleep(options.symbolGapMs);
   }
 
   const elapsed = Date.now() - startedAt;

@@ -53,6 +53,8 @@
  *                                              [--force]   ← 장중에도 돌린다(기본은 막힘)
  */
 
+import { setTimeout as sleep } from 'node:timers/promises';
+
 import type { Instrument } from '@invest/shared';
 
 import {
@@ -76,20 +78,23 @@ import { marketHoursBlock } from '../trading/session.js';
 import { closeDb } from '../db/client.js';
 import { config, kisServerLabel } from '../config.js';
 import { credentialServer, primaryCredentials } from '../kis/auth.js';
-import { isRetriableTransportError } from '../kis/errorCodes.js';
-import { getInvestorFlowDaily, isRateLimitedError } from '../kis/rest.js';
+import { kstToday } from '../kis/normalize.js';
+import { getInvestorFlowDaily } from '../kis/rest.js';
+import {
+  describeError,
+  formatDay,
+  formatDuration,
+  parseCollectOptions,
+  previousDay,
+  withRetry,
+  type CollectOptions as Options,
+} from './collectCommon.js';
 
 /**
  * 한 종목에 받을 최대 페이지 수. 한 쪽이 30거래일이라 **200쪽 = 24.4년**이다.
  * 수급이 있는 21년(2005-10~)을 넉넉히 덮는다.
  */
 const DEFAULT_MAX_PAGES = 200;
-
-/** 종목 사이 간격. 일봉 수집기가 1.2초로 안정된 값을 그대로 쓴다. */
-const DEFAULT_SYMBOL_GAP_MS = 1_200;
-
-/** 재시도 간격. 소켓 절단·타임아웃·한도는 일시적 실패라 종목을 건너뛰지 않는다. */
-const RETRY_DELAYS_MS = [3_000, 10_000, 30_000];
 
 /**
  * **전부-0 페이지가 몇 번 연속이면 그만둘까.**
@@ -110,16 +115,6 @@ const REFRESH_PAGES = 1;
 /** 진행 요약을 몇 종목마다 찍을까. 밤새 도는 로그를 아침에 훑을 때 기준이 된다. */
 const HEARTBEAT_EVERY = 50;
 
-interface Options {
-  limit: number | null;
-  refresh: boolean;
-  assetTypes: Array<'stock' | 'etf'>;
-  symbols: string[];
-  symbolGapMs: number;
-  maxPages: number;
-  force: boolean;
-}
-
 interface SymbolResult {
   /** 이번에 저장한 날 수. 증분 갱신에서는 새로 붙인 것만 센다 */
   days: number;
@@ -133,118 +128,7 @@ interface SymbolResult {
   refetched: boolean;
 }
 
-function parseOptions(argv: string[]): Options {
-  const options: Options = {
-    limit: null,
-    refresh: false,
-    assetTypes: [],
-    symbols: [],
-    symbolGapMs: DEFAULT_SYMBOL_GAP_MS,
-    maxPages: DEFAULT_MAX_PAGES,
-    force: false,
-  };
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    const next = (): string => argv[(index += 1)] ?? '';
-    switch (arg) {
-      case '--limit':
-        options.limit = Number(next());
-        break;
-      case '--resume':
-        // 기본 동작이 곧 이어받기다. 명시할 수 있게 받아 두되 아무것도 바꾸지 않는다.
-        break;
-      case '--refresh':
-        options.refresh = true;
-        break;
-      case '--stock':
-        options.assetTypes.push('stock');
-        break;
-      case '--etf':
-        options.assetTypes.push('etf');
-        break;
-      case '--symbols':
-        options.symbols = next().split(',').map((s) => s.trim()).filter(Boolean);
-        break;
-      case '--force':
-        options.force = true;
-        break;
-      case '--gap-ms':
-        options.symbolGapMs = Number(next());
-        break;
-      case '--pages':
-        options.maxPages = Number(next());
-        break;
-      default:
-        throw new Error(`모르는 인자입니다: ${arg}`);
-    }
-  }
-  if (options.assetTypes.length === 0) options.assetTypes = ['stock', 'etf'];
-  if (!Number.isFinite(options.symbolGapMs) || options.symbolGapMs < 0) {
-    throw new Error('--gap-ms는 0 이상의 숫자여야 합니다');
-  }
-  if (!Number.isInteger(options.maxPages) || options.maxPages < 1) {
-    throw new Error('--pages는 1 이상의 정수여야 합니다');
-  }
-  return options;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-/** KST 오늘 `YYYYMMDD`. 오늘치를 걸러 내는 잣대다. */
-function kstToday(): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date()).replace(/-/g, '');
-}
-
-/** `YYYYMMDD`의 하루 전. 다음 쪽의 끝을 잡을 때 쓴다. */
-function previousDay(day: string): string {
-  const date = new Date(Date.UTC(
-    Number(day.slice(0, 4)),
-    Number(day.slice(4, 6)) - 1,
-    Number(day.slice(6, 8)),
-  ));
-  date.setUTCDate(date.getUTCDate() - 1);
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const dayOfMonth = String(date.getUTCDate()).padStart(2, '0');
-  return `${date.getUTCFullYear()}${month}${dayOfMonth}`;
-}
-
 let stopRequested = false;
-
-/**
- * 일시적 실패면 쉬었다 다시. 아니면 그대로 던진다.
- *
- * **가르는 것이 핵심이다.** 소켓 절단으로 종목을 건너뛰면 밤샘 수집이 구멍 뚫린
- * 채 끝나고, 반대로 "그 서버에 없는 기능"을 재시도하면 같은 답을 세 번 듣는다.
- */
-async function withRetry<T>(label: string, run: () => Promise<T>): Promise<{ value: T; calls: number }> {
-  let calls = 0;
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      calls += 1;
-      return { value: await run(), calls };
-    } catch (error) {
-      const transient = isRetriableTransportError(error) || isRateLimitedError(error);
-      if (!transient || attempt >= RETRY_DELAYS_MS.length || stopRequested) throw error;
-      const wait = RETRY_DELAYS_MS[attempt];
-      console.log(
-        `    ${label} 일시적 실패 (${attempt + 1}/${RETRY_DELAYS_MS.length}) · ${Math.round(wait / 1000)}초 뒤 다시`
-        + ` — ${describeError(error)}`,
-      );
-      await delay(wait);
-    }
-  }
-}
-
-function describeError(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
-  const cause = (error as Error & { cause?: unknown }).cause;
-  const causeText = cause instanceof Error ? ` (${cause.message})` : '';
-  return `${error.message}${causeText}`.slice(0, 200);
-}
 
 /**
  * ★★ **오늘 날짜로 물으면 빈 응답이 온다** (2026-09-02 실측).
@@ -276,7 +160,7 @@ interface PageFetch {
 
 /** 한 쪽(30거래일)을 받아 갈라 놓는다. */
 async function fetchPage(symbol: string, endDate: string, today: string, label: string): Promise<PageFetch> {
-  const attempt = await withRetry(label, () => getInvestorFlowDaily(symbol, endDate));
+  const attempt = await withRetry(label, () => getInvestorFlowDaily(symbol, endDate), () => stopRequested);
   const days = attempt.value;
   if (days.length === 0) {
     return { rows: [], blank: 0, received: 0, nextEnd: null, calls: attempt.calls };
@@ -499,21 +383,8 @@ async function collectRefresh(symbol: string, options: Options, today: string): 
   };
 }
 
-function formatDuration(ms: number): string {
-  const totalMinutes = Math.round(ms / 60_000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (hours === 0) return `${minutes}분`;
-  return `${hours}시간 ${minutes}분`;
-}
-
-function formatDay(day: string | null): string {
-  if (!day) return '-';
-  return `${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6, 8)}`;
-}
-
 async function main(): Promise<void> {
-  const options = parseOptions(process.argv.slice(2));
+  const options = parseCollectOptions(process.argv.slice(2), DEFAULT_MAX_PAGES);
   const today = kstToday();
 
   const block = options.force ? null : marketHoursBlock(new Date());
@@ -662,7 +533,7 @@ async function main(): Promise<void> {
       );
     }
 
-    if (options.symbolGapMs > 0 && !stopRequested) await delay(options.symbolGapMs);
+    if (options.symbolGapMs > 0 && !stopRequested) await sleep(options.symbolGapMs);
   }
 
   const elapsed = Date.now() - startedAt;

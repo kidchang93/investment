@@ -25,6 +25,8 @@
  *   npx tsx src/scripts/collectDelistings.ts [--from 20050101] [--to 20260813] [--dry-run]
  */
 
+import { parseArgs } from 'node:util';
+
 import { closeDb, pool } from '../db/client.js';
 import {
   ensureDelistingSchema,
@@ -32,7 +34,9 @@ import {
   upsertDelistings,
 } from '../db/delistings.js';
 import { ensureInstrumentSchema, insertInactiveInstruments } from '../db/instruments.js';
+import { kstToday } from '../kis/normalize.js';
 import { fetchDelistings, type DelistingRecord } from '../krx/kindDelistings.js';
+import { formatDay } from './collectCommon.js';
 
 /** KIND 목록의 시작. 일봉 저장소가 덮는 구간(21.4년)과 맞춘 값이다. */
 const DEFAULT_FROM_DAY = '20050101';
@@ -44,37 +48,21 @@ interface Options {
   dryRun: boolean;
 }
 
-function kstToday(): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date()).replace(/-/g, '');
-}
-
 function parseOptions(argv: string[]): Options {
-  const options: Options = { fromDay: DEFAULT_FROM_DAY, toDay: kstToday(), dryRun: false };
-  for (let index = 0; index < argv.length; index += 1) {
-    const next = (): string => argv[(index += 1)] ?? '';
-    switch (argv[index]) {
-      case '--from':
-        options.fromDay = next();
-        break;
-      case '--to':
-        options.toDay = next();
-        break;
-      case '--dry-run':
-        options.dryRun = true;
-        break;
-      default:
-        throw new Error(`모르는 인자입니다: ${argv[index]}`);
-    }
-  }
+  const { values } = parseArgs({
+    args: argv,
+    strict: true,
+    options: {
+      from: { type: 'string', default: DEFAULT_FROM_DAY },
+      to: { type: 'string', default: kstToday() },
+      'dry-run': { type: 'boolean', default: false },
+    },
+  });
+  const options: Options = { fromDay: values.from, toDay: values.to, dryRun: values['dry-run'] };
   for (const day of [options.fromDay, options.toDay]) {
     if (!/^\d{8}$/.test(day)) throw new Error(`날짜는 YYYYMMDD입니다: ${day}`);
   }
   return options;
-}
-
-function formatDay(day: string | null): string {
-  if (!day) return '-';
-  return `${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6, 8)}`;
 }
 
 function count(value: number): string {
