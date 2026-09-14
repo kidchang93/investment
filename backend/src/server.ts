@@ -23,25 +23,22 @@ import {
   type KisAccountConfig,
 } from './config.js';
 import {
-  addDefaultWatchlistItem,
   addWatchlistItem,
   createWatchlist,
   deleteWatchlist,
   ensureDomesticAssetTypes,
   ensureInstrumentSchema,
   getCategoryInstruments,
-  getDefaultWatchlist,
   getInstrument,
   getInstrumentCategories,
   getTerminalInstruments,
   getWatchlistItems,
   getWatchlists,
-  removeDefaultWatchlistItem,
   removeWatchlistItem,
   searchInstruments,
   seedDefaultWatchlist,
 } from './db/instruments.js';
-import { ensureThemeSchema, getThemeList, getThemeMembers } from './db/themes.js';
+import { ensureThemeSchema, getThemeList } from './db/themes.js';
 import { QuoteCache } from './quoteCache.js';
 import { getThemePulses, THEME_PULSE_MAX_THEMES } from './themes/pulse.js';
 import { getLastBuySubmittedAt } from './db/brokerOrders.js';
@@ -153,7 +150,6 @@ import {
 } from './trading/screening.js';
 import { checkRiskRules, ensureRiskRuleSchema, getRiskRules, upsertRiskRules } from './db/riskRules.js';
 import {
-  getDailyCandles,
   getInstrumentCandles,
   getInstrumentIntradayCandles,
   getInstrumentNews,
@@ -172,7 +168,6 @@ import {
   cancelKisDomesticReservedOrder,
   placeKisDomesticOrder,
   placeKisOverseasOrder,
-  getQuote,
   getUsdKrwExchangeRate,
 } from './kis/rest.js';
 import { isUnconfirmedDivision, STOP_LIMIT_ORDER_DIVISION } from './kis/orderDivisions.js';
@@ -397,8 +392,6 @@ async function main(): Promise<void> {
     if (!result.ok) return reply.code(409).send({ message: result.message });
     return result;
   });
-  app.get('/api/watchlist', async () => WATCHLIST);
-
   app.get('/api/broker/kis/accounts', async () => {
     return config.kisAccounts.map((account) => ({
       id: account.id,
@@ -1679,10 +1672,6 @@ async function main(): Promise<void> {
     return getCategoryInstruments(req.params.id, 300, req.query.q ?? '');
   });
 
-  app.get('/api/watchlists/default', async () => {
-    return getDefaultWatchlist();
-  });
-
   app.get('/api/watchlists', async () => {
     return getWatchlists();
   });
@@ -1695,18 +1684,6 @@ async function main(): Promise<void> {
   app.delete<{ Params: { id: string } }>('/api/watchlists/:id', async (req, reply) => {
     const deleted = await deleteWatchlist(req.params.id);
     if (!deleted) return reply.code(400).send({ message: '관심그룹을 삭제할 수 없습니다.' });
-    return { ok: true };
-  });
-
-  app.post<{ Body: { instrumentId?: string } }>('/api/watchlists/default/items', async (req, reply) => {
-    if (!req.body.instrumentId) return reply.code(400).send({ message: 'instrumentId가 필요합니다.' });
-    const instrument = await addDefaultWatchlistItem(req.body.instrumentId);
-    if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
-    return instrument;
-  });
-
-  app.delete<{ Params: { id: string } }>('/api/watchlists/default/items/:id', async (req) => {
-    await removeDefaultWatchlistItem(req.params.id);
     return { ok: true };
   });
 
@@ -1727,14 +1704,6 @@ async function main(): Promise<void> {
   app.delete<{ Params: { id: string; instrumentId: string } }>('/api/watchlists/:id/items/:instrumentId', async (req) => {
     await removeWatchlistItem(req.params.id, req.params.instrumentId);
     return { ok: true };
-  });
-
-  app.get<{ Params: { code: string } }>('/api/candles/:code', async (req) => {
-    return getDailyCandles(req.params.code);
-  });
-
-  app.get<{ Params: { code: string } }>('/api/quote/:code', async (req) => {
-    return getQuote(req.params.code);
   });
 
   app.post<{ Body: { ids?: string[] } }>('/api/instruments/quotes', async (req, reply) => {
@@ -1794,19 +1763,14 @@ async function main(): Promise<void> {
    * 업종에는 `반도체`라는 칸이 없다. 분야별로 돈이 어디로 도는지는 테마로만 볼 수
    * 있다 (`docs/DESIGN.md`의 「테마 분류」).
    *
-   * 목록·구성종목은 **DB만 본다 (KIS 호출 0회)**. 등락률만 시세를 부르고, 그
+   * 목록은 **DB만 본다 (KIS 호출 0회)**. 등락률만 시세를 부르고, 그
    * 비용을 응답에 담는다.
    */
   app.get('/api/themes', async () => {
     return getThemeList();
   });
 
-  /*
-   * 테마 여러 개의 지금 등락률. **누를 때만 돈다.**
-   *
-   * `/api/themes/:code`보다 먼저 등록해도 Fastify는 고정 경로를 먼저 맞춘다.
-   * 그래도 읽는 사람이 헷갈리지 않게 위에 둔다.
-   */
+  /* 테마 여러 개의 지금 등락률. **누를 때만 돈다.** */
   app.get<{ Querystring: { codes?: string } }>('/api/themes/pulse', async (req, reply) => {
     const codes = (req.query.codes ?? '')
       .split(',')
@@ -1823,12 +1787,6 @@ async function main(): Promise<void> {
       req.log.warn({ err, codes }, '테마 등락률 조회 실패');
       return reply.code(502).send({ message: '테마 등락률을 조회하지 못했습니다.' });
     }
-  });
-
-  app.get<{ Params: { code: string } }>('/api/themes/:code', async (req, reply) => {
-    const members = await getThemeMembers(req.params.code);
-    if (!members) return reply.code(404).send({ message: '그런 테마 코드가 없습니다.' });
-    return members;
   });
 
   app.get<{ Params: { id: string } }>('/api/instruments/:id/candles', async (req, reply) => {

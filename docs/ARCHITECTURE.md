@@ -105,13 +105,15 @@ backend/src/
 한화에어로스페이스와 한화오션이 같은 `제조 / 운송장비·부품`이다. 분야별로 돈이 어디로
 도는지 보려면 테마가 필요하다. 자세한 설계는 `docs/DESIGN.md`의 「테마 분류」 절.
 
-테마를 꺼내는 길은 셋이다. **앞의 둘은 DB만 보고 KIS를 부르지 않는다.**
+테마를 꺼내는 길은 둘이다. **앞의 것은 DB만 보고 KIS를 부르지 않는다.**
 
 | 라우트 | 하는 일 | KIS 호출 |
 |------|------|------|
 | `GET /api/themes` | 테마 목록. 잴 수 있는 것(`themes`)과 종목을 하나도 못 찾은 것(`emptyThemes`)을 갈라서 준다 | 0회 |
-| `GET /api/themes/:code` | 테마 하나의 종목 + `missingSymbols` | 0회 |
 | `GET /api/themes/pulse?codes=` | 테마들의 지금 등락률 | 30종목당 1회, 한 요청 8회까지 |
+
+테마 하나의 종목 + `missingSymbols`(`getThemeMembers`)는 라우트 없이 `pulse`와
+`scripts/probeThemeTurnover.ts`가 DB에서 직접 읽는다.
 
 `pulse`는 **여러 테마를 한 번에** 받는다. 테마끼리 종목이 겹치므로(종목당 평균 2.37개)
 합집합을 한 번에 물어야 같은 종목을 여러 번 묻지 않는다. 예산을 넘기면 **테마 단위로
@@ -657,9 +659,9 @@ reversal 계열의 우위는 **상한**이다. ★ 그 종목들의 봉은 **아
 
 ### 1) 일봉 (REST, 종목 선택 시 1회)
 ```
-App: 종목 선택 → fetchCandles(code) → GET /api/candles/:code
-  → backend getDailyCandles() → KIS FHKST03010100 → Candle[] 정규화(오름차순)
-  → Chart.setData()
+App: 종목 선택 → fetchInstrumentCandles(id) → GET /api/instruments/:id/candles
+  → backend getInstrumentCandles() → (국내) getDailyCandles() → KIS FHKST03010100
+  → Candle[] 정규화(오름차순) → Chart.setData()
 ```
 
 ### 2) 실시간 체결 (WebSocket, 지속)

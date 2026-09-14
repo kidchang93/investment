@@ -581,10 +581,6 @@ export async function getCategoryInstruments(categoryId: string, limit = 300, qu
   }
 }
 
-export async function getDefaultWatchlist(): Promise<Instrument[]> {
-  return getWatchlistItems(DEFAULT_WATCHLIST_ID);
-}
-
 export async function getWatchlists(): Promise<WatchlistGroup[]> {
   const result = await pool.query<WatchlistRow>(`
     SELECT w.id, w.name, count(wi.instrument_id)::text AS item_count
@@ -673,10 +669,6 @@ export async function seedDefaultWatchlist(items: WatchItem[]): Promise<void> {
   }
 }
 
-export async function addDefaultWatchlistItem(instrumentId: string): Promise<Instrument | null> {
-  return addWatchlistItem(DEFAULT_WATCHLIST_ID, instrumentId);
-}
-
 export async function addWatchlistItem(watchlistId: string, instrumentId: string): Promise<Instrument | null> {
   const instrument = await getInstrument(instrumentId);
   if (!instrument) return null;
@@ -693,10 +685,6 @@ export async function addWatchlistItem(watchlistId: string, instrumentId: string
     [watchlistId, instrumentId],
   );
   return instrument;
-}
-
-export async function removeDefaultWatchlistItem(instrumentId: string): Promise<void> {
-  await removeWatchlistItem(DEFAULT_WATCHLIST_ID, instrumentId);
 }
 
 export async function removeWatchlistItem(watchlistId: string, instrumentId: string): Promise<void> {

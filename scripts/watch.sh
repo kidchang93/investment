@@ -4,8 +4,8 @@
 #
 # 왜 이렇게 생겼나. 2026-08-07에 세 번 데였다:
 #
-#  (1) 종목을 하나씩 `GET /api/quote/<code>`로 치면 KIS 모의 서버 유량(실전의 1/18)에 걸려
-#      **오류가 아니라 빈 응답**이 온다. 11개 중 8개가 조용히 비었다. 재시도 3회를 넣어도
+#  (1) 종목을 하나씩 `GET /api/quote/<code>`(지금은 없는 라우트)로 쳤더니 KIS 모의 서버
+#      유량(실전의 1/18)에 걸려 **오류가 아니라 빈 응답**이 왔다. 11개 중 8개가 조용히 비었다. 재시도 3회를 넣어도
 #      3개가 실패했고 회차 하나가 15분 걸렸다.
 #      → 멀티시세(`POST /api/instruments/quotes`) 1회 호출로 바꿨다. 0.09초다.
 #
@@ -35,7 +35,7 @@ if ! curl -sf -m 3 http://localhost:4000/api/health >/dev/null 2>&1; then
 fi
 
 # ── 지수 ──────────────────────────────────────────────────────────────
-# HTTP 라우트에 없다. `/api/quote/0001`은 price:0을 준다 — 쓰면 안 된다.
+# 지수 시세는 HTTP 라우트에 없어 KIS 함수를 직접 부른다.
 cat > backend/probe-index.ts <<'EOF'
 import { getDomesticIndex } from './src/kis/rest.js';
 for (const [c, l] of [['0001','코스피'],['1001','코스닥']] as Array<[string,string]>) {
