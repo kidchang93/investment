@@ -23,7 +23,7 @@
 | KIS 원본 필드 | KIS 스펙 그대로 (약어) — **단, `kis/` 내부에서만** | `stck_prpr`, `hts_kor_isnm` |
 
 시각 필드 이름은 **무엇의 시각인지**로 고른다. 값 하나를 받아 온 시각은 `fetchedAt`
-(`Quote`·`OrderBook`·`ExchangeRate`·`MarketMoversSnapshot`), 한 **회차**를 돌린 시각은
+(`Quote`·`ExchangeRate`·`MarketMoversSnapshot`), 한 **회차**를 돌린 시각은
 그 회차가 한 동작으로 부른다 — 후보를 거른 회차는 `scannedAt`, 테마 등락률을 잰
 회차는 `measuredAt`. 셋이 갈라져 있는 것은 실수가 아니라 대상이 다른 것이다.
 새 타입에 시각을 넣을 때 이 셋 중 어디인지 먼저 정한다.

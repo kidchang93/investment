@@ -161,14 +161,12 @@ import {
   getInstrumentQuotes,
   getFinancials,
   getMarketMovers,
-  getOrderBook,
   amendKisDomesticOrder,
   getKisDomesticAccountSnapshot,
   getKisDomesticAmendableOrders,
   getKisDomesticExecutions,
   getKisDomesticOrderability,
   getKisDomesticReservedOrders,
-  getKisDomesticSellability,
   getKisDomesticTradeProfit,
   placeKisDomesticReservedOrder,
   cancelKisDomesticReservedOrder,
@@ -756,30 +754,6 @@ async function main(): Promise<void> {
       } catch (err) {
         req.log.warn({ err, instrumentId, accountId }, 'KIS 매수가능금액 조회 실패');
         return reply.code(502).send({ message: 'KIS 매수가능금액을 조회할 수 없습니다.' });
-      }
-    },
-  );
-
-  app.get<{ Querystring: { instrumentId?: string; accountId?: string } }>(
-    '/api/broker/kis/sellability',
-    async (req, reply) => {
-      const { instrumentId, accountId } = req.query;
-      if (!instrumentId) return reply.code(400).send({ message: 'instrumentId가 필요합니다.' });
-
-      const account = resolveAccount(accountId);
-      if (account === 'unknown') return reply.code(404).send({ message: '등록된 KIS 계좌가 아닙니다.' });
-
-      const instrument = await getInstrument(instrumentId);
-      if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
-      if (!ORDERABLE_DOMESTIC_ASSET_TYPES.has(instrument.assetType) || instrument.country !== 'KR') {
-        return reply.code(400).send({ message: '국내주식·ETF·ETN만 매도가능수량을 조회할 수 있습니다.' });
-      }
-
-      try {
-        return await getKisDomesticSellability(account, instrument.providerSymbol);
-      } catch (err) {
-        req.log.warn({ err, instrumentId, accountId }, 'KIS 매도가능수량 조회 실패');
-        return reply.code(502).send({ message: 'KIS 매도가능수량을 조회할 수 없습니다.' });
       }
     },
   );
@@ -1887,16 +1861,6 @@ async function main(): Promise<void> {
   });
 
   /*
-   * 호가와 예상 체결. 국내 현금 종목만 해당한다 — 야간 환산가·원자재·선물은
-   * KRX 호가 대상이 아니라 404로 돌려주고, 화면이 "없음"과 "안 되는 종목"을
-   * 구별할 수 있게 사유를 함께 준다.
-   */
-  /*
-   * 분기별 재무 지표. 국내 주식만 해당한다 — ETF·ETN은 재무제표가 없고,
-   * 해외는 KIS 재무 API 대상이 아니다. 없는 것을 빈 배열로 주면 "재무가
-   * 나쁘다"로 읽히므로 사유와 함께 404로 돌려준다.
-   */
-  /*
    * 거래소 등락률 순위. **상위 30만 온다 — 전 종목이 아니다.**
    *
    * `랭킹` 탭은 관심·최근 종목 안에서만 순위를 매겨서, "오늘 시장에서 많이 오른
@@ -1953,6 +1917,11 @@ async function main(): Promise<void> {
     },
   );
 
+  /*
+   * 분기별 재무 지표. 국내 주식만 해당한다 — ETF·ETN은 재무제표가 없고,
+   * 해외는 KIS 재무 API 대상이 아니다. 없는 것을 빈 배열로 주면 "재무가
+   * 나쁘다"로 읽히므로 사유와 함께 404로 돌려준다.
+   */
   app.get<{ Params: { id: string } }>('/api/instruments/:id/financials', async (req, reply) => {
     const instrument = await getInstrument(req.params.id);
     if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
@@ -1964,22 +1933,6 @@ async function main(): Promise<void> {
     } catch (err) {
       req.log.warn({ err, instrumentId: instrument.id }, '재무 지표 조회 실패');
       return reply.code(502).send({ message: '재무 지표를 조회하지 못했습니다.' });
-    }
-  });
-
-  app.get<{ Params: { id: string } }>('/api/instruments/:id/order-book', async (req, reply) => {
-    const instrument = await getInstrument(req.params.id);
-    if (!instrument) return reply.code(404).send({ message: '종목을 찾을 수 없습니다.' });
-    if (instrument.country !== 'KR' || !ORDERABLE_DOMESTIC_ASSET_TYPES.has(instrument.assetType)) {
-      return reply.code(404).send({ message: '국내 주식·ETF만 호가를 조회할 수 있습니다.' });
-    }
-    try {
-      // 다른 조회와 같이 화면이 쓰는 종목 id로 맞춘다. KIS 종목코드가 아니다.
-      const book = await getOrderBook(instrument.providerSymbol);
-      return { ...book, code: instrument.id };
-    } catch (err) {
-      req.log.warn({ err, instrumentId: instrument.id }, '호가 조회 실패');
-      return reply.code(502).send({ message: '호가를 조회하지 못했습니다.' });
     }
   });
 

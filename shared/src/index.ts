@@ -582,54 +582,6 @@ export function quoteFreshnessState(
   return { kind: 'fresh', ageMs };
 }
 
-/** 호가 한 단계. 같은 층의 팔자(ask)와 사자(bid)를 마주 놓는다. */
-export interface OrderBookLevel {
-  /** 1이 최우선호가. 국내주식은 10단계까지 온다 */
-  step: number;
-  askPrice: number;
-  askQuantity: number;
-  bidPrice: number;
-  bidQuantity: number;
-}
-
-/**
- * 예상 체결.
- *
- * 동시호가 구간에는 체결이 일어나지 않고 "이 값에 체결될 것 같다"는 값만 온다.
- *
- * 주의: 정규장이 시작돼도 KIS는 이 값을 **0으로 지우지 않고 개장 동시호가
- * 결과를 그대로 들고 있는다**(2026-07-27 09:00 실측 — 09:00:10에 257,000이던
- * 값이 09:00:50에도 257,000). 그래서 값의 유무로 동시호가인지 판단할 수 없다.
- * `OrderBook.sessionPhase`가 `auction`일 때만 채워 보낸다.
- */
-export interface ExpectedConclusion {
-  price: number;
-  change: number;
-  changeRate: number;
-  sign: PriceSign;
-  /** 지금까지 쌓인 예상 거래량 */
-  volume: number;
-}
-
-/**
- * 장운영 상태. KIS 장운영 구분 코드를 **실측으로 확인한 값만** 옮긴다.
- *
- * - `auction` — 동시호가. 체결이 아니라 예상 체결가만 나온다
- * - `regular` — 정규장
- * - `unknown` — 확인하지 못한 코드. 이때는 예상 체결을 보내지 않는다
- *
- * 코드표 전체를 확보하지 못해서 모르는 코드를 아는 척하지 않는다. 모르면
- * 예상 체결을 감추는 쪽이 낡은 값을 현재처럼 보여주는 것보다 낫다.
- *
- * **`regular`를 "지금 거래 중"으로 읽지 말 것.** KIS는 마감 뒤에도 정규장과
- * 같은 코드(112)를 돌려준다 — 2026-07-27 15:30:45에 121(마감 동시호가)에서
- * 112로 되돌아갔고 15:33:05까지 그대로였다. 장 마감을 뜻하는 코드가 따로 없다.
- * 장 개폐는 시계(`KRX_SESSION` 09:00~15:30)로 판단하고, 이 값은 **동시호가
- * 구간을 알아내는 데만** 쓴다. 지금은 `auction`일 때 예상 체결을 채우는 데만
- * 쓰이고 있다.
- */
-export type MarketSessionPhase = 'auction' | 'regular' | 'unknown';
-
 /**
  * KRX 정규장 시각. **분 단위, Asia/Seoul 기준.**
  *
@@ -792,24 +744,6 @@ export interface MarketMoversSnapshot {
   fetchedAt: number;
   /** 거래소가 한 번에 주는 수. 전 종목이 아니라 상위 N이다 */
   rows: MarketMover[];
-}
-
-/** 호가창 한 장. 예상 체결이 있으면 함께 온다. */
-export interface OrderBook {
-  code: string;
-  /** 받아온 시각 (ms). 호가는 금방 낡으므로 화면이 언제 값인지 말해야 한다 */
-  fetchedAt: number;
-  levels: OrderBookLevel[];
-  totalAskQuantity: number;
-  totalBidQuantity: number;
-  /** 시간외 총 잔량 */
-  afterHoursAskQuantity: number;
-  afterHoursBidQuantity: number;
-  sessionPhase: MarketSessionPhase;
-  /** 동시호가 예상 체결. `sessionPhase`가 auction일 때만 채운다 */
-  expected: ExpectedConclusion | null;
-  /** 변동성완화장치(VI) 발동 중인지 */
-  volatilityInterrupted: boolean;
 }
 
 /**
@@ -1278,30 +1212,6 @@ export function settledRealized(profit: BrokerTradeProfitSnapshot): number | und
 
 export function settledProfitRate(profit: BrokerTradeProfitSnapshot): number | undefined {
   return profit.rows.length > 0 ? profit.totalProfitRate : undefined;
-}
-
-/**
- * KIS 매도가능수량 조회 결과.
- * 이 응답에는 종목명이 없다(상품번호만 온다). 이름은 화면이 이미 아는 `Instrument`를 쓴다.
- */
-export interface BrokerSellability {
-  broker: 'kis';
-  configured: boolean;
-  accountId: string;
-  symbol: string;
-  currency: string;
-  /** 매도가능수량 */
-  sellableQuantity?: number;
-  /** 잔고수량 */
-  holdingQuantity?: number;
-  /** 미수 수량. 결제 전이라 매도가 막힐 수 있는 양 */
-  unsettledQuantity?: number;
-  /** 현재가 */
-  price?: number;
-  /** 매입평균가 */
-  averagePrice?: number;
-  fetchedAt?: number;
-  message?: string;
 }
 
 /** 정정·취소가 가능한 미체결 주문 1건 */

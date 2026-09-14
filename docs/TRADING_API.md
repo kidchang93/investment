@@ -22,12 +22,16 @@ KIS 오픈API 매매 기능의 구현 현황과, 막혀 있는 항목의 이유�
 | 주식잔고 | `trading/inquire-balance` | `TTTC8434R` / `VTTC8434R` | `GET /api/broker/kis/account` | ✅ |
 | 매수가능 | `trading/inquire-psbl-order` | `TTTC8908R` / `VTTC8908R` | `GET /api/broker/kis/orderability` | ✅ |
 | 일별 주문체결 | `trading/inquire-daily-ccld` | `TTTC0081R` / `VTTC0081R` | `GET /api/broker/kis/executions` | ✅ |
-| 매도가능수량 | `trading/inquire-psbl-sell` | `TTTC8408R` / **모의 없음** | `GET /api/broker/kis/sellability` | ✅ |
+| 매도가능수량 | `trading/inquire-psbl-sell` | `TTTC8408R` / **모의 없음** | 없음 (2026-09-14 걷어냄) | ✅ |
 | 정정취소가능주문 | `trading/inquire-psbl-rvsecncl` | `TTTC0084R` / **모의 없음** | `GET /api/broker/kis/open-orders` | ✅ |
 | 예약주문 조회 | `trading/order-resv-ccnl` | `CTSC0004R` / **모의 없음** | `GET /api/broker/kis/reserved-orders` | ✅ |
 | 기간별 매매손익 | `trading/inquire-period-trade-profit` | `TTTC8715R` / **모의 없음** | `GET /api/broker/kis/trade-profit` | ✅ |
 | 국내 개장일 | `quotations/chk-holiday` | `CTCA0903R` / **모의 없음** | (리스크 룰 내부) | ✅ |
-| 호가·예상체결 | `quotations/inquire-asking-price-exp-ccn` | `FHKST01010200` | `GET /api/instruments/:id/order-book` | ✅ |
+| 호가·예상체결 | `quotations/inquire-asking-price-exp-ccn` | `FHKST01010200` | 없음 (2026-09-14 걷어냄) | ✅ |
+
+> 상태(✅)는 그 TR을 실계좌로 불러 확인했다는 뜻이고, 매도가능수량·호가는 **지금 부르는
+> 코드가 없다** — 화면 주문 티켓이 사라진 뒤 두 라우트를 부르는 곳이 없어 조회 함수와
+> 함께 지웠다. 아래 호가 절의 실측은 다시 붙일 때 쓸 사실로 남긴다.
 | 멀티시세 (최대 30종목) | `quotations/intstock-multprice` | `FHKST11300006` | `POST /api/instruments/quotes` (내부) | ✅ |
 
 ### 현재가에는 예상체결이 없다 (프리마켓)
@@ -56,7 +60,8 @@ antc_mkop_cls_code = 311    장운영 구분
 
 ### 장운영 구분 코드 (`antc_mkop_cls_code`)
 
-**실측한 값만** 옮긴다 (`SESSION_PHASE_BY_CODE`, `backend/src/kis/rest.ts`).
+**실측한 값만** 옮긴다. (이 표를 들고 있던 `SESSION_PHASE_BY_CODE`는 호가 조회와
+함께 코드에서 걷어냈다 — 다시 붙이면 이 표에서 옮긴다.)
 
 | 코드 | 뜻 | 확인 방법 |
 |------|------|------|
@@ -119,9 +124,9 @@ antc_mkop_cls_code = 311    장운영 구분
 
 ### 호출 비용
 
-종목당 KIS 호출이 1회 더 늘어난다. 그래서 **보고 있는 종목 하나**에만 붙였다
-(주문 패널이 열려 있는 동안 3초 간격). 관심목록 전체에 붙이면 목록 새로고침
-한 번에 호출이 두 배가 되어 `EGW00201`에 걸린다.
+종목당 KIS 호출이 1회 더 늘어난다. 그래서 **보고 있는 종목 하나**에만 붙였었다
+(주문 패널이 열려 있는 동안 3초 간격). 다시 붙일 때도 그렇게 한다 — 관심목록
+전체에 붙이면 목록 새로고침 한 번에 호출이 두 배가 되어 `EGW00201`에 걸린다.
 
 ### 재무 지표 — 값이 **연초부터의 누적**이다
 

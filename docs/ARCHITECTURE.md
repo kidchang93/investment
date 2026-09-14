@@ -691,7 +691,6 @@ KisRealtime open/close → 'status' 이벤트 → broadcast({type:'status'})
 | 국내주식 잔고 | REST GET | `inquire-balance` / `TTTC8434R`(실전) · `VTTC8434R`(모의) |
 | 매수가능 조회 | REST GET | `inquire-psbl-order` / `TTTC8908R`(실전) · `VTTC8908R`(모의) |
 | 일별 주문체결 | REST GET | `inquire-daily-ccld` / `TTTC0081R`(실전) · `VTTC0081R`(모의) |
-| 매도가능수량 | REST GET | `inquire-psbl-sell` / `TTTC8408R` (모의 미지원) |
 | 정정취소가능주문 | REST GET | `inquire-psbl-rvsecncl` / `TTTC0084R` (모의 미지원) |
 | 예약주문 조회 | REST GET | `order-resv-ccnl` / `CTSC0004R` (모의 미지원) |
 | 기간별 매매손익 | REST GET | `inquire-period-trade-profit` / `TTTC8715R` (모의 미지원) |

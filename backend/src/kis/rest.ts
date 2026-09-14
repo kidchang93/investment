@@ -56,22 +56,17 @@ import type {
   BrokerOrderability,
   BrokerPosition,
   BrokerReservedOrder,
-  BrokerSellability,
   BrokerTradeProfitRow,
   BrokerTradeProfitSnapshot,
   OrderSide,
   Candle,
   CandlesResponse,
   ExchangeRate,
-  ExpectedConclusion,
   FinancialSnapshot,
   Instrument,
   NewsItem,
   MarketMover,
   MarketMoversSnapshot,
-  MarketSessionPhase,
-  OrderBook,
-  OrderBookLevel,
   OrderType,
   PriceSign,
   Quote,
@@ -1446,37 +1441,6 @@ export async function getInstrumentQuotes(instruments: Instrument[]): Promise<In
   return result;
 }
 
-/** 국내주식 호가 단계 수. KRX가 10단계까지 준다 (askp1~askp10 / bidp1~bidp10). */
-const ORDER_BOOK_STEPS = 10;
-
-/*
- * KIS 장운영 구분 코드(antc_mkop_cls_code) → 우리 말.
- *
- * **실측한 값만 넣는다.** 2026-07-27에 20초 간격으로 찍어 확인한 것:
- *   311 — 08:53~09:00:10 장전 동시호가 (예상 체결가만 오고 현재가는 전일 종가)
- *   112 — 09:00:30 이후 정규장 (현재가가 실제로 움직이기 시작)
- *   121 — 15:20:03~15:30 마감 동시호가. 14:53부터 20초 간격 90개 표본에서
- *         15:20:03에 112 → 121로 한 번에 바뀌었고, 그 뒤로 되돌아가지 않았다.
- *         같은 시각 000660으로도 121을 확인했다(한 종목만 보고 넣지 않는다).
- *
- * 이 코드를 넣기 전에는 마감 동시호가가 unknown으로 떨어져 예상 체결이
- * 감춰졌다. 그동안 화면 큰 글씨는 15:19:59에 멈춘 정규장 마지막 체결가였다 —
- * 000660이 1,820,000원(+3.47%)으로 굳어 있는 동안 동시호가는 1,836,000원
- * (+4.38%)에 지시되고 있었다. 16,000원 차이를 화면이 말하지 않았다.
- *
- * 아직 모르는 코드는 그대로 unknown으로 둔다 — 안 보이는 쪽이 낡은 값을
- * 현재처럼 보여주는 것보다 낫다.
- */
-const SESSION_PHASE_BY_CODE: Record<string, MarketSessionPhase> = {
-  '311': 'auction',
-  '112': 'regular',
-  '121': 'auction',
-};
-
-function toSessionPhase(code: string | undefined): MarketSessionPhase {
-  return SESSION_PHASE_BY_CODE[String(code ?? '').trim()] ?? 'unknown';
-}
-
 /**
  * 거래소 등락률 순위 (국내주식 등락률 순위, tr_id: FHPST01700000).
  *
@@ -1533,79 +1497,6 @@ export async function getMarketMovers(direction: 'up' | 'down'): Promise<MarketM
     .filter((row): row is MarketMover => row !== null);
 
   return { direction, fetchedAt: Date.now(), rows };
-}
-
-/**
- * 호가와 예상 체결 (주식현재가 호가/예상체결, tr_id: FHKST01010200).
- *
- * 현재가(FHKST01010100)에는 예상체결 필드가 **없다.** 그래서 동시호가 구간에
- * 현재가만 물으면 `stck_prpr`이 전일 종가고 등락률이 0.00으로 온다 — 화면이
- * "249,500원 0.00%"라고 적는 동안 실제로는 259,500원(+4.01%)에 지시되고
- * 있었다(2026-07-27 08:51 실측). 프리마켓 값은 여기서만 나온다.
- *
- * 호출 비용이 있으므로(종목당 1회) 관심목록 전체가 아니라 보고 있는 종목에만 쓴다.
- */
-export async function getOrderBook(
-  code: string,
-  exchange: KisExchange = DEFAULT_EXCHANGE,
-): Promise<OrderBook> {
-  const json = await kisGet(
-    '/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn',
-    'FHKST01010200',
-    { FID_COND_MRKT_DIV_CODE: marketDivCode(exchange), FID_INPUT_ISCD: code },
-  );
-  const book = (json.output1 ?? {}) as Record<string, string>;
-  const summary = (json.output2 ?? {}) as Record<string, string>;
-
-  const levels: OrderBookLevel[] = [];
-  for (let step = 1; step <= ORDER_BOOK_STEPS; step += 1) {
-    const askPrice = toNumber(book[`askp${step}`]);
-    const bidPrice = toNumber(book[`bidp${step}`]);
-    // 상장 직후나 거래정지처럼 단계가 덜 차는 경우가 있다. 빈 층은 넣지 않는다.
-    if (!isPositiveFinite(askPrice) && !isPositiveFinite(bidPrice)) continue;
-    levels.push({
-      step,
-      askPrice: isPositiveFinite(askPrice) ? askPrice : 0,
-      askQuantity: toNumber(book[`askp_rsqn${step}`]) || 0,
-      bidPrice: isPositiveFinite(bidPrice) ? bidPrice : 0,
-      bidQuantity: toNumber(book[`bidp_rsqn${step}`]) || 0,
-    });
-  }
-
-  /*
-   * 예상 체결가가 0인지로 동시호가를 판단하면 안 된다. 정규장이 시작돼도 KIS는
-   * 이 값을 지우지 않고 개장 동시호가 결과를 그대로 들고 있다 — 09:00:10에
-   * 257,000이던 값이 09:00:50에도 257,000이었다(2026-07-27 실측). 값의 유무로
-   * 보면 하루 종일 낡은 예상가를 현재처럼 띄우게 된다.
-   *
-   * 장운영 구분 코드로 가른다. 다만 코드표 전체는 확보하지 못했고 실측한 것만
-   * 옮긴다. 모르는 코드는 unknown으로 두고 예상 체결을 감춘다.
-   */
-  const sessionPhase = toSessionPhase(summary.antc_mkop_cls_code);
-  const expectedPrice = toNumber(summary.antc_cnpr);
-  const expected: ExpectedConclusion | null = sessionPhase === 'auction' && isPositiveFinite(expectedPrice)
-    ? {
-        price: expectedPrice,
-        change: toNumber(summary.antc_cntg_vrss) || 0,
-        changeRate: toNumber(summary.antc_cntg_prdy_ctrt) || 0,
-        sign: parseSign(summary.antc_cntg_vrss_sign),
-        volume: toNumber(summary.antc_vol) || 0,
-      }
-    : null;
-
-  return {
-    code,
-    sessionPhase,
-    fetchedAt: Date.now(),
-    levels,
-    totalAskQuantity: toNumber(book.total_askp_rsqn) || 0,
-    totalBidQuantity: toNumber(book.total_bidp_rsqn) || 0,
-    afterHoursAskQuantity: toNumber(book.ovtm_total_askp_rsqn) || 0,
-    afterHoursBidQuantity: toNumber(book.ovtm_total_bidp_rsqn) || 0,
-    expected,
-    // 'N'이 아니면 발동. 값이 안 오면 모르는 것이므로 발동으로 보지 않는다.
-    volatilityInterrupted: typeof summary.vi_cls_code === 'string' && summary.vi_cls_code !== 'N',
-  };
 }
 
 /**
@@ -2558,57 +2449,6 @@ export async function isDomesticMarketOpenDay(date = kstToday()): Promise<boolea
   const open = today.opnd_yn === 'Y';
   marketOpenCache.set(date, open);
   return open;
-}
-
-/** 국내주식 매도가능수량 조회 (tr_id: TTTC8408R, 모의투자 미지원). */
-export async function getKisDomesticSellability(
-  account: KisAccountConfig | null,
-  symbol: string,
-): Promise<BrokerSellability> {
-  if (!account) {
-    return {
-      broker: 'kis',
-      configured: false,
-      accountId: '',
-      symbol,
-      currency: 'KRW',
-      message: MISSING_ACCOUNT_MESSAGE,
-    };
-  }
-
-  const { body } = await kisGetWithHeaders(
-    '/uapi/domestic-stock/v1/trading/inquire-psbl-sell',
-    'TTTC8408R',
-    { CANO: account.cano, ACNT_PRDT_CD: account.productCode, PDNO: symbol },
-    '',
-    toCredentials(account),
-  );
-
-  assertRtOk(body, '매도가능수량조회');
-
-  const rows = Array.isArray(body.output)
-    ? (body.output as Array<Record<string, string>>)
-    : body.output && typeof body.output === 'object'
-      ? [body.output as Record<string, string>]
-      : [];
-  const output = rows[0] ?? {};
-
-  // 응답 필드는 잔고조회와 이름이 다르다. 잔고수량은 cblc_qty, 현재가는 now_pric다.
-  // 종목명은 아예 내려오지 않으므로(pdno만 온다) 화면이 이미 아는 이름을 쓰게 둔다.
-  return {
-    broker: 'kis',
-    configured: true,
-    accountId: account.id,
-    symbol,
-    currency: 'KRW',
-    sellableQuantity: firstNumber(output, ['ord_psbl_qty']),
-    holdingQuantity: firstNumber(output, ['cblc_qty']),
-    /** 미수(외상) 수량. 결제 전이라 매도가 막힐 수 있는 양 */
-    unsettledQuantity: firstNumber(output, ['nsvg_qty']),
-    price: firstNumber(output, ['now_pric']),
-    averagePrice: firstNumber(output, ['pchs_avg_pric']),
-    fetchedAt: Date.now(),
-  };
 }
 
 /**
