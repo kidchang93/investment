@@ -42,7 +42,7 @@ backend/src/
     ├── auth.ts        # access_token(REST, 파일캐시) / approval_key(WS, 메모리)
     ├── errorCodes.ts  # KIS 오류 코드에 이름 붙이기 (★짝 문제 vs 기능 없음을 가른다)
     ├── rest.ts        # 일봉(getDailyCandles)·현재가(getQuote/getDomesticQuotes) 조회 + 정규화
-    ├── normalize.ts   # KIS 원본 문자열 → 숫자·부호 (rest/multiQuote가 같은 규칙을 쓴다)
+    ├── normalize.ts   # KIS 원본 문자열 → 숫자·부호·KST 날짜 (rest/multiQuote/realtime/주문 본문이 같은 규칙을 쓴다)
     │                  # ★빈 칸과 0을 가르는 자리다 — toNumberOrNaN / optionalNumber
     ├── multiQuote.ts  # 멀티시세(FHKST11300006) 요청 조립 + 응답 자리 검산
     ├── orderCash.ts   # 현금 주문 본문 조립 (★스톱지정가의 짝이 안 맞으면 보내기 전에 던진다)

@@ -31,6 +31,7 @@
  */
 
 import type { OrderSide } from '@invest/shared';
+import { isPositiveFinite } from './normalize.js';
 
 /**
  * KIS 해외 거래소 코드(`OVRS_EXCG_CD`).
@@ -134,10 +135,6 @@ export interface OverseasOrderInput {
   limitPrice: number;
 }
 
-function isPositive(n: number | undefined): n is number {
-  return typeof n === 'number' && Number.isFinite(n) && n > 0;
-}
-
 /**
  * 값이 어긋나면 **조립하지 않고 던진다.**
  *
@@ -152,7 +149,7 @@ export function overseasOrderPayload(input: OverseasOrderInput): Record<string, 
    *   비우는 규칙이 있지만, 여기서는 시장가 자체를 안 만들었으므로 `'0'`이
    *   나갈 자리가 없다 — 나간다면 그건 값이 빠진 것이다.
    */
-  if (!isPositive(input.limitPrice)) {
+  if (!isPositiveFinite(input.limitPrice)) {
     throw new Error(
       `${NOT_SENT} 지정가가 필요합니다 — 해외주식은 지정가만 보냅니다`
       + '(시장가 주문구분은 시장마다 달라 아직 확인하지 않았습니다).',

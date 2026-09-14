@@ -34,8 +34,11 @@ import {
   parseMultiQuoteChunk,
 } from './multiQuote.js';
 import {
+  isFutureAssetType,
   isNonNegativeFinite,
   isPositiveFinite,
+  kstDaysAgo,
+  kstToday,
   optionalNumber,
   parseSign,
   requireNumber,
@@ -696,17 +699,6 @@ export async function getDailyCandleHistory(
   return { code, name, candles };
 }
 
-function kstToday(): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Seoul',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date());
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}${values.month}${values.day}`;
-}
-
 function kstDateTimeToTimestamp(date: string, time: string): number {
   const y = Number(date.slice(0, 4));
   const m = Number(date.slice(4, 6));
@@ -720,10 +712,6 @@ function optionalKstDateTimeToTimestamp(date: string | undefined, time: string |
   if (!/^\d{8}$/.test(date ?? '') || !/^\d{6}$/.test(time ?? '')) return undefined;
   const timestamp = kstDateTimeToTimestamp(date as string, time as string);
   return Number.isFinite(timestamp) ? timestamp : undefined;
-}
-
-function isFutureAssetType(assetType: Instrument['assetType']): boolean {
-  return assetType === 'future' || assetType === 'future_spread';
 }
 
 interface TradingViewFields {
@@ -2232,19 +2220,6 @@ export async function getKisDomesticOrderability(
   };
 }
 
-/**
- * KST 기준 오늘에서 days일 전 날짜를 YYYYMMDD로. 조회 구간 시작일 계산용.
- * 서버 타임존과 무관해야 하므로 UTC 게터로만 다시 포맷한다 (`yyyymmdd`는 로컬 기준이라 쓰지 않는다).
- */
-function kstDaysAgo(days: number): string {
-  const today = kstToday();
-  const base = Date.UTC(Number(today.slice(0, 4)), Number(today.slice(4, 6)) - 1, Number(today.slice(6, 8)));
-  const past = new Date(base - days * 86_400_000);
-  const month = String(past.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(past.getUTCDate()).padStart(2, '0');
-  return `${past.getUTCFullYear()}${month}${day}`;
-}
-
 /** KIS 체결 진행 상태를 감사용 상태로 정규화한다. 취소·거부도 기록으로 남긴다. */
 function toBrokerExecutionStatus(row: Record<string, string>): BrokerExecutionStatus {
   if (row.cncl_yn === 'Y') return 'canceled';
@@ -2667,8 +2642,7 @@ async function amendableFromExecutions(account: KisAccountConfig): Promise<Broke
    *
    * ★ 이것을 안 거르면 **매일 지난 주문에 정정·취소를 쏘고 매번 실패한다.**
    */
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' })
-    .format(new Date()).replace(/-/g, '');
+  const today = kstToday();
   const out: BrokerAmendableOrder[] = [];
   for (const row of snapshot.executions) {
     if (row.orderDate !== today) continue;

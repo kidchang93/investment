@@ -1,14 +1,14 @@
 /**
- * KIS 원본 문자열 → 우리 숫자·부호.
+ * KIS 원본 문자열 → 우리 숫자·부호·KST 날짜.
  *
- * `rest.ts`와 `multiQuote.ts`가 같은 규칙으로 값을 좁혀야 해서 한곳에 모았다.
- * 특히 **부호 규약은 TR이 달라도 같다** — `1`=상한 `2`=상승 `3`=보합 `4`=하한 `5`=하락.
+ * `rest.ts`·`multiQuote.ts`·`realtime.ts`·주문 본문 조립이 같은 규칙으로 값을 좁혀야 해서
+ * 한곳에 모았다. 특히 **부호 규약은 TR이 달라도 같다** — `1`=상한 `2`=상승 `3`=보합 `4`=하한 `5`=하락.
  * 파일마다 따로 적어 두면 한쪽만 고쳤을 때 같은 값이 두 화면에서 다른 색으로 나온다.
  *
- * 여기 있는 것은 전부 순수 함수다. 네트워크도 설정도 건드리지 않는다.
+ * 여기 있는 것은 전부 순수 함수다(날짜는 시각을 인자로 받는다). 네트워크도 설정도 건드리지 않는다.
  */
 
-import type { PriceSign } from '@invest/shared';
+import type { InstrumentAssetType, PriceSign } from '@invest/shared';
 
 /** KIS는 숫자에 천단위 쉼표를 섞어 주는 필드가 있다. */
 export function toNumber(value: string | undefined): number {
@@ -58,6 +58,26 @@ export function isPositiveFinite(value: number): boolean {
 
 export function isNonNegativeFinite(value: number): boolean {
   return Number.isFinite(value) && value >= 0;
+}
+
+/**
+ * KST 기준 오늘에서 `days`일 전의 날짜 `YYYYMMDD` — KIS 조회 구간의 날짜 형식이다.
+ * 서버 시간대와 무관하다. KST에는 서머타임이 없어 24시간을 빼면 달력으로 하루 전이다.
+ */
+export function kstDaysAgo(days: number, nowMs: number = Date.now()): string {
+  return new Date(nowMs - days * 86_400_000)
+    .toLocaleDateString('en-CA', { timeZone: 'Asia/Seoul' })
+    .replace(/-/g, '');
+}
+
+/** KST 기준 오늘 `YYYYMMDD` */
+export function kstToday(nowMs: number = Date.now()): string {
+  return kstDaysAgo(0, nowMs);
+}
+
+/** 선물(스프레드 포함)인가. 시세·일봉·실시간 TR이 여기서 갈린다 */
+export function isFutureAssetType(assetType: InstrumentAssetType): boolean {
+  return assetType === 'future' || assetType === 'future_spread';
 }
 
 /**

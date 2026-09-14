@@ -27,6 +27,7 @@
 
 import type { OrderSide } from '@invest/shared';
 
+import { isPositiveFinite } from './normalize.js';
 import { needsConditionPrice, STOP_LIMIT_ORDER_DIVISION, usesZeroPrice } from './orderDivisions.js';
 import { venueAcceptsStopLimit, type OrderVenue } from './orderVenues.js';
 
@@ -85,7 +86,7 @@ export function assertStopLimitPair(input: {
       + ' KRX 또는 NXT로 보내세요.',
     );
   }
-  if (!isPositivePrice(input.conditionPrice)) {
+  if (!isPositiveFinite(input.conditionPrice ?? Number.NaN)) {
     throw new Error(
       `${NOT_SENT} 스톱지정가(주문구분 ${STOP_LIMIT_ORDER_DIVISION})에는 조건가격이 필요합니다`
       + ' — 값이 없으면 거래소가 거절합니다.',
@@ -95,7 +96,7 @@ export function assertStopLimitPair(input: {
    * 스톱가에 닿았을 때 **얼마에** 낼지가 지정가다. 없으면 `ORD_UNPR`이 `'0'`으로
    * 나가는데, 그건 스톱지정가가 아니라 값이 빠진 주문이다.
    */
-  if (!isPositivePrice(input.limitPrice)) {
+  if (!isPositiveFinite(input.limitPrice ?? Number.NaN)) {
     throw new Error(
       `${NOT_SENT} 스톱지정가(주문구분 ${STOP_LIMIT_ORDER_DIVISION})에는 지정가도 필요합니다`
       + ' — 스톱가에 닿았을 때 얼마에 낼지가 정해지지 않습니다.',
@@ -131,9 +132,4 @@ export function orderCashPayload(input: OrderCashInput): Record<string, string> 
       ? String(Math.floor(input.conditionPrice ?? 0))
       : '',
   };
-}
-
-/** 가격으로 쓸 수 있는 값인가. `undefined`·`NaN`·0·음수를 한자리에서 거른다. */
-function isPositivePrice(value: number | undefined): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }

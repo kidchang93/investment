@@ -18,7 +18,26 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { optionalNumber, requireNumber, toNumber, toNumberOrNaN } from './normalize.js';
+import { kstDaysAgo, kstToday, optionalNumber, requireNumber, toNumber, toNumberOrNaN } from './normalize.js';
+
+/*
+ * `en-CA`가 `YYYY-MM-DD`로 찍는 것은 Node에 들어 있는 ICU 자료에 기대는 사실이다.
+ * 그 모양이 바뀌면 조회 구간 날짜가 통째로 틀리므로 경계 시각으로 못 박는다.
+ */
+describe('KST 날짜 — 서버 시간대와 무관하다', () => {
+  it('UTC 15:00은 KST 다음 날 00:00이다', () => {
+    assert.equal(kstToday(Date.UTC(2026, 8, 13, 14, 59, 59)), '20260913');
+    assert.equal(kstToday(Date.UTC(2026, 8, 13, 15, 0, 0)), '20260914');
+  });
+
+  it('월말·연말·윤일을 넘어 뒤로 센다', () => {
+    const newYearKst = Date.UTC(2027, 0, 1, 0, 0, 0); // KST 2027-01-01 09:00
+    assert.equal(kstDaysAgo(0, newYearKst), '20270101');
+    assert.equal(kstDaysAgo(1, newYearKst), '20261231');
+    assert.equal(kstDaysAgo(90, newYearKst), '20261003');
+    assert.equal(kstDaysAgo(1, Date.UTC(2028, 2, 1, 3, 0, 0)), '20280229');
+  });
+});
 
 describe('toNumber — 왜 그냥 쓰면 안 되나', () => {
   it('빈 문자열과 공백을 0으로 읽는다 — 이것이 함정이다', () => {

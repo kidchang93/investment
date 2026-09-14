@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 import { config } from '../config.js';
 import { getApprovalKey } from './auth.js';
+import { isFutureAssetType, isNonNegativeFinite, isPositiveFinite, kstToday } from './normalize.js';
 import type {
   ClientSubscribeInstrument,
   OrderNotice,
@@ -50,25 +51,6 @@ const RECONNECT_MS = 3_000;
 
 function isPriceSign(value: string | undefined): value is PriceSign {
   return value === '1' || value === '2' || value === '3' || value === '4' || value === '5';
-}
-
-function isPositiveFinite(value: number): boolean {
-  return Number.isFinite(value) && value > 0;
-}
-
-function isNonNegativeFinite(value: number): boolean {
-  return Number.isFinite(value) && value >= 0;
-}
-
-function kstToday(): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Seoul',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date());
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}${values.month}${values.day}`;
 }
 
 /**
@@ -179,15 +161,11 @@ export class KisRealtime extends EventEmitter {
     return true;
   }
 
-  private isFutureAssetType(assetType: ClientSubscribeInstrument['assetType']): boolean {
-    return assetType === 'future' || assetType === 'future_spread';
-  }
-
   private resolveTradeTrId(instrument: ClientSubscribeInstrument): string | null {
-    if (this.isFutureAssetType(instrument.assetType) && instrument.market === 'KRX_NIGHT') {
+    if (isFutureAssetType(instrument.assetType) && instrument.market === 'KRX_NIGHT') {
       return TR_KRX_NIGHT_FUTURES_TRADE;
     }
-    if (!this.isFutureAssetType(instrument.assetType)) return TR_TRADE;
+    if (!isFutureAssetType(instrument.assetType)) return TR_TRADE;
     return null;
   }
 
