@@ -35,7 +35,7 @@
 
 import type { BrokerExecution, OrderSide } from '@invest/shared';
 
-import { checkMinHold } from './minHold.js';
+import { minHoldDefersSell } from './minHold.js';
 import { pendingSellQuantities } from './pendingBuys.js';
 
 export interface PositionGuardInput {
@@ -104,13 +104,12 @@ export function checkPositionGuard(input: PositionGuardInput): PositionGuardVerd
       violations.push(`매도 가능 수량 ${sellable}주를 초과합니다 (요청 ${input.quantity}주).`);
     }
 
-    const hold = checkMinHold({
-      side: 'sell',
+    const tooSoon = minHoldDefersSell({
       minHoldMinutes: input.minHoldMinutes,
       boughtAtMs: input.boughtAtBySymbol.get(input.symbol),
       nowMs: input.nowMs,
     });
-    if (hold.defer) {
+    if (tooSoon) {
       violations.push(`최소 보유 ${input.minHoldMinutes}분이 안 지났습니다.`);
     }
 
