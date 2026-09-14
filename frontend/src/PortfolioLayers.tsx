@@ -17,18 +17,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { PortfolioLayerSummary, PortfolioLayersSnapshot } from '@invest/shared';
 
 import { getJson } from './api';
-
-function formatWon(value: number): string {
-  return `${Math.round(value).toLocaleString('ko-KR')}원`;
-}
-
-function formatSigned(value: number): string {
-  return `${value >= 0 ? '+' : ''}${Math.round(value).toLocaleString('ko-KR')}원`;
-}
-
-function formatPercent(value: number, digits = 1): string {
-  return `${(value * 100).toFixed(digits)}%`;
-}
+import { formatRatio, formatSignedWon, formatWon } from './format';
 
 /** 손익 부호. **색은 판정에만 쓴다** — 층을 색으로 가르지 않는다 */
 function pnlSign(value: number): 'up' | 'down' | 'flat' {
@@ -46,9 +35,9 @@ function LayerRow({ layer, isEmpty }: { layer: PortfolioLayerSummary; isEmpty: b
         <small title={layer.rationale}>{layer.rationale}</small>
       </th>
       <td className="num">
-        {formatPercent(layer.weight)}
+        {formatRatio(layer.weight)}
         <small>
-          목표 {formatPercent(layer.targetWeight)}
+          목표 {formatRatio(layer.targetWeight)}
           {/* 이탈이 0.5%p를 넘을 때만 적는다. 늘 뜨는 표시는 안 읽힌다. */}
           {Math.abs(gap) >= 0.005 && (
             <em data-gap={gap > 0 ? 'over' : 'under'}>
@@ -61,11 +50,11 @@ function LayerRow({ layer, isEmpty }: { layer: PortfolioLayerSummary; isEmpty: b
       </td>
       <td className="num">{isEmpty ? '—' : formatWon(layer.marketValue)}</td>
       <td className="num" data-pnl={isEmpty ? undefined : pnlSign(layer.unrealizedPnl)}>
-        {isEmpty ? '—' : formatSigned(layer.unrealizedPnl)}
+        {isEmpty ? '—' : formatSignedWon(layer.unrealizedPnl)}
       </td>
       <td className="num" data-pnl={layer.closedTrades === 0 ? undefined : pnlSign(layer.realizedPnl)}>
         {/* 청산이 없으면 0원이 아니라 "아직 없음"이다 — 0으로 적으면 본전으로 읽힌다 */}
-        {layer.closedTrades === 0 ? '—' : formatSigned(layer.realizedPnl)}
+        {layer.closedTrades === 0 ? '—' : formatSignedWon(layer.realizedPnl)}
       </td>
       <td className="num" data-pnl={isEmpty ? undefined : pnlSign(layer.contribution)}>
         {isEmpty ? '—' : `${(layer.contribution * 100).toFixed(2)}%p`}
@@ -202,11 +191,11 @@ export function PortfolioLayers({ accountId }: { accountId: string | null }): JS
               <tr>
                 <th scope="row">합계</th>
                 <td className="num">
-                  {snapshot && snapshot.totalAssets > 0 ? formatPercent(invested / snapshot.totalAssets) : '—'}
+                  {snapshot && snapshot.totalAssets > 0 ? formatRatio(invested / snapshot.totalAssets) : '—'}
                 </td>
                 <td className="num">{formatWon(invested)}</td>
                 <td className="num" colSpan={2} data-pnl={pnlSign(totalPnl)}>
-                  {formatSigned(totalPnl)}
+                  {formatSignedWon(totalPnl)}
                 </td>
                 <td className="num" data-pnl={pnlSign(totalPnl)}>
                   {snapshot && snapshot.totalAssets > 0
@@ -233,12 +222,12 @@ export function PortfolioLayers({ accountId }: { accountId: string | null }): JS
                 .map((l) => (
                   <p key={l.layer}>
                     <b>{l.label}</b> 청산 {l.closedTrades}건 · 승률{' '}
-                    {l.winRate === null ? '—' : formatPercent(l.winRate)}
+                    {l.winRate === null ? '—' : formatRatio(l.winRate)}
                     {l.profitFactor !== null && ` · 손익비 ${l.profitFactor.toFixed(2)}`}
                     {l.breakEvenWinRate !== null && (
                       <>
                         {' '}
-                        → 본전 승률 <b>{formatPercent(l.breakEvenWinRate)}</b>
+                        → 본전 승률 <b>{formatRatio(l.breakEvenWinRate)}</b>
                       </>
                     )}
                   </p>

@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { getJson, jsonBody, request } from './api';
+import { formatHhmm } from './format';
 
 interface TaskState {
   name: string;
@@ -62,11 +63,6 @@ interface AutomationStatus {
   weekday: number;
   tasks: TaskState[];
   recent: RecentRun[];
-}
-
-/** `HHMM` 정수를 `HH:MM`으로 */
-function clockLabel(value: number): string {
-  return `${String(Math.floor(value / 100)).padStart(2, '0')}:${String(value % 100).padStart(2, '0')}`;
 }
 
 function timeLabel(ms: number): string {
@@ -214,7 +210,7 @@ export function Automation(): JSX.Element {
           return (
             <li key={task.name} className="automation__task" data-state={state} data-window={task.inWindow}>
               <span className="automation__task-time">
-                {clockLabel(task.window[0])}
+                {formatHhmm(task.window[0])}
                 {task.everyMinutes ? ` · ${task.everyMinutes}분마다` : ''}
               </span>
               <span className="automation__task-label">

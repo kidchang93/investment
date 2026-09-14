@@ -14,6 +14,7 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts';
 import type { Candle, ChartTradeMark, PriceSign, Trade } from '@invest/shared';
+import { formatRate, formatVolume } from './format';
 
 interface LatestPrice {
   price: number;
@@ -180,18 +181,6 @@ function formatChartPrice(value: number): string {
 function formatSignedChartPrice(value: number): string {
   if (!Number.isFinite(value)) return '-';
   return `${value > 0 ? '+' : ''}${formatChartPrice(value)}`;
-}
-
-function formatChartRate(value: number): string {
-  if (!Number.isFinite(value)) return '-';
-  return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
-}
-
-function formatChartVolume(value: number): string {
-  if (!Number.isFinite(value)) return '-';
-  if (value >= 100_000_000) return `${(value / 100_000_000).toFixed(1)}억`;
-  if (value >= 10_000) return `${Math.floor(value / 10_000).toLocaleString('ko-KR')}만`;
-  return value.toLocaleString('ko-KR');
 }
 
 function formatChartTime(time: Time): string {
@@ -646,17 +635,17 @@ export function Chart({
           <span>고가 <b>{formatChartPrice(crosshair.high)}</b></span>
           <span>저가 <b>{formatChartPrice(crosshair.low)}</b></span>
           <span style={{ color: crosshair.color }}>종가 <b>{formatChartPrice(crosshair.close)}</b></span>
-          <span>거래량 <b>{formatChartVolume(crosshair.volume)}</b></span>
+          <span>거래량 <b>{formatVolume(crosshair.volume)}</b></span>
           {crosshairStats && (
             <>
               <span style={{ color: crosshair.color }}>
                 변동{' '}
                 <b>
-                  {formatSignedChartPrice(crosshairStats.change)} ({formatChartRate(crosshairStats.changeRate)})
+                  {formatSignedChartPrice(crosshairStats.change)} ({formatRate(crosshairStats.changeRate)})
                 </b>
               </span>
               <span>
-                폭 <b>{formatChartPrice(crosshairStats.range)} ({formatChartRate(crosshairStats.rangeRate)})</b>
+                폭 <b>{formatChartPrice(crosshairStats.range)} ({formatRate(crosshairStats.rangeRate)})</b>
               </span>
             </>
           )}

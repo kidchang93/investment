@@ -34,6 +34,7 @@ import {
   type FinancialsResult,
 } from './api';
 import { useStream } from './useStream';
+import { formatRate, formatVolume } from './format';
 import { AgentDesk } from './AgentDesk';
 import { Automation } from './Automation';
 import { Dashboard } from './Dashboard';
@@ -158,9 +159,6 @@ interface MacroBoardItem {
   filter: MacroFilter;
   instrumentId?: string;
 }
-
-
-
 
 const RANGE_OPTIONS: Array<{ key: RangeKey; label: string; days?: number }> = [
   { key: '1M', label: '1개월', days: 31 },
@@ -326,7 +324,6 @@ const SIDE_PANEL_OPTIONS: Array<{ key: SidePanelTab; label: string }> = [
   { key: 'discover', label: '탐색' },
 ];
 
-/** 자동매매 상태를 사람 말로. 코드값을 그대로 보여주면 무슨 뜻인지 알 수 없다. */
 /*
  * 전문용어 사전.
  *
@@ -358,12 +355,6 @@ function Term({ children }: { children: string }): JSX.Element {
     </abbr>
   );
 }
-
-
-
-
-
-
 
 const SIDE_PANEL_TITLE: Record<SidePanelTab, string> = {
   watch: '관심종목',
@@ -428,7 +419,6 @@ const MACRO_FILTER_OPTIONS: Array<{ key: MacroFilter; label: string }> = [
   { key: 'fx', label: '환율' },
   { key: 'indices', label: '지수' },
 ];
-
 
 const FALLBACK_TERMINAL_NEWS: TerminalNewsCard[] = [
   {
@@ -564,11 +554,6 @@ function BrokerAccountPicker({
 }
 
 /**
- * 표 행을 기본 몇 줄까지만 보여주고 나머지는 펼쳐서 본다.
- * 기록이 쌓이는 카드 하나가 화면을 독점하면 옆 카드를 못 본다.
- * 카드마다 따로 자르면 기준이 갈리므로 한 곳에서 처리한다.
- */
-/**
  * 주문 기록의 종목 칸에 찍을 값. 언제나 종목코드 한 가지 형태로 맞춘다.
  *
  * 이 칸에 세 가지가 섞여 있었다.
@@ -588,7 +573,11 @@ function orderLogSymbolLabel(symbol?: string, requestedInstrumentId?: string): s
   return symbol || '-';
 }
 
-
+/**
+ * 표 행을 기본 몇 줄까지만 보여주고 나머지는 펼쳐서 본다.
+ * 기록이 쌓이는 카드 하나가 화면을 독점하면 옆 카드를 못 본다.
+ * 카드마다 따로 자르면 기준이 갈리므로 한 곳에서 처리한다.
+ */
 function CollapsibleRows({
   rows,
   limit = 8,
@@ -981,11 +970,6 @@ function FinancialsPanel({
   );
 }
 
-
-
-
-
-
 /** 국내 현금 주문이 성립하는 종목인지. 지수·선물·야간 프록시는 매수가능 조회 대상이 아니다. */
 function isOrderableDomesticInstrument(instrument: Instrument | null): boolean {
   return Boolean(
@@ -1012,14 +996,12 @@ function readStoredString(key: string, fallback: string): string {
 /** 탐색 패널을 처음 열 때 보여줄 카테고리. 주문할 수 있는 국내 종목이 나온다. */
 const DEFAULT_DISCOVER_CATEGORY = 'kr-major';
 
-
 function readStoredBoolean(key: string, fallback: boolean): boolean {
   const value = window.localStorage.getItem(`${STORAGE_PREFIX}${key}`);
   if (value === 'true') return true;
   if (value === 'false') return false;
   return fallback;
 }
-
 
 function writeStoredValue(key: string, value: string | boolean): void {
   window.localStorage.setItem(`${STORAGE_PREFIX}${key}`, String(value));
@@ -1057,8 +1039,6 @@ function readStoredInstruments(key: string): Instrument[] {
 function writeStoredJson(key: string, value: unknown): void {
   window.localStorage.setItem(`${STORAGE_PREFIX}${key}`, JSON.stringify(value));
 }
-
-
 
 function areStringArraysEqual(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((item, index) => item === b[index]);
@@ -1144,8 +1124,8 @@ function realtimeChartStatusLabel(instrument: Instrument | null, trade: Trade | 
   return trade ? '실시간 차트 수신중' : '실시간 차트 대기';
 }
 
-function formatPrice(n: number): string {
-  return Number.isFinite(n) ? n.toLocaleString('ko-KR') : '-';
+function formatPrice(n: number | undefined): string {
+  return n !== undefined && Number.isFinite(n) ? n.toLocaleString('ko-KR') : '-';
 }
 
 function formatCurrencyPrice(n: number | undefined, currency = 'KRW'): string {
@@ -1177,26 +1157,9 @@ function formatConvertedKrw(value: number | undefined, currency: string | undefi
   return `약 ${formatCurrencyPrice(Math.round(value * exchangeRate.rate), 'KRW')}`;
 }
 
-function formatRate(n: number): string {
-  if (!Number.isFinite(n)) return '-';
-  return `${n > 0 ? '+' : ''}${n.toFixed(2)}%`;
-}
-
 function formatSignedPrice(n: number): string {
   if (!Number.isFinite(n)) return '-';
   return `${n > 0 ? '+' : ''}${formatPrice(n)}`;
-}
-
-function formatVolume(n: number): string {
-  if (!Number.isFinite(n)) return '-';
-  if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1)}억`;
-  if (n >= 10_000) return `${Math.floor(n / 10_000).toLocaleString('ko-KR')}만`;
-  /*
-   * 거래량은 주식 수라 소수점이 의미 없다. 평균 거래량처럼 나눗셈으로 나온 값이
-   * 1만 미만이면 `4,573.842`처럼 소수점 세 자리가 그대로 찍혔다 — 옆 칸들이
-   * `54만`, `5만`인데 혼자만 형식이 달랐다.
-   */
-  return Math.round(n).toLocaleString('ko-KR');
 }
 
 function formatTradeTime(time: string | undefined): string {
@@ -1204,12 +1167,6 @@ function formatTradeTime(time: string | undefined): string {
   return `${time.slice(0, 2)}:${time.slice(2, 4)}:${time.slice(4, 6)}`;
 }
 
-/*
- * 시각만 찍는다. 예전엔 값이 없을 때 `시세 연결 대기`라는 상태 문구를
- * 돌려줬는데, 부르는 쪽이 `시세 갱신 ${formatClock(...)}`처럼 문장에 끼워
- * 쓰면 "시세 갱신 시세 연결 대기"가 됐다. 포맷 함수가 상태를 지어내지 않게
- * 중립 자리표시자만 준다. 없을 때 뭐라고 적을지는 부르는 쪽이 정한다.
- */
 /**
  * 화면 위쪽 오류 배너에 쓸 문구.
  *
@@ -1225,6 +1182,12 @@ function toErrorMessage(e: unknown): string {
   return raw;
 }
 
+/*
+ * 시각만 찍는다. 예전엔 값이 없을 때 `시세 연결 대기`라는 상태 문구를
+ * 돌려줬는데, 부르는 쪽이 `시세 갱신 ${formatClock(...)}`처럼 문장에 끼워
+ * 쓰면 "시세 갱신 시세 연결 대기"가 됐다. 포맷 함수가 상태를 지어내지 않게
+ * 중립 자리표시자만 준다. 없을 때 뭐라고 적을지는 부르는 쪽이 정한다.
+ */
 function formatClock(ms: number | null): string {
   if (!ms) return '-';
   return new Intl.DateTimeFormat('ko-KR', {
@@ -1311,24 +1274,12 @@ function tradeTimestampMs(trade: Trade | undefined): number | null {
   return new Date(y, m - 1, d, hh, mm, ss).getTime();
 }
 
-
-function formatCandleDate(seconds: number, withTime: boolean): string {
-  return new Intl.DateTimeFormat('ko-KR', {
-    month: '2-digit',
-    day: '2-digit',
-    ...(withTime ? { hour: '2-digit', minute: '2-digit', hour12: false } : {}),
-    timeZone: 'Asia/Seoul',
-  }).format(new Date(seconds * 1000));
-}
-
-function formatNewsTime(seconds: number | undefined): string {
+function formatCandleDate(seconds: number | undefined, withTime: boolean): string {
   if (!seconds) return '-';
   return new Intl.DateTimeFormat('ko-KR', {
     month: '2-digit',
     day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
+    ...(withTime ? { hour: '2-digit', minute: '2-digit', hour12: false } : {}),
     timeZone: 'Asia/Seoul',
   }).format(new Date(seconds * 1000));
 }
@@ -1374,14 +1325,6 @@ function terminalNewsCardFromItem(item: NewsItem): TerminalNewsCard {
     filters: newsFiltersForTitle(cleanTitle),
     url: newsSearchUrl(item),
   };
-}
-
-function formatNumber(n: number | undefined): string {
-  return n !== undefined && Number.isFinite(n) ? n.toLocaleString('ko-KR') : '-';
-}
-
-function formatMoney(n: number | undefined, currency = 'KRW'): string {
-  return formatCurrencyPrice(n, currency);
 }
 
 function brokerExecutionStatusLabel(status: BrokerExecutionStatus): string {
@@ -1448,7 +1391,6 @@ function formatPercent(value: number | undefined): string {
   return value !== undefined && Number.isFinite(value) ? `${value.toFixed(2)}%` : '-';
 }
 
-
 /**
  * 조회 구간 표시용 'YY.MM.DD'.
  * 행 단위는 MM-DD로 충분하지만, 구간은 연도를 버리면 1년 범위가
@@ -1472,7 +1414,6 @@ function formatElapsed(ms: number): string {
   if (hours < 24) return `${hours}시간 전`;
   return `${Math.floor(hours / 24)}일 전`;
 }
-
 
 /** 브로커가 내려주는 YYYYMMDD·HHMMSS를 화면용 'MM-DD HH:MM'으로. */
 function formatBrokerOrderTime(date: string, time?: string): string {
@@ -2111,16 +2052,6 @@ export function App(): JSX.Element {
   const [liveOrderGate, setLiveOrderGate] = useState<LiveOrderGate | null>(null);
   /** 게이트 조회가 실패했을 때의 사유. null이 `아직 안 옴`과 `못 받음`을 겸하지 않게 한다. */
   const [liveOrderGateError, setLiveOrderGateError] = useState<string | null>(null);
-
-  /*
-   * 자동매매. 러너는 서버에 살고 화면은 상태를 받아 보여줄 뿐이다.
-   * 돌고 있는 동안에는 주기적으로 다시 받아 실행 기록이 쌓이는 걸 보여준다.
-   */
-  /** 상태를 못 받아온 사유. 게이트(liveOrderGateError)와 같은 방식이다. */
-  /*
-   * 신호 채점 성적. 백테스트는 과거를 말하고 이 값은 실제로 낸 신호가 어땠는지를
-   * 말한다. 아직 채점된 게 없으면 빈 배열이고, 그걸 0%로 채우지 않는다.
-   */
   const [kisExecutionSnapshot, setKisExecutionSnapshot] = useState<BrokerExecutionSnapshot | null>(null);
   const [isKisExecutionRefreshing, setIsKisExecutionRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2184,7 +2115,6 @@ export function App(): JSX.Element {
   useEffect(() => writeStoredValue('activePage', activePage), [activePage]);
   useEffect(() => writeStoredValue('terminalTab', terminalTab), [terminalTab]);
   useEffect(() => writeStoredValue('sidePanelTab', sidePanelTab), [sidePanelTab]);
-
 
   /*
    * ★ **선택한 종목에서 우리가 사고판 자리.** 차트에 화살표로 찍는다(2026-08-24).
@@ -2413,12 +2343,6 @@ export function App(): JSX.Element {
     refreshKisExecutions();
   }, [activePage, refreshKisExecutions]);
 
-  // 매수가능금액은 종목·단가에 따라 달라지므로 매수 탭에서 국내 주문 가능 종목일 때만 조회한다.
-
-  // 매도가능수량은 종목만 있으면 되지만 매도 탭에서만 의미가 있다.
-
-
-
   /*
    * 재무 지표는 하단 독의 재무 탭을 열었을 때만 받는다.
    *
@@ -2509,7 +2433,6 @@ export function App(): JSX.Element {
       disposed = true;
     };
   }, [activePage, terminalTab, moversDirection]);
-
 
   // 기간별 매매손익은 포트폴리오에서 계좌·구간별로 받는다.
   useEffect(() => {
@@ -3509,7 +3432,6 @@ export function App(): JSX.Element {
   const bottomDockModeLabel =
     BOTTOM_DOCK_MODE_OPTIONS.find((option) => option.key === bottomDockMode)?.label ?? bottomDockMode;
 
-
   const kisAccountPositionCount = kisAccountSnapshot?.positions.length ?? 0;
   const kisExecutionCount = kisExecutionSnapshot?.executions.length ?? 0;
   const kisOpenExecutionCount =
@@ -3621,19 +3543,6 @@ export function App(): JSX.Element {
     setShowComparePanel(false);
   }
 
-
-  /*
-   * 자동매매가 지금 설정으로 실제로 주문을 낼 수 있는지.
-   *
-   * 러너를 시작해도 매 회차 "후보 없음"이나 "차단"만 쌓이는 경우가 있다.
-   * 그 이유는 리스크 룰에 있는데 화면이 다른 카드라 연결짓기 어렵다.
-   * 시작 버튼 옆에서 바로 보이게 한다.
-   */
-
-
-
-
-
   /** 쉼표로 구분된 종목코드 입력을 배열로. 서버가 다시 정규화하므로 여기선 느슨하게 자른다. */
   function parseSymbolText(text: string): string[] {
     return text
@@ -3665,10 +3574,6 @@ export function App(): JSX.Element {
       setIsRiskSaving(false);
     }
   }
-
-
-
-
 
   return (
     <div className={`app${isFocusMode ? ' is-focus-mode' : ''}`}>
@@ -4014,7 +3919,7 @@ export function App(): JSX.Element {
                 <b data-account="live">
                   예수금{' '}
                   {kisAccountSnapshot?.configured
-                    ? formatMoney(kisAccountSnapshot.cashBalance, kisAccountSnapshot.baseCurrency)
+                    ? formatCurrencyPrice(kisAccountSnapshot.cashBalance, kisAccountSnapshot.baseCurrency)
                     : '미설정'}
                 </b>
               </small>
@@ -4235,7 +4140,7 @@ export function App(): JSX.Element {
                   <div className="terminal-news">
                     {selectedNews.slice(0, 5).map((item) => (
                       <a href={newsSearchUrl(item)} key={item.id} rel="noreferrer" target="_blank">
-                        <span>{formatNewsTime(item.publishedAt)}</span>
+                        <span>{formatCandleDate(item.publishedAt, true)}</span>
                         <strong>{item.title}</strong>
                         <em>{item.source}</em>
                       </a>
@@ -4318,14 +4223,14 @@ export function App(): JSX.Element {
                       <a href={item.url} key={item.id} rel="noreferrer" target="_blank">
                         <span>{index + 1}</span>
                         <strong>{item.title}</strong>
-                        <em>{item.source} · {item.publishedAt ? formatNewsTime(item.publishedAt) : '검색 후보'}</em>
+                        <em>{item.source} · {item.publishedAt ? formatCandleDate(item.publishedAt, true) : '검색 후보'}</em>
                       </a>
                     ))}
                   </div>
                   <div className="terminal-news-list">
                     {filteredTerminalNews.map((item, index) => (
                       <a href={item.url} key={`${item.id}-${index}`} rel="noreferrer" target="_blank">
-                        <span>{item.publishedAt ? formatNewsTime(item.publishedAt) : '검색'}</span>
+                        <span>{item.publishedAt ? formatCandleDate(item.publishedAt, true) : '검색'}</span>
                         <strong>{item.title}</strong>
                         <em>{item.filters.map((filter) => NEWS_FILTER_OPTIONS.find((option) => option.key === filter)?.label ?? filter).join(' · ')}</em>
                       </a>
@@ -4466,7 +4371,7 @@ export function App(): JSX.Element {
                               <small className="movers__code">{row.symbol}</small>
                               <em>{row.price.toLocaleString('ko-KR')}원</em>
                               <span className="movers__rate">
-                                {row.changeRate > 0 ? '+' : ''}{row.changeRate.toFixed(2)}%
+                                {formatRate(row.changeRate)}
                               </span>
                               {!openable && <small className="movers__unopenable">목록에 없음</small>}
                             </button>
@@ -4815,7 +4720,7 @@ export function App(): JSX.Element {
                               </span>
                               <span role="cell">{row.price.toLocaleString('ko-KR')}원</span>
                               <span data-tone={row.changeRate >= 0 ? 'up' : 'down'} role="cell">
-                                {row.changeRate > 0 ? '+' : ''}{row.changeRate.toFixed(2)}%
+                                {formatRate(row.changeRate)}
                               </span>
                               <span role="cell">{formatOkeanAmount(row.turnover)}</span>
                               {/* 고가·저가가 아직 없으면 0%가 아니라 없다고 적는다. */}
@@ -4950,7 +4855,6 @@ export function App(): JSX.Element {
               </small>
             </div>
           </section>}
-
 
           {activePage === 'market' && <div className="chart-toolbar">
             <div className="chart-toolbar__group">
@@ -5185,7 +5089,7 @@ export function App(): JSX.Element {
                 <em>{selectedNews.length ? `${selectedNews.length}건` : '대기'}</em>
                 {selectedNews.length > 0 && (
                   <div className="news-panel__summary" aria-label="뉴스 요약">
-                    <span>최신 {formatNewsTime(newsSummary.latestPublishedAt)}</span>
+                    <span>최신 {formatCandleDate(newsSummary.latestPublishedAt, true)}</span>
                     <span>
                       출처 {newsSummary.sourceCount}곳
                       {newsSummary.topSourceName ? ` · ${newsSummary.topSourceName} ${newsSummary.topSourceCount}` : ''}
@@ -5202,7 +5106,7 @@ export function App(): JSX.Element {
                     rel="noreferrer"
                     target="_blank"
                   >
-                    <span>{formatNewsTime(item.publishedAt)}</span>
+                    <span>{formatCandleDate(item.publishedAt, true)}</span>
                     <strong>{item.title}</strong>
                     <em>{item.source}</em>
                     <small>검색</small>
@@ -5365,20 +5269,20 @@ export function App(): JSX.Element {
                     <div className="portfolio-page__metrics portfolio-page__metrics--broker">
                       <div>
                         <span><Term>예수금</Term></span>
-                        <strong>{formatMoney(kisAccountSnapshot.cashBalance, kisAccountSnapshot.baseCurrency)}</strong>
+                        <strong>{formatCurrencyPrice(kisAccountSnapshot.cashBalance, kisAccountSnapshot.baseCurrency)}</strong>
                       </div>
                       <div>
                         <span><Term>총 평가</Term></span>
-                        <strong>{formatMoney(kisAccountSnapshot.totalEvaluation, kisAccountSnapshot.baseCurrency)}</strong>
+                        <strong>{formatCurrencyPrice(kisAccountSnapshot.totalEvaluation, kisAccountSnapshot.baseCurrency)}</strong>
                       </div>
                       <div>
                         <span><Term>주식 평가</Term></span>
-                        <strong>{formatMoney(kisAccountSnapshot.stockEvaluation, kisAccountSnapshot.baseCurrency)}</strong>
+                        <strong>{formatCurrencyPrice(kisAccountSnapshot.stockEvaluation, kisAccountSnapshot.baseCurrency)}</strong>
                       </div>
                       <div>
                         <span><Term>평가 손익</Term></span>
                         <strong data-tone={kisAccountPnlTone}>
-                          {formatMoney(kisAccountSnapshot.unrealizedPnl, kisAccountSnapshot.baseCurrency)}
+                          {formatCurrencyPrice(kisAccountSnapshot.unrealizedPnl, kisAccountSnapshot.baseCurrency)}
                           {/*
                             매입금액 대비 손익률. 서버가 계산한 값이다 — KIS가 주는
                             자산증감수익률(전일 총자산 대비)은 다른 것을 재는 값이라
@@ -5421,13 +5325,13 @@ export function App(): JSX.Element {
                               {position.name || position.symbol}
                               <small>{position.symbol}</small>
                             </strong>
-                            <span>{formatNumber(position.quantity)}</span>
-                            <span>{formatMoney(position.averagePrice, position.currency)}</span>
-                            <span>{formatMoney(position.currentPrice, position.currency)}</span>
+                            <span>{formatPrice(position.quantity)}</span>
+                            <span>{formatCurrencyPrice(position.averagePrice, position.currency)}</span>
+                            <span>{formatCurrencyPrice(position.currentPrice, position.currency)}</span>
                             <em className="portfolio-table__pnl" data-tone={tone}>
                               {position.unrealizedPnl === undefined
                                 ? '-'
-                                : `${position.unrealizedPnl > 0 ? '+' : ''}${formatMoney(position.unrealizedPnl, position.currency)}`}
+                                : formatSignedCurrencyPrice(position.unrealizedPnl, position.currency)}
                               {position.unrealizedPnlRate !== undefined && (
                                 <small>{formatRate(position.unrealizedPnlRate)}</small>
                               )}
@@ -5477,15 +5381,15 @@ export function App(): JSX.Element {
                     <div className="portfolio-page__metrics portfolio-page__metrics--broker">
                       <div>
                         <span>총 주문수량</span>
-                        <strong>{formatNumber(kisExecutionSnapshot.totalOrderQuantity)}</strong>
+                        <strong>{formatPrice(kisExecutionSnapshot.totalOrderQuantity)}</strong>
                       </div>
                       <div>
                         <span>총 체결수량</span>
-                        <strong>{formatNumber(kisExecutionSnapshot.totalFilledQuantity)}</strong>
+                        <strong>{formatPrice(kisExecutionSnapshot.totalFilledQuantity)}</strong>
                       </div>
                       <div>
                         <span>총 체결금액</span>
-                        <strong>{formatMoney(kisExecutionSnapshot.totalFilledAmount)}</strong>
+                        <strong>{formatCurrencyPrice(kisExecutionSnapshot.totalFilledAmount)}</strong>
                       </div>
                       <div>
                         <span><Term>미체결</Term></span>
@@ -5525,15 +5429,15 @@ export function App(): JSX.Element {
                             )}
                           </span>
                           <span>
-                            {formatNumber(execution.filledQuantity)} / {formatNumber(execution.orderQuantity)}
+                            {formatPrice(execution.filledQuantity)} / {formatPrice(execution.orderQuantity)}
                           </span>
                           <span>
-                            {formatMoney(
+                            {formatCurrencyPrice(
                               execution.averageFilledPrice || execution.orderPrice,
                               execution.currency,
                             )}
                           </span>
-                          <span>{formatMoney(execution.filledAmount, execution.currency)}</span>
+                          <span>{formatCurrencyPrice(execution.filledAmount, execution.currency)}</span>
                           <em data-status={execution.status}>{brokerExecutionStatusLabel(execution.status)}</em>
                         </div>
                       ))} />
@@ -5584,7 +5488,7 @@ export function App(): JSX.Element {
                       <div>
                         <span>실현손익</span>
                         <strong data-tone={profitTone(settledRealized(kisTradeProfit))}>
-                          {formatMoney(settledRealized(kisTradeProfit))}
+                          {formatCurrencyPrice(settledRealized(kisTradeProfit))}
                         </strong>
                       </div>
                       <div>
@@ -5595,15 +5499,15 @@ export function App(): JSX.Element {
                       </div>
                       <div>
                         <span>수수료</span>
-                        <strong>{formatMoney(kisTradeProfit.totalFee)}</strong>
+                        <strong>{formatCurrencyPrice(kisTradeProfit.totalFee)}</strong>
                       </div>
                       <div>
                         <span>세금</span>
-                        <strong>{formatMoney(kisTradeProfit.totalTax)}</strong>
+                        <strong>{formatCurrencyPrice(kisTradeProfit.totalTax)}</strong>
                       </div>
                       <div>
                         <span>거래대금</span>
-                        <strong>{formatMoney(kisTradeProfit.totalTradeAmount)}</strong>
+                        <strong>{formatCurrencyPrice(kisTradeProfit.totalTradeAmount)}</strong>
                       </div>
                     </div>
                     {kisTradeProfit.rows.length === 0 ? (
@@ -5624,12 +5528,12 @@ export function App(): JSX.Element {
                             <span>{formatBrokerOrderTime(row.tradeDate)}</span>
                             <strong>{row.name || row.symbol}</strong>
                             <span>
-                              {formatNumber(row.sellQuantity)}주 · {formatMoney(row.sellPrice, row.currency)}
+                              {formatPrice(row.sellQuantity)}주 · {formatCurrencyPrice(row.sellPrice, row.currency)}
                             </span>
-                            <span>{formatMoney(row.buyPrice, row.currency)}</span>
-                            <span>{formatMoney(row.fee + row.tax, row.currency)}</span>
+                            <span>{formatCurrencyPrice(row.buyPrice, row.currency)}</span>
+                            <span>{formatCurrencyPrice(row.fee + row.tax, row.currency)}</span>
                             <span data-tone={profitTone(row.realizedProfit)}>
-                              {formatMoney(row.realizedProfit, row.currency)}
+                              {formatCurrencyPrice(row.realizedProfit, row.currency)}
                             </span>
                             <span data-tone={profitTone(row.profitRate)}>{formatPercent(row.profitRate)}</span>
                           </div>
@@ -5646,7 +5550,6 @@ export function App(): JSX.Element {
                   </div>
                 )}
               </section>
-
 
               <section className="portfolio-card portfolio-card--wide" aria-label="실주문 리스크 룰">
                 <div className="portfolio-card__header">
@@ -5823,8 +5726,8 @@ export function App(): JSX.Element {
                           {orderLogSymbolLabel(record.symbol, record.requestedInstrumentId)}
                         </strong>
                         <span>
-                          {record.quantity !== undefined ? `${formatNumber(record.quantity)}주` : '-'}
-                          {record.limitPrice !== undefined ? ` · ${formatMoney(record.limitPrice, record.currency ?? 'KRW')}` : ''}
+                          {record.quantity !== undefined ? `${formatPrice(record.quantity)}주` : '-'}
+                          {record.limitPrice !== undefined ? ` · ${formatCurrencyPrice(record.limitPrice, record.currency ?? 'KRW')}` : ''}
                           {/*
                             스톱가는 단가와 성질이 다르다 — "얼마에 나가는가"가 아니라
                             "언제 나가는가"다. 합쳐 적으면 손절이 걸린 주문과 그냥 지정가
@@ -5832,7 +5735,7 @@ export function App(): JSX.Element {
                           */}
                           {record.stopPrice !== undefined && (
                             <span title="스톱가입니다. 현재가가 여기 닿으면 위 단가로 주문이 나갑니다.">
-                              {` · 스톱 ${formatMoney(record.stopPrice, record.currency ?? 'KRW')}`}
+                              {` · 스톱 ${formatCurrencyPrice(record.stopPrice, record.currency ?? 'KRW')}`}
                             </span>
                           )}
                           {/*
@@ -5846,7 +5749,7 @@ export function App(): JSX.Element {
                                 className="portfolio-table__estimate"
                                 title="시장가라 단가가 없습니다. 일일 금액 한도를 잰 추정 단가입니다."
                               >
-                                추정 {formatMoney(record.estimatedPrice)}
+                                추정 {formatCurrencyPrice(record.estimatedPrice)}
                               </span>
                             </>
                           )}

@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { getJson } from './api';
+import { formatHhmm, formatWon } from './format';
 
 // ── 픽셀 캐릭터 ──────────────────────────────────────────────────────────
 //
@@ -313,11 +314,6 @@ function stanceOf(task: TaskState | undefined, status: AutomationStatus): Stance
   return 'closed';
 }
 
-const clock = (hhmm: number): string =>
-  `${String(Math.floor(hhmm / 100)).padStart(2, '0')}:${String(hhmm % 100).padStart(2, '0')}`;
-
-const won = (n: number): string => `${Math.round(n).toLocaleString('ko-KR')}원`;
-
 const TRIGGER_LABEL: Record<string, string> = {
   scheduled: '발굴 회차',
   'fair-value': '적정가 반응',
@@ -469,10 +465,10 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
     const first = tradesToday[0];
     const more = tradesToday.length > 1 ? ` 외 ${tradesToday.length - 1}건` : '';
     headline = `오늘 ${first.name} ${first.quantity}주를 ${ACTION_LABEL[first.action]}했습니다${more}`
-      + (equity ? ` · 총자산 ${won(equity)}` : '');
+      + (equity ? ` · 총자산 ${formatWon(equity)}` : '');
   } else {
     headline = `오늘은 아직 사고판 것이 없습니다 · 판단 ${today.length}번`
-      + (equity ? ` · 총자산 ${won(equity)}` : '');
+      + (equity ? ` · 총자산 ${formatWon(equity)}` : '');
   }
 
   return (
@@ -552,7 +548,7 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
                         gridColumn: `${member.at.col} / span 2`,
                         gridRow: `${member.at.row} / span 3`,
                       }}
-                      title={`${member.job}${task ? ` · ${clock(task.window[0])}–${clock(task.window[1])}` : ''}`}
+                      title={`${member.job}${task ? ` · ${formatHhmm(task.window[0])}–${formatHhmm(task.window[1])}` : ''}`}
                     >
                       {/*
                         말풍선은 **하는 일이 있을 때만** 뜬다. 활동 표시가 오면 그
@@ -608,7 +604,7 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
               <li key={o.orderNo}>
                 <b>{ACTION_LABEL[o.side] ?? o.side}</b> {o.name} <em>{o.symbol}</em>
                 {' '}{o.quantity}주 중 {o.filledQuantity ?? 0}주 체결
-                {o.price ? ` · 지정가 ${won(o.price)}` : ''}
+                {o.price ? ` · 지정가 ${formatWon(o.price)}` : ''}
                 <span className="agent-open__no">주문번호 {o.orderNo}</span>
               </li>
             ))}
@@ -675,7 +671,7 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
                       .map((d) => `${ACTION_LABEL[d.action] ?? d.action} ${d.name} ${d.quantity}주`)
                       .join(' · ')}
                 </span>
-                <span className="agent-round__equity">{won(round.equity)}</span>
+                <span className="agent-round__equity">{formatWon(round.equity)}</span>
               </button>
 
               {open && (
@@ -688,8 +684,8 @@ export function AgentDesk({ accountId }: { accountId: string | null }): JSX.Elem
                       </h4>
                       <p className="agent-decision__nums">
                         {d.quantity}주
-                        {d.limitPrice ? ` · 지정가 ${won(d.limitPrice)}` : ''}
-                        {d.plan ? ` · 목표 ${won(d.plan.targetPrice)} / 손절 ${won(d.plan.stopPrice)}` : ''}
+                        {d.limitPrice ? ` · 지정가 ${formatWon(d.limitPrice)}` : ''}
+                        {d.plan ? ` · 목표 ${formatWon(d.plan.targetPrice)} / 손절 ${formatWon(d.plan.stopPrice)}` : ''}
                         {d.plan ? ` · ${d.plan.horizonDays}거래일 · 기대 ${(d.plan.expectedReturn * 100).toFixed(2)}%` : ''}
                       </p>
                       <p className="agent-decision__why">{d.rationale}</p>

@@ -128,9 +128,14 @@ backend/src/
 frontend/src/
 ├── main.tsx           # 진입점 (createRoot)
 ├── App.tsx            # 레이아웃: 본문 패널 + 오른쪽 사이드바, 상태 오케스트레이션
+├── AgentDesk.tsx      # 목표 화면: 에이전트 사무실 + 판단 기록
+├── Automation.tsx     # 목표 화면: 자동화 스위치·작업 시간표
+├── Dashboard.tsx      # 목표 화면: 3층 비중·지금 할 일
+├── PortfolioLayers.tsx # 내 계좌: 3층 성과 카드
 ├── Chart.tsx          # lightweight-charts 캔들 차트 (일봉 + 실시간 업데이트)
 ├── useStream.ts       # /stream WebSocket 훅 (자동 재접속, 종목별 최신 체결)
-├── api.ts             # REST 클라이언트 (watchlist, candles)
+├── api.ts             # REST 클라이언트. 모든 fetch가 request/getJson 한 길을 탄다
+├── format.ts          # 두 파일 이상이 쓰는 숫자 포맷 (원·비율·등락률·거래량·HH:MM)
 ├── config.ts          # API_BASE / STREAM_URL 파생
 └── styles.css         # 다크 테마 스타일
 ```

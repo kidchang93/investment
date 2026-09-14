@@ -1347,7 +1347,7 @@ export interface BrokerTradeProfitSnapshot {
  * 없는 값**이라 이건 "본전이었다"로 읽힌다. 잰 결과가 0인 게 아니라 잴 것이
  * 없는 것이다.
  *
- * `undefined`를 돌려주면 화면의 `formatMoney`/`formatPercent`가 `-`를,
+ * `undefined`를 돌려주면 화면의 `formatCurrencyPrice`/`formatPercent`가 `-`를,
  * `profitTone`이 `flat`을 준다 — 없는 값에 빨강·파랑이 붙지 않는다.
  *
  * **수수료·세금·거래대금에는 쓰지 않는다.** 거래가 없었으면 그 셋은 정말로

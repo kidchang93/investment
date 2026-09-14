@@ -23,10 +23,8 @@ import { useCallback, useEffect, useState } from 'react';
 import type { PortfolioLayersSnapshot, TradingHealthSnapshot } from '@invest/shared';
 
 import { getJson } from './api';
+import { formatRatio, formatSignedWon, formatWon } from './format';
 
-const won = (v: number): string => `${Math.round(v).toLocaleString('ko-KR')}원`;
-const signed = (v: number): string => `${v >= 0 ? '+' : ''}${Math.round(v).toLocaleString('ko-KR')}원`;
-const pct = (v: number, d = 1): string => `${(v * 100).toFixed(d)}%`;
 const pnl = (v: number): 'up' | 'down' | 'flat' => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat');
 
 /** 큰 돈은 조·억으로 줄여 읽기 쉽게. 정확한 값은 옆에 그대로 둔다 */
@@ -191,19 +189,19 @@ export function Dashboard({ accountId }: { accountId: string | null }): JSX.Elem
             <div>
               <span>총자산</span>
               <strong>{short(layers.totalAssets)}</strong>
-              <small>{won(layers.totalAssets)}</small>
+              <small>{formatWon(layers.totalAssets)}</small>
             </div>
             <div>
               <span>손익</span>
-              <strong data-pnl={pnl(totalPnl)}>{signed(totalPnl)}</strong>
+              <strong data-pnl={pnl(totalPnl)}>{formatSignedWon(totalPnl)}</strong>
               <small>
-                {cost > 0 ? `원가 대비 ${pct(totalPnl / cost, 2)}` : '—'}
+                {cost > 0 ? `원가 대비 ${formatRatio(totalPnl / cost, 2)}` : '—'}
                 {days !== null && ` · ${days}일째`}
               </small>
             </div>
             <div>
               <span>시장에 넣은 몫</span>
-              <strong>{pct(invested / layers.totalAssets)}</strong>
+              <strong>{formatRatio(invested / layers.totalAssets)}</strong>
               <small>현금 {short(layers.cash)}원 (D+2)</small>
             </div>
           </div>
@@ -225,9 +223,9 @@ export function Dashboard({ accountId }: { accountId: string | null }): JSX.Elem
                       </div>
                     </td>
                     <td className="dash__num">
-                      <b>{pct(l.weight)}</b>
+                      <b>{formatRatio(l.weight)}</b>
                       <small>
-                        목표 {pct(l.targetWeight)}
+                        목표 {formatRatio(l.targetWeight)}
                         {Math.abs(gap) >= 0.005 && (
                           <em data-gap={gap > 0 ? 'over' : 'under'}>
                             {' '}{gap > 0 ? '+' : ''}{(gap * 100).toFixed(1)}%p
@@ -236,7 +234,7 @@ export function Dashboard({ accountId }: { accountId: string | null }): JSX.Elem
                       </small>
                     </td>
                     <td className="dash__num" data-pnl={empty ? undefined : pnl(l.totalPnl)}>
-                      {empty ? '아직 없음' : signed(l.totalPnl)}
+                      {empty ? '아직 없음' : formatSignedWon(l.totalPnl)}
                     </td>
                   </tr>
                 );
