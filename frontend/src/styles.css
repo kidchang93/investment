@@ -706,23 +706,6 @@ button {
   scrollbar-width: thin;
 }
 
-.chart-tool-strip {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  gap: 3px;
-  padding-right: 6px;
-  border-right: 1px solid var(--border);
-}
-
-.chart-tool-strip button {
-  min-width: 26px;
-  width: 26px;
-  padding: 0;
-  font-size: 11px;
-  font-weight: 800;
-}
-
 .layout-presets {
   display: inline-flex;
   align-items: center;
@@ -1165,31 +1148,6 @@ button {
   border-color: rgba(245, 196, 81, 0.42);
   background: rgba(245, 196, 81, 0.1);
   color: var(--focus);
-}
-
-/*
- * 필터가 두 갈래인 줄(캘린더의 지역·중요도). 갈래마다 이름을 붙이고 사이를
- * 벌린다. `.terminal-filterbar`와 특이도가 같으므로 gap을 덮으려면 반드시
- * 뒤에 있어야 한다.
- */
-.terminal-filterbar--grouped {
-  gap: 18px;
-}
-
-.terminal-filterbar__group,
-.terminal-filterbar__group > [role='tablist'] {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.terminal-filterbar__label {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 800;
-  white-space: nowrap;
 }
 
 .terminal-page {
@@ -1769,35 +1727,7 @@ button {
   font-size: 20px;
 }
 
-/*
- * 예시 데이터 표시.
- *
- * 셀렉터를 `span.sample-badge`(0,1,1)로 둔다. `.sample-badge`(0,1,0)로는
- * 이 배지가 들어가는 세 부모(.terminal-page__header span,
- * .terminal-panel__header span)의 color/font-size에 진다.
- *
- * 상태색(초록/노랑)을 쓰지 않는다. 이건 정상/경고 신호가 아니라
- * "이 숫자는 재지 않은 값"이라는 표시라, 점선 테두리로 구분만 한다.
- */
-span.sample-badge {
-  display: inline-flex;
-  align-items: center;
-  height: 22px;
-  padding: 0 8px;
-  border: 1px dashed rgba(148, 163, 184, 0.42);
-  border-radius: 4px;
-  background: rgba(148, 163, 184, 0.06);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
-  cursor: help;
-  flex-shrink: 0;
-}
-
-.terminal-headlines,
-.terminal-fee-controls,
-.terminal-simulation-grid {
+.terminal-headlines {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
@@ -1844,9 +1774,7 @@ span.sample-badge {
   font-size: 11px;
 }
 
-.terminal-headlines a,
-.terminal-fee-controls label,
-.terminal-fee-controls > div {
+.terminal-headlines a {
   display: grid;
   align-content: start;
   gap: 5px;
@@ -1879,35 +1807,15 @@ span.sample-badge {
 }
 
 .terminal-headlines strong,
-.terminal-news-list strong,
-.terminal-fee-controls strong {
+.terminal-news-list strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/*
- * 계산에 쓴 가정.
- *
- * 결과 숫자만 보여주면 무엇을 넣어 나온 값인지 알 수 없다. 값 자체가 확인된
- * 것이 아니라 더 그렇다 — 세율도 배수도 출처가 없다.
- */
-.terminal-fee-assumptions {
-  margin: 0;
-  padding: 8px 11px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: rgba(148, 163, 184, 0.06);
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
 .terminal-headlines em,
 .terminal-news-list em,
-.terminal-news-list span,
-.terminal-fee-controls span,
-.terminal-fee-controls em {
+.terminal-news-list span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1917,16 +1825,14 @@ span.sample-badge {
 }
 
 .terminal-news-list,
-.terminal-macro-list,
-.terminal-leaderboard {
+.terminal-macro-list {
   display: grid;
   gap: 7px;
 }
 
 .terminal-news-list a,
 .terminal-news-list p,
-.terminal-macro-list button[data-tone],
-.terminal-leaderboard div {
+.terminal-macro-list button[data-tone] {
   display: grid;
   grid-template-columns: minmax(78px, 0.2fr) minmax(0, 1fr) minmax(120px, 0.25fr);
   align-items: center;
@@ -1973,141 +1879,9 @@ span.sample-badge {
   border-color: rgba(59, 130, 246, 0.26);
 }
 
-.terminal-calendar-grid,
-.terminal-fee-table,
-.terminal-report-grid,
-.terminal-ranking-list,
-.terminal-lounge-posts {
+.terminal-ranking-list {
   display: grid;
   gap: 8px;
-}
-
-.terminal-report-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.terminal-report-grid article {
-  position: relative;
-  display: grid;
-  align-content: start;
-  gap: 6px;
-  min-width: 0;
-  min-height: 116px;
-  padding: 12px;
-  overflow: hidden;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: rgba(15, 23, 42, 0.42);
-}
-
-.terminal-report-grid article strong {
-  font-size: 28px;
-  font-variant-numeric: tabular-nums;
-}
-
-.terminal-report-grid article span,
-.terminal-report-grid article em {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
-  font-size: 12px;
-  font-style: normal;
-}
-
-.terminal-report-grid article i {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  height: 3px;
-  background: linear-gradient(90deg, #3b82f6, #f5c451, #e5484d);
-}
-
-.terminal-report-layout,
-.terminal-lounge-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: 10px;
-}
-
-.terminal-chat-layout {
-  display: grid;
-  grid-template-columns: minmax(220px, 0.36fr) minmax(0, 1fr);
-  gap: 10px;
-}
-
-.terminal-chat-layout[data-mode='wide'] {
-  grid-template-columns: minmax(180px, 0.24fr) minmax(0, 1.4fr);
-}
-
-.terminal-heatmap {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-height: 360px;
-}
-
-.terminal-heatmap article {
-  display: grid;
-  align-content: end;
-  gap: 4px;
-  min-width: 128px;
-  min-height: 92px;
-  padding: 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: rgba(15, 23, 42, 0.58);
-}
-
-.terminal-heatmap article[data-tone='up'] {
-  border-color: rgba(229, 72, 77, 0.3);
-  background: rgba(229, 72, 77, 0.12);
-}
-
-.terminal-heatmap article[data-tone='down'] {
-  border-color: rgba(59, 130, 246, 0.3);
-  background: rgba(59, 130, 246, 0.12);
-}
-
-/*
- * 아직 시세가 안 온 타일.
- *
- * `[data-tone]` 규칙들보다 뒤에 둬야 배경색을 덮는다 — 특이도가 같아
- * 순서로 결정된다. 값이 없는데 색이 칠해져 있으면 오르내린 것처럼 보인다.
- */
-.terminal-heatmap article[data-pending='true'] {
-  border-color: var(--border-soft);
-  background: rgba(148, 163, 184, 0.05);
-  opacity: 0.6;
-}
-
-.terminal-heatmap article strong,
-.terminal-heatmap article span,
-.terminal-heatmap article em {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.terminal-heatmap article span,
-.terminal-heatmap article em,
-.terminal-heatmap-legend {
-  color: var(--muted);
-  font-size: 12px;
-  font-style: normal;
-}
-
-.terminal-heatmap-legend {
-  display: grid;
-  grid-template-columns: auto minmax(180px, 320px) auto minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-}
-
-.terminal-heatmap-legend i {
-  height: 8px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #3b82f6, rgba(148, 163, 184, 0.35), #e5484d);
 }
 
 .terminal-ranking-list button:not(.portfolio-table__more),
@@ -2162,298 +1936,6 @@ span.sample-badge {
 .terminal-ranking-list em {
   font-style: normal;
   font-variant-numeric: tabular-nums;
-}
-
-.terminal-lounge-posts article {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: rgba(15, 23, 42, 0.42);
-}
-
-.terminal-lounge-posts article p {
-  margin: 0;
-  color: #c7ccd6;
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.terminal-lounge-posts article span,
-.terminal-lounge-posts article em {
-  color: var(--muted);
-  font-size: 12px;
-  font-style: normal;
-}
-
-.terminal-chat-feed {
-  display: grid;
-  gap: 8px;
-}
-
-.terminal-chat-feed article {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: rgba(15, 23, 42, 0.42);
-}
-
-.terminal-chat-feed article[data-tone='alert'] {
-  border-color: rgba(229, 72, 77, 0.32);
-}
-
-.terminal-chat-feed article[data-tone='macro'] {
-  border-color: rgba(245, 196, 81, 0.32);
-}
-
-.terminal-chat-feed article span {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.terminal-chat-composer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-}
-
-.terminal-chat-composer input,
-.terminal-chat-composer button {
-  height: 36px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: rgba(8, 11, 17, 0.62);
-  color: var(--muted);
-  padding: 0 10px;
-}
-
-.terminal-calendar-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.terminal-calendar-grid article {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-  min-height: 92px;
-  padding: 11px;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: rgba(15, 23, 42, 0.42);
-}
-
-.terminal-calendar-grid article[data-impact='최고'] {
-  border-color: rgba(229, 72, 77, 0.34);
-}
-
-.terminal-calendar-grid article[data-impact='높음'] {
-  border-color: rgba(245, 196, 81, 0.32);
-}
-
-.terminal-calendar-grid span,
-.terminal-calendar-grid em {
-  color: var(--muted);
-  font-size: 12px;
-  font-style: normal;
-}
-
-/*
- * 이미 지난 일정.
- *
- * `[data-impact]` 규칙들보다 뒤에 둬야 테두리색을 덮는다 — 특이도가 같아
- * (0,2,1) 순서로 결정된다. 지우지는 않는다. 지난 발표도 왜 그날 움직였는지
- * 볼 때 쓴다.
- */
-.terminal-calendar-grid article[data-past='true'] {
-  border-color: var(--border-soft);
-  opacity: 0.55;
-}
-
-.terminal-fee-table__head,
-.terminal-fee-table__row {
-  display: grid;
-  grid-template-columns: minmax(160px, 1fr) 90px 110px minmax(140px, 0.8fr);
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: rgba(8, 11, 17, 0.46);
-}
-
-.terminal-fee-table__row span[data-tone='up'] {
-  color: #ff9b9f;
-}
-
-.terminal-fee-table__row span[data-tone='down'] {
-  color: #93c5fd;
-}
-
-.terminal-fee-table span,
-.terminal-fee-table strong,
-.terminal-fee-table em {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.terminal-fee-table__head,
-.terminal-fee-table em {
-  color: var(--muted);
-  font-size: 12px;
-  font-style: normal;
-}
-
-.terminal-fee-controls input {
-  width: 100%;
-  min-width: 0;
-  height: 34px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: #080b11;
-  color: var(--text);
-  padding: 0 10px;
-}
-
-.terminal-fee-table__head,
-.terminal-fee-table__row {
-  grid-template-columns: minmax(180px, 1fr) 120px 120px 130px;
-}
-
-.terminal-fee-table__head {
-  min-height: 34px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.terminal-simulation-grid {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
-}
-
-.terminal-sim-metrics {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.terminal-sim-metrics div,
-.terminal-sim-ticket label,
-.terminal-sim-ticket > div {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 7px;
-  background: rgba(8, 11, 17, 0.46);
-}
-
-.terminal-sim-metrics span,
-.terminal-sim-ticket span {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.terminal-sim-metrics strong[data-tone='up'] {
-  color: #ff9b9f;
-}
-
-.terminal-sim-metrics strong[data-tone='down'] {
-  color: #93c5fd;
-}
-
-.terminal-sim-ticket {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.terminal-sim-ticket input {
-  width: 100%;
-  height: 32px;
-  min-width: 0;
-  padding: 0 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: #080b11;
-  color: var(--text);
-}
-
-.terminal-simulation-grid .terminal-panel button,
-.terminal-sim-ticket button {
-  width: max-content;
-  max-width: 100%;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid rgba(245, 196, 81, 0.34);
-  border-radius: 6px;
-  background: rgba(245, 196, 81, 0.1);
-  color: var(--focus);
-  cursor: pointer;
-  font-weight: 800;
-}
-
-.terminal-sim-ticket button {
-  width: 100%;
-  margin: 0;
-}
-
-.terminal-sim-positions {
-  display: grid;
-  gap: 7px;
-}
-
-.terminal-sim-positions button,
-.terminal-sim-positions p {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) minmax(130px, 0.55fr) 110px;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  min-height: 42px;
-  margin: 0;
-  padding: 9px 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: rgba(8, 11, 17, 0.46);
-  color: inherit;
-  text-align: left;
-}
-
-.terminal-sim-positions button[data-tone='up'] small {
-  color: #ff9b9f;
-}
-
-.terminal-sim-positions button[data-tone='down'] small {
-  color: #93c5fd;
-}
-
-.terminal-sim-positions span,
-.terminal-sim-positions strong,
-.terminal-sim-positions em,
-.terminal-sim-positions small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.terminal-sim-positions span,
-.terminal-sim-positions em,
-.terminal-sim-positions small {
-  color: var(--muted);
-  font-size: 12px;
-  font-style: normal;
-}
-
-.terminal-leaderboard div {
-  grid-template-columns: 44px minmax(0, 1fr) 120px 120px;
 }
 
 .terminal-panel {
@@ -2853,786 +2335,18 @@ span.sample-badge {
   background: var(--text);
 }
 
-.order-ticket {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.36fr);
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-  background: #0b1018;
-}
-
-.order-ticket__header {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  min-height: 34px;
-  padding: 7px 12px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
-  gap: 12px;
-}
-
-/*
- * 이 종목으로는 주문이 안 된다는 안내.
- *
- * 경고 빨강을 쓰지 않는다. 뭔가 잘못됐다는 게 아니라 종목을 바꾸면 되는
- * 일이라, 눈에는 들어오되 겁주지 않는 앰버(--focus)로 둔다.
- */
-.order-ticket__unavailable {
-  display: grid;
-  gap: 3px;
-  margin: 8px 12px 0;
-  padding: 9px 11px;
-  border: 1px solid rgba(245, 196, 81, 0.3);
-  border-radius: 6px;
-  background: rgba(245, 196, 81, 0.07);
-}
-
-.order-ticket__unavailable strong {
-  color: var(--focus);
-  font-size: 12px;
-}
-
-.order-ticket__unavailable span {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.order-ticket__unavailable b {
-  color: var(--text);
-  font-weight: 700;
-}
-
-/*
- * 호가창.
- *
- * 매도(팔자)가 위, 매수(사자)가 아래. 국내 증권사 호가창의 배치라 뒤집으면
- * 익숙한 사람이 반대로 읽는다. 잔량 막대는 이 화면 안에서 가장 큰 잔량을
- * 100%로 잡은 실제 비율이다.
- */
-.order-book {
-  display: grid;
-  gap: 6px;
-  margin: 8px 12px 0;
-  padding: 8px 9px 9px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: rgba(15, 23, 42, 0.32);
-}
-
-.order-book__header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.order-book__header strong {
-  font-size: 12px;
-}
-
-.order-book__header span {
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.order-book__list {
-  display: grid;
-  gap: 1px;
-}
-
-.order-book__row {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px;
-  height: 20px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: 3px;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  text-align: left;
-}
-
-/* 막대는 글자 뒤에 깔린다. 잔량이 많은 쪽이 길다. */
-.order-book__bar {
-  position: absolute;
-  top: 1px;
-  right: 0;
-  bottom: 1px;
-  border-radius: 3px;
-  pointer-events: none;
-}
-
-.order-book__row[data-side='ask'] .order-book__bar {
-  background: rgba(59, 130, 246, 0.16);
-}
-
-.order-book__row[data-side='bid'] .order-book__bar {
-  background: rgba(229, 72, 77, 0.16);
-}
-
-.order-book__row em,
-.order-book__row i {
-  position: relative;
-  font-style: normal;
-}
-
-.order-book__row em {
-  font-weight: 700;
-}
-
-.order-book__row[data-side='ask'] em {
-  color: #7fb0ff;
-}
-
-.order-book__row[data-side='bid'] em {
-  color: #ff9b9f;
-}
-
-.order-book__row i {
-  color: var(--muted);
-}
-
-.order-book__row:hover {
-  outline: 1px solid rgba(245, 196, 81, 0.4);
-}
-
-/*
- * 동시호가 예상 체결. 아직 체결된 값이 아니라는 걸 테두리로도 말한다 —
- * 실제 체결가와 같은 모양이면 확정된 값으로 읽힌다.
- */
-.order-book__expected {
-  display: grid;
-  gap: 2px;
-  padding: 7px 8px;
-  border: 1px dashed rgba(245, 196, 81, 0.45);
-  border-radius: 5px;
-  background: rgba(245, 196, 81, 0.06);
-}
-
-.order-book__expected strong {
-  font-size: 12px;
-}
-
-.order-book__expected span {
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.order-book__expected span[data-tone='up'] {
-  color: var(--up);
-}
-
-.order-book__expected span[data-tone='down'] {
-  color: var(--down);
-}
-
-.order-book__expected small,
-.order-book__totals,
-.order-book__empty {
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.order-book__totals {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.order-book__vi,
-.order-book__error {
-  padding: 6px 8px;
-  border: 1px solid rgba(229, 72, 77, 0.35);
-  border-radius: 5px;
-  color: #ff9b9f;
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.order-ticket__header > div:first-child {
-  display: flex;
-  align-items: baseline;
-  min-width: 0;
-  gap: 8px;
-}
-
-.order-ticket__header span,
-.order-ticket__summary span,
-.order-ticket__recent > span,
-.order-ticket__controls label span {
-  color: var(--faint);
-  font-size: 11px;
-}
-
-.order-ticket__header strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-}
-
-.order-ticket__account {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  gap: 6px;
-}
-
-.order-ticket__account em,
-.order-ticket__account span {
-  display: inline-flex;
-  align-items: center;
-  height: 22px;
-  padding: 0 7px;
-  border: 1px solid var(--border-soft);
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: 11px;
-  font-style: normal;
-  white-space: nowrap;
-}
-
-.order-ticket__account span {
-  border-color: rgba(245, 196, 81, 0.3);
-  color: var(--focus);
-  font-weight: 700;
-}
-
 /*
  * 4블록을 고정 4열 그리드로 두면, 사이드 패널이 열린 폭(본문 ~880px)에서 컨트롤 열이
  * 136px까지 눌려 flex 자식들이 열을 넘어 요약 셀 위로 겹쳤다.
  * flex-wrap으로 바꿔 좁아지면 겹치거나 잘리는 대신 다음 줄로 접히게 한다.
  * 컨테이너 폭에 반응해야 해서 window 기준 media query로는 잡히지 않는다(사이드 패널이 폭을 먹는다).
  */
-/*
- * 주문 티켓은 오른쪽 패널(384px) 안에서만 렌더된다. 예전엔 본문 전체 폭을
- * 쓰는 전용 화면이라 가로로 늘어놓는 전제였고, 그대로 패널에 넣으니 값들이
- * `246,...` `9,71...`처럼 잘렸다. 세로로 흐르게 바꾼다.
- */
-.order-ticket__body {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-  min-width: 0;
-  padding: 10px 12px;
-}
-
-.order-ticket__controls {
-  display: flex;
-  align-items: end;
-  flex-wrap: wrap;
-  min-width: 0;
-  gap: 7px;
-}
-
-.order-ticket__segments {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: #090d14;
-}
-
-.order-ticket__segments button {
-  height: 26px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.order-ticket__segments button[aria-selected='true'][data-side='buy'] {
-  background: rgba(229, 72, 77, 0.14);
-  color: #ff9b9f;
-}
-
-.order-ticket__segments button[aria-selected='true'][data-side='sell'] {
-  background: rgba(59, 130, 246, 0.14);
-  color: #93c5fd;
-}
-
-.order-ticket__controls select,
-.order-ticket__controls input {
-  height: 31px;
-  border: 1px solid var(--border-soft);
-  border-radius: 5px;
-  outline: none;
-  background: #090d14;
-  color: var(--text);
-  font-size: 12px;
-}
-
-.order-ticket__controls select {
-  min-width: 78px;
-  padding: 0 8px;
-}
-
-.order-ticket__controls label {
-  display: grid;
-  gap: 3px;
-  min-width: 74px;
-}
-
-.order-ticket__controls input {
-  width: 100%;
-  padding: 0 8px;
-}
-
-.order-ticket__controls input:disabled {
-  color: var(--faint);
-  cursor: not-allowed;
-  opacity: 0.55;
-}
 
 /*
  * 셀이 5개다. minmax(0, 1fr)로 두어 좁아지면 줄바꿈 대신 셀이 함께 줄어들게 한다.
  * 하한(px)을 주면 order-ticket__body의 summary 컬럼 안에서 2열로 접히면서
  * 옆 컨트롤 영역을 밀어내 겹친다.
  */
-/* 다섯 칸을 384px에 밀어 넣으면 칸마다 70px이라 숫자가 잘린다. 폭에 맞춰 접는다. */
-.order-ticket__summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
-  gap: 6px;
-  min-width: 0;
-}
-
-/* 셀이 5개로 늘어 좌우 패딩을 줄였다. 8px면 좁은 폭에서 금액이 잘린다. */
-.order-ticket__summary div {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  padding: 7px 6px;
-  border: 1px solid rgba(148, 163, 184, 0.1);
-  border-radius: 5px;
-  background: rgba(9, 13, 20, 0.72);
-}
-
-/*
- * 같은 줄에 모의 계좌 금액과 실계좌 금액이 함께 놓인다.
- * 포트폴리오 섹션과 같은 색 규칙(실계좌 붉은 계열, 모의 노란 계열)으로 갈라 둔다.
- */
-.order-ticket__summary div[data-account='live'] {
-  border-color: rgba(229, 72, 77, 0.26);
-}
-
-.order-ticket__summary div[data-account='paper'] {
-  border-color: rgba(245, 196, 81, 0.22);
-}
-
-/*
- * 예상 비용. 문장이 길어 auto-fit 칸 하나에 들어가면 세로로 눌린다.
- * 부모가 auto-fit 그리드이므로 줄 전체를 쓴다.
- *
- * 어림이라는 걸 점선으로도 말한다 — SampleBadge와 같은 규칙이다. 상태색은
- * 쓰지 않는다. 잘못됐다는 게 아니라 확인된 값이 아니라는 표시다.
- */
-.order-ticket__summary .order-ticket__cost {
-  grid-column: 1 / -1;
-  border-style: dashed;
-  border-color: rgba(245, 196, 81, 0.34);
-}
-
-.order-ticket__cost em {
-  color: var(--muted);
-  font-size: 10px;
-  font-style: normal;
-  line-height: 1.45;
-}
-
-.order-ticket__summary strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.order-ticket__summary small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-}
-
-/*
- * flex-basis 260px는 가로 배치일 때의 폭이었다. 본문이 세로로 바뀌자 그대로
- * 높이가 돼, 19px짜리 안내 칩 하나를 담은 줄이 260px을 차지했다.
- */
-.order-ticket__risk {
-  display: grid;
-  flex: 0 0 auto;
-  gap: 6px;
-  min-width: 0;
-}
-
-.order-ticket__ack {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.order-ticket__ack input {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--focus);
-}
-
-/*
- * align-items를 기본값(stretch)으로 두면 칩이 줄 높이만큼 세로로 늘어난다.
- * 좁은 패널에서 이 줄에 여유 높이가 생기자 칩이 130x126이 됐고,
- * border-radius: 999px가 그대로 원으로 그려졌다.
- */
-.order-ticket__messages {
-  display: flex;
-  align-items: flex-start;
-  align-content: flex-start;
-  gap: 4px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
-.order-ticket__messages em {
-  padding: 2px 6px;
-  border: 1px solid rgba(245, 196, 81, 0.24);
-  border-radius: 999px;
-  color: var(--focus);
-  font-size: 10px;
-  font-style: normal;
-  line-height: 1.25;
-  white-space: nowrap;
-}
-
-.order-ticket__messages em[data-tone='ok'] {
-  border-color: rgba(34, 197, 94, 0.28);
-  color: #8ee59e;
-}
-
-/* 실계좌 한도 안내는 paper 주문을 막지 않으므로 차단 메시지와 색을 구분한다. */
-.order-ticket__messages em[data-tone='live'] {
-  border-color: rgba(96, 165, 250, 0.3);
-  color: #93b8f8;
-}
-
-/* ── 실계좌 주문 ──────────────────────────────────────────
-   paper 경로와 색을 확실히 갈라 오발주를 막는다. */
-.live-order,
-.live-order__open {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-  margin: 0 14px 10px;
-  padding: 10px 12px;
-  border: 1px solid rgba(229, 72, 77, 0.26);
-  border-radius: 6px;
-  background: rgba(229, 72, 77, 0.04);
-}
-
-/*
- * 전송 상자는 바로 위 주문 폼과 한 덩어리로 보여야 한다. 폼과 버튼이 서로 다른
- * 상자에 있으면 어디서 주문이 나가는지 알기 어렵다 — 실제로 그렇게 갈라져 있었다.
- * 위쪽 여백과 모서리를 없애 폼에 붙인다.
- */
-.live-order {
-  margin-top: -6px;
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
-}
-
-.live-order__open {
-  border-color: var(--border-soft);
-  background: rgba(9, 13, 20, 0.6);
-}
-
-.live-order__header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-/*
- * 좁은 카드에서 긴 설명이 제목을 밀어 "실시간 통 / 보"처럼 단어 중간에서 끊겼다.
- * 제목은 줄이지 않고, 설명이 대신 줄바꿈되게 한다.
- */
-.live-order__header strong {
-  flex-shrink: 0;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.live-order__header span {
-  min-width: 0;
-  color: var(--faint);
-  font-size: 11px;
-}
-
-.live-order__header em {
-  padding: 2px 7px;
-  border: 1px solid var(--border-soft);
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: 10px;
-  font-style: normal;
-}
-
-.live-order__header em[data-open='true'] {
-  border-color: rgba(229, 72, 77, 0.44);
-  color: #ff9b9f;
-}
-
-.live-order__header button {
-  height: 24px;
-  margin-left: auto;
-  padding: 0 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 5px;
-  background: #090d14;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.live-order__body {
-  display: flex;
-  align-items: end;
-  flex-wrap: wrap;
-  gap: 8px;
-  min-width: 0;
-}
-
-.live-order__phrase {
-  display: grid;
-  flex: 1 1 220px;
-  gap: 3px;
-  min-width: 0;
-}
-
-.live-order__phrase span {
-  color: var(--faint);
-  font-size: 11px;
-}
-
-.live-order__phrase input {
-  height: 31px;
-  padding: 0 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: 5px;
-  outline: none;
-  background: #090d14;
-  color: var(--text);
-  font-size: 12px;
-}
-
-.live-order__submit {
-  min-height: 31px;
-  padding: 0 14px;
-  border: 1px solid rgba(229, 72, 77, 0.44);
-  border-radius: 6px;
-  background: rgba(229, 72, 77, 0.14);
-  color: #ff9b9f;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.live-order__submit[data-side='sell'] {
-  border-color: rgba(59, 130, 246, 0.44);
-  background: rgba(59, 130, 246, 0.14);
-  color: #93c5fd;
-}
-
-.live-order__submit:disabled {
-  border-color: var(--border-soft);
-  background: #090d14;
-  color: var(--faint);
-  cursor: not-allowed;
-}
-
-.live-order__messages {
-  display: flex;
-  gap: 4px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
-.live-order__messages em {
-  padding: 2px 6px;
-  border: 1px solid var(--border-soft);
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: 10px;
-  font-style: normal;
-  line-height: 1.25;
-}
-
-.live-order__messages em[data-tone='warn'] {
-  border-color: rgba(229, 72, 77, 0.4);
-  color: #ff9b9f;
-}
-
-.live-order__result {
-  margin: 0;
-  color: var(--text);
-  font-size: 11px;
-  word-break: break-all;
-}
-
-.live-order__actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-/*
- * 줄 안에서 확인받을 때 무엇이 바뀌는지 보여 주는 자리.
- * 실계좌로 나가는 동작이라 주문 확인 패널과 같은 붉은 계열로 둔다.
- */
-.live-order__inline-confirm {
-  flex-shrink: 0;
-  padding: 2px 6px;
-  border: 1px solid rgba(229, 72, 77, 0.4);
-  border-radius: 4px;
-  background: rgba(229, 72, 77, 0.08);
-  color: var(--text);
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-/* 카드 안에서 쓰는 확인 패널. 주문 티켓과 달리 좌우 여백을 카드에 맞춘다. */
-.live-order__confirm--card {
-  margin: 8px 0 0;
-}
-
-.live-order__actions input {
-  width: 74px;
-  height: 24px;
-  padding: 0 6px;
-  border: 1px solid var(--border-soft);
-  border-radius: 4px;
-  outline: none;
-  background: #090d14;
-  color: var(--text);
-  font-size: 11px;
-}
-
-.live-order__actions button {
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: 4px;
-  background: #090d14;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.live-order__actions button:hover:not(:disabled) {
-  border-color: rgba(229, 72, 77, 0.5);
-  color: #ff9b9f;
-}
-
-.live-order__actions button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.order-ticket__submit {
-  align-self: stretch;
-  min-width: 108px;
-  min-height: 36px;
-  border: 1px solid rgba(245, 196, 81, 0.34);
-  border-radius: 6px;
-  background: rgba(245, 196, 81, 0.12);
-  color: var(--focus);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.order-ticket__submit:hover:not(:disabled) {
-  background: rgba(245, 196, 81, 0.18);
-}
-
-.order-ticket__submit:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
-}
-
-.order-ticket__recent {
-  display: grid;
-  align-content: start;
-  gap: 6px;
-  min-width: 0;
-  padding: 10px 14px 10px 0;
-  border-left: 1px solid rgba(148, 163, 184, 0.08);
-}
-
-.order-ticket__recent div {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.order-ticket__recent strong,
-.order-ticket__recent span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-}
-
-.order-ticket__recent em {
-  padding: 1px 5px;
-  border: 1px solid var(--border-soft);
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: 10px;
-  font-style: normal;
-  line-height: 1.25;
-  white-space: nowrap;
-}
-
-.order-ticket__recent em[data-status='blocked'],
-.order-ticket__recent em[data-status='rejected'] {
-  border-color: rgba(245, 196, 81, 0.28);
-  color: var(--focus);
-}
-
-.order-ticket__recent em[data-status='accepted'],
-.order-ticket__recent em[data-status='filled'] {
-  border-color: rgba(34, 197, 94, 0.28);
-  color: #8ee59e;
-}
 
 .portfolio-page {
   display: grid;
@@ -3684,12 +2398,6 @@ span.sample-badge {
   color: var(--muted);
   font-size: 11px;
   font-weight: 600;
-}
-
-.portfolio-page__grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
 }
 
 .portfolio-card {
@@ -3853,19 +2561,8 @@ span.sample-badge {
 }
 
 .portfolio-table--positions .portfolio-table__head,
-.portfolio-table--positions .portfolio-table__row,
-.portfolio-table--orders .portfolio-table__head,
-.portfolio-table--orders .portfolio-table__row,
-.portfolio-table--fills .portfolio-table__head,
-.portfolio-table--fills .portfolio-table__row {
+.portfolio-table--positions .portfolio-table__row {
   grid-template-columns: minmax(88px, 1fr) repeat(4, minmax(72px, 0.8fr));
-}
-
-.portfolio-table--open-orders .portfolio-table__head,
-.portfolio-table--open-orders .portfolio-table__row,
-.portfolio-table--reserved .portfolio-table__head,
-.portfolio-table--reserved .portfolio-table__row {
-  grid-template-columns: minmax(84px, 0.9fr) minmax(96px, 1.2fr) minmax(88px, 1fr) repeat(2, minmax(72px, 0.8fr)) minmax(150px, 1.1fr);
 }
 
 .portfolio-table--trade-profit .portfolio-table__head,
@@ -3957,11 +2654,6 @@ span.sample-badge {
 .risk-rules__footer strong {
   color: var(--focus);
   font-size: 11px;
-}
-
-.portfolio-table--notices .portfolio-table__head,
-.portfolio-table--notices .portfolio-table__row {
-  grid-template-columns: minmax(70px, 0.8fr) minmax(96px, 1.2fr) minmax(56px, 0.6fr) minmax(110px, 1.1fr) minmax(84px, 0.9fr) minmax(56px, 0.6fr);
 }
 
 /* 주문 기록은 사유 컬럼이 더 붙어 7열이다. */
@@ -4121,13 +2813,6 @@ span.sample-badge {
   display: flex;
   align-items: center;
   gap: 6px;
-  overflow-x: auto;
-}
-
-.range-tabs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
   overflow-x: auto;
 }
 
@@ -4298,14 +2983,6 @@ span.sample-badge {
 .chart-readout__indicator[data-line='ma20'] {
   border-color: rgba(34, 197, 94, 0.26);
   color: #8ee59e;
-}
-
-.chart-readout__tool {
-  padding: 2px 6px;
-  border: 1px solid var(--border-soft);
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.08);
-  color: var(--focus);
 }
 
 .chart-readout__live {
@@ -5173,16 +3850,6 @@ span.sample-badge {
  */
 .watchlist[data-panel='order'] {
   width: 384px;
-}
-
-/* 패널 안에서는 주문 티켓이 세로로 흐르고, 넘치면 여기서 스크롤한다. */
-.watchlist .order-ticket {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 10px 12px 14px;
 }
 
 .watchlist.is-collapsed {
@@ -6070,19 +4737,8 @@ span.sample-badge {
   }
 
   .terminal-headlines,
-  .terminal-fee-controls,
-  .terminal-macro-grid,
-  .terminal-calendar-grid,
-  .terminal-report-grid,
-  .terminal-report-layout,
-  .terminal-lounge-layout,
-  .terminal-chat-layout,
-  .terminal-sim-metrics {
+  .terminal-macro-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .terminal-simulation-grid {
-    grid-template-columns: 1fr;
   }
 
   .quote-stats {
@@ -6093,25 +4749,8 @@ span.sample-badge {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .order-ticket {
-    grid-template-columns: 1fr;
-  }
-
-  .order-ticket__body {
-    grid-template-columns: 1fr;
-  }
-
-  .order-ticket__recent {
-    padding: 0 14px 10px;
-    border-left: 0;
-  }
-
   .portfolio-page__metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .portfolio-page__grid {
-    grid-template-columns: 1fr;
   }
 
   .watchlist {
@@ -6191,14 +4830,8 @@ span.sample-badge {
   .terminal-news-list a,
   .terminal-news-list p,
   .terminal-macro-list button[data-tone],
-  .terminal-leaderboard div,
   .terminal-ranking-list button:not(.portfolio-table__more),
-  .terminal-ranking-list p,
-  .terminal-sim-ticket,
-  .terminal-sim-positions button,
-  .terminal-sim-positions p,
-  .terminal-fee-table__head,
-  .terminal-fee-table__row {
+  .terminal-ranking-list p {
     grid-template-columns: 1fr;
   }
 
@@ -6207,16 +4840,7 @@ span.sample-badge {
   }
 
   .terminal-headlines,
-  .terminal-fee-controls,
-  .terminal-macro-grid,
-  .terminal-calendar-grid,
-  .terminal-report-grid,
-  .terminal-report-layout,
-  .terminal-lounge-layout,
-  .terminal-chat-layout,
-  .terminal-chat-composer,
-  .terminal-sim-metrics,
-  .terminal-heatmap-legend {
+  .terminal-macro-grid {
     grid-template-columns: 1fr;
   }
 
@@ -6310,24 +4934,6 @@ span.sample-badge {
     grid-template-columns: 1fr;
   }
 
-  .order-ticket__header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .order-ticket__controls {
-    align-items: stretch;
-    flex-wrap: wrap;
-  }
-
-  .order-ticket__controls label {
-    flex: 1 1 120px;
-  }
-
-  .order-ticket__summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .portfolio-page {
     padding: 10px;
   }
@@ -6368,15 +4974,6 @@ span.sample-badge {
   }
 }
 
-.live-order__phrase--inline {
-  flex: 0 1 220px;
-}
-
-.live-order__phrase--inline input {
-  height: 28px;
-  font-size: 11px;
-}
-
 /* 예약주문 등록 폼의 select도 입력칸과 같은 높이로 */
 .risk-rules select {
   height: 29px;
@@ -6391,11 +4988,6 @@ span.sample-badge {
 
 .risk-rules input[readonly] {
   color: var(--muted);
-}
-
-/* 카드 안에 들어가는 안내 메시지는 좌우 패딩을 카드에 맞춘다. */
-.live-order__messages--card {
-  padding: 0 12px 10px;
 }
 
 /* 접힌 목록을 펼치는 줄. 표의 마지막 행처럼 보이게 둔다. */
@@ -6437,64 +5029,6 @@ span.sample-badge {
 .app :is(a, button, input, select, textarea, [tabindex]):focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
-}
-
-/*
- * 실주문 확인 단계. 예전에는 `실주문 전송`이라는 문구를 그대로 받아치게 했는데,
- * 클라이언트가 아는 상수를 클라이언트가 다시 적는 것뿐이라 오발주를 막는 힘이
- * 없었다. 실제 증권사 주문 화면처럼 무엇이 나가는지 보여주고 한 번 확인받는다.
- */
-.live-order__confirm {
-  display: grid;
-  gap: 8px;
-  padding: 9px 10px;
-  border: 1px solid rgba(229, 72, 77, 0.4);
-  border-radius: 6px;
-  background: rgba(229, 72, 77, 0.08);
-}
-
-.live-order__confirm p {
-  display: grid;
-  gap: 2px;
-  margin: 0;
-}
-
-.live-order__confirm strong {
-  color: var(--text);
-  font-size: 13px;
-}
-
-.live-order__confirm span {
-  color: var(--text);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.live-order__confirm em {
-  color: var(--muted);
-  font-size: 11px;
-  font-style: normal;
-}
-
-.live-order__confirm-actions {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 6px;
-}
-
-.live-order__confirm-actions > button:first-child {
-  min-height: 30px;
-  padding: 0 14px;
-  border: 1px solid var(--border-soft);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.live-order__confirm-actions > button:first-child:hover {
-  color: var(--text);
 }
 
 /* 오류 배너. 닫기 버튼을 오른쪽 끝에 붙인다. */
@@ -6562,58 +5096,6 @@ span.sample-badge {
 }
 
 /*
- * 주문이 어느 계좌로 나가는지 붙이는 이름표.
- *
- * 계좌가 두 종류다 — KIS에 연결한 실계좌, 그리고 앱 안에만 있는 연습용
- * 모의계좌. 예전엔 둘을 한 줄에 붙여 `KIS 21  KIS 23  모의계좌`로 보여서
- * KIS 계좌가 모의계좌인 것처럼 읽혔다.
- */
-.order-ticket__account-label {
-  flex-shrink: 0;
-  padding: 2px 7px;
-  border: 1px solid var(--border-soft);
-  border-radius: 4px;
-  background: #090d14;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.order-ticket__destination {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.order-ticket__destination em {
-  color: var(--faint);
-  font-size: 11px;
-  font-style: normal;
-}
-
-/*
- * 자동매매 패널.
- *
- * 실제 돈이 오갈 수 있는 기능이라 상태를 한눈에 알 수 있어야 한다.
- * 돌고 있을 때만 눈에 띄게 하고, 멈춰 있을 때는 조용히 둔다.
- */
-.auto-trader {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  align-items: end;
-  gap: 10px;
-  padding: 10px 16px 14px;
-}
-
-.auto-trader__field {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-/*
  * 고른 전략에 대해 백테스트로 확인된 것.
  *
  * 부모가 `repeat(auto-fit, minmax(190px, 1fr))` 그리드라 그냥 두면 한 칸에
@@ -6623,304 +5105,6 @@ span.sample-badge {
  * 전략 자체의 성질이라서다. 처음엔 `잃는다`로 적었는데 표본을 20종목으로
  * 늘리니 평균이 -13.97%에서 -0.40%로 올라와 문구를 낮췄다.
  */
-/*
- * 축마다 한 장. 부모 그리드 한 칸에 끼지 않도록 묶음이 한 줄을 다 쓴다.
- */
-.auto-trader__verdicts {
-  grid-column: 1 / -1;
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.auto-trader__verdict {
-  grid-column: 1 / -1;
-  display: grid;
-  gap: 3px;
-  margin: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: rgba(148, 163, 184, 0.06);
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.auto-trader__verdict[data-verdict='no_edge'] {
-  border-color: rgba(229, 72, 77, 0.34);
-  background: rgba(229, 72, 77, 0.07);
-  color: #f0a8aa;
-}
-
-/*
- * 실제로 도는 축을 먼저 읽게 한다.
- *
- * 색으로 좋다/나쁘다를 말하는 게 아니라 **어느 것이 지금 이야기인지**를 가르는
- * 표시다. 그래서 상태색을 쓰지 않고 왼쪽 띠와 글자 밝기로만 나눈다 — 판정색
- * (`data-verdict`)과 겹치면 어느 쪽이 무슨 뜻인지 알 수 없게 된다.
- */
-.auto-trader__verdict[data-axis='runner'] {
-  border-left: 3px solid var(--accent, #60a5fa);
-}
-
-.auto-trader__verdict[data-axis='other'] {
-  opacity: 0.72;
-}
-
-/* 러너가 쓰지 않는 축은 판정색까지 끌어오지 않는다. 지금 이야기가 아니다. */
-.auto-trader__verdict[data-axis='other'][data-verdict='no_edge'] {
-  border-color: var(--border-soft);
-  background: rgba(148, 163, 184, 0.06);
-  color: var(--muted);
-}
-
-.auto-trader__verdict-axis {
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.auto-trader__verdict[data-axis='other'] .auto-trader__verdict-axis {
-  color: var(--muted);
-  font-weight: 500;
-}
-
-.auto-trader__verdict-sample {
-  color: var(--faint);
-}
-
-/*
- * 최소 보유 시간 설명.
- *
- * 부모가 `repeat(auto-fit, minmax(190px, 1fr))` 그리드라 그냥 두면 한 칸에 끼어
- * 필드처럼 보인다. 문단이므로 한 줄을 다 쓴다 — 판정문(`__verdict`)과 같은 이유다.
- *
- * 켜면 테두리만 또렷해진다. 상태색(초록/빨강)을 쓰지 않는 것은 이게 좋다/나쁘다가
- * 아니라 **지금 켜져 있다**는 사실이기 때문이다. 판정색이 바로 위에 있어 색을 더
- * 쓰면 어느 색이 무슨 뜻인지 알 수 없게 된다.
- */
-.auto-trader__min-hold {
-  grid-column: 1 / -1;
-  display: grid;
-  gap: 4px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: rgba(148, 163, 184, 0.06);
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.55;
-}
-
-.auto-trader__min-hold[data-on='true'] {
-  border-color: rgba(148, 163, 184, 0.5);
-}
-
-.auto-trader__min-hold > strong {
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.auto-trader__min-hold p {
-  margin: 0;
-}
-
-/* 매도를 미루는 기능이라 위험은 눌러 적지 않는다. 손절이 없다는 사실과 같이 읽힌다. */
-.auto-trader__min-hold-risk {
-  color: #f0a8aa;
-}
-
-.auto-trader__field > span {
-  color: var(--faint);
-  font-size: 11px;
-}
-
-.auto-trader__field select,
-.auto-trader__field input {
-  min-height: 30px;
-  padding: 0 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: 5px;
-  background: var(--panel-2);
-  color: var(--text);
-  font-size: 12px;
-}
-
-.auto-trader__field select:disabled,
-.auto-trader__field input:disabled {
-  color: var(--muted);
-}
-
-.auto-trader__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 4px;
-}
-
-.auto-trader__actions > button {
-  width: 100%;
-  min-height: 30px;
-}
-
-/* 지금 돌고 있는지 모를 때 시작 버튼이 왜 막혔는지. 상태색은 쓰지 않는다. */
-.auto-trader__unknown {
-  flex: 1 0 100%;
-  color: var(--muted);
-  font-size: 11px;
-  font-style: normal;
-  line-height: 1.4;
-}
-
-.auto-trader__stop {
-  border: 1px solid rgba(229, 72, 77, 0.5);
-  border-radius: 5px;
-  background: rgba(229, 72, 77, 0.14);
-  color: #ff9b9f;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.auto-trader__status {
-  padding: 2px 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 700;
-}
-
-/* 돌고 있을 때만 눈에 띈다. */
-.auto-trader__status[data-status='running'] {
-  border-color: rgba(34, 197, 94, 0.4);
-  background: rgba(34, 197, 94, 0.12);
-  color: #8ee59e;
-}
-
-.auto-trader__status[data-status='target_reached'] {
-  border-color: rgba(245, 196, 81, 0.45);
-  color: var(--focus);
-}
-
-.auto-trader__status[data-status='stopped_out'],
-.auto-trader__status[data-status='error'] {
-  border-color: rgba(229, 72, 77, 0.45);
-  color: #ff9b9f;
-}
-
-/*
- * 멈춘 것과 모르는 것을 눈으로도 가른다. 상태색(초록/빨강)은 쓰지 않는다 —
- * 정상도 경고도 아니고 아직 모른다는 표시라 점선으로만 구분한다.
- */
-.auto-trader__status[data-status='unknown'] {
-  border-style: dashed;
-}
-
-/* 실행 기록. 시각은 좁게, 내용은 넓게. */
-.portfolio-table--auto-runs .portfolio-table__head,
-.portfolio-table--auto-runs .portfolio-table__row {
-  /* 날짜가 붙은 줄(`07-26 11:58:34`)이 92px을 쓴다. 헤더와 행이 같은 값이어야
-     열이 어긋나지 않으므로 한 규칙에서 함께 정한다. */
-  grid-template-columns: 96px minmax(0, 1fr);
-}
-
-.portfolio-table--auto-runs .portfolio-table__row > span:last-child {
-  white-space: normal;
-}
-
-/*
- * 회차가 살아 있는지 한 줄. 평소에는 조용한 글씨로 두고, 주기를 넘겼을 때만
- * 눈에 띄게 한다 — 정상일 때 빨간 줄이 늘 떠 있으면 정작 멎었을 때 안 보인다.
- */
-.auto-run__pulse {
-  margin: 0 0 6px;
-  font-size: 12px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.auto-run__pulse[data-overdue] {
-  color: var(--up);
-  font-weight: 600;
-}
-
-/*
- * 회차 줄 앞에 붙는 짧은 표. 글(`message`)과 같은 크기로 두면 묻히므로 배경을
- * 준다. 매수·매도 색은 주문 티켓과 같은 값을 쓴다 — 같은 사실에 다른 색을 쓰면
- * 화면마다 매수가 무슨 색인지 다시 익혀야 한다.
- */
-.auto-run__tag {
-  display: inline-block;
-  margin-right: 6px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--panel-2);
-  color: var(--muted);
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.auto-run__tag[data-side='buy'] {
-  background: rgba(229, 72, 77, 0.14);
-  color: #ff9b9f;
-}
-
-.auto-run__tag[data-side='sell'] {
-  background: rgba(59, 130, 246, 0.14);
-  color: #93c5fd;
-}
-
-/* 오류·중단선은 사람이 손을 대야 하는 회차다. 정지·목표 도달은 그렇지 않다. */
-.auto-run__tag[data-status='error'],
-.auto-run__tag[data-status='stopped_out'] {
-  background: rgba(229, 72, 77, 0.14);
-  color: #ff9b9f;
-}
-
-.auto-run__equity {
-  margin-left: 6px;
-  color: var(--muted);
-  font-size: 11px;
-  font-style: normal;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-/*
- * 시작 버튼은 무엇이 일어날지를 색으로 알려준다. 연습은 조용하게, 실제 돈이
- * 나가는 쪽은 눈에 띄게. 매수 버튼 색을 그대로 쓰면 연습인데도 실주문처럼 보인다.
- */
-.auto-trader__start {
-  min-height: 30px;
-  border: 1px solid var(--border-soft);
-  border-radius: 5px;
-  background: var(--panel-2);
-  color: var(--text);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.auto-trader__start:hover:not(:disabled) {
-  border-color: rgba(148, 163, 184, 0.3);
-}
-
-.auto-trader__start[data-mode='live'] {
-  border-color: rgba(229, 72, 77, 0.55);
-  background: rgba(229, 72, 77, 0.16);
-  color: #ff9b9f;
-}
-
-.auto-trader__start:disabled {
-  color: var(--muted);
-  cursor: default;
-}
 
 /*
  * 뜻풀이가 붙은 전문용어.
@@ -6932,180 +5116,6 @@ span.sample-badge {
   border-bottom: 1px dotted var(--faint);
   text-decoration: none;
   cursor: help;
-}
-
-/*
- * 자동매매를 막고 있는 설정 안내.
- *
- * 리스크 룰은 아래 다른 카드에 있어서, 여기서 알려주지 않으면 러너를 켜 놓고도
- * 왜 아무것도 안 사는지 알아내기 어렵다. 경고가 아니라 안내라 색은 조용하게 둔다.
- */
-.auto-trader__blockers {
-  margin: 0 16px 12px;
-  padding: 9px 12px;
-  border: 1px solid rgba(245, 196, 81, 0.32);
-  border-radius: 6px;
-  background: rgba(245, 196, 81, 0.07);
-}
-
-.auto-trader__blockers > strong {
-  display: block;
-  margin-bottom: 5px;
-  color: var(--focus);
-  font-size: 12px;
-}
-
-.auto-trader__blockers ul {
-  margin: 0;
-  padding-left: 16px;
-  color: var(--text);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-/*
- * 막고 있는 설정으로 데려가는 버튼.
- *
- * 사유 문장 끝에 붙는다. 줄 안에 섞이므로 inline으로 두고, 문장과 구분되게
- * 밑줄만 준다 — 사유 목록 안에서 또 하나의 상자가 되면 읽는 흐름이 끊긴다.
- */
-.auto-trader__blockers li button.auto-trader__jump {
-  margin-left: 6px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--focus);
-  font-size: 12px;
-  font-weight: 700;
-  text-decoration: underline;
-  cursor: pointer;
-}
-
-/*
- * 수량 입력 + `최대` 버튼.
- *
- * 매수 가능 금액과 판매 가능 수량은 이미 받아 오고 있었는데 화면에는 숫자로만
- * 적혀 있어, 5만원으로 몇 주를 살 수 있는지 사람이 나눗셈해야 했다.
- * 토스증권 주문 API도 두 값을 따로 주는 걸 보면 주문 화면에서 꼭 필요한 값이다.
- */
-.order-ticket__quantity > div {
-  display: flex;
-  align-items: stretch;
-  gap: 4px;
-  min-width: 0;
-}
-
-.order-ticket__quantity input {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.order-ticket__quantity > div > button {
-  flex-shrink: 0;
-  min-width: 40px;
-  padding: 0 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: 5px;
-  background: var(--panel-2);
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.order-ticket__quantity > div > button:hover:not(:disabled) {
-  color: var(--text);
-}
-
-.order-ticket__quantity > div > button:disabled {
-  color: var(--faint);
-  cursor: default;
-}
-
-/*
- * 신호 채점 성적.
- *
- * 백테스트 판정과 나란히 놓이므로 구분이 필요하다 — 이건 과거를 잰 값이
- * 아니라 실제로 낸 신호를 센 값이다. 점선으로 감싸 "아직 쌓이는 중"이라는
- * 성격을 드러낸다(어림값·모르는 상태에 쓰는 것과 같은 규칙).
- */
-.signal-scores {
-  display: grid;
-  gap: 6px;
-  margin-top: 10px;
-  padding: 9px 10px;
-  border: 1px dashed rgba(148, 163, 184, 0.3);
-  border-radius: 6px;
-}
-
-.signal-scores__head {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.signal-scores__head strong {
-  font-size: 12px;
-}
-
-.signal-scores__head span,
-.signal-scores__empty,
-.signal-scores__rows em {
-  color: var(--muted);
-  font-size: 11px;
-  font-style: normal;
-  line-height: 1.45;
-}
-
-.signal-scores__error {
-  color: #ff9b9f;
-  font-size: 11px;
-  font-style: normal;
-  line-height: 1.45;
-}
-
-.signal-scores__rows {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
-  gap: 6px;
-}
-
-.signal-scores__rows > div {
-  display: grid;
-  gap: 2px;
-  padding: 7px 8px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  border-radius: 5px;
-  background: rgba(9, 13, 20, 0.6);
-}
-
-.signal-scores__rows > div > span {
-  color: var(--faint);
-  font-size: 11px;
-}
-
-.signal-scores__rows > div > strong {
-  font-size: 15px;
-  font-variant-numeric: tabular-nums;
-}
-
-.signal-scores__rows > div > strong[data-tone='up'] {
-  color: var(--up);
-}
-
-.signal-scores__rows > div > strong[data-tone='down'] {
-  color: var(--down);
-}
-
-.signal-scores__rows > div > small {
-  color: var(--muted);
-  font-size: 10px;
-}
-
-/* 문장 요소는 auto-fit 칸에 눌리지 않게 줄 전체를 쓴다. */
-.signal-scores__rows > em {
-  grid-column: 1 / -1;
 }
 
 /* ── 3층 성과 카드 (2026-08-18) ─────────────────────────────────────────
@@ -7594,7 +5604,6 @@ span.sample-badge {
 /* ── 자리 ── */
 .agent-seat { position: relative; text-align: center; align-self: start; }
 .agent-seat h3 { margin: .3rem 0 .1rem; font-size: .76rem; }
-.agent-seat__when { margin: .1rem 0 0; font-size: .64rem; color: var(--faint, #788497); font-variant-numeric: tabular-nums; }
 .agent-seat__stance {
   margin: 0; font-size: .66rem; font-variant-numeric: tabular-nums;
   display: flex; align-items: center; justify-content: center; gap: .25rem;
@@ -7755,8 +5764,6 @@ span.sample-badge {
 .agent-day__label[data-today] { color: var(--focus, #f5c451); }
 .agent-day__label em { font-style: normal; color: var(--faint, #788497); font-size: .7rem; }
 .agent-day .agent-round:first-of-type { border-top: 0; }
-/* 카드 높이를 맞춘다 — 설명이 두 줄인 것과 한 줄인 것이 섞여 들쭉날쭉했다. */
-.agent-card__job { min-height: 2.7em; }
 
 /* 지금 나가 있는 주문 — 없으면 절 자체를 그리지 않는다(빈 목록은 소음이다). */
 .agent-open { margin-top: 1rem; padding: .7rem .8rem; border-radius: 8px;
@@ -7966,8 +5973,3 @@ span.sample-badge {
   color: var(--muted, #8b95a5);
 }
 .layer-pending b { color: var(--accent, #60a5fa); font-weight: 600; }
-/* 경보 등급 셋째 — 해야 할 일이 아니라 알고 있어야 할 것 */
-.dash-alert[data-level="info"], .alert[data-level="info"] {
-  background: rgba(96, 165, 250, .08);
-  border-color: rgba(96, 165, 250, .22);
-}
