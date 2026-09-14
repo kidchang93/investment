@@ -42,7 +42,14 @@
 
 import { buildPanel, localAt, type Panel } from './panel.js';
 import type { DailyBar, SignalCandidate, SignalContext } from './signals.js';
-import { legReturn, neweyWestT, type EntryBasis } from './walkForward.js';
+import {
+  legReturn,
+  meanOf,
+  neweyWestT,
+  tieShareOf,
+  trimmedMean,
+  type EntryBasis,
+} from './walkForward.js';
 
 export interface HarnessInput {
   /** 종목코드 → 날짜 오름차순 계열 */
@@ -220,22 +227,6 @@ export interface HarnessResult {
   entryBasis: EntryBasis;
 }
 
-const mean = (v: number[]): number => (v.length === 0 ? 0 : v.reduce((a, b) => a + b, 0) / v.length);
-
-/**
- * 위아래 `fraction`씩 잘라낸 평균. 꼬리에 휘둘리는지 보는 데 쓴다.
- *
- * 자를 개수가 0이 되면 그냥 평균이다 — 표본이 적으면 절사가 아무 일도 안 한다는
- * 사실을 감추지 않는다.
- */
-function trimmedMean(v: number[], fraction: number): number {
-  if (v.length === 0) return 0;
-  const cut = Math.floor(v.length * fraction);
-  if (cut === 0) return mean(v);
-  const sorted = [...v].sort((a, b) => a - b);
-  return mean(sorted.slice(cut, sorted.length - cut));
-}
-
 /**
  * 절대값 상위 `n`일이 합계에서 차지하는 몫.
  *
@@ -247,7 +238,7 @@ function trimmedMean(v: number[], fraction: number): number {
 function topDaysShare(v: number[], n: number): number | undefined {
   if (v.length === 0) return undefined;
   const total = v.reduce((a, x) => a + x, 0);
-  const scale = mean(v.map(Math.abs));
+  const scale = meanOf(v.map(Math.abs));
   if (scale <= 0 || Math.abs(total) < scale) return undefined;
   const top = [...v].sort((a, b) => Math.abs(b) - Math.abs(a)).slice(0, n);
   return top.reduce((a, x) => a + x, 0) / total;
@@ -263,7 +254,7 @@ function median(v: number[]): number {
 /** 날짜별 값의 군집 t. 표본이 하나면 0 — 0으로 나누지 않는다. */
 function clusterT(values: number[]): number {
   if (values.length < 2) return 0;
-  const m = mean(values);
+  const m = meanOf(values);
   const variance = values.reduce((a, v) => a + (v - m) ** 2, 0) / (values.length - 1);
   const se = variance > 0 ? Math.sqrt(variance / values.length) : 0;
   return se > 0 ? m / se : 0;
@@ -308,15 +299,6 @@ function scoreMatrix(
     }
   }
   return scores;
-}
-
-/** 상위분위 안에서 점수가 겹치는 정도. 1에 가까우면 그 십분위는 사실상 임의다. */
-function tieShareOf(scores: number[]): number {
-  if (scores.length <= 1) return 0;
-  const sorted = [...scores].sort((a, b) => a - b);
-  let distinct = 1;
-  for (let i = 1; i < sorted.length; i += 1) if (sorted[i] !== sorted[i - 1]) distinct += 1;
-  return 1 - distinct / sorted.length;
 }
 
 /**
@@ -383,17 +365,17 @@ function evaluateCell(
         dayBottom.push(snapshot[i].forward);
       }
     }
-    dailySpread.push((mean(dayTop) - mean(dayBottom)) * 100);
+    dailySpread.push((meanOf(dayTop) - meanOf(dayBottom)) * 100);
     // 같은 날 전체 평균. 시장 대용이다 — 상위·하위가 함께 타는 것을 걷어낼 재료다.
-    const dayMarket = mean(snapshot.map((s) => s.forward));
+    const dayMarket = meanOf(snapshot.map((s) => s.forward));
     dailyMarket.push(dayMarket * 100);
     /*
      * ★ **우리가 실제로 살 수 있는 것.** 상위분위가 그날 평균 종목보다 앞선 몫.
      * 같은 날 안의 차이라 시장이 통째로 움직인 몫은 구조상 이미 빠져 있다.
      */
-    dailyTopLeg.push((mean(dayTop) - dayMarket) * 100);
-    dailyBotLeg.push((mean(dayBottom) - dayMarket) * 100);
-    dailyTie.push(tieShareOf(dayTopScores));
+    dailyTopLeg.push((meanOf(dayTop) - dayMarket) * 100);
+    dailyBotLeg.push((meanOf(dayBottom) - dayMarket) * 100);
+    dailyTie.push(tieShareOf(Float64Array.from(dayTopScores), dayTopScores.length));
     namesPerDay.push(snapshot.length);
   }
 
@@ -404,7 +386,7 @@ function evaluateCell(
   return {
     signalKey: signal.key,
     horizon,
-    spreadMean: (mean(top) - mean(bottom)) * 100,
+    spreadMean: (meanOf(top) - meanOf(bottom)) * 100,
     spreadMedian: (median(top) - median(bottom)) * 100,
     t: clusterT(dailySpread),
     /*
@@ -418,7 +400,7 @@ function evaluateCell(
     alpha,
     alphaT,
     beta,
-    topLegMean: mean(dailyTopLeg),
+    topLegMean: meanOf(dailyTopLeg),
     topLegMedian: median(dailyTopLeg),
     topLegT: clusterT(dailyTopLeg),
     topLegTrimmed10: trimmedMean(dailyTopLeg, 0.1),
@@ -426,10 +408,10 @@ function evaluateCell(
     topLegAlpha: topLegFit.alpha,
     topLegAlphaT: topLegFit.alphaT,
     topLegBeta: topLegFit.beta,
-    botLegMean: mean(dailyBotLeg),
+    botLegMean: meanOf(dailyBotLeg),
     botLegAlpha: botLegFit.alpha,
     botLegAlphaT: botLegFit.alphaT,
-    tieShare: mean(dailyTie),
+    tieShare: meanOf(dailyTie),
     degenerate: median(dailyTie) > 0.5,
     truncatedExits,
     noEntry,
@@ -454,8 +436,8 @@ function regressOnMarket(
 ): { alpha: number; alphaT: number; beta: number } {
   const n = Math.min(spread.length, market.length);
   if (n < 3) return { alpha: 0, alphaT: 0, beta: 0 };
-  const my = mean(spread.slice(0, n));
-  const mx = mean(market.slice(0, n));
+  const my = meanOf(spread.slice(0, n));
+  const mx = meanOf(market.slice(0, n));
   let sxy = 0;
   let sxx = 0;
   for (let i = 0; i < n; i += 1) {

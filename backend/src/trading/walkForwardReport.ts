@@ -29,12 +29,10 @@ import type { Panel } from './panel.js';
 import {
   clusterMeanSe,
   meanOf,
+  TRADING_DAYS_PER_YEAR,
   type HorizonMix,
   type WalkForwardResult,
 } from './walkForward.js';
-
-/** 거래일 기준 1년. `walkForward.ts`와 같은 값이어야 표가 맞는다 */
-const TRADING_DAYS_PER_YEAR = 252;
 
 /* ── 서식 ────────────────────────────────────────────────────────────── */
 

@@ -165,7 +165,7 @@ export function legReturn(
 }
 
 /** 상위분위 안에서 점수가 겹치는 정도. 1에 가까우면 그 십분위는 사실상 임의다. */
-function tieShareOf(values: Float64Array, count: number): number {
+export function tieShareOf(values: Float64Array, count: number): number {
   if (count <= 1) return 0;
   const sorted = values.slice(0, count).sort();
   let distinct = 1;
@@ -544,7 +544,7 @@ export function topShare(values: ArrayLike<number>, fraction: number): number | 
 /* ── 절차 ────────────────────────────────────────────────────────────── */
 
 /** 거래일 기준 1년. 창 길이를 날짜가 아니라 자리 수로 잡는 데 쓴다. */
-const TRADING_DAYS_PER_YEAR = 252;
+export const TRADING_DAYS_PER_YEAR = 252;
 
 export interface WalkForwardSpec {
   panel: Panel;
