@@ -25,7 +25,6 @@ import {
   addWatchlistItem,
   createWatchlist,
   deleteWatchlist,
-  ensureDomesticAssetTypes,
   ensureInstrumentSchema,
   getCategoryInstruments,
   getInstrument,
@@ -308,7 +307,6 @@ async function main(): Promise<void> {
 
   const app = Fastify({ logger: true });
   await ensureInstrumentSchema();
-  await ensureDomesticAssetTypes();
   await ensureThemeSchema();
   await ensureBrokerOrderSchema();
   await ensureRiskRuleSchema();
