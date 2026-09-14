@@ -23,7 +23,6 @@ import { pool } from './client.js';
 import type { DailyBar } from './dailyBars.js';
 import {
   ensureDelistingSchema,
-  getDelistings,
   isMarketTransfer,
   planDelistedCollection,
   summarizeDelistings,
@@ -259,6 +258,19 @@ after(async () => {
   await pool.end().catch(() => undefined);
 });
 
+/** 저장된 그 코드의 폐지 기록. 폐지일 오름차순. 앱 코드에는 이걸 읽는 곳이 없어 시험이 직접 읽는다 */
+async function storedDelistings(symbol: string) {
+  const { rows } = await pool.query<{
+    delisted_on: string; name: string; market: string | null; note: string | null; vintage: string;
+  }>(
+    'SELECT delisted_on, name, market, note, vintage FROM instrument_delistings WHERE symbol = $1 ORDER BY delisted_on',
+    [symbol],
+  );
+  return rows.map((row) => ({
+    delistedOn: row.delisted_on, name: row.name, market: row.market, note: row.note, vintage: row.vintage,
+  }));
+}
+
 describe('저장소 (DB가 있을 때만)', () => {
   it('같은 코드의 폐지 두 건이 나란히 남는다 — 재상장을 한 줄로 뭉개지 않는다', async (t) => {
     if (!usable) return t.skip('DB에 붙지 못했습니다');
@@ -273,7 +285,7 @@ describe('저장소 (DB가 있을 때만)', () => {
       1,
     );
 
-    const rows = (await getDelistings()).filter((row) => row.symbol === TEST_SYMBOL);
+    const rows = await storedDelistings(TEST_SYMBOL);
     assert.deepEqual(rows.map((row) => row.delistedOn), ['20100429', '20260811']);
     assert.deepEqual(rows.map((row) => row.market), ['KOSDAQ', 'KOSPI']);
     assert.equal(rows[1].note, '비고');
@@ -289,7 +301,7 @@ describe('저장소 (DB가 있을 때만)', () => {
       2,
     );
 
-    const rows = (await getDelistings()).filter((row) => row.symbol === TEST_SYMBOL);
+    const rows = await storedDelistings(TEST_SYMBOL);
     assert.equal(rows.length, 2, '앞 기록이 그대로 있다');
     const latest = rows[1];
     assert.equal(latest.name, '이름바뀜');

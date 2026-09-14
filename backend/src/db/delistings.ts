@@ -130,34 +130,6 @@ export async function upsertDelistings(
   return { inserted, updated: records.length - inserted };
 }
 
-/** 폐지 기록 전부. 코드·폐지일 오름차순이다. */
-export async function getDelistings(): Promise<DelistingRow[]> {
-  const { rows } = await pool.query<{
-    symbol: string;
-    delisted_on: string;
-    name: string;
-    market: string | null;
-    reason: string;
-    note: string | null;
-    source: string;
-    vintage: string;
-  }>(
-    `SELECT symbol, delisted_on, name, market, reason, note, source, vintage
-     FROM instrument_delistings
-     ORDER BY symbol, delisted_on`,
-  );
-  return rows.map((row) => ({
-    symbol: row.symbol,
-    delistedOn: row.delisted_on,
-    name: row.name,
-    market: row.market,
-    reason: row.reason,
-    note: row.note,
-    source: row.source,
-    vintage: row.vintage,
-  }));
-}
-
 /** 폐지 기록 요약. 수집 전후를 한 줄로 견준다. */
 export interface DelistingStoreSummary {
   records: number;

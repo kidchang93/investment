@@ -21,7 +21,6 @@ import {
   ensureDailyBarSchema,
   getDailyBarCursors,
   getDailyBars,
-  getSymbolVintages,
   needsFullRefetch,
   recordDailyBarFailure,
   replaceSymbolBars,
@@ -166,7 +165,11 @@ describe('저장소 (DB가 있을 때만)', () => {
     const rows = await getDailyBars(TEST_SYMBOL);
     assert.deepEqual(rows.map((row) => row.close), [50_000, 51_000]);
     // 지우고 넣으므로 기준일이 하나뿐이다. 둘이면 섞인 것이다.
-    assert.deepEqual(await getSymbolVintages(TEST_SYMBOL), ['20260811']);
+    const vintages = await pool.query<{ vintage: string }>(
+      'SELECT DISTINCT vintage FROM trading_daily_bars WHERE symbol = $1 ORDER BY vintage',
+      [TEST_SYMBOL],
+    );
+    assert.deepEqual(vintages.rows.map((row) => row.vintage), ['20260811']);
   });
 
   it('안 온 값을 0으로 채우지 않는다', async (t) => {

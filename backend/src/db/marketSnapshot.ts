@@ -87,12 +87,3 @@ export async function getEarliestSnapshot(
   const row = rows[0];
   return row ? { tradingDay, kind, symbols: row.symbols, note: row.note } : null;
 }
-
-/** 며칠치를 찍어 뒀나. 측정을 시작할 수 있는지 판단하는 값이다. */
-export async function countSnapshotDays(kind: MarketSnapshotRow['kind']): Promise<number> {
-  const { rows } = await pool.query<{ days: string }>(
-    `SELECT count(DISTINCT trading_day) AS days FROM market_snapshot WHERE kind = $1`,
-    [kind],
-  );
-  return Number(rows[0]?.days ?? 0);
-}

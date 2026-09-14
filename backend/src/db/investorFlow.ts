@@ -230,17 +230,13 @@ async function insertFlow(
 /** 한 종목의 수급. 날짜 오름차순이다 — 측정이 그대로 먹는다. */
 export async function getInvestorFlow(
   symbol: string,
-  range: { from?: string; to?: string } = {},
+  range: { from?: string } = {},
 ): Promise<InvestorFlowDayRow[]> {
   const conditions = ['symbol = $1'];
   const values: unknown[] = [symbol];
   if (range.from) {
     values.push(range.from);
     conditions.push(`trading_day >= $${values.length}`);
-  }
-  if (range.to) {
-    values.push(range.to);
-    conditions.push(`trading_day <= $${values.length}`);
   }
   const { rows } = await pool.query<FlowRow>(
     `SELECT trading_day, close, individual, foreign_net, institution

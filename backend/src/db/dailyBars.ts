@@ -245,17 +245,13 @@ async function insertBars(
 /** 한 종목의 봉. 날짜 오름차순이다 — 백테스트가 그대로 먹는다. */
 export async function getDailyBars(
   symbol: string,
-  range: { from?: string; to?: string } = {},
+  range: { from?: string } = {},
 ): Promise<DailyBar[]> {
   const conditions = ['symbol = $1'];
   const values: unknown[] = [symbol];
   if (range.from) {
     values.push(range.from);
     conditions.push(`trading_day >= $${values.length}`);
-  }
-  if (range.to) {
-    values.push(range.to);
-    conditions.push(`trading_day <= $${values.length}`);
   }
   const { rows } = await pool.query<BarRow>(
     `SELECT trading_day, open, high, low, close, volume, turnover
@@ -265,15 +261,6 @@ export async function getDailyBars(
     values,
   );
   return rows.map(rowToBar);
-}
-
-/** 이 종목이 어느 기준일로 받은 것들인가. 둘 이상이면 섞여 있다는 뜻이다. */
-export async function getSymbolVintages(symbol: string): Promise<string[]> {
-  const { rows } = await pool.query<{ vintage: string }>(
-    `SELECT DISTINCT vintage FROM trading_daily_bars WHERE symbol = $1 ORDER BY vintage`,
-    [symbol],
-  );
-  return rows.map((row) => row.vintage);
 }
 
 export async function getDailyBarCursors(): Promise<Map<string, DailyBarCursor>> {

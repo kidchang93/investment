@@ -435,7 +435,6 @@ export async function getLatestStopPrices(accountId: string): Promise<Map<string
 
 export async function getDeliberations(filter: {
   accountId?: string;
-  tradingDay?: string;
   limit?: number;
 }): Promise<Array<DeliberationRound & {
   id: number;
@@ -452,10 +451,6 @@ export async function getDeliberations(filter: {
   if (filter.accountId) {
     values.push(filter.accountId);
     where.push(`account_id = $${values.length}`);
-  }
-  if (filter.tradingDay) {
-    values.push(filter.tradingDay);
-    where.push(`trading_day = $${values.length}`);
   }
   values.push(Math.min(200, Math.max(1, filter.limit ?? 50)));
 
