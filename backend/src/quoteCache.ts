@@ -45,8 +45,6 @@ export interface QuoteCacheLookup {
 export class QuoteCache {
   private readonly entries = new Map<string, Quote>();
 
-  constructor(private readonly ttlMs: number = QUOTE_CACHE_TTL_MS) {}
-
   /**
    * 넣는다. 키는 `Instrument.id`이고 시각은 `quote.fetchedAt`을 그대로 쓴다.
    * **여기서 시각을 찍지 않는다** — 넣는 시각과 받은 시각은 다른 사실이다.
@@ -65,7 +63,7 @@ export class QuoteCache {
        * `fetchedAt`이 숫자가 아니면 나이를 모른다. 모르는 값을 캐시 적중으로
        * 치면 얼마나 묵었는지 못 밝히므로 다시 받는 쪽으로 둔다.
        */
-      if (!cached || !Number.isFinite(cached.fetchedAt) || now - cached.fetchedAt >= this.ttlMs) {
+      if (!cached || !Number.isFinite(cached.fetchedAt) || now - cached.fetchedAt >= QUOTE_CACHE_TTL_MS) {
         misses.push(id);
         continue;
       }

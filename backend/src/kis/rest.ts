@@ -1699,7 +1699,7 @@ export async function getInstrumentCandles(
   if (instrument.assetType === 'night_proxy') {
     return { code: instrument.id, name: instrument.name, candles: [] };
   }
-  if (instrument.assetType === 'commodity') return getCommodityIndicatorCandles(instrument, days);
+  if (instrument.assetType === 'commodity') return getCommodityIndicatorCandles(instrument);
   if (isFutureAssetType(instrument.assetType)) {
     if (instrument.market === 'OV_FUT') return getOverseasFutureDailyCandles(instrument);
     return getDomesticFutureDailyCandles(instrument, days);
@@ -1729,10 +1729,7 @@ export async function getInstrumentQuote(instrument: Instrument): Promise<Quote>
   return getOverseasQuote(instrument);
 }
 
-async function getCommodityIndicatorCandles(
-  instrument: Instrument,
-  _days: number,
-): Promise<CandlesResponse> {
+async function getCommodityIndicatorCandles(instrument: Instrument): Promise<CandlesResponse> {
   const spec = COMMODITY_CANDLE_SPECS[instrument.id];
   if (!spec) return { code: instrument.id, name: instrument.name, candles: [] };
   try {

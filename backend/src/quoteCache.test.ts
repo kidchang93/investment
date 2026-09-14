@@ -42,7 +42,7 @@ function quote(overrides: Partial<Quote> = {}): Quote {
 
 describe('QuoteCache — 적중', () => {
   it('캐시에서 꺼낸 값은 **처음 받은 시각**을 그대로 들고 나온다', () => {
-    const cache = new QuoteCache(QUOTE_CACHE_TTL_MS);
+    const cache = new QuoteCache();
     cache.store('KR:KOSPI:000660', quote());
 
     // 44.9초 뒤. 아직 안 지났으니 적중이다.
@@ -80,7 +80,7 @@ describe('QuoteCache — 적중', () => {
 
 describe('QuoteCache — 만료', () => {
   it('45초가 지나면 다시 받는다', () => {
-    const cache = new QuoteCache(QUOTE_CACHE_TTL_MS);
+    const cache = new QuoteCache();
     cache.store('KR:KOSPI:000660', quote());
     const { hits, misses } = cache.lookup(['KR:KOSPI:000660'], T0 + QUOTE_CACHE_TTL_MS);
     assert.equal(hits.size, 0);
@@ -88,14 +88,14 @@ describe('QuoteCache — 만료', () => {
   });
 
   it('경계 바로 앞은 적중, 경계는 만료다', () => {
-    const cache = new QuoteCache(QUOTE_CACHE_TTL_MS);
+    const cache = new QuoteCache();
     cache.store('KR:KOSPI:000660', quote());
     assert.equal(cache.lookup(['KR:KOSPI:000660'], T0 + QUOTE_CACHE_TTL_MS - 1).hits.size, 1);
     assert.equal(cache.lookup(['KR:KOSPI:000660'], T0 + QUOTE_CACHE_TTL_MS).hits.size, 0);
   });
 
   it('다시 받아 넣으면 새 시각이 나온다', () => {
-    const cache = new QuoteCache(QUOTE_CACHE_TTL_MS);
+    const cache = new QuoteCache();
     cache.store('KR:KOSPI:000660', quote());
     const refetchedAt = T0 + 50_000;
     cache.store('KR:KOSPI:000660', quote({ fetchedAt: refetchedAt, price: 1_588_000 }));
@@ -108,7 +108,7 @@ describe('QuoteCache — 만료', () => {
 
 describe('QuoteCache — 섞였을 때', () => {
   it('적중과 만료를 갈라 주고, 다시 받을 것은 물어본 순서를 지킨다', () => {
-    const cache = new QuoteCache(QUOTE_CACHE_TTL_MS);
+    const cache = new QuoteCache();
     cache.store('a', quote({ code: 'a' }));
     cache.store('b', quote({ code: 'b', fetchedAt: T0 - 60_000 }));
     cache.store('d', quote({ code: 'd' }));
@@ -120,7 +120,7 @@ describe('QuoteCache — 섞였을 때', () => {
   });
 
   it('시각이 숫자가 아니면 적중으로 치지 않는다 — 나이를 모르는 값은 못 쓴다', () => {
-    const cache = new QuoteCache(QUOTE_CACHE_TTL_MS);
+    const cache = new QuoteCache();
     cache.store('a', quote({ code: 'a', fetchedAt: Number.NaN }));
     assert.deepEqual(cache.lookup(['a'], T0).misses, ['a']);
   });
