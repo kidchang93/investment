@@ -62,12 +62,13 @@ else
   bad "스케줄러   상태를 못 읽었다 — 백엔드가 떠 있나 확인한다"
 fi
 # ★ 옛 데몬이 함께 돌면 모든 작업이 두 번 나간다. 크게 알린다.
-if pgrep -f "daemon.sh __loop" >/dev/null 2>&1; then
-  bad "★★ 옛 데몬이 함께 돌고 있다 (pid $(pgrep -f 'daemon.sh __loop' | head -1)) — 모든 작업이 두 번 나간다"
+daemon_pid=$(pgrep -f "daemon.sh __loop" 2>/dev/null | head -1)
+if [[ -n "$daemon_pid" ]]; then
+  bad "★★ 옛 데몬이 함께 돌고 있다 (pid $daemon_pid) — 모든 작업이 두 번 나간다"
   bad "   그 파일은 2026-09-07에 지웠다 — 되살린 것이면 kill 한다"
 fi
-if pgrep -f "tsx watch src/server.ts" >/dev/null 2>&1; then
-  backend_pid=$(pgrep -f 'tsx watch src/server.ts' | head -1)
+backend_pid=$(pgrep -f "tsx watch src/server.ts" 2>/dev/null | head -1)
+if [[ -n "$backend_pid" ]]; then
   ok "백엔드     pid $backend_pid  :4000"
   # ★ **살아 있다는 말과 계속 돈다는 말은 다르다.** 맥이 자면 백엔드도 스케줄러도
   #   함께 멈춘다 — 9/7~9/11 5거래일이 장중에 19~90분씩 잤다(`morning.sh` 절전 차단).
@@ -107,7 +108,9 @@ fi
 
 # ── 계좌와 3층 ────────────────────────────────────────────────────────
 head_ "계좌와 3층"
-if docker exec kis-postgres psql -U kis -d kis -tAc 'select 1' >/dev/null 2>&1; then
+db_ok=0
+docker exec kis-postgres psql -U kis -d kis -tAc 'select 1' >/dev/null 2>&1 && db_ok=1
+if (( db_ok )); then
   (cd backend && npx tsx src/scripts/layerReport.ts 2>&1) | sed 's/^/  /'
 else
   print -r -- "  Postgres가 없어 못 읽는다"
@@ -115,7 +118,7 @@ fi
 
 # ── 자동 실행 기록 ────────────────────────────────────────────────────
 head_ "오늘 자동으로 한 일 (하트비트)"
-if docker exec kis-postgres psql -U kis -d kis -tAc 'select 1' >/dev/null 2>&1; then
+if (( db_ok )); then
   rows=$(docker exec kis-postgres psql -U kis -d kis -c \
     "SELECT name AS 이름, to_char(ran_at AT TIME ZONE 'Asia/Seoul','HH24:MI:SS') AS 시각, note AS 비고
        FROM trading_heartbeats
@@ -137,17 +140,70 @@ fi
 
 # ── 다음에 무엇이 언제 ────────────────────────────────────────────────
 head_ "다음 자동 실행"
-dow=$(date '+%u'); hhmm=$(date '+%H%M')
-if [[ "$dow" -gt 5 ]]; then
-  print -r -- "  주말이다. 다음 평일 08:12에 개장 전 브리핑."
-elif [[ "$hhmm" < "0812" ]]; then
-  print -r -- "  오늘 08:12  개장 전 브리핑"
-elif [[ "$hhmm" < "1520" ]]; then
-  print -r -- "  장중 — 20분마다 감시, 15:40에 마감 정리"
-elif [[ "$hhmm" < "1540" ]]; then
-  print -r -- "  오늘 15:40  마감 정리"
+#
+# ★ **작업표를 여기 박지 않는다.** 위에서 받은 `/api/automation/status`의 `tasks`
+#   (`backend/src/automation/tasks.ts`)로 그린다. 박아 둔 표는 08:12·20분·15:40만
+#   말했고 판단자·손절·종가 매매가 생긴 뒤에도 "데몬은 주문을 내지 않는다"고 적었다.
+# ★ 요일·시각도 백엔드가 준 KST(`weekday`·`now`)로 본다. 이 맥의 시계로 흉내 내지 않는다.
+if [[ -z "$auto_json" ]]; then
+  print -r -- "  백엔드가 안 떠 있어 작업표를 못 읽었다 — 지금은 아무것도 자동으로 돌지 않는다"
 else
-  print -r -- "  오늘 일정은 끝. 다음 평일 08:12."
+  AUTO_JSON="$auto_json" python3 - <<'PY' 2>/dev/null || print -r -- "  작업표를 못 그렸다 (python3 오류)"
+import json, os, unicodedata
+
+def pad(text, width):
+    used = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in text)
+    return text + ' ' * max(1, width - used)
+
+def hm(clock):
+    return '%02d:%02d' % (clock // 100, clock % 100)
+
+try:
+    d = json.loads(os.environ['AUTO_JSON'])
+    tasks, settings, weekday = d['tasks'], d['settings'], d['weekday']
+    clock = int(d['now'].replace(':', ''))
+except Exception:
+    print('  작업표를 못 읽었다 — 응답 형식이 바뀌었는지 확인한다')
+    raise SystemExit
+
+quiet = None
+if not settings.get('enabled'):
+    quiet = '자동화가 꺼져 있다 — 아래는 켰을 때 도는 작업표다 (화면 :4000「목표」탭에서 켠다)'
+elif weekday > 5:
+    quiet = '주말이다 — 아래 작업표는 평일에만 돈다'
+if quiet:
+    print('  ' + quiet)
+
+for t in sorted(tasks, key=lambda t: t['window'][0]):
+    start, end = t['window']
+    every = t.get('everyMinutes')
+    cadence = '%d분마다' % every if not t['daily'] and every else '하루 한 번'
+    if quiet:
+        state = ''
+    elif t.get('skipped') == 'trading-off':
+        state = '매매 꺼짐이라 건너뛴다'
+    elif t.get('running'):
+        state = '지금 도는 중'
+    elif t['daily'] and t.get('doneToday'):
+        state = '오늘 함 ' + (t.get('lastRunAt') or '')
+        if t.get('finishedToday') is False:
+            state += ' · 안 끝남'
+    elif t.get('inWindow'):
+        if t['daily']:
+            state = '창 안 — 아직 안 했다'
+        elif t.get('noHeartbeat'):
+            state = '창 안 — 기록을 남기지 않는다'
+        else:
+            state = '창 안 · 마지막 ' + (t.get('lastRunAt') or '없음')
+    elif clock < start:
+        state = '오늘 ' + hm(start) + '부터'
+    else:
+        state = '오늘 창 지남' + (' — 안 했다' if t['daily'] else '')
+    print(('  ' + hm(start) + '~' + hm(end) + '  ' + pad(t['label'], 24) + pad(cadence, 11) + state).rstrip())
+
+gated = [t['label'] for t in tasks if t.get('trading')]
+print('')
+print('  매매 스위치 ' + ('켜짐' if settings.get('tradingEnabled') else '꺼짐')
+      + ' — 여기에 걸린 작업: ' + (' · '.join(gated) if gated else '없음'))
+PY
 fi
-print -r -- ""
-print -r -- "  ★ 데몬은 **주문을 내지 않는다.** 상태를 준비하고 기록만 한다."
