@@ -93,7 +93,7 @@ async function main(): Promise<void> {
   const accountId = process.argv.slice(2).find((a) => !a.startsWith('--')) ?? 'VTS-ORDINARY';
   const account = getKisAccount(accountId);
 
-  console.log(`=== 빠른 판단 상태 · ${accountId} · ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} ===\n`);
+  console.log(`=== 분석가 화면 · ${accountId} · ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} ===\n`);
 
   // ── 적정가 (분석가가 넣은 가장 최근 것) ──
   const { rows } = await pool.query<FairRow>(
@@ -105,6 +105,37 @@ async function main(): Promise<void> {
       ORDER BY symbol, measured_at DESC`,
   );
   const bySymbol = new Map(rows.map((r) => [r.symbol, r]));
+
+  /*
+   * ── 📝 분석가의 직전 노트 (2026-09-15) ────────────────────────────────────
+   *
+   * 분석가 루프가 매 바퀴 **모든 종목**을 보되 처음부터 다시 조사하지 않게, 오늘 마지막으로
+   * 남긴 결론을 종목 줄마다 붙인다(`prompts/analyst.md` 6절). 노트는 회차 `findings`에
+   * `agent: 'analyst-note'`로 들어간다 — 표를 새로 만들지 않았다.
+   */
+  interface NoteRow { symbol: string; verdict: string; reason: string; recheck: string; price: number | null; at: string }
+  const notes = new Map((await pool.query<NoteRow>(
+    `SELECT DISTINCT ON (f->>'symbol')
+            f->>'symbol' AS symbol, f->>'verdict' AS verdict, f->>'reason' AS reason,
+            coalesce(f->>'recheckIf', '') AS recheck, (f->>'price')::float8 AS price,
+            to_char(d.created_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at
+       FROM trading_deliberations d, jsonb_array_elements(d.findings) f
+      WHERE d.account_id = $1
+        AND d.trading_day = (now() AT TIME ZONE 'Asia/Seoul')::date
+        AND f->>'agent' = 'analyst-note'
+      ORDER BY f->>'symbol', d.id DESC`,
+    [accountId],
+  ).catch(() => ({ rows: [] as NoteRow[] }))).rows.map((n) => [n.symbol, n]));
+  const noteLine = (symbol: string, price: number | undefined): void => {
+    const n = notes.get(symbol);
+    if (!n) {
+      console.log('      📝 노트 없음 — 오늘 처음 봅니다');
+      return;
+    }
+    const moved = n.price && price ? ` → 지금 ${price >= n.price ? '+' : ''}${((price / n.price - 1) * 100).toFixed(1)}%` : '';
+    console.log(`      📝 ${n.at} ${n.verdict}${n.price ? ` @${won(n.price)}` : ''}${moved} · ${n.reason}`
+      + `${n.recheck ? ` · 다시 볼 조건: ${n.recheck}` : ''}`);
+  };
 
   /*
    * ── ⭐ 추천 ─────────────────────────────────────────────────────────────
@@ -159,6 +190,7 @@ async function main(): Promise<void> {
         `  ⭐ [${p.standard}] ${p.symbol} ${instrument?.name ?? p.symbol}`
         + `${p.gap === null ? '' : ` · ${(p.gap * 100).toFixed(1)}%`}${stale}`,
       );
+      noteLine(p.symbol, bySymbol.get(p.symbol)?.price);
       // ★ "왜 떨어졌나"를 여기서 본다 — 지침이 약속한 그 뉴스다.
       for (const line of newsLines(bySymbol.get(p.symbol)?.news, true)) console.log(line);
     }
@@ -228,6 +260,7 @@ async function main(): Promise<void> {
           + ` ${c.correction ? '(정정) ' : ''}${c.title}`,
         );
         if (c.warnings !== '') console.log(`      ⚠ 같은 기간 악재 공시: ${c.warnings}`);
+        noteLine(c.symbol, c.price);
         for (const line of newsLines(c.news, true)) console.log(line);
       }
       console.log('  ★ 📣는 "재료가 나왔다"이지 "오른다"가 아닙니다 — 재료의 크기(공급계약은 매출 대비 금액)는 원문에만 있습니다.');
@@ -251,7 +284,7 @@ async function main(): Promise<void> {
   // ★ `null`은 못 읽었다, `undefined`는 기록이 없다 — 둘 다 "0건"이 아니다.
   const scan = await lastScan('risers-scan');
 
-  console.log('\n── 📈 오늘 오른 종목 (참고 — 이미 오른 것, 이것으로는 판단자를 부르지 않습니다) ──');
+  console.log('\n── 📈 오늘 오른 종목 (이미 오른 것 — 오른 이유가 1~2주 남을 때만 근거) ──');
   if (scan === null) {
     console.log('  ★ 📈 기록을 읽지 못했습니다 — 없다는 뜻이 아닙니다.');
   } else if (scan === undefined) {
@@ -286,6 +319,7 @@ async function main(): Promise<void> {
           `  📈 ${r.symbol} ${r.name} ${won(r.price)} · +${r.change_rate.toFixed(2)}%`
           + ` · 거래대금 ${Math.round(r.turnover / 100_000_000).toLocaleString('ko-KR')}억${range}${gap}${limitUp}`,
         );
+        noteLine(r.symbol, r.price);
         for (const line of newsLines(r.news, true)) console.log(line);
       }
       console.log('  ★ 📈는 "오른다"이지 "더 오른다"가 아닙니다 — 오른 이유(📰)가 1~2주 남을 때만 근거가 됩니다.');
@@ -468,6 +502,7 @@ async function main(): Promise<void> {
           + ` / 손절 ${won(plan.stop)}${price > 0 && price <= plan.stop ? ' ★깼다' : ''}`
           + ` (회차 ${plan.round})`
         : '      · 내가 적은 값 없음 (익절·손절 둘 다 지킬 약속이 없다)');
+      noteLine(p.symbol, p.currentPrice);
     }
   } catch (error) {
     console.log(`  ★ 계좌를 못 읽었습니다: ${(error as Error).message.slice(0, 80)}`);

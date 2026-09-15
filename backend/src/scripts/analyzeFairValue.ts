@@ -58,9 +58,6 @@ import {
 import { kstToday } from '../kis/normalize.js';
 import { getMainNews } from '../naver/finance.js';
 import { escapeMrkdwn, sendSlackBot, slackBotConfigured } from '../notify/slack.js';
-import {
-  CHEAP_GATE, composeNote, crossesGate, freshNames, gateSignature, splitNote, type GateInput,
-} from '../trading/judgeGate.js';
 import { markAgentActivity } from '../db/agentActivity.js';
 import {
   ASSET_KIND_LABEL, ASSET_KIND_METHOD,
@@ -146,7 +143,7 @@ const CANDIDATE_POOL = 900;
  * *"오를만한 것들로 브리핑을 해줘야지 이미 오른 걸 가지고 뭐하려고?"*
  * 화면에는 남기고(참고), 소집하지 않는다. 이 자리는 "재료가 막 나온 종목"이 대신한다.
  */
-const RISER_LIMIT = 5;
+const RISER_LIMIT = 10;
 
 /**
  * ── 📣 재료가 막 나온 종목 (2026-09-11) ──────────────────────────────────
@@ -161,7 +158,7 @@ const RISER_LIMIT = 5;
  * (`CATALYST_BUDGET_MS`)과 끊긴 채우기 잇기(`syncDisclosures`)를 넣고 13:45에 다시 켰다.
  */
 const CATALYSTS_ENABLED = true;
-const CATALYST_LIMIT = 5;
+const CATALYST_LIMIT = 20;
 /** 공시 직전 종가 대비 이보다 더 올랐으면 "이미 반영됐다"로 본다 */
 const CATALYST_MAX_MOVE = 0.05;
 /** 📣를 훑은 기록 이름. `risers-scan`과 같은 규칙으로 0건·실패를 가른다 */
@@ -191,8 +188,13 @@ const RISERS_HEARTBEAT = 'risers-scan';
 const DELIBERATE_LOCK = '.cron-logs/deliberate.lock';
 /** 이보다 싸야 **절대 기준**으로 추천한다. 판단자를 부르는 문턱(−7%)보다 엄하게 잡는다 */
 const RECOMMEND_GAP = -0.10;
-/** 추천을 이만큼만 보여준다. 더 길면 안 읽힌다 */
-const RECOMMEND_LIMIT = 5;
+/**
+ * 분석가에게 넘기는 ⭐ 수. 2026-09-15에 5 → 20 — 사용자가 *"모든 종목에 대한 내용을 봐줘야"*라고 했다.
+ * 문턱 통과는 하루 100건을 넘는다(9/15 117건)라 전부는 한 바퀴에 못 본다 — 싼 순으로 자른다.
+ */
+const RECOMMEND_LIMIT = 20;
+/** 슬랙 브리핑에는 목록마다 이만큼만 — 분석가 루프가 4분마다 보내므로 길면 소음이 된다 */
+const SLACK_SHOWN = 5;
 
 /**
  * ── ★★ 두 번째 기준: **오늘 후보 사이의 순위** (2026-09-03) ────────────
@@ -1165,7 +1167,7 @@ async function main(): Promise<void> {
     console.log(`\n${head}\n   기준: ${rule}`);
     lines.push(head);
     lines.push(`_기준: ${escapeMrkdwn(rule)}_`);
-    for (const r of picks) {
+    for (const r of picks.slice(0, SLACK_SHOWN)) {
       const text = `[${standardOf(r.symbol)}] ${describe(r.fv, r.name)}`;
       console.log(`  ⭐ ${text}`);
       lines.push(`⭐ ${escapeMrkdwn(text)}`);
@@ -1201,7 +1203,7 @@ async function main(): Promise<void> {
     const head = '📣 *재료가 막 나온 종목* — 최근 2거래일 공시 호재, 공시 뒤 아직 +5% 이하';
     console.log(`\n${head}`);
     lines.push(`\n${head}`);
-    for (const c of catalysts) {
+    for (const c of catalysts.slice(0, SLACK_SHOWN)) {
       const text = `${c.name} ${Math.round(c.price).toLocaleString('ko-KR')}원`
         + ` · 공시 뒤 ${c.move >= 0 ? '+' : ''}${(c.move * 100).toFixed(1)}% · [${c.labels.join('·')}] ${c.latest.title}`
         + (c.warnings.length > 0 ? ` · ⚠${c.warnings.join('·')}` : '');
@@ -1215,7 +1217,7 @@ async function main(): Promise<void> {
     const head = '📈 *오늘 오르는 후보* — 정식 회차와 같은 스크리너, 개별주식·보유 제외 오른 순';
     console.log(`\n${head}`);
     lines.push(`\n${head}`);
-    for (const r of risers) {
+    for (const r of risers.slice(0, SLACK_SHOWN)) {
       const text = `${r.name} ${Math.round(r.price).toLocaleString('ko-KR')}원 · +${r.changeRate.toFixed(2)}%`
         + ` · 거래대금 ${Math.round(r.turnover / 100_000_000).toLocaleString('ko-KR')}억`;
       console.log(`  📈 ${text}`);
@@ -1269,119 +1271,43 @@ async function main(): Promise<void> {
   const sent = await sendSlackBot([header, ...lines].join('\n'));
   console.log(sent ? '\nstock-briefing 채널로 보냈다.' : '\n보내지 못했다.');
 
-  if (!args.includes('--no-judge')) await maybeCallJudge(rows, accountId, falling, risers, catalysts);
+  if (!args.includes('--no-judge')) await callAnalyst(accountId, risers, catalysts);
 }
 
 /**
- * ★★ **분석 뒤에 판단자를 부른다** — 다만 **부를 이유가 있을 때만.**
+ * ★★ **계산이 끝날 때마다 분석가를 부른다** (2026-09-15).
  *
- * 사용자가 정했다 — *"분석가가 메세지 보낸 후 판단자를 바로 부르면 돼."*
- * 그런데 5분마다 무조건 부르면 **하루 78회**다. 빠른 회차가 2~3분이어도
- * 장중 내내 헤드리스 Claude가 도는 것이고, 대부분은 **5분 전과 같은 상황**이라
- * 같은 판단을 되풀이해 산다.
+ * 사용자가 정했다 — *"5분 간격으로 분석가를 부른다기보단 … 시퀀스를 루프화 시키는게
+ * 좋을 것 같아. 빠른 집행을 하기위한 최적의 루프를 만들어줘."* 그래서 부를 이유를 따지던
+ * 게이트(적정가 문턱·새 📣 이름, 옛 `trading/judgeGate.ts`)를 걷었다. 분석가(Claude)가
+ * 매 바퀴 **모든 종목**을 보고 직전 노트를 이어 쓰므로, 같은 상황을 되풀이해 사는 비용은
+ * 노트가 누른다(`prompts/analyst.md`).
  *
- * 그래서 문턱을 둔다. 아래 중 하나면 부른다:
+ * ★ 게이트 시절 빠른 회차 231번 중 매수는 0건이었다 — 부르는 횟수가 아니라 조사 시간이
+ *   막고 있었다. 게이트를 둔 이유(하루 78회 비용)는 사용자가 알고 넘겼다.
  *
- *   ① 적정가가 **문턱을 넘은 종목이 있다** — 싸거나(−7% 이하, 보유·후보 둘 다),
- *      비싸거나(+15% 이상, **보유만**)
- *   ② 그 종목이 **직전 회차 이후 새로 넘었다** — 같은 신호로 다시 부르지 않는다
- *
- * ★ ②가 없으면 문턱을 넘은 종목이 하나라도 있는 한 5분마다 계속 부른다.
- *   신호가 바뀔 때만 부르는 것이 이 게이트의 핵심이다.
- *
- * ★ **또는 📣에 오늘 처음 보는 이름이 들어왔을 때.** 📈(이미 오른 것)로는 부르지
- *   않는다 — `RISER_LIMIT` 주석.
- *
- * ★ **판단자가 도는 중이면 신호를 적지 않는다**(`judgeRunning`) — 적으면 그 신호는
- *   다음 회차에 "이미 보여 줬다"가 되어 판단자 앞에 영영 안 온다.
- *
- * ★ **판정은 `trading/judgeGate.ts`에 있고 시험이 붙어 있다.** 여기 있을 때는
- *   시험이 없어 2026-09-03에 두 번 무너진 것을 로그를 눈으로 읽고 알았다.
+ * ★ **띄우기 전에 `fair-value-judge`를 남긴다** — "새 계산 결과가 나왔다"는 표시다.
+ *   분석가가 도는 중이면 새로 띄우지 않는다. 그 분석가가 끝날 때 이 표시를 보고 곧바로
+ *   한 바퀴 더 돈다(`scripts/deliberate.sh` 끝). 매매 스위치·장 시간도 거기서 본다.
  */
-async function maybeCallJudge(
-  rows: Row[], accountId: string, falling: Set<string>, risers: Riser[] | null,
-  catalysts: CatalystPick[] | null,
+async function callAnalyst(
+  accountId: string, risers: Riser[] | null, catalysts: CatalystPick[] | null,
 ): Promise<void> {
-  /*
-   * ★★ **급락 축을 게이트에도 넘긴다** (2026-09-10). 그전에는 ⭐추천에만
-   *    걸려 있어서, 적정가가 −7% 아래인 급락 종목이 매 회차 판단자를 부르고
-   *    판단자는 매번 "떨어진 것이지 싼 게 아니다"로 거절했다. 자세한 것은
-   *    `judgeGate.crossesGate` 주석에 있다.
-   */
-  const gateRowOf = (r: Row): GateInput =>
-    ({ symbol: r.symbol, gap: r.fv.gap, held: r.held, falling: falling.has(r.symbol) });
-
-  const crossed = rows.filter((r) => crossesGate(gateRowOf(r)));
-
-  /*
-   * ★ **몇을 걸렀는지 적는다.** 이 필터가 너무 세게 걸려 소집이 0이 되는 날이
-   *   오면 그것도 결함인데, 안 적으면 "조용히 아무 일도 안 일어나는 것"과
-   *   구분되지 않는다 — 2026-09-03에 게이트가 무너진 것을 로그를 눈으로 읽고서야
-   *   알았던 것과 같은 자리다.
-   */
-  const blocked = rows.filter(
-    (r) => !r.held && falling.has(r.symbol) && r.fv.gap !== null && r.fv.gap <= CHEAP_GATE,
+  const names = (list: Array<{ symbol: string }> | null) => (list ? list.map((x) => x.symbol).join(',') : '못 훑음');
+  await pool.query(
+    `INSERT INTO trading_heartbeats (name, status, note) VALUES ('fair-value-judge', 'ok', $1)`,
+    [`📣 ${names(catalysts)} · 📈 ${names(risers)}`],
   );
-  if (blocked.length > 0) {
-    console.log(
-      `떨어지는 중이라 소집 사유로 안 세는 ${blocked.length}종목: `
-      + blocked.map((r) => r.name).join(', '),
-    );
-  }
-
-  /*
-   * ★ **같은 신호로 다시 부르지 않는다.** 직전 호출 때 넘어 있던 종목 묶음과
-   *   같으면 새 정보가 아니다 — 5분 전과 상황이 같다는 뜻이다.
-   *
-   * ★★ 📣는 **오늘 이미 보여 준 이름**을 다시 세지 않는다(`judgeGate.freshNames`).
-   *    그래서 오늘 기록을 전부 읽는다 — 직전 한 줄만 보면 5등·6등이 자리를 바꿀
-   *    때마다 부른다.
-   */
-  const signature = gateSignature(rows.map(gateRowOf));
-  const { rows: today } = await pool.query<{ note: string }>(
-    `SELECT note FROM trading_heartbeats
-      WHERE name = 'fair-value-judge'
-        AND (ran_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date
-      ORDER BY id DESC`,
-  );
-  const fairChanged = crossed.length > 0 && splitNote(today[0]?.note).fair !== signature;
-  // 📈 이름은 부르는 근거가 아니라 기록에만 남긴다 — `RISER_LIMIT` 주석.
-  const riserSymbols = (risers ?? []).map((r) => r.symbol);
-  // ★ 📣는 오늘 처음 보는 이름이면 부른다 — 📈 대신 "오를만한 것"을 대는 자리다.
-  const catalystSymbols = (catalysts ?? []).map((c) => c.symbol);
-  const freshCat = freshNames(catalystSymbols, today.map((r) => r.note));
-
-  if (!fairChanged && freshCat.length === 0) {
-    console.log(crossed.length === 0
-      ? '판단자를 부르지 않는다 — 문턱을 넘은 종목도, 새 📣 재료도 없다.'
-      : `판단자를 부르지 않는다 — 직전과 같은 신호(${crossed.length}종목)이고 새 📣 재료도 없다.`);
-    return;
-  }
 
   const repoRoot = process.cwd().endsWith('backend') ? '..' : '.';
   const running = judgeRunning(repoRoot);
   if (running !== null) {
-    console.log(`판단자가 도는 중이다(pid ${running}) — 신호를 적지 않고 다음 5분에 다시 본다.`);
+    console.log(`분석가가 도는 중이다(pid ${running}) — 끝나면 이 결과로 곧바로 한 바퀴 더 돈다.`);
     return;
   }
+  console.log('★ 분석가를 부른다');
 
-  const reasons = [
-    fairChanged ? `문턱을 넘은 ${crossed.length}종목: ${crossed.map((r) => r.name).join(', ')}` : null,
-    freshCat.length > 0
-      ? `새 📣 재료 ${freshCat.length}종목: ${freshCat.map((s) => catalysts?.find((c) => c.symbol === s)?.name ?? s).join(', ')}`
-      : null,
-  ].filter(Boolean).join(' · ');
-  console.log(`★ 판단자를 부른다 — ${reasons}`);
-  await pool.query(
-    `INSERT INTO trading_heartbeats (name, status, note) VALUES ('fair-value-judge', 'ok', $1)`,
-    [composeNote(signature, riserSymbols, catalystSymbols)],
-  );
-
-  /*
-   * ★ 백그라운드로 띄우고 **기다리지 않는다.** 이 스크립트는 5분마다 도는데
-   *   판단자는 2~3분 걸린다 — 기다리면 다음 분석이 밀린다.
-   *   중복은 스케줄러의 `guard`(pgrep)와 `deliberate.sh`가 막는다.
-   */
+  // 백그라운드로 띄우고 기다리지 않는다 — 계산 루프가 분석가를 기다리면 두 루프가 한 줄이 된다.
   const child = spawn('zsh', ['scripts/deliberate.sh', '--quick', accountId], {
     cwd: repoRoot,
     detached: true,

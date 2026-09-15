@@ -46,6 +46,9 @@ import {
 } from '../db/deliberations.js';
 import { escapeMrkdwn, sendSlackBot, won as slackWon } from '../notify/slack.js';
 import { markAgentActivity } from '../db/agentActivity.js';
+import { pool } from '../db/client.js';
+import { getKisDomesticAccountSnapshot, getKisDomesticOrderability, getQuote } from '../kis/rest.js';
+import { checkBuy } from '../trading/buyGuard.js';
 
 const API_BASE = process.env.INVEST_API_BASE ?? 'http://localhost:4000';
 
@@ -205,6 +208,19 @@ async function main(): Promise<void> {
   if (pending.length === 0) return;
   if (!execute) return;
 
+  /*
+   * ★★ **매매 스위치를 여기서 본다** (2026-09-15). 스케줄러는 `trading: true` 작업만
+   *   스위치로 거르는데, 빠른 회차는 `trading: false`인 적정가 분석이 띄워서 **스위치를
+   *   꺼도 주문이 나갈 수 있었다.** 모든 판단 경로가 이 집행기를 지나므로 한 곳에 건다.
+   */
+  const { rows: [switchRow] } = await pool.query<{ trading_enabled: boolean }>(
+    'SELECT trading_enabled FROM trading_automation_settings WHERE id = 1',
+  );
+  if (!switchRow?.trading_enabled) {
+    console.log('매매 스위치가 꺼져 있다 — 주문하지 않는다.');
+    return;
+  }
+
   console.log();
   const executions: DeliberationExecution[] = [...round.executions];
 
@@ -218,6 +234,31 @@ async function main(): Promise<void> {
     layers.push(position.layer);
     holdingLayers.set(position.symbol, layers);
   }
+
+  /*
+   * ★★ **매수 한도는 코드가 본다** (2026-09-15, `trading/buyGuard.ts`). 빠른 회차에서
+   *   판단자를 빼며 층 50%·종목 10%·위험 2%·매수여력이 함께 사라지지 않게 한다.
+   *   계좌를 못 읽으면 **매수만** 막는다 — 들어가는 것은 모를 때 막는다.
+   */
+  let equity = 0;
+  const heldValue = new Map<string, number>();
+  const heldPrice = new Map<string, number>();
+  let snapshotError = '';
+  if (pending.some((d) => d.action === 'buy')) {
+    try {
+      const snap = await getKisDomesticAccountSnapshot(account);
+      equity = snap.totalEvaluation ?? 0;
+      for (const p of snap.positions) {
+        heldValue.set(p.symbol, p.marketValue ?? 0);
+        if (p.currentPrice) heldPrice.set(p.symbol, p.currentPrice);
+      }
+    } catch (err) {
+      snapshotError = `계좌를 못 읽어 매수 한도를 잴 수 없다 (${(err as Error).message.slice(0, 60)})`;
+    }
+  }
+  const layerValue = (layer: Layer): number => [...heldValue]
+    .filter(([symbol]) => (holdingLayers.get(symbol) ?? []).includes(layer))
+    .reduce((sum, [, value]) => sum + value, 0);
 
   for (const d of pending) {
     const side = d.action === 'sell' ? 'sell' : 'buy';
@@ -241,6 +282,44 @@ async function main(): Promise<void> {
         blockedBy: [problem],
       });
       continue;
+    }
+    let quantity = d.quantity;
+    if (d.action === 'buy') {
+      const layer = d.layer as Layer;
+      let why = snapshotError;
+      if (!why) {
+        const buyingPower = await getKisDomesticOrderability(account, d.symbol, 'limit', d.limitPrice ?? 0)
+          .then((o) => o.cashAvailable)
+          .catch(() => undefined);
+        const currentPrice = heldPrice.get(d.symbol)
+          ?? await getQuote(d.symbol).then((q) => q.price).catch(() => undefined);
+        const verdict = buyingPower === undefined
+          ? { kind: 'block' as const, why: '매수여력을 못 읽었다' }
+          : checkBuy({
+            quantity: d.quantity,
+            limitPrice: d.limitPrice ?? 0,
+            stopPrice: d.plan?.stopPrice,
+            layer,
+            equity,
+            buyingPower,
+            heldValue: heldValue.get(d.symbol) ?? 0,
+            layerValue: layerValue(layer),
+            currentPrice,
+          });
+        if (verdict.kind === 'block') why = verdict.why;
+        else {
+          quantity = verdict.quantity;
+          for (const note of verdict.trimmed) console.log(`  · ${d.symbol} ${note}`);
+        }
+      }
+      if (why) {
+        console.log(`  ✗ ${describe(d)} → ${why}`);
+        executions.push({
+          symbol: d.symbol, side, action: d.action, quantity: d.quantity,
+          orderNo: '', estimatedPrice: d.limitPrice ?? 0, blockedBy: [why],
+        });
+        continue;
+      }
     }
     let result: PostResult;
 
@@ -281,24 +360,29 @@ async function main(): Promise<void> {
         instrumentId: instrument.id,
         side,
         orderType: d.limitPrice ? 'limit' : 'market',
-        quantity: d.quantity,
+        quantity,
         limitPrice: d.limitPrice,
         // 매수는 판단자가 적은 층, 매도는 장부에서 읽은 층이다.
         layer: sellLayer?.kind === 'use' ? sellLayer.layer : d.layer,
         // 회차 id를 넣어 같은 판단이 두 번 나가지 않게 한다.
-        clientOrderId: `delib${round.id}-${round.tradingDay.replace(/-/g, '')}-${d.symbol}-${side}${d.quantity}`,
+        clientOrderId: `delib${round.id}-${round.tradingDay.replace(/-/g, '')}-${d.symbol}-${side}${quantity}`,
       });
     }
 
     const order = (result.body.order ?? result.body) as Record<string, unknown>;
     const orderNo = typeof order.orderNo === 'string' ? order.orderNo : '';
     if (result.ok && orderNo) {
-      console.log(`  ✓ ${describe(d)} → 주문번호 ${orderNo}`);
+      console.log(`  ✓ ${describe(d)}${quantity !== d.quantity ? ` → ${quantity}주로 줄여` : ''} → 주문번호 ${orderNo}`);
+      if (d.action === 'buy') {
+        // 같은 회차의 다음 매수가 방금 산 것까지 세게 한다.
+        heldValue.set(d.symbol, (heldValue.get(d.symbol) ?? 0) + quantity * (d.limitPrice ?? 0));
+        holdingLayers.set(d.symbol, [...new Set([...(holdingLayers.get(d.symbol) ?? []), d.layer as Layer])]);
+      }
       executions.push({
         symbol: d.symbol,
         side,
         action: d.action,
-        quantity: d.quantity,
+        quantity,
         orderNo,
         estimatedPrice: d.limitPrice ?? 0,
       });

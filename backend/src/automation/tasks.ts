@@ -210,16 +210,20 @@ export const TASKS: TaskSpec[] = [
      *    메세지 보내줘"*, 그리고 *"판단자가 그 가격을 보고 매수할지 매도할지
      *    정해서 집행하는 시퀀스."*
      *
-     * ★ **Claude를 안 부른다.** 5분마다면 하루 78회라 헤드리스로 돌리면 판단자의
-     *   수십 배가 된다. 적정가는 재무·차트로 **계산**하고 뉴스는 제목을 붙인다 —
-     *   해석은 판단자의 일이고, 여기서 또 하면 같은 판단을 두 번 사는 것이다.
+     * ★ **계산만 한다.** 적정가는 재무·차트로 계산하고 뉴스는 제목을 붙인다. 해석은
+     *   분석가(Claude)가 한다 — 이 작업이 끝날 때마다 부른다(`callAnalyst`).
+     *
+     * ★★ **루프다** (2026-09-15). 사용자가 정했다 — *"5분 간격으로 분석가를 부른다기보단
+     *    … 시퀀스를 루프화 시키는게 좋을 것 같아."* 1분 슬롯이라 끝나면 다음 틱에 곧바로
+     *    다시 돈다(한 바퀴 3~5분, 도는 중에는 `running`이 겹치지 않게 막는다). 분석가 쪽
+     *    루프는 `scripts/deliberate.sh` 끝에 있다.
      */
     name: 'fair-value',
-    label: '적정가 분석',
+    label: '적정가 분석 → 분석가 루프',
     window: [905, 1520],
     trading: false,
     daily: false,
-    everyMinutes: 5,
+    everyMinutes: 1,
     command: 'cd backend && npx tsx src/scripts/analyzeFairValue.ts VTS-ORDINARY',
   },
   {

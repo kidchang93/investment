@@ -58,7 +58,7 @@ if [[ $CLOSE -eq 1 ]]; then
   PROMPT_FILE="prompts/deliberate-close.md"
   LOG_SUFFIX="close"
 elif [[ $QUICK -eq 1 ]]; then
-  PROMPT_FILE="prompts/deliberate-quick.md"
+  PROMPT_FILE="prompts/analyst.md"
   LOG_SUFFIX="quick"
 else
   PROMPT_FILE="prompts/deliberate.md"
@@ -80,6 +80,26 @@ if ! docker exec kis-postgres pg_isready -U kis >/dev/null 2>&1; then
   log "Postgres가 안 떠 있다 — docker start kis-postgres 후 다시"
   exit 1
 fi
+
+# ── ★★ 분석가 루프는 매매 스위치와 장 시간을 스스로 본다 (2026-09-15) ────────
+#
+# `--quick`은 스케줄러가 아니라 적정가 계산(`trading: false` 작업)이 띄우고, 아래 끝에서
+# 스스로 한 바퀴 더 돈다. 스케줄러의 매매 스위치 검사를 **한 번도 안 지난다** — 그래서
+# 여기서 본다. 안 보면 화면에서 매매를 꺼도 분석가와 집행기가 계속 돈다.
+if [[ $QUICK -eq 1 ]]; then
+  HM=$(date '+%H%M')
+  if [[ "$HM" < "0905" || ! "$HM" < "1520" ]]; then
+    log "분석가 루프 창(09:05~15:20) 밖이다 — 돌지 않는다"
+    exit 0
+  fi
+  TRADING=$(docker exec kis-postgres psql -U kis -d kis -tAc \
+    "SELECT trading_enabled FROM trading_automation_settings WHERE id = 1" 2>/dev/null | tr -d ' ')
+  if [[ "$TRADING" != "t" ]]; then
+    log "매매 스위치가 꺼져 있다 — 분석가를 부르지 않는다"
+    exit 0
+  fi
+fi
+START_EPOCH=$(date +%s)
 
 # ── ★★ 두 벌이 뜨는 것을 여기서 막는다 (2026-09-07) ──────────────────────
 #
@@ -229,6 +249,33 @@ if [[ $exec_code -eq 0 ]]; then
   log "집행기 끝"
 else
   log "★ 집행기가 실패했다 (exit $exec_code) — 판단은 남았으니 다음 회차가 다시 본다"
+fi
+
+# ── ★★ 루프 — 기다리지 않고 다음 바퀴 (2026-09-15) ────────────────────────
+#
+# 사용자가 정했다 — *"5분 간격으로 분석가를 부른다기보단 … 시퀀스를 루프화 시키는게
+# 좋을 것 같아. 빠른 집행을 하기위한 최적의 루프를 만들어줘."*
+#
+# 두 루프가 서로를 기다리지 않는다:
+#   ① 계산(`analyzeFairValue.ts`)은 끝나면 곧바로 다음 계산 — 끝날 때마다 분석가를 부른다
+#   ② 분석가(여기)는 끝나면, **그 사이 계산이 새 결과를 냈을 때만** 곧바로 한 바퀴 더.
+#      없으면 끝낸다 — 다음 계산이 끝나는 순간 ①이 다시 부른다. 같은 표로 두 번 돌지 않는다.
+#
+# ★ "새 결과"는 계산이 분석가를 부르기 **직전에** 남기는 `fair-value-judge` 기록으로 잰다.
+#   스케줄러의 `fair-value-*` 하트비트는 분석가를 띄운 **뒤에** 찍혀서, 그걸 보면 방금 읽은
+#   표를 새것으로 착각해 늘 한 바퀴 더 돈다.
+if [[ $QUICK -eq 1 ]]; then
+  NEWER=$(docker exec kis-postgres psql -U kis -d kis -tAc \
+    "SELECT count(*) FROM trading_heartbeats
+      WHERE name = 'fair-value-judge' AND ran_at > to_timestamp($START_EPOCH)" 2>/dev/null | tr -d ' ')
+  if [[ "${NEWER:-0}" -gt 0 ]]; then
+    log "그 사이 계산이 새 결과를 냈다 — 곧바로 다음 바퀴"
+    mark idle
+    rm -rf "$LOCK_DIR"
+    trap - EXIT
+    exec zsh scripts/deliberate.sh --quick "$ACCOUNT"
+  fi
+  log "새 계산 결과를 기다린다 — 계산이 끝나면 분석가를 다시 부른다"
 fi
 
 exit 0
