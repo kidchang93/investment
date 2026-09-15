@@ -25,3 +25,6 @@ backend/.cache/
 #   쓰는데 판단자가 같은 레포에 파일을 만들기 때문이다. 타입 오류가 있는 채로
 #   들어가면 다음 typecheck가 깨진다(실제로 `_tmpQuotes.ts`가 그랬다).
 backend/src/scripts/_tmp*
+
+# 판단자·분석가가 회차마다 덮어쓰는 임시 파일 — 내용은 trading_deliberations에 남는다
+backend/round.json
