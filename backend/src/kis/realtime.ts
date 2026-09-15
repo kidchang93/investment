@@ -44,8 +44,12 @@ const NOTICE_FIELD = {
 const NOTICE_MIN_FIELDS = 26;
 /** KRX 야간선물 실시간종목체결 TR */
 const TR_KRX_NIGHT_FUTURES_TRADE = 'H0MFCNT0';
-/** H0STCNT0 레코드당 필드 수 (여러 체결이 한 프레임에 붙어올 때 분할 기준) */
-const FIELDS_PER_RECORD = 46;
+/**
+ * H0STCNT0 레코드당 필드 수 (여러 체결이 한 프레임에 붙어올 때 분할 기준).
+ * 2026-09-11에 47번째 `MARKET_CLS_CODE`(1 프리·2 정규·3 애프터·5 종가)가 붙었다 —
+ * 2026-09-15 모의·실전 실측 프레임 100%가 47이었다.
+ */
+const FIELDS_PER_RECORD = 47;
 const NIGHT_FUTURES_FIELDS_PER_RECORD = 49;
 const RECONNECT_MS = 3_000;
 
@@ -72,6 +76,8 @@ export class KisRealtime extends EventEmitter {
   /** 체결통보 복호화 키. 구독 등록 응답으로만 받을 수 있다. */
   private noticeAesKey = '';
   private noticeAesIv = '';
+  /** 필드 수 어긋남은 한 번만 알린다 — 프레임마다 뜨면 아무도 안 읽는다 */
+  private fieldCountWarned = false;
 
   get isConnected(): boolean {
     return this.connected;
@@ -278,6 +284,17 @@ export class KisRealtime extends EventEmitter {
   private onStockTradeFrame(parts: string[]): void {
     const count = Number(parts[2]) || 1;
     const fields = parts[3].split('^');
+    /*
+     * ★ 스펙이 또 바뀌면 조용히 흘리지 않고 알린다. 칸 수가 어긋나면 두 번째 건부터
+     *   가격 자리가 밀려 아래 검사에 걸러질 뿐 오류가 안 난다 — 46이던 나흘이 그랬다.
+     */
+    if (fields.length !== count * FIELDS_PER_RECORD && !this.fieldCountWarned) {
+      this.fieldCountWarned = true;
+      this.emitStatus({
+        kisConnected: this.connected,
+        message: `실시간 체결 필드 수가 스펙과 다릅니다 (${count}건에 ${fields.length}필드, 건당 ${FIELDS_PER_RECORD} 기대) — 체결이 빠질 수 있습니다`,
+      });
+    }
     for (let i = 0; i < count; i++) {
       const f = fields.slice(i * FIELDS_PER_RECORD, (i + 1) * FIELDS_PER_RECORD);
       if (f.length < FIELDS_PER_RECORD || !isPriceSign(f[3]) || !/^\d{8}$/.test(f[33] ?? '')) {

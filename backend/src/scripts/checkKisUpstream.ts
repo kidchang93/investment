@@ -8,7 +8,9 @@
  * 이 레포는 **포크가 아니다**(첫 커밋부터 직접 만들었다). 그런데 KIS 스펙을
  * **숫자로 박아 두고** 있어서 우려는 정확하다:
  *
- *   realtime.ts     FIELDS_PER_RECORD = 46 · 야간선물 49
+ *   realtime.ts     FIELDS_PER_RECORD = 47 · 야간선물 49
+ *                   ★ 2026-09-11에 46→47로 바뀌었는데 이 스크립트가 못 잡았다 — GitHub
+ *                     샘플이 안 바뀌었고 KIS 공지(2026-09-09)에만 있었다
  *   multiQuote.ts   MULTI_QUOTE_MAX_CODES = 30
  *   orderDivisions.ts  주문 구분 코드표
  *   errorCodes.ts   서버 불일치 vs 없는 기능
