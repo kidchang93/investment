@@ -278,6 +278,8 @@ async function main(): Promise<void> {
          *   떨어져 **조용히 틀린다** — 2026-08-21 티에스이 손절이 그랬다.
          */
         layer: b.layer,
+        // 산 지 60분 안에 손절가를 깨도 바로 판다 — 최소 보유는 손절에 안 건다.
+        stopLoss: true,
         clientOrderId: `stop-${b.symbol}-${today}`,
       }),
     });

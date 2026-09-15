@@ -56,6 +56,14 @@ export interface PositionGuardInput {
   maxPositions: number;
   /** 산 지 이만큼 안 지났으면 매도를 미룬다. 0이면 끔 */
   minHoldMinutes: number;
+  /**
+   * 손절 매도인가. 그러면 **최소 보유를 보지 않는다**(2026-09-15).
+   *
+   * 최소 보유는 사고팔기를 줄이려는 배관이지 위험을 줄이는 장치가 아니다. 산 지
+   * 60분 안에 손절가를 깨면 60분을 기다렸다 파는 것은 약속한 손절이 아니다.
+   * 미체결 매도 검사는 그대로 건다 — 그건 "팔 수 없어서" 막는 것이다.
+   */
+  stopLoss?: boolean;
 
   /**
    * 지금 평가금액과 **중단선**. 둘 다 있을 때만 하드 스톱이 걸린다.
@@ -109,7 +117,7 @@ export function checkPositionGuard(input: PositionGuardInput): PositionGuardVerd
       boughtAtMs: input.boughtAtBySymbol.get(input.symbol),
       nowMs: input.nowMs,
     });
-    if (tooSoon) {
+    if (tooSoon && !input.stopLoss) {
       violations.push(`최소 보유 ${input.minHoldMinutes}분이 안 지났습니다.`);
     }
 

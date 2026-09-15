@@ -193,6 +193,28 @@ describe('포지션 관문 — 최소 보유 시간', () => {
     assert.match(verdict.violations.join(' '), /최소 보유 60분/);
   });
 
+  /*
+   * ★ 2026-09-15. 손절 주문도 이 관문을 지나는데 표시가 없어, 산 지 60분 안에
+   * 손절가를 깨면 60분이 지나서야 나갔다. 미체결 매도 검사는 그대로 걸린다.
+   */
+  it('손절 매도는 최소 보유를 건너뛴다 — 팔 수 없는 물량은 여전히 막는다', () => {
+    const recent = {
+      side: 'sell' as const,
+      positions: [{ symbol: '005930', quantity: 10 }],
+      boughtAtBySymbol: new Map([['005930', NOW - 5 * MIN]]),
+      minHoldMinutes: 60,
+      stopLoss: true,
+    };
+    const ok = checkPositionGuard(base({ ...recent, quantity: 10 }));
+    assert.equal(ok.allowed, true, ok.violations.join(' '));
+
+    const pending = checkPositionGuard(base({
+      ...recent, quantity: 10, executions: [execution({ remainQuantity: 10 })],
+    }));
+    assert.equal(pending.allowed, false);
+    assert.match(pending.violations.join(' '), /이미 매도 주문이 나가 있습니다/);
+  });
+
   it('지났으면 통과한다', () => {
     const verdict = checkPositionGuard(base({
       side: 'sell',

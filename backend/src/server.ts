@@ -1061,6 +1061,8 @@ async function main(): Promise<void> {
     const layer = layerRaw === 'etf' || layerRaw === 'short'
       ? layerRaw
       : undefined;
+    // 손절 매도는 최소 보유를 건너뛴다(`positionGuard.ts`). `true`만 받는다.
+    const stopLoss = (req.body as { stopLoss?: unknown }).stopLoss === true;
     const auditBase = {
       accountId: accountId ?? '(미지정)',
       action: 'place' as const,
@@ -1259,7 +1261,7 @@ async function main(): Promise<void> {
          * 그대로 나가므로, 안 쓰는 호출로 초당 한도를 먹지 않게 한다.
          */
         let boughtAtBySymbol = new Map<string, number>();
-        if (side === 'sell' && guardRules.minHoldMinutes > 0) {
+        if (side === 'sell' && guardRules.minHoldMinutes > 0 && !stopLoss) {
           boughtAtBySymbol = await getLastBuySubmittedAt(
             account.id,
             guardState.positions.map((p) => p.symbol),
@@ -1276,6 +1278,7 @@ async function main(): Promise<void> {
           boughtAtBySymbol,
           maxPositions: guardRules.maxPositions,
           minHoldMinutes: guardRules.minHoldMinutes,
+          stopLoss,
           equity: guardState.equity,
           stopEquity: guardRules.stopEquity > 0 ? guardRules.stopEquity : undefined,
         });
