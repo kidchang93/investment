@@ -116,6 +116,7 @@ npm run build             # 프론트 프로덕션 빌드 (vite build)
 | 매매 API 추가·주문 전송·차단 사유 확인 | `docs/TRADING_API.md` |
 | 매매 기능 로드맵·DB 설계 | `docs/TRADING_ROADMAP.md` |
 | **전략 파라미터를 바꾸려 할 때** | **`docs/STRATEGY_DISCIPLINE.md`** — 동결 기간·되돌리기·바꿀 수 있는 것의 목록 |
+| **슬랙 브리핑(클라우드 루틴) 프롬프트를 고칠 때** | **`docs/BRIEFING_PROMPT.md`** — 이 파일이 원본이다. 웹 UI에서 직접 고치면 사본과 어긋난다 |
 
 ---
 
