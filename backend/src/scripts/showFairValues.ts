@@ -34,6 +34,7 @@ import {
   getKisDomesticOrderability,
 } from '../kis/rest.js';
 import { won } from '../notify/slack.js';
+import { AXIS_DIVERGENCE_LIMIT } from '../trading/fairValue.js';
 
 /** 이보다 오래된 적정가는 낡았다고 알린다. 분석가가 5분마다 도므로 넉넉한 값이다 */
 const STALE_MINUTES = 20;
@@ -87,6 +88,59 @@ interface FairRow {
   falling: boolean;
   /** 종목별 뉴스 — ⭐·보유 개별주식에만 있다. `null`이면 안 받았다 */
   news: NewsCell | null;
+}
+
+/**
+ * 종목 줄에 붙일 적정가 꼬리표.
+ *
+ * ★★ **왜 못 냈는지를 함께 적는다** (2026-09-16).
+ *
+ * 이 자리가 빈칸이던 동안 판단자가 매 회차 *"두 축 중 하나가 통째로 없어 손절선
+ * 기준을 못 세운다 — 종목 판단이 아니라 **데이터가 없어서** 못 산 것"*이라고
+ * `unknowns`에 적었다. **오진이었다.** 그날 걸린 종목은 두 축이 **다 있었고**,
+ * 2.0~12.8배 어긋나 `combine()`이 **일부러** 안 낸 것이다(`trading/fairValue.ts`).
+ * 사유는 `combine()`이 `missing`에 정확히 적지만 그 배열은 저장되지 않는다
+ * (`trading_fair_values`에 칸이 없다). 두 축 값은 저장되므로 배수는 여기서 다시 낸다.
+ *
+ * ★ `undefined`(적정가를 재지 않은 종목)와 `null`(재 봤지만 못 냄)은 **다른
+ *   사실**이다. 둘을 같은 빈칸으로 두면 "모른다"와 "안 봤다"가 섞인다.
+ *
+ * ★ 못 냈다는 것 자체가 정보다 — 2026-09-16 📈(오늘 오른 것) 10종목 중 **6종목**이
+ *   이것이었다. 테마로 급등하면 과거 배수가 성립하지 않으므로, 이 꼬리표는
+ *   사실상 "재무로는 설명이 안 되는 자리"를 가리킨다.
+ */
+function fairGapLabel(row: FairRow | undefined): string {
+  if (row === undefined) return '';
+  if (row.gap !== null) {
+    return ` · 적정가 대비 ${row.gap > 0 ? '+' : ''}${(row.gap * 100).toFixed(1)}%`;
+  }
+  /*
+   * ★★ **`gap`이 `null`인 길은 셋이고 서로 다른 사실이다** (2026-09-16 실측).
+   *
+   * `combine()`을 그대로 따라간다 — 순서를 바꾸면 설명이 틀린다:
+   *   ① 두 축이 다 있고 한계 이상 어긋남 → 거기서 바로 `null`이 된다
+   *   ② 그렇지 않은데 `price <= 0` → 마지막 줄에서 `null`
+   *   ③ 축을 하나도 못 냄
+   *
+   * ★ 이 순서를 안 지켜 처음 쓴 판이 비츠로테크에 *"두 축이 1.0배 어긋남"*이라고
+   *   적었다. 차트 8,518원 · 재무 8,430원으로 **거의 일치**하는데도 `null`이었고,
+   *   진짜 이유는 그 회차가 **현재가를 못 받은 것**(`price = 0`)이었다.
+   *   오늘 42,530행 중 335행이 그랬다.
+   */
+  const chart = row.chart_mid;
+  const fundamental = row.fundamental_mid;
+  if (chart && fundamental) {
+    const ratio = Math.max(chart, fundamental) / Math.min(chart, fundamental);
+    if (ratio >= AXIS_DIVERGENCE_LIMIT) {
+      return ` · 적정가 못 냄 — 두 축이 ${ratio.toFixed(1)}배 어긋남`
+        + `(한계 ${AXIS_DIVERGENCE_LIMIT.toFixed(1)}배, 차트중앙 ${won(chart)} · 재무중앙 ${won(fundamental)}).`
+        + ' 과거 배수가 더 이상 성립하지 않는 것이고, 데이터가 없는 것이 아니다';
+    }
+  }
+  if (!(row.price > 0)) {
+    return ' · 적정가 못 냄 — 이 회차가 현재가를 못 받았다(두 축은 있다). 종목 문제가 아니라 시세 조회 실패다';
+  }
+  return ' · 적정가 못 냄 — 두 축을 하나도 못 냈다';
 }
 
 async function main(): Promise<void> {
@@ -247,10 +301,7 @@ async function main(): Promise<void> {
     } else {
       console.log(`  기준: ${picks[0].rule}${stale}`);
       for (const c of picks) {
-        const fairGap = bySymbol.get(c.symbol)?.gap;
-        const gap = fairGap === null || fairGap === undefined
-          ? ''
-          : ` · 적정가 대비 ${fairGap > 0 ? '+' : ''}${(fairGap * 100).toFixed(1)}%`;
+        const gap = fairGapLabel(bySymbol.get(c.symbol));
         console.log(
           `  📣 ${c.symbol} ${c.name} ${won(c.price)} · 공시 뒤 ${c.move >= 0 ? '+' : ''}${(c.move * 100).toFixed(1)}%`
           + ` (기준 ${md(c.base_day)} 종가 ${won(c.base_close)})${gap}`,
@@ -308,10 +359,7 @@ async function main(): Promise<void> {
       console.log(`  기준: ${risers[0].rule}${stale}`);
       for (const r of risers) {
         // ★ 적정가 표에 있으면 함께 적는다 — 크게 +이면 이미 많이 오른 자리다.
-        const fairGap = bySymbol.get(r.symbol)?.gap;
-        const gap = fairGap === null || fairGap === undefined
-          ? ''
-          : ` · 적정가 대비 ${fairGap > 0 ? '+' : ''}${(fairGap * 100).toFixed(1)}%`;
+        const gap = fairGapLabel(bySymbol.get(r.symbol));
         const range = r.range_rate === null ? '' : ` · 변동폭 ${r.range_rate.toFixed(2)}%`;
         // ★ 가격제한폭 근처는 팔 사람이 없어 체결이 어렵고 되돌림이 크다.
         const limitUp = r.change_rate >= LIMIT_UP_WARN ? ' · ⚠상한가 근처' : '';
