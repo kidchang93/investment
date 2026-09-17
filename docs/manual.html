@@ -1133,7 +1133,7 @@
             <tr><td>해외주식 주문</td><td>서버 경로(<code>POST /api/broker/kis/overseas-orders</code>)는 미국 정규장 지정가만 있고 화면은 없다. 접수는 아직 확인하지 못했다</td><td>주간거래는 막는다. 자세한 것은 <code>docs/TRADING_API.md</code>의 「4-1. 해외주식 주문」</td></tr>
             <tr><td>예약주문 정정</td><td>미구현</td><td>취소 후 재등록만 가능</td></tr>
             <tr><td>신용 주문</td><td>미구현</td><td>—</td></tr>
-            <tr><td>시간외단일가·장전시간외 주문</td><td>미구현</td><td>정규장 지정가(<code>00</code>)/시장가(<code>01</code>)만. 정규장 밖에서 <code>order-cash</code>를 보내면 KIS가 거부한다</td></tr>
+            <tr><td>애프터마켓(16:00~20:00)·장전시간외 주문</td><td>미구현</td><td>정규장 지정가(<code>00</code>)/시장가(<code>01</code>)만. 애프터마켓은 주문구분 <code>41</code>~<code>47</code>이 따로 있다(2026-09-14 시작, 옛 시간외 단일가는 폐지). 정규장 밖에서 <code>order-cash</code>를 보내면 KIS가 거부한다</td></tr>
             <tr><td>모의(vts)에서 정정취소가능주문·예약주문 조회</td><td>KIS 공식 예제에 모의 분기가 없다</td><td>실전(prod)에서만 된다. 자동화 작업이 쓰는 계좌(<code>VTS-ORDINARY</code>)는 모의라 여기에 걸린다</td></tr>
             <tr><td>계좌 간 교차 조회</td><td>KIS가 앱키에 등록된 계좌만 허용(<code>INVALID_CHECK_ACNO</code>)</td><td>계좌마다 앱키가 다르면 각자 조회해야 한다</td></tr>
             <tr><td>다른 계좌(KIS 23)의 주문 통보 실시간 수신</td><td>실시간 WS 연결이 기본 계좌 앱키 하나뿐</td><td>기본 계좌(지금은 KIS 21)의 통보만 온다</td></tr>

@@ -46,9 +46,10 @@ describe('주문구분 — 아직 모르는 것', () => {
     assert.equal(isUnconfirmedDivision(AFTER_HOURS_CLOSE_CANDIDATE), true);
   });
 
-  it('시간외 단일가는 아직 후보조차 없다', () => {
+  /* 07은 개발자센터 문서에서 빠졌다 — 2026-09-14 시간외 단일가 폐지(애프터마켓은 41~47). */
+  it('없어진 시간외 단일가(07)는 표에 없다', () => {
     const confirmed: string[] = Object.values(CONFIRMED_ORDER_DIVISIONS);
-    assert.ok(!confirmed.includes('07'), '07을 확인 없이 넣지 않았다');
+    assert.ok(!confirmed.includes('07'), '폐지된 07을 넣지 않았다');
   });
 
   /* 확인된 값을 미확인이라 적으면 기록이 거짓말을 한다. 반대 방향도 못 박는다. */

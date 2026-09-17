@@ -606,22 +606,32 @@ export const KRX_SESSION_MINUTES = {
   /** 마감. 15:30:45에 121 → 112로 돌아간 것을 봤다. */
   close: 15 * 60 + 30,
   /**
-   * 장후 시간외 종가 15:40~16:00, 시간외 단일가 16:00~18:00.
+   * 장후 시간외 종가 15:40~16:00, 애프터마켓 16:00~20:00.
    *
-   * **KRX 규정값이고 실측이 아니다.** 이 구간에 KIS가 무엇을 주는지는 아직 찍어
-   * 보지 못했다 — 장이 닫힌 뒤에 만들었다. 내일 16:00~18:00에 재야 한다.
+   * **2026-09-14에 바뀌었다.** 그 전 16:00~18:00은 시간외 단일가(10분마다 한
+   * 가격)였는데 폐지되고, 그 자리에 KRX 애프터마켓(연속체결)이 20:00까지 열렸다.
+   * 옛 값으로 두면 18:00~20:00에 체결이 계속 나는데 화면이 `장외`라고 적는다.
+   *
+   * **경계 시각은 KRX 규정값이고 실측이 아니다.** 출처는 KRX 규정 사이트 시장의
+   * 개폐 표(`regulation.krx.co.kr` RGL03020401 — "애프터마켓 호가접수 16:00~20:00,
+   * 매매거래 16:00~20:00", 시간외단일가 행 없음, 2026-09-17 확인). 실측한 것은
+   * 하나다 — 2026-09-15 17:27에 005930 KRX 시세(`J`)가 13초 사이 248,500 →
+   * 248,000으로 움직였다. 단일가였다면 10분 안에 값이 바뀌지 않는다.
    */
   postOffHoursOpen: 15 * 60 + 40,
-  singlePriceOpen: 16 * 60,
-  singlePriceClose: 18 * 60,
+  afterMarketOpen: 16 * 60,
+  afterMarketClose: 20 * 60,
 } as const;
 
 /**
  * KRX 하루 운영 구간.
  *
  * 예전에는 정규장(09:00~15:30)과 동시호가만 알았고 나머지는 전부 `장외`였다.
- * 그런데 **15:40~18:00에는 실제로 거래가 일어난다** — 장후 시간외 종가와
- * 시간외 단일가다. 화면이 그 시간을 `마감 후`라고 부르면 거래가 없는 줄 안다.
+ * 그런데 **15:40~20:00에는 실제로 거래가 일어난다** — 장후 시간외 종가와
+ * 애프터마켓이다. 화면이 그 시간을 `마감 후`라고 부르면 거래가 없는 줄 안다.
+ *
+ * 애프터마켓은 **주식만** 거래한다(ETF·ETN 제외). 구간은 시각만으로 가르므로
+ * ETF를 보고 있어도 `afterMarket`이 나온다 — 화면 문구가 그 사실을 적는다.
  *
  * 08:30~08:40은 장전 시간외 종가와 장전 동시호가가 겹치지만 따로 두지 않는다 —
  * 우리 앱은 어느 쪽으로도 주문을 못 내고, 사용자에게 중요한 것은 "연속 체결이
@@ -633,15 +643,15 @@ export type KrxSessionKind =
   | 'regular'
   | 'closeAuction'
   | 'postOffHours'
-  | 'singlePrice';
+  | 'afterMarket';
 
 export function krxSessionKind(minutesOfDay: number): KrxSessionKind {
   const s = KRX_SESSION_MINUTES;
   if (minutesOfDay >= s.preAuctionOpen && minutesOfDay < s.open) return 'preAuction';
   if (minutesOfDay >= s.open && minutesOfDay < s.closeAuctionOpen) return 'regular';
   if (minutesOfDay >= s.closeAuctionOpen && minutesOfDay <= s.close) return 'closeAuction';
-  if (minutesOfDay >= s.postOffHoursOpen && minutesOfDay < s.singlePriceOpen) return 'postOffHours';
-  if (minutesOfDay >= s.singlePriceOpen && minutesOfDay < s.singlePriceClose) return 'singlePrice';
+  if (minutesOfDay >= s.postOffHoursOpen && minutesOfDay < s.afterMarketOpen) return 'postOffHours';
+  if (minutesOfDay >= s.afterMarketOpen && minutesOfDay < s.afterMarketClose) return 'afterMarket';
   return 'closed';
 }
 

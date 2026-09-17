@@ -30,14 +30,20 @@ describe('KRX_SESSION_MINUTES', () => {
 
 describe('krxSessionKind — 하루 전체', () => {
   it('시간외 거래 시간을 `장외`로 뭉치지 않는다', () => {
-    // 15:40~18:00에는 KRX에서 실제로 거래가 일어난다. `마감 후`라고 부르면
+    // 15:40~20:00에는 KRX에서 실제로 거래가 일어난다. `마감 후`라고 부르면
     // 거래가 없는 줄 안다.
-    assert.equal(krxSessionKind(at('15:35')), 'closed'); // 휴식 — 이때는 정말 없다
+    assert.equal(krxSessionKind(at('15:35')), 'closed'); // 체결은 정말 없다(시간외 종가 호가만 15:30부터 받는다)
     assert.equal(krxSessionKind(at('15:40')), 'postOffHours');
     assert.equal(krxSessionKind(at('15:59')), 'postOffHours');
-    assert.equal(krxSessionKind(at('16:00')), 'singlePrice');
-    assert.equal(krxSessionKind(at('17:59')), 'singlePrice');
-    assert.equal(krxSessionKind(at('18:00')), 'closed'); // 끝나면 다시 휴장
+    assert.equal(krxSessionKind(at('16:00')), 'afterMarket');
+    assert.equal(krxSessionKind(at('19:59')), 'afterMarket');
+    assert.equal(krxSessionKind(at('20:00')), 'closed'); // 끝나면 다시 휴장
+  });
+
+  it('18:00~20:00은 장외가 아니다 — 2026-09-14 시간외 단일가 폐지·애프터마켓 도입', () => {
+    // 옛 표는 18:00에 끝났다. 그대로 두면 체결이 계속 나는 두 시간을 `장외`라고 적는다.
+    assert.equal(krxSessionKind(at('18:00')), 'afterMarket');
+    assert.equal(krxSessionKind(at('19:30')), 'afterMarket');
   });
 
   it('정규장과 마감 동시호가를 가른다', () => {
@@ -65,10 +71,10 @@ describe('krxSessionKind — 하루 전체', () => {
     assert.equal(count.regular, 380, '09:00~15:19');
     assert.equal(count.closeAuction, 11, '15:20~15:30');
     assert.equal(count.postOffHours, 20, '15:40~15:59');
-    assert.equal(count.singlePrice, 120, '16:00~17:59');
+    assert.equal(count.afterMarket, 240, '16:00~19:59');
     assert.equal(
       count.preAuction + count.regular + count.closeAuction + count.postOffHours
-        + count.singlePrice + count.closed,
+        + count.afterMarket + count.closed,
       1440,
       '합이 하루',
     );

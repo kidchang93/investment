@@ -13,7 +13,7 @@ const LABEL: Record<KrxSessionKind, string> = {
   regular: '정규장 · 거래 중',
   closeAuction: '마감 동시호가',
   postOffHours: '장후 시간외',
-  singlePrice: '시간외 단일가',
+  afterMarket: '애프터마켓',
   closed: '장외',
 };
 
@@ -22,10 +22,14 @@ function label(minutes: number): string {
   if (kind !== 'closed') return LABEL[kind];
   if (minutes < KRX_SESSION_MINUTES.preAuctionOpen) return '장외 · 개장 전';
   if (minutes < KRX_SESSION_MINUTES.postOffHoursOpen) return '장외 · 정규장 마감';
-  return '장외 · 시간외까지 끝';
+  return '장외 · 애프터마켓까지 끝';
 }
 
-/** KRX 공식 운영 시간. 앱이 무엇을 놓치는지 견주려고 옆에 적는다. */
+/**
+ * KRX 공식 운영 시간. 앱이 무엇을 놓치는지 견주려고 옆에 적는다.
+ *
+ * 2026-09-14부터다 — 시간외 단일가(16:00~18:00)가 폐지되고 애프터마켓이 20:00까지 열렸다.
+ */
 const KRX: Array<[string, string]> = [
   ['07:30', '휴장'],
   ['08:20', '휴장'],
@@ -37,13 +41,13 @@ const KRX: Array<[string, string]> = [
   ['15:19', '정규장'],
   ['15:20', '마감 동시호가'],
   ['15:30', '마감 동시호가 끝'],
-  ['15:35', '휴식'],
+  ['15:35', '체결 없음 · 시간외 종가 호가 접수(15:30~)'],
   ['15:40', '장후 시간외 종가(~16:00)'],
-  ['16:00', '시간외 단일가(~18:00)'],
-  ['16:30', '시간외 단일가'],
-  ['17:59', '시간외 단일가'],
-  ['18:00', '시간외 단일가 끝'],
-  ['19:00', '휴장'],
+  ['16:00', '애프터마켓(~20:00) · 주식만'],
+  ['18:00', '애프터마켓'],
+  ['19:59', '애프터마켓'],
+  ['20:00', '애프터마켓 끝'],
+  ['21:00', '휴장'],
 ];
 
 async function main(): Promise<void> {

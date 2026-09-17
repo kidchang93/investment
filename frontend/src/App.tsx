@@ -230,8 +230,8 @@ const SCREENING_VERDICT: Record<ScreeningVerdict, { label: string; why: string }
  * KRX 구간별 화면 문구.
  *
  * 예전에는 15:40~18:00을 전부 `장외 · 마감 후`라고 불렀다. 그 시간에 KRX는
- * 실제로 거래한다(장후 시간외 종가 → 시간외 단일가) — `마감 후`라고 하면
- * 거래가 없는 줄 안다.
+ * 실제로 거래한다(장후 시간외 종가 → 애프터마켓, 2026-09-14부터 20:00까지) —
+ * `마감 후`라고 하면 거래가 없는 줄 안다.
  *
  * `orderable`은 **우리 앱이** 그때 주문을 낼 수 있는지다(거래소가 여는지가
  * 아니다). 시간외 세션은 `ORD_DVSN` 코드가 따로라 미구현이고, 서버도 리스크 룰
@@ -279,9 +279,9 @@ const KRX_SESSION_TEXT: Record<
     },
     orderable: false,
   },
-  singlePrice: {
-    label: '시간외 단일가',
-    detail: '단일가로 거래됩니다 · 이 앱은 주문을 못 냅니다',
+  afterMarket: {
+    label: '애프터마켓',
+    detail: '주식만 20:00까지 거래됩니다 · 이 앱은 주문을 못 냅니다',
     tone: 'pre',
     frozen: false,
     orderable: false,
@@ -1550,7 +1550,7 @@ function getMarketSession(instrument: Instrument | null): MarketSession {
         ? '개장 전'
         : now < KRX_SESSION_MINUTES.postOffHoursOpen
           ? '정규장 마감 · 15:40부터 시간외'
-          : '시간외까지 끝',
+          : '애프터마켓까지 끝',
       hours: session.hours,
       localTime,
       krxKind: kind,
