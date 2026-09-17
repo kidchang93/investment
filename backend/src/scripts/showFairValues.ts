@@ -115,17 +115,15 @@ function fairGapLabel(row: FairRow | undefined): string {
     return ` · 적정가 대비 ${row.gap > 0 ? '+' : ''}${(row.gap * 100).toFixed(1)}%`;
   }
   /*
-   * ★★ **`gap`이 `null`인 길은 셋이고 서로 다른 사실이다** (2026-09-16 실측).
+   * ★★ **`gap`이 `null`인 길은 둘이고 서로 다른 사실이다** (2026-09-16 실측).
    *
    * `combine()`을 그대로 따라간다 — 순서를 바꾸면 설명이 틀린다:
    *   ① 두 축이 다 있고 한계 이상 어긋남 → 거기서 바로 `null`이 된다
-   *   ② 그렇지 않은데 `price <= 0` → 마지막 줄에서 `null`
-   *   ③ 축을 하나도 못 냄
+   *   ② 축을 하나도 못 냄
    *
-   * ★ 이 순서를 안 지켜 처음 쓴 판이 비츠로테크에 *"두 축이 1.0배 어긋남"*이라고
-   *   적었다. 차트 8,518원 · 재무 8,430원으로 **거의 일치**하는데도 `null`이었고,
-   *   진짜 이유는 그 회차가 **현재가를 못 받은 것**(`price = 0`)이었다.
-   *   오늘 42,530행 중 335행이 그랬다.
+   * ★ 셋째 길(`price = 0`)이 있었다 — 9/16에 42,530행 중 335행. 처음 쓴 판이 그중
+   *   비츠로테크(차트 8,518원 · 재무 8,430원)에 *"두 축이 1.0배 어긋남"*이라고 적었다.
+   *   2026-09-17부터 분석가가 **현재가 없는 행을 아예 안 남긴다**(`analyzeFairValue.ts`).
    */
   const chart = row.chart_mid;
   const fundamental = row.fundamental_mid;
@@ -136,9 +134,6 @@ function fairGapLabel(row: FairRow | undefined): string {
         + `(한계 ${AXIS_DIVERGENCE_LIMIT.toFixed(1)}배, 차트중앙 ${won(chart)} · 재무중앙 ${won(fundamental)}).`
         + ' 과거 배수가 더 이상 성립하지 않는 것이고, 데이터가 없는 것이 아니다';
     }
-  }
-  if (!(row.price > 0)) {
-    return ' · 적정가 못 냄 — 이 회차가 현재가를 못 받았다(두 축은 있다). 종목 문제가 아니라 시세 조회 실패다';
   }
   return ' · 적정가 못 냄 — 두 축을 하나도 못 냈다';
 }

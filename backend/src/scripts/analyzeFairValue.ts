@@ -905,6 +905,8 @@ async function main(): Promise<void> {
     const batch = await getDomesticQuotes([...targets, ...candidates]);
     for (const [code, q] of batch.quotes) if (q.price > 0) quotes.set(code, q.price);
     if (batch.blank.length > 0) console.log(`  시세가 빈 종목: ${batch.blank.join(' ')}`);
+    const unanswered = batch.failed.flatMap((f) => f.codes).length;
+    if (unanswered > 0) console.log(`  시세를 못 받은 종목 ${unanswered}개 — ${batch.failed[0].message.slice(0, 60)}`);
   } catch (error) {
     console.log(`시세를 못 받았다: ${(error as Error).message.slice(0, 60)}`);
   }
@@ -928,12 +930,17 @@ async function main(): Promise<void> {
 
   const rows: Row[] = [];
   for (const symbol of [...targets, ...candidates]) {
+    /*
+     * ★ **현재가가 없으면 행을 남기지 않는다** (2026-09-17). 남기면 "0원 · 적정가 못 냄"이
+     *   이 회차의 측정처럼 읽힌다. 안 남기면 화면이 직전 행을 `⚠N분 전`으로 보여 준다 —
+     *   "이번엔 못 쟀다"가 사실이다. 9/16 모의 서버가 죽었을 때 900종목 전부가 0원 행이었다.
+     */
+    const price = quotes.get(symbol);
+    if (price === undefined) continue;
     const instrument = await getKoreanInstrumentBySymbol(symbol);
     const name = instrument?.name ?? symbol;
     const kind = classifyAsset(name, instrument?.assetType);
-    const price = quotes.get(symbol) ?? 0;
     const missing: string[] = [];
-    if (price <= 0) missing.push('현재가 없음');
 
     // ── ② 차트 ──
     const bars = (await getDailyBars(symbol)).map((b) => ({
