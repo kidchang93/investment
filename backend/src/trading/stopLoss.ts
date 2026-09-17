@@ -13,7 +13,24 @@
 
 import { sellableQuantity } from './positionGuard.js';
 import type { Layer } from './layers.js';
-import type { BrokerExecution } from '@invest/shared';
+import { KRX_SESSION_MINUTES, type BrokerExecution } from '@invest/shared';
+
+/**
+ * 지금 손절 **주문**을 낼 수 있는 시각인가(KST 자정부터의 분).
+ *
+ * ── 감시는 20:00까지, 주문은 15:30 전까지 (2026-09-17 사용자 결정) ────────
+ *
+ * 2026-09-14부터 KRX 애프터마켓(16:00~20:00)이 열려 마감 뒤에도 값이 움직인다.
+ * 사용자가 *"손절 감시를 20:00까지 늘려줘"*라고 했다. 그런데 15:30 뒤에는 우리가
+ * 팔 길이 없다 — 리스크 룰이 15:30 뒤를 막고, 애프터마켓은 시장가를 안 받으며
+ * 그 주문구분(`41`~`47`)은 만들지 않았다. 그래서 그 시간에는 **보고 알리기만** 한다.
+ *
+ * ★ 15:30 그 1분도 주문을 안 낸다. 룰은 15:30을 통과시키지만 마감 동시호가는
+ *   15:30에 끝난다 — 그 1분에 낸 시장가가 접수되는지 잰 적이 없다. 모르는 주문은 안 낸다.
+ */
+export function canSendStopOrder(minutesOfDay: number): boolean {
+  return minutesOfDay < KRX_SESSION_MINUTES.close;
+}
 
 export interface StopRule {
   /** 손절가(원) */

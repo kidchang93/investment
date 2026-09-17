@@ -28,7 +28,10 @@
  * ★ **미체결 매도가 이미 있으면 그만큼 뺀다**(`sellableQuantity`). 안 그러면
  *   없는 물량을 판다.
  *
- * 장 시간 밖에서는 서버 리스크 룰(09:00~15:30)이 거부한다 — 여기서 또 판정하지 않는다.
+ * ★ **감시는 20:00까지, 주문은 15:30 전까지** (2026-09-17, 사용자가 정했다).
+ *   애프터마켓(16:00~20:00)에 값이 움직여 감시를 늘렸지만 그 시간에 팔 길이가 없다
+ *   (`canSendStopOrder` 주석). 15:30 뒤에 선을 깨면 **종목마다 하루 한 번 알리고**
+ *   주문은 안 낸다 — 다음 개장 뒤에도 선 아래면 그때 시장가로 판다.
  */
 
 import { spawn } from 'node:child_process';
@@ -37,35 +40,40 @@ import { getKisAccount } from '../config.js';
 import { getLatestStopPrices } from '../db/deliberations.js';
 import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
 import { getLayerPositions } from '../db/layers.js';
-import { getKisDomesticAccountSnapshot, getKisDomesticExecutions } from '../kis/rest.js';
+import { getDomesticQuotes, getKisDomesticAccountSnapshot, getKisDomesticExecutions } from '../kis/rest.js';
 import { escapeMrkdwn, sendSlack, sendSlackBot, won as slackWon } from '../notify/slack.js';
 import { parseLayer } from '../trading/layers.js';
 import type { Layer } from '../trading/layers.js';
-import { checkStops, type StopRule, type TargetHit } from '../trading/stopLoss.js';
+import { canSendStopOrder, checkStops, type StopRule } from '../trading/stopLoss.js';
+import { kstMinutesOfDay } from '../trading/session.js';
 import { markAgentActivity } from '../db/agentActivity.js';
 import { pool } from '../db/client.js';
 
 const API_BASE = process.env.INVEST_API_BASE ?? 'http://localhost:4000';
 const won = (n: number): string => Math.round(n).toLocaleString('ko-KR');
 
-/** 오늘 이 종목의 익절 돌파로 판단자를 이미 불렀나. */
-async function calledForTargetToday(symbol: string): Promise<boolean> {
+/**
+ * 오늘 이 이름으로 이미 했나 — 판단자를 불렀나, 슬랙으로 알렸나.
+ *
+ * 매 분 도는 자리라 그냥 두면 같은 일을 하루 수백 번 한다. `target-hit-{종목}`
+ * (익절 돌파로 판단자 소집) · `stop-after-close-{종목}`(마감 뒤 손절선) ·
+ * `stop-failed-{종목}`(손절 주문 실패 알림)을 종목마다 하루 한 번으로 묶는다.
+ */
+async function doneToday(name: string): Promise<boolean> {
   const { rows } = await pool.query<{ n: string }>(
     `SELECT count(*)::text AS n FROM trading_heartbeats
       WHERE name = $1 AND status = 'ok'
         AND (ran_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date`,
-    [`target-hit-${symbol}`],
+    [name],
   );
   return Number(rows[0]?.n ?? 0) > 0;
 }
 
-/** 불렀다는 사실을 남긴다. 사람이 나중에 "왜 그때 깨웠나"를 되짚는 실이다. */
-async function markTargetCall(symbol: string, hit: TargetHit): Promise<void> {
+/** 했다는 사실을 남긴다. 사람이 나중에 "왜 그때 깨웠나·알렸나"를 되짚는 실이다. */
+async function markDone(name: string, note: string): Promise<void> {
   await pool.query(
     `INSERT INTO trading_heartbeats (name, status, note) VALUES ($1, 'ok', $2)`,
-    [`target-hit-${symbol}`,
-      `${hit.name} ${Math.round(hit.price)}원 · 목표 ${Math.round(hit.target)}원`
-      + ` · +${(hit.overshootRate * 100).toFixed(2)}% · 회차 ${hit.round}`],
+    [name, note],
   );
 }
 
@@ -143,7 +151,20 @@ async function main(): Promise<void> {
     .format(new Date())
     .replace(/-/g, '');
 
-  const result = checkStops(snapshot.positions, stops, executionSnapshot?.executions ?? []);
+  const orderOpen = canSendStopOrder(kstMinutesOfDay(new Date()));
+  /*
+   * ★★ **15:30 뒤에는 잔고 현재가를 안 믿는다.** 애프터마켓 체결을 안 따라간다 —
+   *    2026-09-17 23:02 실측: 삼성전자우 잔고 현재가 193,300원, 그날 16:00~19:59 KRX
+   *    분봉은 194,900~196,100원, 멀티시세는 196,100원(= 19:59 봉). 셀트리온·달바글로벌도
+   *    멀티시세만 마지막 체결가와 같았다. 잔고로 보면 20:00까지 늘린 감시가 아무것도 못 본다.
+   *    멀티시세로 갈아 끼우고(보유 30종목 이하라 1회), 못 받은 종목은 판정하지 않는다.
+   *    ★ 16:00~20:00 **도중에도** 잔고가 멈춰 있는지는 안 쟀다 — 밤에 잰 값이다.
+   */
+  const positions = orderOpen
+    ? snapshot.positions
+    : await getDomesticQuotes(snapshot.positions.map((p) => p.symbol)).then(({ quotes }) =>
+      snapshot.positions.map((p) => ({ ...p, currentPrice: quotes.get(p.symbol)?.price })));
+  const result = checkStops(positions, stops, executionSnapshot?.executions ?? []);
   const breached = result.breaches;
 
   /*
@@ -168,11 +189,15 @@ async function main(): Promise<void> {
    *   같은 종목이 그날 다시 넘어도 안 부르지만, 그때는 이미 판단자가 한 번
    *   보았고 그 판단(팔거나 hold)이 기록에 남아 있다.
    */
-  if (execute && result.targetsHit.length > 0) {
+  // 15:30 뒤엔 깨우지 않는다 — 판단자가 팔자고 해도 주문이 안 나간다. 다음 개장 뒤에 다시 넘으면 부른다.
+  if (execute && orderOpen && result.targetsHit.length > 0) {
     for (const hit of result.targetsHit) {
-      const already = await calledForTargetToday(hit.symbol);
-      if (already) continue;
-      await markTargetCall(hit.symbol, hit);
+      if (await doneToday(`target-hit-${hit.symbol}`)) continue;
+      await markDone(
+        `target-hit-${hit.symbol}`,
+        `${hit.name} ${Math.round(hit.price)}원 · 목표 ${Math.round(hit.target)}원`
+          + ` · +${(hit.overshootRate * 100).toFixed(2)}% · 회차 ${hit.round}`,
+      );
       console.log(
         `  ★ 익절가를 넘었다 — ${hit.symbol} ${hit.name} ${won(hit.price)}원`
         + ` (목표 ${won(hit.target)} · +${(hit.overshootRate * 100).toFixed(2)}%) → 판단자를 부른다`,
@@ -226,11 +251,13 @@ async function main(): Promise<void> {
    *   장부가 어긋나 있다는 것을 알았다. 데몬(`--execute`)은 여전히 조용하다.
    */
   if (!execute) {
-    for (const position of snapshot.positions) {
+    for (const position of positions) {
       const rule = stops.get(position.symbol);
       if (!rule) continue;
+      // 판정에 쓴 가격을 함께 찍는다 — 15:30 뒤엔 잔고가 아니라 멀티시세 값이다.
+      const price = position.currentPrice ? `${won(position.currentPrice)}원` : '모름';
       console.log(
-        `  · ${position.symbol} ${position.name} 손절 ${won(rule.stop)}원 (회차 ${rule.round})`
+        `  · ${position.symbol} ${position.name} 현재 ${price} · 손절 ${won(rule.stop)}원 (회차 ${rule.round})`
         + `${rule.layer ? ` · 층 ${rule.layer}` : ' · ★ 층 없음 — 팔면 층 장부가 끊긴다'}`,
       );
     }
@@ -255,6 +282,30 @@ async function main(): Promise<void> {
   if (breached.length === 0 || !execute) {
     // 경보처럼 종료 코드로 알린다 — 부르는 쪽이 그것으로 알림을 띄운다.
     process.exit(breached.length > 0 ? 1 : 0);
+  }
+
+  /*
+   * ── 15:30 뒤: 알리기만 한다 ─────────────────────────────────────────────
+   *
+   * 주문을 보내면 리스크 룰에 막혀 매 분 "손절이 나가지 못했다"가 네 시간 쌓인다
+   * (룰 검사가 멱등성 키를 잡기 전이라 키가 막아 주지 않는다). 종목마다 하루 한 번만
+   * 알리고, 새로 알린 게 없으면 성공으로 끝낸다 — 실행 기록이 매 분 빨개지지 않게.
+   */
+  if (!orderOpen) {
+    let alerted = 0;
+    for (const b of breached) {
+      const name = `stop-after-close-${b.symbol}`;
+      if (await doneToday(name)) continue;
+      await markDone(name, `${b.name} ${Math.round(b.price)}원 ≤ 손절 ${Math.round(b.stop)}원 · 회차 ${b.round}`);
+      alerted += 1;
+      await sendSlack(
+        `:warning: *장 마감 뒤 손절선을 깼습니다* — ${escapeMrkdwn(b.name)} (${b.symbol}) ${b.quantity}주\n`
+        + `현재가 ${slackWon(b.price)} ≤ 손절 ${slackWon(b.stop)} (회차 ${b.round})\n`
+        + '이 시간엔 주문을 못 냅니다(애프터마켓 주문 미구현). '
+        + '*다음 개장 뒤에도 선 아래면 09:01부터 시장가로 팝니다* — 그 전에 팔려면 손으로.',
+      ).catch(() => undefined);
+    }
+    process.exit(alerted > 0 ? 1 : 0);
   }
 
   for (const b of breached) {
@@ -313,7 +364,13 @@ async function main(): Promise<void> {
       /*
        * ★★ **못 판 것이 판 것보다 급하다.** 손절선을 깼는데 주문이 안 나갔다는
        *   것은 그 자리가 무방비로 남아 있다는 뜻이다 — 사람이 손으로 팔아야 한다.
+       *
+       * ★ 알림은 종목마다 하루 한 번이다(주문 시도는 매 분 계속한다). 공휴일에는
+       *   개장일 검사가 매 분 막아 하루 수백 통이 될 수 있었다 — 늘 울리는 경보는
+       *   안 읽힌다.
        */
+      if (await doneToday(`stop-failed-${b.symbol}`)) continue;
+      await markDone(`stop-failed-${b.symbol}`, why.slice(0, 200));
       await sendSlack(
         `:x: *손절이 나가지 못했다* — ${escapeMrkdwn(b.name)} (${b.symbol}) ${b.quantity}주\n`
         + `현재가 ${slackWon(b.price)} ≤ 손절 ${slackWon(b.stop)} (회차 ${b.round})\n`

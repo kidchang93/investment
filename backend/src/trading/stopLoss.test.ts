@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { checkStops, type StopRule } from './stopLoss.js';
+import { canSendStopOrder, checkStops, type StopRule } from './stopLoss.js';
 import type { BrokerExecution } from '@invest/shared';
 
 const NO_EXEC: BrokerExecution[] = [];
@@ -174,5 +174,23 @@ describe('익절가를 넘은 자리', () => {
     );
     assert.deepEqual(r.targetsHit.map((h) => h.symbol), ['005935']);
     assert.deepEqual(r.breaches.map((b) => b.symbol), ['015760']);
+  });
+});
+
+describe('손절 주문을 낼 수 있는 시각 — 감시는 20:00까지, 주문은 15:30 전까지 (2026-09-17)', () => {
+  const at = (clock: string): number => {
+    const [hour, minute] = clock.split(':').map(Number);
+    return hour * 60 + minute;
+  };
+
+  it('마감 동시호가(15:20~15:29)까지는 시장가로 판다', () => {
+    assert.equal(canSendStopOrder(at('09:01')), true);
+    assert.equal(canSendStopOrder(at('15:29')), true);
+  });
+
+  it('★ 15:30부터는 주문을 안 낸다 — 거절될 주문을 매 분 보내 "못 팔았다"를 쌓지 않는다', () => {
+    assert.equal(canSendStopOrder(at('15:30')), false);
+    assert.equal(canSendStopOrder(at('17:00')), false); // 애프터마켓 — 값은 움직이지만 팔 길이 없다
+    assert.equal(canSendStopOrder(at('19:59')), false);
   });
 });
