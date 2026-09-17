@@ -28,12 +28,14 @@ import { getKisAccount } from '../config.js';
 import { closeDb, pool } from '../db/client.js';
 import { getLatestStopPrices } from '../db/deliberations.js';
 import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
+import { getLayerPositions } from '../db/layers.js';
 import {
   getKisDomesticAccountSnapshot,
   getKisDomesticAmendableOrders,
   getKisDomesticOrderability,
 } from '../kis/rest.js';
 import { won } from '../notify/slack.js';
+import { LAYER_CAP, STOCK_CAP } from '../trading/buyGuard.js';
 import { AXIS_DIVERGENCE_LIMIT } from '../trading/fairValue.js';
 
 /** 이보다 오래된 적정가는 낡았다고 알린다. 분석가가 5분마다 도므로 넉넉한 값이다 */
@@ -518,6 +520,22 @@ async function main(): Promise<void> {
       }
     } catch {
       console.log('  ★ 매수여력을 못 읽었습니다. 예수금보다 훨씬 작을 수 있으니 크게 사지 마세요.');
+    }
+    /*
+     * ★★ **운용 지침 — 빈 자리를 보인다** (2026-09-17). 사용자가 정했다: 단기 층이 비어
+     *   있으면 후보를 기대값 순으로 사서 채운다(`prompts/analyst.md`). 그전엔 이 값이 화면에
+     *   없어 분석가가 매번 따로 셌고, 층이 5.1%인 채로 4거래일 매수 0건이었다.
+     *   값은 층 장부 수량 × 지금 현재가다(집행기 `layerValue`와 같은 재료).
+     */
+    const equity = snap.totalEvaluation ?? 0;
+    const priceOf = new Map(snap.positions.map((p) => [p.symbol, p.currentPrice ?? 0]));
+    const shortValue = (await getLayerPositions(accountId).catch(() => []))
+      .filter((p) => p.layer === 'short')
+      .reduce((s, p) => s + p.quantity * (priceOf.get(p.symbol) ?? 0), 0);
+    if (equity > 0) {
+      const room = Math.max(0, LAYER_CAP * equity - shortValue);
+      console.log(`  ★ 단기 층 ${((shortValue / equity) * 100).toFixed(1)}% · 목표 ${LAYER_CAP * 100}%`
+        + ` — 빈 자리 ${won(room)} (한 종목 최대 ${STOCK_CAP * 100}% = ${won(STOCK_CAP * equity)})`);
     }
     /*
      * ★★ **내가 적은 익절·손절을 함께 찍는다** (2026-09-09).
