@@ -1035,7 +1035,20 @@ export async function getDomesticQuotes(codes: string[]): Promise<QuoteBatchResu
   const unique = [...new Set(codes.map((code) => code.trim()).filter((code) => code.length > 0))];
   const result: QuoteBatchResult = { quotes: new Map(), blank: [], failed: [], calls: 0 };
 
+  /*
+   * ★ **서버가 답을 안 하면 남은 묶음은 묻지 않는다** (2026-09-17).
+   *
+   * 9/16 14:13부터 KIS 모의 서버가 연결은 받고 응답을 0바이트로 흘렸다. 묶음마다
+   * 15초 타임아웃 × 재연결 1회 = 30초라, 900종목(30묶음)을 끝까지 두드리느라
+   * 적정가 한 회차가 **17분**을 썼다(14:42~14:59). 응답 없는 묶음이 연달아 둘이면
+   * 나머지도 같다고 보고 `failed`에만 적는다. 서버가 답을 준 실패(rt_cd)는 세지 않는다.
+   */
+  let unansweredInARow = 0;
   for (const chunk of chunkQuoteCodes(unique)) {
+    if (unansweredInARow >= 2) {
+      result.failed.push({ codes: chunk, message: `앞 묶음 ${unansweredInARow}개가 연달아 응답이 없어 묻지 않았다` });
+      continue;
+    }
     result.calls += 1;
     try {
       const json = await kisGet(MULTI_QUOTE_PATH, MULTI_QUOTE_TR_ID, multiQuoteParams(chunk));
@@ -1052,7 +1065,9 @@ export async function getDomesticQuotes(codes: string[]): Promise<QuoteBatchResu
       const parsed = parseMultiQuoteChunk(chunk, Array.isArray(rows) ? rows : [], fetchedAt);
       for (const quote of parsed.quotes) result.quotes.set(quote.code, quote);
       result.blank.push(...parsed.blank);
+      unansweredInARow = 0;
     } catch (err) {
+      unansweredInARow = isTransientNetworkError(err) ? unansweredInARow + 1 : 0;
       result.failed.push({ codes: chunk, message: err instanceof Error ? err.message : String(err) });
     }
   }

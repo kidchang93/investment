@@ -16,7 +16,9 @@
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -25,6 +27,7 @@ import {
   multiQuoteParams,
   parseMultiQuoteChunk,
 } from './multiQuote.js';
+import { getDomesticQuotes } from './rest.js';
 
 /** 실측(2026-07-31): 31종목을 넣으면 rt_cd=0으로 응답하면서 30행만 온다. */
 const MEASURED_MAX_CODES = 30;
@@ -372,5 +375,53 @@ describe('parseMultiQuoteChunk — 숫자가 아닌 값', () => {
     const parsedHalted = parseMultiQuoteChunk(['005930'], [halted], FETCHED_AT);
     assert.equal(parsedHalted.quotes.length, 1, '거래정지 종목을 잃으면 안 된다');
     assert.equal(parsedHalted.quotes[0].accVolume, 0);
+  });
+});
+
+/*
+ * 9/16 14:13 KIS 모의 서버가 연결만 받고 답을 안 했다. 묶음마다 30초씩 30묶음을
+ * 두드려 적정가 한 회차가 17분이 됐다.
+ *
+ * ★ 토큰 캐시는 `process.cwd()/.cache`에 쓰인다 — `backend/.cache`의 실제 토큰을
+ *   가짜로 덮지 않게 **작업 디렉터리를 임시 폴더로 옮긴 뒤에만** 부른다(`auth.test.ts`와 같다).
+ */
+describe('getDomesticQuotes — 서버가 답을 안 할 때', () => {
+  const codes = Array.from({ length: 90 }, (_, i) => String(100_000 + i)); // 3묶음
+
+  async function withFakeKis(quoteCall: () => Response, run: () => Promise<void>): Promise<void> {
+    const dir = await mkdtemp(join(tmpdir(), 'kis-multiquote-test-'));
+    const cwd = process.cwd();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      if (String(input).includes('/oauth2/tokenP')) {
+        return new Response(JSON.stringify({ access_token: 't', expires_in: 86_400 }));
+      }
+      return quoteCall();
+    }) as typeof fetch;
+    process.chdir(dir);
+    try {
+      await run();
+    } finally {
+      process.chdir(cwd);
+      globalThis.fetch = realFetch;
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('응답 없는 묶음이 연달아 둘이면 셋째는 묻지 않고 failed에만 적는다', async () => {
+    await withFakeKis(() => { throw new DOMException('timed out', 'TimeoutError'); }, async () => {
+      const result = await getDomesticQuotes(codes);
+      assert.equal(result.calls, 2, '죽은 서버에 남은 묶음까지 두드렸다');
+      assert.equal(result.failed.length, 3, '안 물은 묶음도 못 받은 것으로 남아야 한다');
+      assert.match(result.failed[2].message, /묻지 않았다/);
+    });
+  });
+
+  it('서버가 답을 준 실패(rt_cd)는 세지 않는다 — 끝까지 묻는다', async () => {
+    await withFakeKis(() => new Response(JSON.stringify({ rt_cd: '1', msg_cd: 'X', msg1: '실패' })), async () => {
+      const result = await getDomesticQuotes(codes);
+      assert.equal(result.calls, 3);
+      assert.equal(result.failed.length, 3);
+    });
   });
 });
