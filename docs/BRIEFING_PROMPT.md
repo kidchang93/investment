@@ -25,12 +25,43 @@
 >
 > **프롬프트는 두 루틴이 같다.** 회차 구분은 프롬프트가 `TZ=Asia/Seoul date`로 한다.
 >
-> ## 남은 환경 문제 — 사람만 고칠 수 있다
+> ## ★★ 출처를 통째로 갈았다 (2026-09-18)
 >
-> `stock.naver.com`이 환경 정책상 차단(403)돼 **미국 지수 포인트 값과 정식 뉴스를
-> 못 가져온다.** 대리지표(SPY·QQQ·DIA·IEF)로 방향성만 메우고 있다. 풀려면:
-> claude.ai/code/routines → 루틴 → 연필 → 환경(구름) → 톱니 → Network access →
-> Allowed domains에 `stock.naver.com` 추가. **API로는 안 된다.**
+> 9/18 08:04 회차의 프리플라이트에서 **`finance.naver.com` 레거시 엔드포인트가 전부
+> `HTTP 410 Gone`**으로 나왔다. 9/11에 "검증됨"으로 적어 둔 표가 통째로 무효가 된
+> 것이다. 그 회차는 코스피·코스닥·수급·환율·금리·유가·금을 전부 `❓미확보`로 적고
+> 미국은 ETF 프록시로만 메웠다 — 브리핑의 절반이 빈 채로 나갔다.
+>
+> 대체 출처를 실측으로 찾아 넣었다(2026-09-18 로컬 확인):
+>
+> | 그동안 못 가져오던 것 | 새 출처 |
+> |---|---|
+> | 코스피·코스닥 종가·등락률 | `m.stock.naver.com/api/index/{KOSPI,KOSDAQ}/price` |
+> | **투자자별 수급(개인·외국인·기관)** | `m.stock.naver.com/api/index/{KOSPI,KOSDAQ}/trend` |
+> | 원/달러 | Yahoo `USDKRW=X` |
+> | **미국 3대 지수 — 포인트 값 자체** | Yahoo `^GSPC` · `^IXIC` · `^DJI` |
+> | **미 10년물 금리 — 수치 자체** | Yahoo `^TNX` |
+> | 유가 WTI·브렌트 | Yahoo `CL=F` · `BZ=F` |
+> | 금·은 | Yahoo `GC=F` · `SI=F` |
+> | VIX·달러지수 (새로 추가) | Yahoo `^VIX` · `DX-Y.NYB` |
+>
+> ★ **대리지표(SPY·QQQ·DIA·IEF)는 이제 1순위가 아니다.** 지수 값 자체가 오므로
+> 프록시는 Yahoo가 죽은 회차의 폴백으로만 쓴다.
+>
+> ## 아직 미확보 — 출처를 못 찾았다
+>
+> - **프로그램 매매** — `m.stock.naver.com`에 엔드포인트가 없다(404)
+> - **국내 금리 3종**(국고채 3년·CD91·콜) — 네이버 모바일 API에 없고, 한국은행
+>   ECOS는 API 키가 필요하다(`ecos.bok.or.kr` 자체는 200)
+> - **정식 뉴스** — `/news/*`·`n.news.naver.com` 여전히 차단
+> - KRX JSON API(`getJsonData.cmd`)는 계속 403이다
+>
+> ## 검증 범위 — 읽는 사람이 알아야 할 것
+>
+> 위 표는 **로컬(사용자 맥)에서 잰 값**이다. 클라우드 루틴 환경은 네트워크 정책이
+> 달라(네이버가 거기서만 막혔던 전례가 있다) **같으리라는 보장이 없다.** 그래서
+> 프롬프트는 출처를 박아 넣지 않고 **프리플라이트로 확인한 뒤 살아 있는 것만 쓴다.**
+> 죽었으면 `❓미확보`로 적는 규칙은 그대로다.
 
 ---
 
@@ -53,34 +84,34 @@
 2. **[0-A] 프리플라이트 (건너뛰기 금지)** — 실제 데이터 엔드포인트로 확인한다:
 
    ```
-   curl -sS -o /dev/null -w "naver-idx  %{http_code}\n" --max-time 20 \
-     "https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI"
-   curl -sS -o /dev/null -w "naver-fx   %{http_code}\n" --max-time 20 \
-     "https://finance.naver.com/marketindex/exchangeDailyQuote.naver?marketindexCd=FX_USDKRW&page=1"
-   curl -sS -o /dev/null -w "naver-oil  %{http_code}\n" --max-time 20 \
-     "https://finance.naver.com/marketindex/worldDailyQuote.naver?marketindexCd=OIL_CL&fdtc=2&page=1"
-   curl -sS -o /dev/null -w "krx        %{http_code}\n" --max-time 20 https://data.krx.co.kr/
+   UA="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"
+   curl -sS -o /dev/null -w "yahoo-idx  %{http_code}\n" --max-time 20 -H "User-Agent: Mozilla/5.0" \
+     "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?interval=1d&range=5d"
+   curl -sS -o /dev/null -w "yahoo-fx   %{http_code}\n" --max-time 20 -H "User-Agent: Mozilla/5.0" \
+     "https://query1.finance.yahoo.com/v8/finance/chart/USDKRW=X?interval=1d&range=5d"
+   curl -sS -o /dev/null -w "nv-index   %{http_code}\n" --max-time 20 -H "User-Agent: $UA" \
+     "https://m.stock.naver.com/api/index/KOSPI/price?pageSize=3&page=1"
+   curl -sS -o /dev/null -w "nv-trend   %{http_code}\n" --max-time 20 -H "User-Agent: $UA" \
+     "https://m.stock.naver.com/api/index/KOSPI/trend?pageSize=3"
+   curl -sS -o /dev/null -w "nv-etf     %{http_code}\n" --max-time 20 \
+     "https://finance.naver.com/api/sise/etfItemList.naver"
    curl -sS -o /dev/null -w "sa         %{http_code}\n" --max-time 20 https://stockanalysis.com/etf/schd/
    ```
 
-   ※ `finance.naver.com`의 **최상위 경로**(`/sise/`, `/world/`, `/marketindex/`, `/news/`)는
-     `stock.naver.com`으로 리다이렉트되며 이 환경에서 차단되어 302를 반환한다.
-     **이는 출처 사망이 아니다.** 위 레거시 엔드포인트 중 하나라도 200이면 naver는 생존으로 판정한다.
-   ※ 모든 네이버 페이지는 **EUC-KR**이다. 반드시 `iconv -f euc-kr -t utf-8`로 디코딩한다.
-     `/api/sise/etfItemList.naver`는 JSON이지만 **역시 EUC-KR**이다.
-
-   `200`이 아니면 그 출처는 죽은 것으로 간주한다. `403`은 사이트의 봇 차단이므로
-   재시도·User-Agent 변경으로 우회하려 하지 말고 죽은 것으로 처리한다.
-   WebFetch가 `EGRESS_BLOCKED`를 반환하면 같은 URL을 curl로 받아 파싱해도 된다
-   (동일 출처이므로 규칙 위반 아님).
+   `200`이 아니면 그 출처는 죽은 것으로 간주한다. `403`·`410`은 재시도·User-Agent
+   변경으로 우회하려 하지 말고 죽은 것으로 처리한다. WebFetch가 `EGRESS_BLOCKED`를
+   반환하면 같은 URL을 curl로 받아 파싱해도 된다(동일 출처이므로 규칙 위반 아님).
 
    결과에 따라 모드를 확정한다:
-   - **정상 모드** — 국내 출처(naver 또는 krx) + stockanalysis 모두 생존 → 전체 브리핑 작성.
-   - **국내 온리 모드** — 국내 출처만 생존 → 미국 ETF 섹션을 "❓ 미확보(출처 접근 차단)"로
+   - **정상 모드** — 국내 출처(`nv-index` 또는 `nv-etf`) + 해외 출처(`yahoo-idx` 또는 `sa`)
+     모두 생존 → 전체 브리핑 작성.
+   - **국내 온리 모드** — 국내 출처만 생존 → 미국 섹션을 `❓ 미확보(출처 접근 차단)`로
      표기하고, [2](B)의 '국내·미국 모두 포함' 요건을 **이 실행에 한해 면제**.
      면제 사실을 브리핑에 명시.
-   - **미국 온리 모드** — stockanalysis만 생존 → **브리핑을 작성하지 않는다.**
-     슬랙에 "국내 출처 접근 불가로 이번 회차를 건너뜁니다"와 프리플라이트 결과만 짧게 남긴다.
+   - **해외 온리 모드** — 해외 출처만 생존 → 국내 섹션을 `❓ 미확보`로 적고 해외만
+     작성한다. 국내가 통째로 빈 회차임을 **핵심 요약 셋째 줄에 명시**한다.
+   - **양쪽 다 사망** — **브리핑을 작성하지 않는다.** 슬랙에 "출처 접근 불가로 이번
+     회차를 건너뜁니다"와 프리플라이트 결과만 짧게 남긴다.
 
 3. 데이터 수집 → 4. 작성 → 5. 슬랙 전송.
 
@@ -88,51 +119,70 @@
 
 ## [1] 출처 규칙
 
-**허용 출처는 셋뿐이다** — `finance.naver.com`(레거시 엔드포인트), `data.krx.co.kr`,
-`stockanalysis.com`. 다른 출처를 끌어오지 않는다.
+**허용 출처는 넷뿐이다** — `query1.finance.yahoo.com`, `m.stock.naver.com`,
+`finance.naver.com/api/sise/etfItemList.naver`, `stockanalysis.com`.
+(`data.krx.co.kr`는 메인만 200이고 데이터 API가 403이라 실질적으로 못 쓴다.)
+다른 출처를 끌어오지 않는다.
 
-**✅ 검증된 작동 엔드포인트 (2026.09.11 확인) — 먼저 이것부터 시도한다**
+**✅ 검증된 작동 엔드포인트 (2026.09.18 로컬 확인) — 먼저 이것부터 시도한다**
+
+Yahoo는 전부 같은 모양이다. `https://query1.finance.yahoo.com/v8/finance/chart/<심볼>?interval=1d&range=5d`
+→ JSON. 값은 `chart.result[0].meta`의 `regularMarketPrice`(종가)와
+`chartPreviousClose`(전일 종가)에 있다. `^`는 URL에서 `%5E`로 인코딩한다.
+
+| 데이터 | 심볼 |
+|---|---|
+| S&P500 · 나스닥 · 다우 | `^GSPC` · `^IXIC` · `^DJI` |
+| 미 10년물 금리(%) | `^TNX` |
+| VIX · 달러지수 | `^VIX` · `DX-Y.NYB` |
+| 원/달러 | `USDKRW=X` |
+| WTI · 브렌트 | `CL=F` · `BZ=F` |
+| 금 · 은 | `GC=F` · `SI=F` |
+| 코스피 · 코스닥 (보조) | `^KS11` · `^KQ11` |
+
+네이버 모바일 API — `User-Agent`에 모바일 문자열을 넣는다. 응답은 UTF-8 JSON이다
+(레거시 페이지의 EUC-KR 처리는 더 이상 필요 없다).
 
 | 데이터 | URL |
 |---|---|
-| 코스피·코스닥 일별 | `/sise/sise_index_day.naver?code=KOSPI` (KOSDAQ) |
-| 원달러 일별(날짜 포함) | `/marketindex/exchangeDailyQuote.naver?marketindexCd=FX_USDKRW&page=1` |
-| 환율 실시간 목록 | `/marketindex/exchangeList.naver` (※ 고시일 표기 없음 — 일별 페이지로 날짜 확인할 것) |
-| 국제유가 | `/marketindex/worldDailyQuote.naver?marketindexCd=OIL_CL&fdtc=2&page=1` |
-| | 브렌트 `OIL_BRT` · 두바이 `OIL_DU` · 금 `CMDT_GC` (같은 URL, 코드만 교체) |
-| 국내 금리 | `/marketindex/interestDailyQuote.naver?marketindexCd=IRR_GOVT03Y&page=1` |
-| | CD91일 `IRR_CD91` · 콜금리 `IRR_CALL` |
-| 국내 ETF 전종목 | `/api/sise/etfItemList.naver` (JSON이지만 EUC-KR 인코딩) |
-| 국내 종목·ETF 일별시세 | `/item/sise_day.naver?code=<6자리코드>` |
-| 미국 ETF 개요 | `https://stockanalysis.com/etf/<티커>/` (소문자, 리다이렉트 따라가려면 `-L`) |
-| 미국 ETF 일별 | `https://stockanalysis.com/etf/<티커>/history/` |
-| 미국 ETF 배당 | `https://stockanalysis.com/etf/<티커>/dividend/` |
+| 코스피·코스닥 일별 시세 | `https://m.stock.naver.com/api/index/{KOSPI\|KOSDAQ}/price?pageSize=5&page=1` |
+| **투자자별 수급(개인·외국인·기관)** | `https://m.stock.naver.com/api/index/{KOSPI\|KOSDAQ}/trend?pageSize=5` |
+| 지수 기본 정보 | `https://m.stock.naver.com/api/index/{KOSPI\|KOSDAQ}/basic` |
+| 종목별 수급·외국인 지분율 | `https://m.stock.naver.com/api/stock/<6자리코드>/trend?pageSize=5` |
+| 국내 ETF 전종목 | `https://finance.naver.com/api/sise/etfItemList.naver` (JSON, **EUC-KR** — `iconv -f euc-kr -t utf-8`) |
+| 미국 ETF 개요 | `https://stockanalysis.com/etf/<티커>/` (HTML 안의 `quote:{...}` 객체에 `p`=현재가 `cp`=등락률 `cl`=전일종가 `u`=기준시각) |
+| 미국 ETF 일별 · 배당 | `https://stockanalysis.com/etf/<티커>/history/` · `/dividend/` |
 
 **❌ 확인된 불가 (재시도하지 말 것)**
-- `/world/*` 전 경로 — 미국 지수 포인트 값 확보 불가. `/world/` 최상위는 **2013년 캐시**를 준다
-- 미 10년물 금리 — 네이버 marketindex에 코드 자체가 없음 (국내 금리만 제공)
-- `/news/*`, `/item/news_news.naver` — 껍데기(JS)만 반환, 기사 데이터 없음.
-  `n.news.naver.com`도 차단
-- 국내 ETF 총보수·분배금 — 네이버에 전용 엔드포인트 없음. **단, `/item/main.naver?code=<코드>`를
-  UTF-8로 디코딩하면 총보수·운용사·1/3/6/12개월 수익률이 나온다**(EUC-KR이 아니다 — 이 페이지만 예외)
-- KRX JSON API (`getJsonData.cmd`) — JS 생성 세션 토큰을 요구해 `LOGOUT`만 반환
-- `/item/coinfo.naver`, `polling.finance.naver.com` — 302 / 차단
+- **`finance.naver.com`의 레거시 엔드포인트 전부 — `HTTP 410 Gone`** (2026.09.18 확인).
+  `/sise/sise_index_day.naver`·`/marketindex/*`(환율·유가·금리)·`/item/sise_day.naver`가
+  모두 죽었다. **`/api/sise/etfItemList.naver` 하나만 살아 있다.**
+- 프로그램 매매 — 네이버 모바일 API에 엔드포인트 없음(404)
+- 국내 금리(국고채 3년·CD91·콜) — 네이버 모바일 API에 없음(404). 한국은행 ECOS는
+  API 키가 필요해 이 환경에서 못 쓴다
+- `/news/*`, `/item/news_news.naver`, `n.news.naver.com` — 차단
+- KRX JSON API (`getJsonData.cmd`) — 403
 - `https://stockanalysis.com/etf/<티커>/performance/` — 404
 
-**대리지표 허용 규칙**
-미국 지수·금리의 *수치 자체*를 확보하지 못한 경우, 허용 출처인 stockanalysis(미국 상장 ETF)의
-추종 ETF로 **방향성만** 대체할 수 있다. 단 반드시 **"지수 값이 아니라 ETF 가격"임을 명시**한다.
+**대리지표 — 폴백 전용**
+Yahoo가 죽은 회차에 한해, stockanalysis(미국 상장 ETF)의 추종 ETF로 **방향성만**
+대체할 수 있다. 단 반드시 **"지수 값이 아니라 ETF 가격"임을 명시**한다.
 - S&P500 → SPY · 나스닥100 → QQQ · 다우 → DIA · 미 10년물 금리 방향 → IEF(가격↓ = 금리↑)
 
-이것은 스니펫 금지 규칙과 무관하다(실제 페이지를 열어 읽은 값이므로).
+**Yahoo가 살아 있으면 지수 값을 그대로 쓴다. 프록시로 대체하지 않는다.**
 
 **★ 스니펫 금지** — 검색 결과 요약·미리보기에서 숫자를 옮기지 않는다. 실제 페이지를 열어 읽은 값만 쓴다.
 
 **★ 날조 금지** — 확보하지 못한 값은 반드시 `❓ 미확보(사유)`로 적는다. 그럴듯한 값을 채우지 않는다.
 추정으로 메운 것은 "추정"이라고 밝힌다.
 
-**★ 모든 수치에 출처와 기준일을 붙인다** — `_(출처: 네이버금융 ETF 목록, 2026.09.10 기준)_` 형식.
-기준일이 오늘이 아니면 그 사실이 보여야 한다.
+**★ 모든 수치에 출처와 기준일을 붙인다** — `_(출처: Yahoo Finance ^GSPC, 2026.09.17 종가)_` 형식.
+기준일이 오늘이 아니면 그 사실이 보여야 한다. 네이버 모바일 API는 `localTradedAt`,
+Yahoo는 `meta.regularMarketTime`, stockanalysis는 `quote`의 `u` 값이 기준일이다.
+
+**★ 출처 목록이 틀렸으면 그 사실을 보고한다** — 프리플라이트에서 위 표의 엔드포인트가
+죽어 있으면, 브리핑 끝의 `⚠️ *출처 접근 안내*`에 **어느 URL이 몇 번 코드로 죽었는지**
+적는다. 이 표는 실측으로만 갱신된다(2026.09.11 표가 09.18에 통째로 410이 된 전례).
 
 ---
 
@@ -143,15 +193,19 @@
 1. 맨 위 면책 문구: `ℹ️ _본 브리핑은 정보 제공 목적이며 개인화된 투자 조언이 아닙니다. 모든 투자 판단과 책임은 본인에게 있습니다._`
 2. 제목: `📅 *데일리 한·미 주식 브리핑 — YYYY.MM.DD (요일) KST*`
 3. **핵심 요약 3줄** — 오늘 가장 중요한 것 세 개. 미확보가 많은 회차면 그 사실을 셋째 줄에 적는다.
-4. **1️⃣ 한국 시장** — 코스피·코스닥 종가·등락률, 투자자별 수급(개인·외국인·기관), 프로그램 매매
-5. **2️⃣ 미국 시장** — 3대 지수. 포인트 값을 못 가져오면 대리지표(SPY·QQQ·DIA)로 방향성만, 명시할 것
-6. **3️⃣ 시장지표** — 원/달러, 국내 금리(국고채 3년·CD91·콜), 국제유가 3종(WTI·브렌트·두바이), 금
+4. **1️⃣ 한국 시장** — 코스피·코스닥 종가·등락률, **투자자별 수급(개인·외국인·기관)**,
+   프로그램 매매(출처 없음 → `❓ 미확보`)
+5. **2️⃣ 미국 시장** — 3대 지수 **포인트 값과 등락률**. Yahoo가 죽었을 때만 대리지표로
+   방향성, 그 경우 명시할 것. 미 10년물 금리(`^TNX`)와 VIX를 함께 적는다
+6. **3️⃣ 시장지표** — 원/달러, 달러지수, 국제유가(WTI·브렌트), 금·은.
+   국내 금리 3종은 출처가 없으므로 `❓ 미확보(출처 없음)`로 둔다
 7. 출처 접근에 문제가 있었다면 `⚠️ *출처 접근 안내*`로 본문 끝에 짧게
 
 ### (B) 스레드 — 본문에 이어 붙인다 (세 건)
 
 - **스레드 1 · `4️⃣ ETF 자금 흐름`** — 국내 ETF 거래대금 상위, 3개월 수익률 상·하위와 AUM.
-  실시간 순자금유출입은 허용 출처에 없으므로 시총 흐름으로 간접 유추하고 그렇다고 밝힌다
+  실시간 순자금유출입은 허용 출처에 없으므로 시총 흐름으로 간접 유추하고 그렇다고 밝힌다.
+  ★ 개장 전(오전 회차)에는 `quant`·`amonut`이 0으로 오므로 **전일 기준임을 밝힌다**
 - **스레드 2 · `5️⃣ 유망 후보` + `6️⃣ ⏳ 지금은 피할 구간`** —
   유망 후보는 **국내·미국 모두 포함**한다(국내 온리 모드면 면제, 명시할 것).
   피할 구간은 3개 내외, 각각 근거 수치와 함께
@@ -177,6 +231,8 @@
 - 검색 스니펫에서 숫자 옮기기
 - 허용 출처 밖에서 데이터 가져오기
 - 프리플라이트 건너뛰기
-- 302·403을 우회하려고 User-Agent 바꾸기·재시도 반복
+- 403·410을 우회하려고 User-Agent 바꾸기·재시도 반복 (네이버 모바일 API에 모바일
+  UA를 넣는 것은 우회가 아니라 그 API의 정상 호출 방식이다)
 - 기준일 없는 수치 쓰기
 - 보유 종목 목록을 브리핑에 넣기 (그것은 로컬 판단자의 일이다)
+- Yahoo가 살아 있는데 프록시(SPY·QQQ·DIA)로 미국 지수를 대신하기
