@@ -52,7 +52,7 @@ import { getDailyBars } from '../db/dailyBars.js';
 import { getLayerPositions } from '../db/layers.js';
 import { getNaverEtfIndicators } from '../naver/finance.js';
 import { dividendYield, trailingDividendPerShare } from '../trading/dividend.js';
-import { annualizedReturn, feeDrag, yearsBetween } from '../trading/longHold.js';
+import { annualizedReturn, CONFIRMED_ETF_TAX, feeDrag, taxDrag, yearsBetween } from '../trading/longHold.js';
 
 const args = process.argv.slice(2);
 const flags = args.filter((a) => a.startsWith('--'));
@@ -256,16 +256,49 @@ if (bestDiv && heldBelow.length > 0) {
  */
 const TWENTY = 20;
 console.log(`\n── ${TWENTY}년 지평 · 가격 연환산은 가진 봉 전부, 기간을 함께 본다 ──\n`);
-console.log('   종목                        가격 연환산    기간     배당   보수 20년 누적');
-console.log('─'.repeat(80));
+console.log('   종목                        가격 연환산    기간     배당   보수 20년 누적   세금 연 깎임  과세');
+console.log('─'.repeat(104));
 const byLong = [...rows].sort((a, b) => (b.longCagr ?? -999) - (a.longCagr ?? -999));
+/*
+ * ★ 판 해에 차익이 몰리는 종목을 모은다. 기타형(보유기간 과세)은 20년치 차익이
+ *   **판 해 한 번에** 배당소득으로 잡혀, 그해 금융소득이 2천만원을 넘으면 넘는 몫이
+ *   다른 소득과 합산돼 누진세율로 과세된다. 그 누진은 다른 소득에 달려 있어 계산에
+ *   넣지 못하므로 크기만 보인다.
+ */
+const lumpSale: Array<{ name: string; value: number }> = [];
 for (const r of byLong) {
   const drag = feeDrag(r.feePct, TWENTY);
+  const tax = CONFIRMED_ETF_TAX[r.symbol];
+  const t = tax && r.longCagr !== undefined && r.divYield !== undefined
+    ? taxDrag(r.longCagr, r.divYield, TWENTY, tax.type) : undefined;
+  if (tax?.type === 'holdingPeriod' && r.held && r.value > 0) lumpSale.push({ name: r.name, value: r.value });
   console.log(
     `${r.held ? ' ●' : '  '} ${r.name.slice(0, 22).padEnd(24)} `
     + `${pct(r.longCagr).padStart(11)} ${(r.longYears === undefined ? '—' : `${r.longYears.toFixed(1)}년`).padStart(7)} `
-    + `${pct(r.divYield).padStart(8)} ${(drag === undefined ? '—' : `−${drag.toFixed(2)}%`).padStart(14)}`,
+    + `${pct(r.divYield).padStart(8)} ${(drag === undefined ? '—' : `−${drag.toFixed(2)}%`).padStart(14)} `
+    + `${(t === undefined ? '—' : `−${t.dragPct.toFixed(2)}%p`).padStart(13)}  `
+    + `${tax === undefined ? '모름' : tax.type === 'domestic' ? '차익 비과세' : '보유기간과세'}`,
   );
+}
+console.log('  ※ 세금 연 깎임 = 배당을 세후로 재투자하며 20년 들고 판 결과의 세전−세후 연환산 차이입니다.');
+console.log('    기타형은 매매차익 **전액**을 과세 대상으로 봤습니다(실제는 Min(차익, 과표증분)) — 상한입니다.');
+console.log('  ※ 과세 "모름"은 운용사 원문으로 확인하지 않은 종목입니다. 이름으로 짐작하지 않습니다.');
+/*
+ * ★★ **"차익이 X억"이 아니라 "연 몇 %만 넘어도"로 적는다.** 첫 판은 과거 연환산으로
+ *    20년 차익을 투영해 "4.8억 원"이라고 적었는데, 그건 금현물 4.8년치 연 23%를
+ *    20년 늘린 것(67배)이라 과장이다. 알고 싶은 것은 **2천만원 문턱을 넘느냐**이고,
+ *    그 문턱 수익률은 보유 금액만으로 정확히 나온다 — 가정이 필요 없다.
+ *      value × ((1+g)^20 − 1) = 2천만  →  g = (1 + 2천만/value)^(1/20) − 1
+ *    배당은 뺐다(두 기타형 모두 0~1%라 문턱을 거의 안 움직인다).
+ */
+const LUMP_THRESHOLD = 20_000_000;
+if (lumpSale.length > 0) {
+  console.log('\n  ★ 기타형은 20년치 차익이 **판 해 한 번에** 금융소득으로 잡힙니다:');
+  for (const l of lumpSale) {
+    const hurdle = ((1 + LUMP_THRESHOLD / l.value) ** (1 / TWENTY) - 1) * 100;
+    console.log(`    ${l.name} 지금 보유분(${won(l.value)})은 20년 연 ${hurdle.toFixed(1)}%만 넘어도 판 해 금융소득 2천만원을 넘어 **종합과세** 대상입니다`);
+  }
+  console.log('    나눠 팔거나(해마다 2천만원 안쪽) 차익 비과세형으로 옮기면 피합니다. 누진세율은 다른 소득에 달려 있어 계산에 넣지 않았습니다.');
 }
 console.log('  ※ 3년 미만은 연환산하지 않았습니다 — 짧은 기간을 연으로 늘리면 20년을 말해 주지 않습니다.');
 console.log('  ※ 지난 수익률은 다음 20년을 보장하지 않습니다. 20년을 실제로 잰 것은 21년치가 있는 종목뿐입니다.');
