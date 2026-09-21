@@ -522,10 +522,13 @@ async function main(): Promise<void> {
       console.log('  ★ 매수여력을 못 읽었습니다. 예수금보다 훨씬 작을 수 있으니 크게 사지 마세요.');
     }
     /*
-     * ★★ **운용 지침 — 빈 자리를 보인다** (2026-09-17). 사용자가 정했다: 단기 층이 비어
-     *   있으면 후보를 기대값 순으로 사서 채운다(`prompts/analyst.md`). 그전엔 이 값이 화면에
-     *   없어 분석가가 매번 따로 셌고, 층이 5.1%인 채로 4거래일 매수 0건이었다.
+     * ★★ **남은 한도를 보인다** (2026-09-17, 이름은 2026-09-21에 고쳤다).
+     *   분석가가 매번 따로 세던 값이다 — 없던 동안 층이 5.1%인 채로 4거래일 매수 0건이었다.
      *   값은 층 장부 수량 × 지금 현재가다(집행기 `layerValue`와 같은 재료).
+     *
+     * ★ **"빈 자리"라고 부르지 않는다** (2026-09-21 사용자가 정했다). 50%는 채워야 할
+     *   목표가 아니라 넘지 말아야 할 선이다. 남은 한도가 크다는 것은 "사야 한다"가 아니라
+     *   "살 수 있다"이고, 사는 이유는 기대값이 비용을 넘는 후보가 **있을 때** 생긴다.
      */
     const equity = snap.totalEvaluation ?? 0;
     const priceOf = new Map(snap.positions.map((p) => [p.symbol, p.currentPrice ?? 0]));
@@ -534,8 +537,9 @@ async function main(): Promise<void> {
       .reduce((s, p) => s + p.quantity * (priceOf.get(p.symbol) ?? 0), 0);
     if (equity > 0) {
       const room = Math.max(0, LAYER_CAP * equity - shortValue);
-      console.log(`  ★ 단기 층 ${((shortValue / equity) * 100).toFixed(1)}% · 목표 ${LAYER_CAP * 100}%`
-        + ` — 빈 자리 ${won(room)} (한 종목 최대 ${STOCK_CAP * 100}% = ${won(STOCK_CAP * equity)})`);
+      console.log(`  ★ 단기 층 ${((shortValue / equity) * 100).toFixed(1)}% · 한도 ${LAYER_CAP * 100}%`
+        + ` — 남은 한도 ${won(room)} (한 종목 최대 ${STOCK_CAP * 100}% = ${won(STOCK_CAP * equity)})`
+        + '\n    ※ 한도는 상한입니다. 남았다고 사야 하는 것이 아니라, 기대값이 비용을 넘는 후보가 있을 때만 삽니다.');
     }
     /*
      * ★★ **내가 적은 익절·손절을 함께 찍는다** (2026-09-09).

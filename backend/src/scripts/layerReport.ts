@@ -57,7 +57,7 @@ async function main(): Promise<void> {
   console.log(
     padR('층', 8) + padL('종목', 5) + padL('원가', 13) + padL('평가액', 13)
     + padL('평가손익', 12) + padL('실현손익', 12) + padL('합계손익', 12)
-    + padL('비중', 7) + padL('목표', 7),
+    + padL('비중', 7) + padL('한도', 7),
   );
   console.log('─'.repeat(90));
   for (const s of summaries) {
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
       + padL(signed(s.realizedPnl), 12)
       + padL(signed(s.totalPnl), 12)
       + padL(pct(s.weight), 7)
-      + padL(pct(s.targetWeight), 7),
+      + padL(pct(s.capWeight), 7),
     );
   }
   console.log('─'.repeat(90));
@@ -89,7 +89,7 @@ async function main(): Promise<void> {
   console.log('\n목표 기여 — 각 층이 총자산 대비 몇 %p를 만들었나');
   for (const s of summaries) {
     if (s.symbols === 0 && s.realizedPnl === 0) {
-      console.log(`  ${padR(LAYER_LABELS[s.layer], 8)} — 아직 아무것도 없다 (목표 비중 ${pct(s.targetWeight)})`);
+      console.log(`  ${padR(LAYER_LABELS[s.layer], 8)} — 아직 아무것도 없다 (한도 ${pct(s.capWeight)})`);
       continue;
     }
     const contribution = totalAssets > 0 ? s.totalPnl / totalAssets : 0;

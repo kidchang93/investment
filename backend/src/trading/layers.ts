@@ -54,8 +54,16 @@ export const LAYER_LABELS: Record<Layer, string> = {
   short: '단기',
 };
 
-/** 층이 노리는 비중(총자산 대비)과 그 근거 */
-export const LAYER_TARGETS: Record<Layer, { weight: number; rationale: string }> = {
+/**
+ * 층의 **거래 한도**(총자산 대비)와 그 근거.
+ *
+ * ★★ **채워야 할 목표가 아니라 넘지 말아야 할 선이다** (2026-09-21 사용자가 정했다 —
+ *    *"내가 말한 50% 이런 수치들은 총자산에서 그정도를 이용해서 거래를 해라 이런것들이고"*).
+ *    미달 자체는 사야 할 이유가 못 된다. 좋은 후보가 있을 때 한도 안에서 사는 것이고,
+ *    없으면 적게 든 채로 둔다. 예전 이름이 `LAYER_TARGETS`·`targetWeight`였는데
+ *    그 이름 때문에 화면·프롬프트가 미달을 "빈 자리"라 부르며 채우라고 말하고 있었다.
+ */
+export const LAYER_CAPS: Record<Layer, { weight: number; rationale: string }> = {
   etf: {
     weight: 0.50,
     rationale: '시장 노출. 알파를 주장하지 않는다 — 21.4년 실측 연 12.12%',
@@ -363,7 +371,7 @@ export interface LayerSummary {
   totalPnl: number;
   /** 총자산 대비 비중(0~1) */
   weight: number;
-  targetWeight: number;
+  capWeight: number;
   symbols: number;
 }
 
@@ -379,7 +387,7 @@ export function summarizeLayers(
 ): { summaries: LayerSummary[]; unpriced: string[]; totalAssets: number } {
   const unpriced: string[] = [];
   const byLayer = new Map<Layer, LayerSummary>();
-  for (const layer of Object.keys(LAYER_TARGETS) as Layer[]) {
+  for (const layer of Object.keys(LAYER_CAPS) as Layer[]) {
     byLayer.set(layer, {
       layer,
       cost: 0,
@@ -388,7 +396,7 @@ export function summarizeLayers(
       realizedPnl: realizedByLayer.get(layer) ?? 0,
       totalPnl: 0,
       weight: 0,
-      targetWeight: LAYER_TARGETS[layer].weight,
+      capWeight: LAYER_CAPS[layer].weight,
       symbols: 0,
     });
   }

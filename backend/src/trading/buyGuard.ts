@@ -14,10 +14,20 @@
  * ★ 매도는 여기 오지 않는다. 안전장치는 들어가는 것을 막지 나오는 것을 막지 않는다.
  */
 
+import { LAYER_CAPS, type Layer } from './layers.js';
+
 /** 단기 층 한 종목 상한(총자산 대비). `docs/USER_DECISIONS.md` 「두 층 포트폴리오」 */
 export const STOCK_CAP = 0.10;
-/** 층 하나의 상한 */
-export const LAYER_CAP = 0.50;
+/**
+ * 층 하나의 상한. **`LAYER_CAPS`에서 가져온다** — 0.50이 두 곳에 따로 적혀 있어
+ * 한쪽만 바뀔 수 있었다(2026-09-21에 합쳤다). 층마다 값이 갈리면 `capOf`를 쓴다.
+ */
+export const LAYER_CAP = LAYER_CAPS.short.weight;
+
+/** 그 층의 상한. 지금은 두 층이 같지만 갈릴 수 있으므로 층으로 묻는다. */
+export function capOf(layer: Layer): number {
+  return LAYER_CAPS[layer].weight;
+}
 /** 손절까지 잃을 수 있는 돈의 상한 */
 export const RISK_CAP = 0.02;
 /** 제안 지정가에서 현재가가 이만큼 넘게 벗어나면 상황이 바뀐 것으로 본다 */
@@ -62,7 +72,7 @@ export function checkBuy(input: BuyGuardInput): BuyGuardVerdict {
 
   const caps: Array<[string, number]> = [
     ['매수여력', input.buyingPower / price],
-    [`층 ${LAYER_CAP * 100}%`, (LAYER_CAP * equity - input.layerValue) / price],
+    [`층 ${capOf(input.layer) * 100}%`, (capOf(input.layer) * equity - input.layerValue) / price],
   ];
   if (input.layer === 'short') {
     caps.push([`종목 ${STOCK_CAP * 100}%`, (STOCK_CAP * equity - input.heldValue) / price]);

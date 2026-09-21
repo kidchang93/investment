@@ -115,7 +115,7 @@ describe('층별 집계', () => {
     assert.ok(etf.unrealizedPnl > 0);
     assert.equal(short.realizedPnl, 150_000, '실현손익은 밖에서 들여온다');
     assert.equal(short.totalPnl, short.unrealizedPnl + 150_000);
-    assert.equal(short.targetWeight, 0.50, '유망주 층을 합쳐 절반이 됐다(2026-09-09)');
+    assert.equal(short.capWeight, 0.50, '유망주 층을 합쳐 절반이 됐다(2026-09-09)');
     assert.ok(Math.abs(totalAssets - (etf.marketValue + short.marketValue + 10_000_000)) < 1);
   });
 
@@ -126,7 +126,7 @@ describe('층별 집계', () => {
     const short = summaries.find((s) => s.layer === 'short')!;
     assert.equal(short.symbols, 0);
     assert.equal(short.marketValue, 0);
-    assert.equal(short.targetWeight, 0.50, '비어 있어도 노리는 비중은 그대로다');
+    assert.equal(short.capWeight, 0.50, '비어 있어도 한도는 그대로다 — 한도는 상한이지 채울 목표가 아니다(2026-09-21)');
   });
 
   it('★ 현재가를 못 받은 종목은 평가액에 0으로 넣지 않고 이름을 돌려준다', () => {

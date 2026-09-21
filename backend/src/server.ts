@@ -45,7 +45,7 @@ import { checkPositionGuard } from './trading/positionGuard.js';
 import { getLayerPositions, getLayerTradeStats, getRealizedByLayer, getTradeMarks } from './db/layers.js';
 import { pool } from './db/client.js';
 import {
-  LAYER_LABELS, LAYER_TARGETS, explainMismatches, reconcile, summarizeLayers,
+  LAYER_LABELS, LAYER_CAPS, explainMismatches, reconcile, summarizeLayers,
   type ExplainedMismatch, type LayerPosition,
 } from './trading/layers.js';
 import { ensureMarketSnapshotSchema } from './db/marketSnapshot.js';
@@ -564,7 +564,7 @@ async function main(): Promise<void> {
         return {
           layer: s.layer,
           label: LAYER_LABELS[s.layer],
-          rationale: LAYER_TARGETS[s.layer].rationale,
+          rationale: LAYER_CAPS[s.layer].rationale,
           symbols: s.symbols,
           cost: s.cost,
           marketValue: s.marketValue,
@@ -572,7 +572,7 @@ async function main(): Promise<void> {
           realizedPnl: s.realizedPnl,
           totalPnl: s.totalPnl,
           weight: s.weight,
-          targetWeight: s.targetWeight,
+          capWeight: s.capWeight,
           contribution: totalAssets > 0 ? s.totalPnl / totalAssets : 0,
           closedTrades,
           // 청산이 없으면 승률을 낼 수 없다. 0%로 적으면 "다 졌다"가 지어진다.

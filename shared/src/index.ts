@@ -1690,8 +1690,11 @@ export interface PortfolioLayerSummary {
   totalPnl: number;
   /** 총자산 대비 지금 비중(0~1) */
   weight: number;
-  /** 총자산 대비 목표 비중(0~1) */
-  targetWeight: number;
+  /**
+   * 총자산 대비 **거래 한도**(0~1). 넘지 말아야 할 선이지 맞춰야 할 값이 아니다 —
+   * 모자란 것은 정상이고, 넘은 것만 문제다(2026-09-21).
+   */
+  capWeight: number;
   /** 총자산 대비 이 층이 만든 손익(0~1). 크기가 다른 층을 견주는 자다 */
   contribution: number;
   /** 청산된 매매 수. 0이면 승률·손익비를 낼 수 없다 */

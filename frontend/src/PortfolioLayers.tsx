@@ -27,7 +27,7 @@ function pnlSign(value: number): 'up' | 'down' | 'flat' {
 }
 
 function LayerRow({ layer, isEmpty }: { layer: PortfolioLayerSummary; isEmpty: boolean }): JSX.Element {
-  const gap = layer.weight - layer.targetWeight;
+  const gap = layer.weight - layer.capWeight;
   return (
     <tr data-empty={isEmpty ? '' : undefined}>
       <th scope="row">
@@ -37,15 +37,12 @@ function LayerRow({ layer, isEmpty }: { layer: PortfolioLayerSummary; isEmpty: b
       <td className="num">
         {formatRatio(layer.weight)}
         <small>
-          목표 {formatRatio(layer.targetWeight)}
-          {/* 이탈이 0.5%p를 넘을 때만 적는다. 늘 뜨는 표시는 안 읽힌다. */}
-          {Math.abs(gap) >= 0.005 && (
-            <em data-gap={gap > 0 ? 'over' : 'under'}>
-              {' '}
-              {gap > 0 ? '+' : ''}
-              {(gap * 100).toFixed(1)}%p
-            </em>
-          )}
+          한도 {formatRatio(layer.capWeight)}
+          {/*
+            **넘은 것만 적는다** (2026-09-21). 한도는 상한이라 모자란 것은 정상이고,
+            그것을 `−14.2%p`처럼 적으면 채워야 할 빚으로 읽힌다.
+          */}
+          {gap >= 0.005 && <em data-gap="over"> +{(gap * 100).toFixed(1)}%p</em>}
         </small>
       </td>
       <td className="num">{isEmpty ? '—' : formatWon(layer.marketValue)}</td>
