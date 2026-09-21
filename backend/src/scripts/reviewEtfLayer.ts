@@ -45,7 +45,7 @@
 import { getKisAccount } from '../config.js';
 import { pool } from '../db/client.js';
 import { sendSlack } from '../notify/slack.js';
-import { getDomesticQuotes, getKisDividendSchedule, getKisDomesticAccountSnapshot } from '../kis/rest.js';
+import { getDomesticQuotes, getKisDividendSchedule, getKisDomesticAccountSnapshot, getKisRawDailyBars } from '../kis/rest.js';
 import { kstDaysAgo, kstToday } from '../kis/normalize.js';
 import { getCategoryInstruments } from '../db/instruments.js';
 import { getDailyBars } from '../db/dailyBars.js';
@@ -87,18 +87,36 @@ if (!account) {
 const today = kstToday();
 const yearAgo = kstDaysAgo(365);
 
+/** `YYYYMMDD`에 days일 더한 날 */
+function ymdPlus(ymd: string, days: number): string {
+  const t = Date.UTC(Number(ymd.slice(0, 4)), Number(ymd.slice(4, 6)) - 1, Number(ymd.slice(6, 8)));
+  return new Date(t + days * 86_400_000).toISOString().slice(0, 10).replace(/-/g, '');
+}
+
+/** 그날부터 열흘 안의 첫 거래일 **원주가** 종가. 못 받으면 `undefined` */
+async function rawCloseNear(symbol: string, ymd: string): Promise<{ day: string; close: number } | undefined> {
+  const bars = await getKisRawDailyBars(symbol, ymd, ymdPlus(ymd, 10)).catch(() => []);
+  return bars[0] ? { day: bars[0].tradingDay, close: bars[0].close } : undefined;
+}
+
 /**
- * 가격 수익률 둘 — **1년**과 **가진 봉 전부**.
+ * 수익률 넷 — **총수익**(수정주가)과 **가격만**(원주가), 각각 1년과 가진 기간 전부.
  *
- * ★ 일봉은 수정주가다(`FID_ORG_ADJ_PRC: '0'`) — 액면분할·병합이 이어져 있어 20년을
- *   곧장 나눌 수 있다. 한국 수정주가는 **배당을 조정하지 않으므로** 여기 값에 배당을
- *   더해도 이중 계산이 아니다.
+ * ★★★ **수정주가는 ETF 분배금까지 조정한다** (2026-09-21 실측 — `kis/rest.ts`
+ *     `getKisRawDailyBars` 주석). 그래서 DB 일봉(수정주가)의 수익률은 **배당을 재투자한
+ *     총수익**이고, 가격만의 수익률은 원주가로 따로 낸다. 이 함수의 첫 판은 수정주가
+ *     수익률을 "가격"이라 부르고 배당을 또 더했다 — **배당을 두 번 셌다.**
+ *
+ * ★ 원주가는 두 날짜(1년 전·첫봉)만 KIS에 묻는다. 연환산은 두 점이면 되고, 끝점은
+ *   지금 현재가라 원주가와 같다(오늘은 조정될 것이 없다).
  */
-async function priceReturns(symbol: string, price: number): Promise<{
-  oneYear: number | undefined; longCagr: number | undefined; longYears: number | undefined; firstDay: string | undefined;
+async function returnsOf(symbol: string, price: number): Promise<{
+  total1y: number | undefined; price1y: number | undefined;
+  totalCagr: number | undefined; priceCagr: number | undefined;
+  years: number | undefined; splitSuspect: boolean;
 }> {
+  const none = { total1y: undefined, price1y: undefined, totalCagr: undefined, priceCagr: undefined, years: undefined, splitSuspect: false };
   const bars = await getDailyBars(symbol).catch(() => []);
-  const none = { oneYear: undefined, longCagr: undefined, longYears: undefined, firstDay: undefined };
   if (bars.length === 0 || !(price > 0)) return none;
 
   /*
@@ -106,9 +124,10 @@ async function priceReturns(symbol: string, price: number): Promise<{
    *   종목은 3개월치로 "1년 +40%"를 만들어 낸다 — 30일 안에 시작한 것만 인정한다.
    */
   const yearStart = bars.find((b) => b.tradingDay >= yearAgo);
-  const oneYear = yearStart && yearStart.tradingDay <= kstDaysAgo(335) && yearStart.close > 0
-    ? ((price - yearStart.close) / yearStart.close) * 100
-    : undefined;
+  const hasYear = !!yearStart && yearStart.tradingDay <= kstDaysAgo(335) && yearStart.close > 0;
+  const total1y = hasYear ? ((price - yearStart!.close) / yearStart!.close) * 100 : undefined;
+  const raw1y = hasYear ? await rawCloseNear(symbol, yearStart!.tradingDay) : undefined;
+  const price1y = raw1y ? ((price - raw1y.close) / raw1y.close) * 100 : undefined;
 
   const first = bars[0]!;
   const years = yearsBetween(first.tradingDay, today);
@@ -116,21 +135,35 @@ async function priceReturns(symbol: string, price: number): Promise<{
    * ★ **3년 미만은 연환산하지 않는다.** 2년치 +60%를 연환산하면 "연 26%"가 되는데
    *   그건 20년을 말해 주지 않는다 — 신생 커버드콜이 대부분 여기 걸린다.
    */
+  if (years < 3) return { ...none, total1y, price1y, years };
+  const rawFirst = await rawCloseNear(symbol, first.tradingDay);
+  /*
+   * ⚠ **액면분할을 지나면 원주가가 이어지지 않는다.** 배당만으로 과거 가격을 3배 넘게
+   *   낮추려면 20년 내내 연 5.6%를 넘게 줘야 한다 — 그보다 크면 분할을 의심하고 가격
+   *   연환산을 내지 않는다.
+   */
+  const ratio = rawFirst && first.close > 0 ? rawFirst.close / first.close : undefined;
+  const splitSuspect = ratio !== undefined && (ratio > 3 || ratio < 0.9);
   return {
-    oneYear,
-    longCagr: years >= 3 ? annualizedReturn(first.close, price, years) : undefined,
-    longYears: years,
-    firstDay: first.tradingDay,
+    total1y, price1y, years, splitSuspect,
+    totalCagr: annualizedReturn(first.close, price, years),
+    priceCagr: rawFirst && !splitSuspect ? annualizedReturn(rawFirst.close, price, years) : undefined,
   };
 }
 
 type Row = {
   symbol: string; name: string; held: boolean; value: number;
-  price: number; divYield: number | undefined; priceRet: number | undefined;
+  price: number; divYield: number | undefined;
+  /** 1년 가격 수익률(%) — **원주가**. 배당이 빠져 있다 */
+  priceRet: number | undefined;
+  /** 1년 총수익(%) — **수정주가**. 배당을 재투자한 값이다. 배당을 더하지 않는다 */
   total: number | undefined;
-  /** 가진 봉 전부의 가격 연환산(%). 3년 미만이면 `undefined` */
-  longCagr: number | undefined;
+  /** 가진 기간 전부의 총수익 연환산(%) — 수정주가. 3년 미만이면 `undefined` */
+  totalCagr: number | undefined;
+  /** 가진 기간 전부의 가격 연환산(%) — 원주가. 분할이 의심되면 `undefined` */
+  priceCagr: number | undefined;
   longYears: number | undefined;
+  splitSuspect: boolean;
   feePct: number | undefined;
   /** 배당을 KIS가 아니라 네이버에서 가져왔나 — KIS 빈 응답을 메운 자리다 */
   divFromNaver: boolean;
@@ -143,8 +176,8 @@ async function measure(symbol: string, name: string, price: number, held: boolea
   const records = await getKisDividendSchedule(account!, symbol, kstDaysAgo(730), today).catch(() => []);
   const kisYield = dividendYield(trailingDividendPerShare(records, today), price);
   const naver = await getNaverEtfIndicators(symbol);
-  const returns = await priceReturns(symbol, price);
-  const priceRet = returns.oneYear;
+  const returns = await returnsOf(symbol, price);
+  const priceRet = returns.price1y;
 
   /*
    * ★ **KIS를 먼저 쓰고, 없을 때만 네이버로 메운다.** KIS 배당일정은 정상 응답의
@@ -158,10 +191,12 @@ async function measure(symbol: string, name: string, price: number, held: boolea
 
   return {
     symbol, name, held, value, price, divYield, priceRet,
-    // 한쪽이라도 모르면 합을 내지 않는다 — 0으로 메우면 모르는 쪽이 유리해진다.
-    total: divYield === undefined || priceRet === undefined ? undefined : divYield + priceRet,
-    longCagr: returns.longCagr,
-    longYears: returns.longYears,
+    // ★ 총수익은 수정주가 그대로다 — 배당을 더하면 두 번 센다(첫 판이 그랬다).
+    total: returns.total1y,
+    totalCagr: returns.totalCagr,
+    priceCagr: returns.priceCagr,
+    longYears: returns.years,
+    splitSuspect: returns.splitSuspect,
     feePct: naver?.totalFeePct,
     divFromNaver: kisYield === undefined && naver?.dividendYieldTtm !== undefined,
     divMismatch: mismatch,
@@ -198,9 +233,9 @@ const won = (n: number): string => `${Math.round(n).toLocaleString('ko-KR')}원`
 rows.sort((a, b) => (b.total ?? -999) - (a.total ?? -999));
 
 console.log(`\nETF 층 재평가 · ${accountId} · ${today}`);
-console.log('지난 1년 총수익 = 가격수익률 + 배당수익률 · 총보수는 가격 쪽에 이미 들어가 있다');
+console.log('지난 1년 · 가격은 원주가, 총수익은 수정주가(배당 재투자) · 총보수는 둘 다에 이미 들어가 있다');
 console.log('⚠ 가격 쪽은 지나간 값입니다 — 높다고 앞으로도 높지 않습니다. 배당 쪽이 그나마 이어지는 값입니다.\n');
-console.log('   종목                        가격수익   배당수익   지난1년계    총보수   보유');
+console.log('   종목                        가격수익   배당수익     총수익    총보수   보유');
 console.log('─'.repeat(88));
 for (const r of rows) {
   console.log(
@@ -255,10 +290,10 @@ if (bestDiv && heldBelow.length > 0) {
  *    6년치 연 18%와 21년치 연 12%는 같은 무게가 아니다.
  */
 const TWENTY = 20;
-console.log(`\n── ${TWENTY}년 지평 · 가격 연환산은 가진 봉 전부, 기간을 함께 본다 ──\n`);
-console.log('   종목                        가격 연환산    기간     배당   보수 20년 누적   세금 연 깎임  과세');
-console.log('─'.repeat(104));
-const byLong = [...rows].sort((a, b) => (b.longCagr ?? -999) - (a.longCagr ?? -999));
+console.log(`\n── ${TWENTY}년 지평 · 가진 기간 전부로 연환산, 기간을 함께 본다 ──\n`);
+console.log('   종목                        총수익 연환산  가격 연환산    기간   보수 20년 누적   세금 연 깎임  과세');
+console.log('─'.repeat(110));
+const byLong = [...rows].sort((a, b) => (b.totalCagr ?? -999) - (a.totalCagr ?? -999));
 /*
  * ★ 판 해에 차익이 몰리는 종목을 모은다. 기타형(보유기간 과세)은 20년치 차익이
  *   **판 해 한 번에** 배당소득으로 잡혀, 그해 금융소득이 2천만원을 넘으면 넘는 몫이
@@ -269,18 +304,28 @@ const lumpSale: Array<{ name: string; value: number }> = [];
 for (const r of byLong) {
   const drag = feeDrag(r.feePct, TWENTY);
   const tax = CONFIRMED_ETF_TAX[r.symbol];
-  const t = tax && r.longCagr !== undefined && r.divYield !== undefined
-    ? taxDrag(r.longCagr, r.divYield, TWENTY, tax.type) : undefined;
+  /*
+   * ★★ 세금 시뮬레이션에는 **가격(원주가)과 배당 몫을 갈라서** 넣는다. 배당 몫은
+   *    총수익과 가격의 차 — 그 기간에 실제로 재투자된 배당의 평균 효과다.
+   *    첫 판은 총수익(수정주가)을 "가격"으로 넣고 현재 배당률을 또 재투자해 두 번 셌다.
+   */
+  const divShare = r.totalCagr !== undefined && r.priceCagr !== undefined
+    ? ((1 + r.totalCagr / 100) / (1 + r.priceCagr / 100) - 1) * 100 : undefined;
+  const t = tax && r.priceCagr !== undefined && divShare !== undefined
+    ? taxDrag(r.priceCagr, divShare, TWENTY, tax.type) : undefined;
   if (tax?.type === 'holdingPeriod' && r.held && r.value > 0) lumpSale.push({ name: r.name, value: r.value });
   console.log(
     `${r.held ? ' ●' : '  '} ${r.name.slice(0, 22).padEnd(24)} `
-    + `${pct(r.longCagr).padStart(11)} ${(r.longYears === undefined ? '—' : `${r.longYears.toFixed(1)}년`).padStart(7)} `
-    + `${pct(r.divYield).padStart(8)} ${(drag === undefined ? '—' : `−${drag.toFixed(2)}%`).padStart(14)} `
+    + `${pct(r.totalCagr).padStart(12)} ${(pct(r.priceCagr) + (r.splitSuspect ? '?' : '')).padStart(11)} `
+    + `${(r.longYears === undefined ? '—' : `${r.longYears.toFixed(1)}년`).padStart(7)} `
+    + `${(drag === undefined ? '—' : `−${drag.toFixed(2)}%`).padStart(14)} `
     + `${(t === undefined ? '—' : `−${t.dragPct.toFixed(2)}%p`).padStart(13)}  `
     + `${tax === undefined ? '모름' : tax.type === 'domestic' ? '차익 비과세' : '보유기간과세'}`,
   );
 }
-console.log('  ※ 세금 연 깎임 = 배당을 세후로 재투자하며 20년 들고 판 결과의 세전−세후 연환산 차이입니다.');
+console.log('  ※ 총수익−가격 = 그 기간 배당이 보탠 몫입니다. 둘의 차가 크면 배당형, 작으면 차익형입니다.');
+if (rows.some((r) => r.splitSuspect)) console.log('  ※ ?는 액면분할이 의심돼 원주가가 안 이어지는 종목입니다 — 가격 연환산을 내지 않았습니다.');
+console.log('  ※ 세금 연 깎임 = 가격과 배당 몫을 갈라 배당을 세후로 재투자하며 20년 들고 판 결과의 세전−세후 차이입니다.');
 console.log('    기타형은 매매차익 **전액**을 과세 대상으로 봤습니다(실제는 Min(차익, 과표증분)) — 상한입니다.');
 console.log('  ※ 과세 "모름"은 운용사 원문으로 확인하지 않은 종목입니다. 이름으로 짐작하지 않습니다.');
 /*

@@ -2248,6 +2248,54 @@ export async function getKisDomesticExecutions(
  * 합계(output2)는 브로커가 계산해 준 값을 그대로 쓴다. 우리가 다시 더하면 어긋난다.
  */
 /**
+ * **원주가** 일봉 (기간별시세 `FHKST03010100`, `FID_ORG_ADJ_PRC=1`) — 한 번에 최대 100봉.
+ *
+ * ★★★ **수정주가(`0`)는 ETF 분배금까지 조정한다** (2026-09-21 실측). `329200` TIGER
+ *     리츠부동산인프라의 상장일(2019-07-19) 종가가 수정주가로 **3,311원**, 원주가로
+ *     **5,125원**이었다 — 7년 치 분배금만큼 과거 가격이 35% 낮춰져 있다. 그래서 DB
+ *     일봉(수정주가)으로 낸 수익률은 **배당을 재투자한 총수익**이다. 나는 그날 두 커밋에
+ *     "한국 수정주가는 배당을 조정하지 않는다"고 적고 가격 수익률에 배당을 또 더했다.
+ *
+ * 그래서 **가격만의 수익률**(배당과 차익을 가르는 세금 계산)과 **배당락일 갭**(수정주가에서는
+ * 조정돼 사라진다)을 재려면 이 원주가가 있어야 한다.
+ *
+ * ⚠ **액면분할·병합을 지나면 원주가는 이어지지 않는다.** 긴 구간을 나눌 때는 분할이
+ *   없었는지 따로 본다 — ETF는 드물지만 있다.
+ */
+export async function getKisRawDailyBars(
+  symbol: string,
+  fromYmd: string,
+  toYmd: string,
+  credentials?: KisCredentials,
+): Promise<Array<{ tradingDay: string; open: number; close: number }>> {
+  const { body } = await kisGetWithHeaders(
+    '/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice',
+    'FHKST03010100',
+    {
+      FID_COND_MRKT_DIV_CODE: 'J',
+      FID_INPUT_ISCD: symbol,
+      FID_INPUT_DATE_1: fromYmd,
+      FID_INPUT_DATE_2: toYmd,
+      FID_PERIOD_DIV_CODE: 'D',
+      FID_ORG_ADJ_PRC: '1', // 1: 원주가
+    },
+    '',
+    credentials ?? primaryCredentials,
+  );
+  assertRtOk(body, '원주가 일봉');
+  const rows = Array.isArray(body.output2) ? (body.output2 as Array<Record<string, string>>) : [];
+  return rows
+    .map((r) => ({
+      tradingDay: String(r.stck_bsop_date ?? '').trim(),
+      open: optionalNumber(r.stck_oprc) ?? 0,
+      close: optionalNumber(r.stck_clpr) ?? 0,
+    }))
+    // 빈 자리를 거래일로 세지 않는다. KIS는 응답을 고정 길이로 채울 때가 있다.
+    .filter((r) => /^\d{8}$/.test(r.tradingDay) && r.close > 0)
+    .sort((a, b) => a.tradingDay.localeCompare(b.tradingDay));
+}
+
+/**
  * 예탁원 배당일정 (tr_id: `HHKDB669102C0`).
  *
  * ★★ **모의 서버에서도 된다** (2026-09-21 실측). 계좌 TR이 아니라 시세·정보 계열이라
