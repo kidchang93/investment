@@ -26,9 +26,15 @@
  *    된다. 이 표가 답하는 것은 *"무엇이 잘했나"*이지 *"무엇이 잘할까"*가 아니다.
  *    ★ 나는 첫 실행에서 이 +134%를 "계산이 틀렸다"고 의심했다 — 틀린 것은 내 감각이었다.
  *
- * ⚠ **총보수(운용비용)는 아직 안 들어간다.** KIS가 주지 않는다. 연 0.1%와 0.5%의
- *   차이는 배당 4% 안에서 큰 몫이라, 교체를 실제로 정할 때는 사람이 따로 확인해야
- *   한다. 여기 숫자만으로 갈아타면 보수가 비싼 쪽으로 옮길 수 있다.
+ * ★★ **총보수는 과거 수익률에서 빼지 않는다** (2026-09-21에 바로잡았다). 총보수는
+ *    매일 NAV에서 차감되므로 **가격수익률에 이미 들어가 있다** — 또 빼면 이중 차감이다.
+ *    그래서 표에 따로 세워 *"앞으로 매년 이만큼 깎인다"*로 읽는다. 같은 지수를 따라가는
+ *    두 ETF 중 고를 때가 이 값이 일하는 자리다(보유 중 TIGER 미국S&P500이 0.0068%,
+ *    PLUS 고배당주가 0.23%로 34배 차이다).
+ *
+ * ★ 총보수·괴리율은 **네이버 모바일**에서 온다 — KIS는 주지 않는다(ETF TR 6개와
+ *   상품기본조회를 다 뒤졌다). 같은 응답의 배당수익률이 우리 KIS 계산과 다섯 종목
+ *   소수점까지 맞아 출처를 믿을 근거가 됐다(`naver/finance.ts`).
  *
  * ★ **분기에 한 번만 실제로 돈다.** 스케줄러는 매일 부르지만 마지막 실행이 90일
  *   안이면 스스로 비킨다(`--force`로 무시). 분기 단위 일정을 스케줄러에 새로 만드는
@@ -44,6 +50,7 @@ import { kstDaysAgo, kstToday } from '../kis/normalize.js';
 import { getCategoryInstruments } from '../db/instruments.js';
 import { getDailyBars } from '../db/dailyBars.js';
 import { getLayerPositions } from '../db/layers.js';
+import { getNaverEtfIndicators } from '../naver/finance.js';
 import { dividendYield, trailingDividendPerShare } from '../trading/dividend.js';
 
 const args = process.argv.slice(2);
@@ -96,17 +103,37 @@ type Row = {
   symbol: string; name: string; held: boolean; value: number;
   price: number; divYield: number | undefined; priceRet: number | undefined;
   total: number | undefined;
+  feePct: number | undefined;
+  /** 배당을 KIS가 아니라 네이버에서 가져왔나 — KIS 빈 응답을 메운 자리다 */
+  divFromNaver: boolean;
+  /** 두 출처의 배당이 0.5%p 넘게 갈렸다. 어느 쪽이 맞는지 모르므로 알리기만 한다 */
+  divMismatch: number | undefined;
 };
 
 async function measure(symbol: string, name: string, price: number, held: boolean, value: number): Promise<Row> {
   // 2년을 받아 1년 창을 센다 — 1년만 받으면 창 경계의 건이 통째로 빠진다.
   const records = await getKisDividendSchedule(account!, symbol, kstDaysAgo(730), today).catch(() => []);
-  const divYield = dividendYield(trailingDividendPerShare(records, today), price);
+  const kisYield = dividendYield(trailingDividendPerShare(records, today), price);
+  const naver = await getNaverEtfIndicators(symbol);
   const priceRet = await priceReturn(symbol, price);
+
+  /*
+   * ★ **KIS를 먼저 쓰고, 없을 때만 네이버로 메운다.** KIS 배당일정은 정상 응답의
+   *   모습으로 비어 올 때가 있다(`kis/rest.ts`) — 그때 종목이 통째로 `—`가 되면
+   *   무배당으로 오해된다. 대신 **어느 출처인지 표에 적는다.**
+   */
+  const divYield = kisYield ?? naver?.dividendYieldTtm;
+  const mismatch = kisYield !== undefined && naver?.dividendYieldTtm !== undefined
+    && Math.abs(kisYield - naver.dividendYieldTtm) >= 0.5
+    ? naver.dividendYieldTtm : undefined;
+
   return {
     symbol, name, held, value, price, divYield, priceRet,
     // 한쪽이라도 모르면 합을 내지 않는다 — 0으로 메우면 모르는 쪽이 유리해진다.
     total: divYield === undefined || priceRet === undefined ? undefined : divYield + priceRet,
+    feePct: naver?.totalFeePct,
+    divFromNaver: kisYield === undefined && naver?.dividendYieldTtm !== undefined,
+    divMismatch: mismatch,
   };
 }
 
@@ -140,16 +167,23 @@ const won = (n: number): string => `${Math.round(n).toLocaleString('ko-KR')}원`
 rows.sort((a, b) => (b.total ?? -999) - (a.total ?? -999));
 
 console.log(`\nETF 층 재평가 · ${accountId} · ${today}`);
-console.log('지난 1년 총수익 = 가격수익률 + 배당수익률 (총보수는 안 들어갔다)');
+console.log('지난 1년 총수익 = 가격수익률 + 배당수익률 · 총보수는 가격 쪽에 이미 들어가 있다');
 console.log('⚠ 가격 쪽은 지나간 값입니다 — 높다고 앞으로도 높지 않습니다. 배당 쪽이 그나마 이어지는 값입니다.\n');
-console.log('   종목                        가격수익   배당수익   지난1년계   보유');
-console.log('─'.repeat(78));
+console.log('   종목                        가격수익   배당수익   지난1년계    총보수   보유');
+console.log('─'.repeat(88));
 for (const r of rows) {
   console.log(
     `${r.held ? ' ●' : '  '} ${r.name.slice(0, 22).padEnd(24)} `
-    + `${pct(r.priceRet).padStart(9)} ${pct(r.divYield).padStart(10)} ${pct(r.total).padStart(10)}  `
+    + `${pct(r.priceRet).padStart(9)} ${(pct(r.divYield) + (r.divFromNaver ? '*' : '')).padStart(10)} `
+    + `${pct(r.total).padStart(10)} ${(r.feePct === undefined ? '—' : `${r.feePct}%`).padStart(9)}  `
     + `${r.held ? won(r.value) : ''}`,
   );
+}
+if (rows.some((r) => r.divFromNaver)) console.log('  * 배당은 네이버 값입니다 — KIS 배당일정이 비어 왔습니다.');
+console.log('  ※ 총보수는 매일 NAV에서 빠지므로 위 가격수익에 이미 들어가 있습니다. 앞으로 매년 깎이는 몫으로 보세요.');
+const mismatched = rows.filter((r) => r.divMismatch !== undefined);
+for (const r of mismatched) {
+  console.log(`  ★ ${r.name} 배당이 출처마다 다릅니다 — KIS ${pct(r.divYield)} vs 네이버 ${pct(r.divMismatch)}. 어느 쪽인지 확인하세요.`);
 }
 
 /*
@@ -162,17 +196,24 @@ for (const r of rows) {
  *    ETF였다). 배당수익률은 정책이라 어느 정도 이어지는 값이라 견줄 만하고,
  *    가격 쪽은 위 표에서 사람이 눈으로 본다.
  */
-const byDividend = [...rows].filter((r) => r.divYield !== undefined).sort((a, b) => b.divYield! - a.divYield!);
+/*
+ * ★ 보수를 뺀 값으로 견준다. 배당은 받는 것이고 보수는 나가는 것이라 둘 다 연율 %다 —
+ *   보수를 모르면 0으로 치지 않고 배당만으로 둔다(모르는 쪽이 유리해지지 않게).
+ */
+const netOf = (r: Row): number => r.divYield! - (r.feePct ?? 0);
+const byDividend = [...rows].filter((r) => r.divYield !== undefined).sort((a, b) => netOf(b) - netOf(a));
 const bestDiv = byDividend.find((r) => !r.held);
-const heldBelow = byDividend.filter((r) => r.held && bestDiv && r.divYield! < bestDiv.divYield!);
+const heldBelow = byDividend.filter((r) => r.held && bestDiv && netOf(r) < netOf(bestDiv));
 console.log();
 if (bestDiv && heldBelow.length > 0) {
-  console.log(`★ 배당만 보면 후보 최고는 ${bestDiv.name} ${pct(bestDiv.divYield)}이고, 그보다 낮은 보유가 ${heldBelow.length}종목입니다:`);
-  for (const r of heldBelow) console.log(`    ${r.name} 배당 ${pct(r.divYield)} · 가격 ${pct(r.priceRet)} · ${won(r.value)}`);
+  console.log(`★ 배당−보수로 보면 후보 최고는 ${bestDiv.name} ${pct(netOf(bestDiv))}이고, 그보다 낮은 보유가 ${heldBelow.length}종목입니다:`);
+  for (const r of heldBelow) {
+    console.log(`    ${r.name} 배당−보수 ${pct(netOf(r))} (배당 ${pct(r.divYield)} − 보수 ${r.feePct ?? 0}%) · 가격 ${pct(r.priceRet)} · ${won(r.value)}`);
+  }
   console.log('  ※ 배당이 높다고 총수익이 높지는 않습니다 — 커버드콜은 배당을 얹는 대신 상승을 깎습니다.');
-  console.log('  ※ 총보수·환헤지·괴리율은 이 표에 없습니다. 갈아타기 전에 확인하세요.');
+  console.log('  ※ 환헤지 여부와 기초자산이 다르면 같은 자로 견줄 수 없습니다. 갈아타기 전에 확인하세요.');
 } else {
-  console.log('★ 후보 중에 지금 든 것보다 배당수익률이 높은 것이 없습니다.');
+  console.log('★ 후보 중에 지금 든 것보다 배당−보수가 높은 것이 없습니다.');
 }
 const unknown = rows.filter((r) => r.total === undefined);
 if (unknown.length > 0) {

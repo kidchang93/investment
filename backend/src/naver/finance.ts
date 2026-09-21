@@ -97,3 +97,79 @@ export async function getMainNews(limit = 10): Promise<NaverNews[]> {
   }
   return out;
 }
+
+// ── ETF 지표 (모바일 JSON) ──────────────────────────────────────────────
+//
+// ★★ **총보수는 KIS가 주지 않는다** (2026-09-21에 다 뒤졌다). ETF/ETN 카테고리
+//    TR 6개는 전부 NAV·구성종목 계열이고, 상품기본조회(`CTPF1604R`)는 실전에서
+//    불러도 이름·분류·위험등급 20칸뿐이다(모의에는 아예 없다). 네이버 모바일
+//    `integration`에 `etfKeyIndicator.totalFee`로 있다.
+//
+// ★ **이 출처를 믿어도 되는 근거**: 같은 응답의 `dividendYieldTtm`이 우리가 KIS
+//   예탁원 배당일정으로 따로 계산한 값과 **다섯 종목 모두 소수점까지 맞았다**
+//   (0.78/0.76 · 4.14/4.15 · 9.72/9.73 · 0.96/0.96 · 0.0/0.00). 서로 다른 경로로
+//   같은 값이 나오는 것이 지금 가진 가장 강한 검증이다.
+//
+// ⚠ 위 뉴스와 달리 **호스트도 형식도 다르다** — `m.stock.naver.com`의 JSON이고
+//   EUC-KR이 아니다. 비공식 경로라 예고 없이 바뀐다(2026-09-18에 레거시
+//   `finance.naver.com` 엔드포인트들이 전부 410으로 죽은 적이 있다).
+//   깨지면 `null`이 되고 호출부가 "못 읽었다"고 적는다 — 0으로 채우지 않는다.
+
+const MOBILE_BASE = 'https://m.stock.naver.com';
+
+/** ETF 한 종목의 지표. **모르는 값은 `undefined`** — 0으로 채우지 않는다 */
+export interface NaverEtfIndicators {
+  symbol: string;
+  /** 운용사 */
+  issuer: string | undefined;
+  /**
+   * 총보수(연 %).
+   *
+   * ★★ **과거 수익률에서 빼면 이중 차감이다.** 총보수는 매일 NAV에서 차감되므로
+   *    이미 가격에 들어가 있다. 이 값은 *"앞으로 매년 이만큼 깎인다"*를 보는 것이고,
+   *    같은 지수를 따라가는 두 ETF 중 어느 쪽이 유리한지 고를 때 쓴다.
+   */
+  totalFeePct: number | undefined;
+  /** 최근 1년 배당수익률(%). KIS 예탁원 계산의 검산에 쓴다 */
+  dividendYieldTtm: number | undefined;
+  /** 괴리율(%). 부호 포함 — 양수면 시장가가 NAV보다 비싸다 */
+  deviationPct: number | undefined;
+  /** 최근 1년 수익률(%) */
+  return1yPct: number | undefined;
+}
+
+function num(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === '') return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * ETF 지표를 받아 온다. 못 받으면 `null` — 부르는 쪽이 "모른다"고 적는다.
+ *
+ * ETF가 아닌 종목은 `etfKeyIndicator`가 없어 역시 `null`이다.
+ */
+export async function getNaverEtfIndicators(symbol: string): Promise<NaverEtfIndicators | null> {
+  let body: Record<string, unknown>;
+  try {
+    const res = await fetch(`${MOBILE_BASE}/api/stock/${symbol}/integration`, {
+      headers: { 'user-agent': UA, accept: 'application/json' },
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!res.ok) return null;
+    body = (await res.json()) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const k = body.etfKeyIndicator as Record<string, unknown> | undefined;
+  if (!k) return null;
+  return {
+    symbol,
+    issuer: typeof k.issuerName === 'string' ? k.issuerName : undefined,
+    totalFeePct: num(k.totalFee),
+    dividendYieldTtm: num(k.dividendYieldTtm),
+    // 부호가 따로 온다 — `deviationSign`이 '-'면 음수다.
+    deviationPct: k.deviationSign === '-' ? -(num(k.deviationRate) ?? 0) : num(k.deviationRate),
+    return1yPct: num(k.returnRate1y),
+  };
+}
