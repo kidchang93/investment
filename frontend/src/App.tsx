@@ -334,7 +334,8 @@ const SIDE_PANEL_OPTIONS: Array<{ key: SidePanelTab; label: string }> = [
  * 점선 밑줄로 "설명이 있다"는 것만 보이게 하고 뜻은 툴팁에 둔다.
  */
 const GLOSSARY: Record<string, string> = {
-  예수금: '계좌에 들어 있는 현금입니다. 주식을 살 때 이 돈을 씁니다.',
+  예수금: '증권사가 적어 주는 현금 표시액(D+0)입니다. 최근 산 주식의 결제대금이 아직 빠지지 않아 실제로 쓸 수 있는 돈보다 큽니다 — 살 돈은 「살 수 있는 돈」을 보세요.',
+  '살 수 있는 돈': '결제(D+2)까지 반영한 현금입니다. 낸 주문이 모두 빠진 뒤의 값이라 지금 실제로 더 살 수 있는 금액입니다.',
   '총 평가': '현금과 보유 주식을 지금 값으로 합친 금액입니다.',
   '주식 평가': '보유 주식만 지금 값으로 계산한 금액입니다.',
   '평가 손익': '지금 팔면 생기는 이익이나 손실입니다. 팔기 전까지는 확정된 값이 아닙니다.',
@@ -3866,7 +3867,15 @@ export function App(): JSX.Element {
               <div className="page-heading__account">
                 <BrokerAccountPicker accounts={kisAccounts} onChange={setKisAccountId} value={kisAccountId} />
               </div>
-              {/* 계좌가 하나뿐이라 이름표 없이 금액만 적는다. */}
+              {/*
+                계좌가 하나뿐이라 이름표 없이 금액만 적는다.
+
+                ★ **예수금만 적으면 거짓말이 된다** (2026-09-21 실측). 예수금(D+0)에는
+                최근 산 주식의 결제대금이 아직 안 빠져 있다 — 그날 예수금은 23,482,484원인데
+                금요일 매수 23,468,409원이 D+2에 빠질 예정이라 실제로 살 수 있는 돈은
+                10,744원이었다. KIS도 총평가에는 D+2 값만 넣는다(95,926,899 = 주식
+                95,916,155 + 10,744). 두 값을 나란히 적어 차이가 보이게 둔다.
+              */}
               <small className="page-heading__balances">
                 <b data-account="live">
                   예수금{' '}
@@ -3874,6 +3883,12 @@ export function App(): JSX.Element {
                     ? formatCurrencyPrice(kisAccountSnapshot.cashBalance, kisAccountSnapshot.baseCurrency)
                     : '미설정'}
                 </b>
+                {kisAccountSnapshot?.configured && (
+                  <b title="결제(D+2)까지 반영한 현금입니다. 지금 실제로 더 살 수 있는 돈입니다.">
+                    살 수 있는 돈{' '}
+                    {formatCurrencyPrice(kisAccountSnapshot.settlementCash, kisAccountSnapshot.baseCurrency)}
+                  </b>
+                )}
               </small>
             </div>
           )}
@@ -5222,6 +5237,15 @@ export function App(): JSX.Element {
                       <div>
                         <span><Term>예수금</Term></span>
                         <strong>{formatCurrencyPrice(kisAccountSnapshot.cashBalance, kisAccountSnapshot.baseCurrency)}</strong>
+                      </div>
+                      {/*
+                        예수금 바로 옆에 둔다 — 둘의 차이가 곧 "아직 안 빠진 결제대금"이라
+                        나란히 놓아야 읽힌다. 떨어뜨려 두면 예수금만 보고 자리 크기를 정하게 된다.
+                        값이 없으면 `-`로 둔다(`?? 0`을 쓰면 "살 돈이 없다"를 지어낸다).
+                      */}
+                      <div>
+                        <span><Term>살 수 있는 돈</Term></span>
+                        <strong>{formatCurrencyPrice(kisAccountSnapshot.settlementCash, kisAccountSnapshot.baseCurrency)}</strong>
                       </div>
                       <div>
                         <span><Term>총 평가</Term></span>
