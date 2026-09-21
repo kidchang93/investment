@@ -52,6 +52,7 @@ import { getDailyBars } from '../db/dailyBars.js';
 import { getLayerPositions } from '../db/layers.js';
 import { getNaverEtfIndicators } from '../naver/finance.js';
 import { dividendYield, trailingDividendPerShare } from '../trading/dividend.js';
+import { annualizedReturn, feeDrag, yearsBetween } from '../trading/longHold.js';
 
 const args = process.argv.slice(2);
 const flags = args.filter((a) => a.startsWith('--'));
@@ -86,23 +87,50 @@ if (!account) {
 const today = kstToday();
 const yearAgo = kstDaysAgo(365);
 
-/** 1년 전 종가 대비 지금 가격의 수익률(%). 1년치 봉이 없으면 `undefined`. */
-async function priceReturn(symbol: string, price: number): Promise<number | undefined> {
-  const bars = await getDailyBars(symbol, { from: yearAgo }).catch(() => []);
-  const first = bars[0];
+/**
+ * 가격 수익률 둘 — **1년**과 **가진 봉 전부**.
+ *
+ * ★ 일봉은 수정주가다(`FID_ORG_ADJ_PRC: '0'`) — 액면분할·병합이 이어져 있어 20년을
+ *   곧장 나눌 수 있다. 한국 수정주가는 **배당을 조정하지 않으므로** 여기 값에 배당을
+ *   더해도 이중 계산이 아니다.
+ */
+async function priceReturns(symbol: string, price: number): Promise<{
+  oneYear: number | undefined; longCagr: number | undefined; longYears: number | undefined; firstDay: string | undefined;
+}> {
+  const bars = await getDailyBars(symbol).catch(() => []);
+  const none = { oneYear: undefined, longCagr: undefined, longYears: undefined, firstDay: undefined };
+  if (bars.length === 0 || !(price > 0)) return none;
+
   /*
-   * ★ 가장 오래된 봉이 **창 시작 근처**여야 1년 수익률이다. 상장한 지 얼마 안 된
+   * ★ 1년 전 봉이 **창 시작 근처**여야 1년 수익률이다. 상장한 지 얼마 안 된
    *   종목은 3개월치로 "1년 +40%"를 만들어 낸다 — 30일 안에 시작한 것만 인정한다.
    */
-  if (!first || !(first.close > 0) || !(price > 0)) return undefined;
-  if (first.tradingDay > kstDaysAgo(335)) return undefined;
-  return ((price - first.close) / first.close) * 100;
+  const yearStart = bars.find((b) => b.tradingDay >= yearAgo);
+  const oneYear = yearStart && yearStart.tradingDay <= kstDaysAgo(335) && yearStart.close > 0
+    ? ((price - yearStart.close) / yearStart.close) * 100
+    : undefined;
+
+  const first = bars[0]!;
+  const years = yearsBetween(first.tradingDay, today);
+  /*
+   * ★ **3년 미만은 연환산하지 않는다.** 2년치 +60%를 연환산하면 "연 26%"가 되는데
+   *   그건 20년을 말해 주지 않는다 — 신생 커버드콜이 대부분 여기 걸린다.
+   */
+  return {
+    oneYear,
+    longCagr: years >= 3 ? annualizedReturn(first.close, price, years) : undefined,
+    longYears: years,
+    firstDay: first.tradingDay,
+  };
 }
 
 type Row = {
   symbol: string; name: string; held: boolean; value: number;
   price: number; divYield: number | undefined; priceRet: number | undefined;
   total: number | undefined;
+  /** 가진 봉 전부의 가격 연환산(%). 3년 미만이면 `undefined` */
+  longCagr: number | undefined;
+  longYears: number | undefined;
   feePct: number | undefined;
   /** 배당을 KIS가 아니라 네이버에서 가져왔나 — KIS 빈 응답을 메운 자리다 */
   divFromNaver: boolean;
@@ -115,7 +143,8 @@ async function measure(symbol: string, name: string, price: number, held: boolea
   const records = await getKisDividendSchedule(account!, symbol, kstDaysAgo(730), today).catch(() => []);
   const kisYield = dividendYield(trailingDividendPerShare(records, today), price);
   const naver = await getNaverEtfIndicators(symbol);
-  const priceRet = await priceReturn(symbol, price);
+  const returns = await priceReturns(symbol, price);
+  const priceRet = returns.oneYear;
 
   /*
    * ★ **KIS를 먼저 쓰고, 없을 때만 네이버로 메운다.** KIS 배당일정은 정상 응답의
@@ -131,6 +160,8 @@ async function measure(symbol: string, name: string, price: number, held: boolea
     symbol, name, held, value, price, divYield, priceRet,
     // 한쪽이라도 모르면 합을 내지 않는다 — 0으로 메우면 모르는 쪽이 유리해진다.
     total: divYield === undefined || priceRet === undefined ? undefined : divYield + priceRet,
+    longCagr: returns.longCagr,
+    longYears: returns.longYears,
     feePct: naver?.totalFeePct,
     divFromNaver: kisYield === undefined && naver?.dividendYieldTtm !== undefined,
     divMismatch: mismatch,
@@ -215,6 +246,34 @@ if (bestDiv && heldBelow.length > 0) {
 } else {
   console.log('★ 후보 중에 지금 든 것보다 배당−보수가 높은 것이 없습니다.');
 }
+/*
+ * ── 20년 지평 ────────────────────────────────────────────────────────────
+ *
+ * ★★ 위 표는 **분기 교체**를 보고 이 표는 **20년 보유**를 본다 — 질문이 다르다.
+ *    사용자 기준은 *"배당도 많이 주면서 20년 뒤 시세차익도 충분한"*이다.
+ *    가격 연환산은 **가진 봉 전부**(최대 21년)로 내고, 기간을 옆에 적는다 —
+ *    6년치 연 18%와 21년치 연 12%는 같은 무게가 아니다.
+ */
+const TWENTY = 20;
+console.log(`\n── ${TWENTY}년 지평 · 가격 연환산은 가진 봉 전부, 기간을 함께 본다 ──\n`);
+console.log('   종목                        가격 연환산    기간     배당   보수 20년 누적');
+console.log('─'.repeat(80));
+const byLong = [...rows].sort((a, b) => (b.longCagr ?? -999) - (a.longCagr ?? -999));
+for (const r of byLong) {
+  const drag = feeDrag(r.feePct, TWENTY);
+  console.log(
+    `${r.held ? ' ●' : '  '} ${r.name.slice(0, 22).padEnd(24)} `
+    + `${pct(r.longCagr).padStart(11)} ${(r.longYears === undefined ? '—' : `${r.longYears.toFixed(1)}년`).padStart(7)} `
+    + `${pct(r.divYield).padStart(8)} ${(drag === undefined ? '—' : `−${drag.toFixed(2)}%`).padStart(14)}`,
+  );
+}
+console.log('  ※ 3년 미만은 연환산하지 않았습니다 — 짧은 기간을 연으로 늘리면 20년을 말해 주지 않습니다.');
+console.log('  ※ 지난 수익률은 다음 20년을 보장하지 않습니다. 20년을 실제로 잰 것은 21년치가 있는 종목뿐입니다.');
+const tooShort = rows.filter((r) => r.longYears !== undefined && r.longYears < 10);
+if (tooShort.length > 0) {
+  console.log(`  ★ 10년이 안 되는 ${tooShort.length}종목은 20년 판단 재료가 부족합니다 — 기초자산(지수)의 역사로 따로 봐야 합니다.`);
+}
+
 const unknown = rows.filter((r) => r.total === undefined);
 if (unknown.length > 0) {
   console.log(`\n★ 총수익을 못 낸 ${unknown.length}종목(배당이나 1년치 봉이 없다): ${unknown.map((r) => r.name).join(' · ')}`);
