@@ -426,7 +426,9 @@ async function main(): Promise<void> {
         return `• ${e.side === 'buy' ? '매수' : '매도'} ${escapeMrkdwn(d?.name ?? e.symbol)}`
           + ` (${e.symbol}) ${e.quantity}주 · ${price}`
           + `${d?.layer ? ` · ${d.layer} 층` : ''} · \`${e.orderNo}\``
-          + (d?.plan ? `\n  ↳ 목표 ${slackWon(d.plan.targetPrice)} / 손절 ${slackWon(d.plan.stopPrice)}`
+          // ETF 층은 목표가·손절가가 없다(2026-09-21 — 장기 목적, 손절선 없음).
+          + (d?.plan ? `\n  ↳ 목표 ${d.plan.targetPrice ? slackWon(d.plan.targetPrice) : '없음'}`
+            + ` / 손절 ${d.plan.stopPrice ? slackWon(d.plan.stopPrice) : '없음(ETF)'}`
             + ` / ${d.plan.horizonDays}거래일` : '');
       }),
       ...(blocked.length > 0

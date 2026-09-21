@@ -69,3 +69,27 @@ describe('회의 기록 — 반증 조건이 없으면 안 남는다', () => {
     );
   });
 });
+
+/*
+ * ★★ 손절선은 층마다 다르다 (2026-09-21 사용자 결정 — ETF에는 손절선을 두지 않는다).
+ *    예전엔 타입만 stopPrice를 필수라 적고 런타임은 검사하지 않았다. 단기 층에서 빠지면
+ *    손절 없는 자리가 조용히 생기고(손절 감시는 stopPrice가 있는 결정만 본다), ETF에 적으면
+ *    장기 자리를 가격으로 판다. **거부되는지만** 본다 — 통과시키면 실제 DB에 기록된다.
+ */
+describe('매수 plan의 손절가 — 층마다 다르다', () => {
+  const buy = (layer: 'short' | 'etf', stopPrice?: number) => round({
+    decisions: [{
+      symbol: '329200', name: 'TIGER 리츠부동산인프라', action: 'buy', quantity: 10, limitPrice: 4_070,
+      layer, rationale: '시험',
+      plan: { horizonDays: 250, expectedReturn: 0.05, basis: '시험', ...(stopPrice ? { stopPrice } : {}) },
+    }],
+  });
+
+  it('단기 층 매수에 stopPrice가 없으면 기록하지 않는다 — 손절 없는 자리가 생긴다', async () => {
+    await assert.rejects(recordDeliberation(buy('short')), /단기 층 매수에 stopPrice가 없습니다/);
+  });
+
+  it('ETF 층 매수에 stopPrice가 있으면 기록하지 않는다 — ETF에는 손절선을 두지 않는다', async () => {
+    await assert.rejects(recordDeliberation(buy('etf', 3_800)), /ETF 층 매수에 stopPrice가 있습니다/);
+  });
+});

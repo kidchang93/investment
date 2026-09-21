@@ -40,7 +40,14 @@
  *   안이면 스스로 비킨다(`--force`로 무시). 분기 단위 일정을 스케줄러에 새로 만드는
  *   대신 스크립트가 스스로 아는 쪽을 골랐다 — 날짜 규칙이 두 곳에 갈리지 않는다.
  *
- * 쓰는 법:  cd backend && npx tsx src/scripts/reviewEtfLayer.ts [계좌id] [후보수] [--force] [--notify]
+ * ★★ **`--cache`는 분석가용이다** (2026-09-21). 사용자가 ETF를 *"50% 내에서 자유롭게"* 사고팔게
+ *    했다 — 분석가가 매 바퀴 이 표를 봐야 하는데, 매 바퀴 계산하면 KIS 호출이 수십 번이라
+ *    손절 감시와 유량이 겹친다(모의 초당 1건). 그래서 **장 시작 전에 하루 한 번** 계산해
+ *    `.cache/etf-review-YYYYMMDD.json`에 두고 분석가(`showFairValues`)는 읽기만 한다.
+ *    이 모드는 **분기 가드도, 슬랙도, 분기 하트비트도 건드리지 않는다** — 분기 재평가와 섞이면
+ *    매일 캐시가 분기 알림을 90일씩 밀어낸다.
+ *
+ * 쓰는 법:  cd backend && npx tsx src/scripts/reviewEtfLayer.ts [계좌id] [후보수] [--force] [--notify] [--cache]
  */
 import { getKisAccount } from '../config.js';
 import { pool } from '../db/client.js';
@@ -59,8 +66,9 @@ const flags = args.filter((a) => a.startsWith('--'));
 const positional = args.filter((a) => !a.startsWith('--'));
 const accountId = positional[0] ?? 'VTS-ORDINARY';
 const candidateCount = Number(positional[1]) || 12;
-const force = flags.includes('--force');
-const notify = flags.includes('--notify');
+const cacheMode = flags.includes('--cache');
+const force = flags.includes('--force') || cacheMode;
+const notify = flags.includes('--notify') && !cacheMode;
 
 /*
  * ★ 분기 가드. 하트비트 하나로 판정한다 — 별도 표를 만들지 않는다.
@@ -370,6 +378,17 @@ if (notify) {
     + (bestDiv ? `\n\n후보 중 배당 최고: ${bestDiv.name} ${pct(bestDiv.divYield)}` : '')
     + '\n자세한 것: `cd backend && npx tsx src/scripts/reviewEtfLayer.ts`',
   ).catch(() => false);
+}
+if (cacheMode) {
+  const { writeFile } = await import('node:fs/promises');
+  const cached = rows.map((r) => ({
+    symbol: r.symbol, name: r.name, held: r.held, value: r.value, divYield: r.divYield,
+    feePct: r.feePct, total: r.total, priceRet: r.priceRet, totalCagr: r.totalCagr, priceCagr: r.priceCagr,
+    years: r.longYears, tax: CONFIRMED_ETF_TAX[r.symbol]?.type ?? null,
+  }));
+  await writeFile(`.cache/etf-review-${today}.json`, JSON.stringify(cached));
+  console.log(`\n캐시에 남겼다: .cache/etf-review-${today}.json (${cached.length}종목)`);
+  process.exit(0);
 }
 await pool.query(
   `INSERT INTO trading_heartbeats (name, status, note) VALUES ($1, 'ok', $2)`,

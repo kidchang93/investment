@@ -40,7 +40,7 @@ import {
 import { kstDaysAgo, kstToday } from '../kis/normalize.js';
 import { exDividendDayOf, monthEndPayer } from '../trading/exDividend.js';
 import { won } from '../notify/slack.js';
-import { LAYER_CAP, STOCK_CAP } from '../trading/buyGuard.js';
+import { capOf, LAYER_CAP, STOCK_CAP } from '../trading/buyGuard.js';
 import { AXIS_DIVERGENCE_LIMIT } from '../trading/fairValue.js';
 
 /** 이보다 오래된 적정가는 낡았다고 알린다. 분석가가 5분마다 도므로 넉넉한 값이다 */
@@ -553,6 +553,12 @@ async function main(): Promise<void> {
      */
     for (const line of await exDividendLines(account, snap.positions)) console.log(line);
     /*
+     * ★★ **ETF 층** (2026-09-21 사용자 결정 — *"ETF 는 그럼 장기 투자 목적 용이니 50% 내에서
+     *    자유롭게 거래할 수 있으면돼"*). 분석가 재량으로 사고팔되 ETF끼리만 교체하고 손절선은
+     *    두지 않는다. 판단 재료는 배당·보수·총수익·과세다 — 장 시작 전 캐시만 읽는다(KIS 0회).
+     */
+    for (const line of await etfLayerLines(accountId, equity, priceOf)) console.log(line);
+    /*
      * ★★ **내가 적은 익절·손절을 함께 찍는다** (2026-09-09).
      *
      * 그전에는 평단·평가손익만 나와서, 익절가를 넘었는지 판단자가 **여기서 알 수
@@ -674,4 +680,55 @@ async function exDividendLines(
       '    오늘까지 사면 배당을 받습니다. 다만 세후 차이는 건당 ±0.03%라 타이밍으로 얻을 것은 없습니다(measureExDividend).'];
   }
   return [];
+}
+
+/**
+ * ETF 층 요약 — 분석가가 ETF를 사고팔 때 보는 줄.
+ *
+ * ★ **캐시만 읽는다.** `reviewEtfLayer.ts --cache`가 장 시작 전(`etf-cache` 작업)에 남긴
+ *   `.cache/etf-review-YYYYMMDD.json`이다. 매 바퀴 계산하면 KIS 호출이 수십 번이라 손절
+ *   감시와 유량이 겹친다(모의 초당 1건).
+ * ★ 후보는 **배당 − 보수**로 줄 세운다. 1년 가격으로 세우면 폭등한 것을 추격하는 표가
+ *   된다(`reviewEtfLayer` 첫 판이 그랬다).
+ */
+async function etfLayerLines(accountId: string, equity: number, priceOf: Map<string, number>): Promise<string[]> {
+  type Cached = {
+    symbol: string; name: string; held: boolean; value: number; divYield?: number; feePct?: number;
+    total?: number; priceRet?: number; totalCagr?: number; priceCagr?: number; years?: number; tax: string | null;
+  };
+  const today = kstToday();
+  const etfValue = (await getLayerPositions(accountId).catch(() => []))
+    .filter((p) => p.layer === 'etf')
+    .reduce((s, p) => s + p.quantity * (priceOf.get(p.symbol) ?? 0), 0);
+  const lines: string[] = [];
+  if (equity > 0) {
+    const room = Math.max(0, capOf('etf') * equity - etfValue);
+    lines.push(`  ★ ETF 층 ${((etfValue / equity) * 100).toFixed(1)}% · 한도 ${capOf('etf') * 100}% — 남은 한도 ${won(room)}`
+      + ' · 분석가 재량 · **ETF끼리만 교체**(단기 자금 마련용 매도 금지) · **손절선 없음**');
+  }
+  let rows: Cached[];
+  try {
+    rows = JSON.parse(await readFile(`.cache/etf-review-${today}.json`, 'utf-8')) as Cached[];
+  } catch {
+    lines.push('    ETF 요약 없음 — 오늘 `etf-cache` 작업이 안 돌았다(`reviewEtfLayer.ts --cache`). 배당·보수를 모른 채 사지 마세요.');
+    return lines;
+  }
+  const pct = (n?: number): string => (n === undefined ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`);
+  const taxLabel = (t: string | null): string => (t === 'domestic' ? '차익 비과세' : t === 'holdingPeriod' ? '보유기간과세' : '과세 모름');
+  const describe = (r: Cached): string => `${r.name.slice(0, 20)} 배당 ${pct(r.divYield)} − 보수 ${r.feePct ?? '—'}%`
+    + ` · 1년 총 ${pct(r.total)}(가격 ${pct(r.priceRet)})`
+    + (r.totalCagr !== undefined ? ` · ${r.years?.toFixed(1)}년 총 연 ${pct(r.totalCagr)}` : ` · ${r.years?.toFixed(1) ?? '?'}년치`)
+    + ` · ${taxLabel(r.tax)}`;
+  for (const r of rows.filter((x) => x.held)) lines.push(`    보유 ${describe(r)} · ${won(r.value)}`);
+  const net = (r: Cached): number => (r.divYield ?? -99) - (r.feePct ?? 0);
+  for (const r of rows.filter((x) => !x.held && x.divYield !== undefined).sort((a, b) => net(b) - net(a)).slice(0, 3)) {
+    /*
+     * ★ 배당−보수로만 세우면 **원금을 깎아 배당을 만드는 상품**이 맨 위에 온다 — 첫 실행에서
+     *   배당 27.76% 커버드콜이 1위였는데 1년 가격 −22%·총수익 −0.69%였다. 배당을 받고도 손해면 적는다.
+     */
+    const warn = r.total !== undefined && r.total < 0 ? ' ⚠ 배당을 받고도 1년 총수익이 마이너스 — 배당이 원금에서 나온다' : '';
+    lines.push(`    후보 ${describe(r)}${warn}`);
+  }
+  lines.push('    ※ 1년 가격은 지난 값입니다 — 높다고 사면 추격입니다. 총보수는 이미 가격에 들어가 있습니다.');
+  return lines;
 }

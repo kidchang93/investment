@@ -108,10 +108,17 @@ export interface DeliberationDecision {
    * `hold`·`sell`에는 없어도 된다 — 새로 들어가는 자리에만 필요하다.
    */
   plan?: {
-    /** 익절 목표가(원) */
-    targetPrice: number;
-    /** 손절가(원). 여기 닿으면 판단이 틀린 것이다 */
-    stopPrice: number;
+    /** 익절 목표가(원). ETF 층은 비워도 된다 — 장기 보유라 목표가로 나오지 않는다 */
+    targetPrice?: number;
+    /**
+     * 손절가(원). 여기 닿으면 판단이 틀린 것이다 — 손절 감시가 매 분 보고 깨면 판다.
+     *
+     * ★★ **층마다 다르다** (2026-09-21 사용자 결정). 단기 층은 **반드시** 적고, ETF 층은
+     *    **적지 않는다**(장기 목적, 분기 재평가·교체로만 나온다). 예전에는 타입이 필수라고
+     *    적어 놓고 런타임은 검사하지 않아 단기 층에서 빠져도 조용히 기록됐다 —
+     *    `decisionProblem`이 이제 층별로 거른다.
+     */
+    stopPrice?: number;
     /** 목표까지 예상하는 보유 기간(거래일) */
     horizonDays: number;
     /** 목표가에 닿았을 때의 수익률(0~1). 비용을 뺀 값으로 적는다 */
@@ -260,6 +267,20 @@ function decisionProblem(d: DeliberationDecision): string | null {
     if (!d.plan) {
       return `${d.symbol} 매수에 plan이 없습니다.`
         + ' targetPrice · stopPrice · horizonDays · expectedReturn · basis를 사기 전에 적으세요.';
+    }
+    /*
+     * ★★ 손절선은 층마다 다르다 (2026-09-21 사용자 결정 — ETF에는 손절선을 두지 않는다).
+     *    단기 층에서 빠지면 **손절 없는 자리**가 생기고(손절 감시는 stopPrice가 있는 결정만 본다),
+     *    ETF 층에 적으면 장기 자리를 가격으로 판다. 둘 다 조용히 지나가면 안 된다.
+     */
+    const stop = d.plan.stopPrice;
+    const hasStop = typeof stop === 'number' && Number.isFinite(stop) && stop > 0;
+    if (d.layer === 'short' && !hasStop) {
+      return `${d.symbol} 단기 층 매수에 stopPrice가 없습니다 — 손절 감시가 이 자리를 못 봅니다.`;
+    }
+    if (d.layer === 'etf' && hasStop) {
+      return `${d.symbol} ETF 층 매수에 stopPrice가 있습니다 — ETF에는 손절선을 두지 않습니다`
+        + '(사용자 결정 2026-09-21, 분기 재평가·교체로만 나온다). stopPrice를 비우세요.';
     }
   }
   if (d.action === 'amend' || d.action === 'cancel') {
