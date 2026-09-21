@@ -2564,9 +2564,12 @@ export async function isDomesticMarketOpenDay(date = kstToday()): Promise<boolea
   const today = rows.find((row) => row.bass_dt === date);
   if (!today) throw new Error(`KIS 휴장일조회에 ${date} 항목이 없습니다.`);
 
-  const open = today.opnd_yn === 'Y';
-  marketOpenCache.set(date, open);
-  return open;
+  /*
+   * ★ 한 번 물으면 여러 날이 함께 온다 — 받은 날을 전부 캐시한다(2026-09-21). 월말
+   *   마지막 개장일을 거꾸로 찾는 배당락 추정이 하루씩 물으면 연휴에 열 번 가까이 나간다.
+   */
+  for (const row of rows) if (/^\d{8}$/.test(row.bass_dt ?? '')) marketOpenCache.set(row.bass_dt!, row.opnd_yn === 'Y');
+  return today.opnd_yn === 'Y';
 }
 
 /**

@@ -29,11 +29,16 @@ import { closeDb, pool } from '../db/client.js';
 import { getLatestStopPrices } from '../db/deliberations.js';
 import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
 import { getLayerPositions } from '../db/layers.js';
+import { readFile, writeFile } from 'node:fs/promises';
 import {
+  getKisDividendSchedule,
   getKisDomesticAccountSnapshot,
   getKisDomesticAmendableOrders,
   getKisDomesticOrderability,
+  isDomesticMarketOpenDay,
 } from '../kis/rest.js';
+import { kstDaysAgo, kstToday } from '../kis/normalize.js';
+import { exDividendDayOf, monthEndPayer } from '../trading/exDividend.js';
 import { won } from '../notify/slack.js';
 import { LAYER_CAP, STOCK_CAP } from '../trading/buyGuard.js';
 import { AXIS_DIVERGENCE_LIMIT } from '../trading/fairValue.js';
@@ -542,6 +547,12 @@ async function main(): Promise<void> {
         + '\n    ※ 한도는 상한입니다. 남았다고 사야 하는 것이 아니라, 기대값이 비용을 넘는 후보가 있을 때만 삽니다.');
     }
     /*
+     * ★★ **배당락일 종목** (2026-09-21) — 그날 하락 중 배당만큼은 **기계적**이다.
+     *   리츠는 매달 0.75%씩 빠진다(원주가 실측). 급락으로 읽으면 멀쩡한 자리를 판다 —
+     *   사용자가 말한 *"폭락 시그널"*과 가려야 한다. 추정이다(`trading/exDividend.ts`).
+     */
+    for (const line of await exDividendLines(account, snap.positions)) console.log(line);
+    /*
      * ★★ **내가 적은 익절·손절을 함께 찍는다** (2026-09-09).
      *
      * 그전에는 평단·평가손익만 나와서, 익절가를 넘었는지 판단자가 **여기서 알 수
@@ -606,3 +617,61 @@ async function main(): Promise<void> {
 }
 
 await main().finally(closeDb);
+
+/**
+ * 오늘·다음 개장일이 배당락(추정)인 보유 종목 — 분석가가 매 바퀴 보는 줄.
+ *
+ * ★ **KIS는 하루 첫 바퀴에만 부른다.** 분석가 루프는 3~5분마다 도는데 모의 서버는 초당
+ *   1건이라 손절 감시와 유량이 겹친다(2026-09-21에 그렇게 배당 조회 하나가 빠졌다).
+ *   결과를 `.cache/ex-dividend-YYYYMMDD.json`에 두고 같은 날은 읽기만 한다.
+ * ★ 배당락은 월말에만 온다(보유 종목 기준일이 전부 그 달 마지막 개장일) — **20일 전에는
+ *   아무것도 묻지 않는다.** 배당 조회도 배당락이 오늘·다음 개장일일 때만 한다.
+ */
+async function exDividendLines(
+  account: NonNullable<ReturnType<typeof getKisAccount>>,
+  positions: Array<{ symbol: string; name?: string; currentPrice?: number }>,
+): Promise<string[]> {
+  const today = kstToday();
+  if (Number(today.slice(6, 8)) < 20) return [];
+  type Cached = { exDay: string | null; nextOpen: string | null; items: Array<{ name: string; amount: number; price: number }> };
+  const file = `.cache/ex-dividend-${today}.json`;
+  let data: Cached;
+  try {
+    data = JSON.parse(await readFile(file, 'utf-8')) as Cached;
+  } catch {
+    const ym = today.slice(0, 6);
+    const lastDay = new Date(Date.UTC(Number(ym.slice(0, 4)), Number(ym.slice(4, 6)), 0)).getUTCDate();
+    const openDays: string[] = [];
+    for (let d = 20; d <= lastDay; d += 1) {
+      const ymd = `${ym}${String(d).padStart(2, '0')}`;
+      // 개장일을 못 물으면 추정하지 않는다 — 틀린 날을 배당락이라 적는 것보다 낫다.
+      if (await isDomesticMarketOpenDay(ymd).catch(() => false)) openDays.push(ymd);
+    }
+    const exDay = exDividendDayOf(openDays) ?? null;
+    const nextOpen = openDays.find((d) => d > today) ?? null;
+    const month = Number(today.slice(4, 6));
+    const items: Cached['items'] = [];
+    if (exDay && (exDay === today || exDay === nextOpen)) {
+      for (const p of positions) {
+        const records = await getKisDividendSchedule(account, p.symbol, kstDaysAgo(400), today).catch(() => []);
+        const payer = monthEndPayer(records, today);
+        if (payer?.months.has(month)) items.push({ name: p.name ?? p.symbol, amount: payer.lastAmount, price: p.currentPrice ?? 0 });
+      }
+    }
+    data = { exDay, nextOpen, items };
+    await writeFile(file, JSON.stringify(data)).catch(() => {});
+  }
+  if (!data.exDay || data.items.length === 0) return [];
+  const list = data.items
+    .map((i) => `${i.name} ${won(i.amount)}${i.price > 0 ? `(${((i.amount / i.price) * 100).toFixed(2)}%)` : ''}`)
+    .join(' · ');
+  if (data.exDay === today) {
+    return [`  ★ 오늘 배당락(추정) — ${list}`,
+      '    오늘 하락 중 이만큼은 배당이 빠진 기계적 하락입니다. 급락 신호로 읽지 마세요(배당은 현금으로 들어옵니다).'];
+  }
+  if (data.exDay === data.nextOpen) {
+    return [`  ★ 다음 개장일(${data.exDay.slice(4, 6)}/${data.exDay.slice(6)}) 배당락(추정) — ${list}`,
+      '    오늘까지 사면 배당을 받습니다. 다만 세후 차이는 건당 ±0.03%라 타이밍으로 얻을 것은 없습니다(measureExDividend).'];
+  }
+  return [];
+}
