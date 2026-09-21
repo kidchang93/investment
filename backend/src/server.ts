@@ -1843,7 +1843,14 @@ async function main(): Promise<void> {
       if (!account) return reply.code(400).send({ message: '등록된 KIS 계좌가 없습니다.' });
       try {
         const snapshot = await getKisDomesticAccountSnapshot(account);
-        const cash = snapshot.cashBalance ?? 0;
+        /*
+         * ★ **D+2를 쓴다** — 위 층 비중 계산과 같은 이유다(2026-09-21에 여기만 D+0인 것을 봤다).
+         * `cashBalance`(D+0)에는 최근 산 주식의 결제대금이 아직 안 빠져 있어, 그 값으로
+         * 거르면 `tooExpensive`(1주가 예수금보다 비쌈) 판정이 통째로 거짓이 된다 —
+         * 그날 D+0은 23,482,484원인데 실제로 살 수 있는 돈은 10,744원이었다.
+         * 판단자가 부르는 경로가 바로 여기라(`docs/TRADING_API.md`) 조용히 틀리면 회차가 통째로 틀린다.
+         */
+        const cash = snapshot.settlementCash ?? 0;
         const result = await runScreening(cash, Number(req.body.lookups) || DEFAULT_SCREENING_LOOKUPS);
         rememberScreening(account.id, result);
         return { result };
