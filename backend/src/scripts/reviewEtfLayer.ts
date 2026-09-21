@@ -54,7 +54,7 @@ import { pool } from '../db/client.js';
 import { sendSlack } from '../notify/slack.js';
 import { getDomesticQuotes, getKisDividendSchedule, getKisDomesticAccountSnapshot, getKisRawDailyBars } from '../kis/rest.js';
 import { kstDaysAgo, kstToday } from '../kis/normalize.js';
-import { getCategoryInstruments } from '../db/instruments.js';
+import { getCategoryInstruments, getTopTurnoverInstruments } from '../db/instruments.js';
 import { getDailyBars } from '../db/dailyBars.js';
 import { getLayerPositions } from '../db/layers.js';
 import { getNaverEtfIndicators } from '../naver/finance.js';
@@ -224,15 +224,21 @@ for (const p of snapshot.positions) {
 }
 
 // ── 대안 후보 — 배당/커버드콜 ETF 중 거래대금 상위 ──────────────────────
-const candidates = (await getCategoryInstruments('kr-etf-income', 60)).filter((i) => !etfSymbols.has(i.symbol));
-const quotes = await getDomesticQuotes(candidates.slice(0, 60).map((i) => i.symbol));
-const liquid = candidates
-  .map((i) => ({ i, q: quotes.quotes.get(i.symbol) }))
-  .filter((x) => x.q && (x.q.turnover ?? 0) > 0)
-  .sort((a, b) => (b.q!.turnover ?? 0) - (a.q!.turnover ?? 0))
+/*
+ * ★★ 거래대금은 **일봉 저장소의 20일 평균**으로 줄 세운다 (2026-09-22).
+ *    오늘 시세의 거래대금으로 거르던 때는 ① 08:20 `etf-cache`가 개장 전이라 전부 0 →
+ *    **매일 아침 후보 0개**였고 "후보 중 더 높은 것이 없다"는 거짓 결론을 적었다.
+ *    ② 풀도 배당 ETF 118개 중 **코드 순서 앞 60개**였다(8/19 스크리닝과 같은 함정).
+ *    시세는 가격만 쓴다 — 개장 전에는 전일 종가다.
+ */
+const income = new Set((await getCategoryInstruments('kr-etf-income', 1000)).map((i) => i.symbol));
+const candidates = (await getTopTurnoverInstruments(['etf'], 2000))
+  .filter((i) => income.has(i.symbol) && !etfSymbols.has(i.symbol))
   .slice(0, candidateCount);
-for (const { i, q } of liquid) {
-  rows.push(await measure(i.symbol, i.name, q!.price ?? 0, false, 0));
+const quotes = await getDomesticQuotes(candidates.map((i) => i.symbol));
+for (const i of candidates) {
+  const price = quotes.quotes.get(i.symbol)?.price ?? 0;
+  if (price > 0) rows.push(await measure(i.symbol, i.name, price, false, 0));
 }
 
 // ── 표 ─────────────────────────────────────────────────────────────────
@@ -286,6 +292,8 @@ if (bestDiv && heldBelow.length > 0) {
   }
   console.log('  ※ 배당이 높다고 총수익이 높지는 않습니다 — 커버드콜은 배당을 얹는 대신 상승을 깎습니다.');
   console.log('  ※ 환헤지 여부와 기초자산이 다르면 같은 자로 견줄 수 없습니다. 갈아타기 전에 확인하세요.');
+} else if (!rows.some((r) => !r.held)) {
+  console.log('★ 후보를 하나도 못 받았습니다 — 견주지 못했습니다(일봉 저장소·시세를 확인하세요).');
 } else {
   console.log('★ 후보 중에 지금 든 것보다 배당−보수가 높은 것이 없습니다.');
 }
