@@ -1224,6 +1224,29 @@ export function settledProfitRate(profit: BrokerTradeProfitSnapshot): number | u
   return profit.rows.length > 0 ? profit.totalProfitRate : undefined;
 }
 
+/**
+ * 배당 한 건 (예탁원 배당일정 `HHKDB669102C0` 정규화).
+ *
+ * ★ **ETF 분배금도 같은 자리에 온다** — 주식 배당과 구분되지 않는다(2026-09-21 실측:
+ *   `161510` PLUS 고배당주의 월배당 12건이 그대로 잡혔다).
+ *
+ * ⚠ **같은 요청이 간헐적으로 0건을 준다.** 2026-09-21에 `329200`을 두 번 물었을 때
+ *   `rt_cd=0`인 채 빈 응답이 왔고, 곧바로 다시 물으니 24건(월배당 33원)이 나왔다.
+ *   **빈 응답을 "배당 없음"으로 읽으면 안 된다** — 그래서 연 배당 합계는
+ *   `number | undefined`로 다니고, 모르는 것은 비운 채 둔다.
+ */
+export interface DividendRecord {
+  symbol: string;
+  /** 배당기준일 `YYYYMMDD`. **이 날 보유해야 받는다** — 지급일이 아니다 */
+  recordDate: string;
+  /** 주당 현금배당금(원) */
+  amountPerShare: number;
+  /** 지급일 `YYYY/MM/DD`. 아직 안 정해졌으면 빈 문자열 */
+  payDate: string;
+  /** 배당종류 — `분기`·`결산`·`중간` 등 KIS가 준 말 그대로 */
+  kind: string;
+}
+
 /** 정정·취소가 가능한 미체결 주문 1건 */
 export interface BrokerAmendableOrder {
   id: string;

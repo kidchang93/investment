@@ -58,6 +58,7 @@ import type {
   BrokerReservedOrder,
   BrokerTradeProfitRow,
   BrokerTradeProfitSnapshot,
+  DividendRecord,
   OrderSide,
   Candle,
   CandlesResponse,
@@ -2246,6 +2247,62 @@ export async function getKisDomesticExecutions(
  * 체결내역(`inquire-daily-ccld`)과 달리 **매도로 확정된 실현손익**과 수수료·세금을 준다.
  * 합계(output2)는 브로커가 계산해 준 값을 그대로 쓴다. 우리가 다시 더하면 어긋난다.
  */
+/**
+ * 예탁원 배당일정 (tr_id: `HHKDB669102C0`).
+ *
+ * ★★ **모의 서버에서도 된다** (2026-09-21 실측). 계좌 TR이 아니라 시세·정보 계열이라
+ *    `VTTC`/`TTTC` 같은 이름 갈림이 없다 — 같은 `tr_id`가 양쪽에서 통한다.
+ *
+ * ★ **ETF 분배금이 같은 자리에 온다.** `161510`(월배당)은 12건, `069500` KODEX 200은
+ *   4건이 나왔다. 주식 배당과 구분되지 않으므로 호출부가 가릴 필요도 없다.
+ *
+ * ⚠⚠ **빈 응답이 아무 때나 온다.** 2026-09-21에 `329200`을 curl로 두 번 물었을 때
+ *   `rt_cd=0`·`msg_cd=MCA00000`(정상)인 채 `output1`이 없었다. 같은 파라미터로 곧바로
+ *   다시 부르니 **24건**(월배당 33원, 연 396원 = 9.7%)이 나왔다. 오류가 아니라 정상
+ *   응답의 모습으로 비어 온다 — **빈 배열은 "배당이 없다"가 아니라 "이번엔 못 받았다"**이다.
+ *   ★ 나는 이것을 "이 TR이 리츠 ETF를 빠뜨린다"는 구조적 한계로 잘못 읽었다.
+ *   합계 함수(`trading/dividend.ts`)가 `undefined`를 돌려주는 것이 유일한 방어선이다.
+ *
+ * ★ 종목 단위로만 부른다. 전체 조회(`SHT_CD` 공백)는 `CTS`로 페이지를 넘기는데
+ *   `kisPages`는 `CTX_AREA_*`를 물리므로 같은 쪽을 다시 받는다. 필요해지면 그때 만든다.
+ */
+export async function getKisDividendSchedule(
+  account: KisAccountConfig,
+  symbol: string,
+  fromDate: string,
+  toDate: string,
+): Promise<DividendRecord[]> {
+  const { rows } = await kisPages(
+    account,
+    '/uapi/domestic-stock/v1/ksdinfo/dividend',
+    'HHKDB669102C0',
+    {
+      CTS: '',
+      GB1: '0', // 0:배당전체 (1:결산, 2:중간)
+      F_DT: fromDate,
+      T_DT: toDate,
+      SHT_CD: symbol,
+      HIGH_GB: '',
+    },
+    '예탁원 배당일정',
+  );
+  return rows
+    // 빈 행이 섞여 온다 — 기준일이 없으면 배당이 아니다.
+    .filter((row) => (row.record_date ?? '').length === 8)
+    .map((row): DividendRecord => ({
+      symbol: row.sht_cd ?? symbol,
+      recordDate: row.record_date ?? '',
+      /*
+       * ★ `divi_rate`를 배당수익률로 쓰면 안 된다. 삼성전자우가 `374.00`으로 오는데
+       *   이것은 **액면가(100원) 대비 비율**이다. 실제 수익률은 주당 배당금을
+       *   현재가로 나눠야 나온다 — 그래서 여기서는 금액만 들고 간다.
+       */
+      amountPerShare: optionalNumber(row.per_sto_divi_amt) ?? 0,
+      payDate: row.divi_pay_dt ?? '',
+      kind: row.divi_kind ?? '',
+    }));
+}
+
 export async function getKisDomesticTradeProfit(
   account: KisAccountConfig | null,
   days = 30,
