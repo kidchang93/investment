@@ -715,7 +715,8 @@ async function etfLayerLines(accountId: string, equity: number, priceOf: Map<str
   }
   const pct = (n?: number): string => (n === undefined ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`);
   const taxLabel = (t: string | null): string => (t === 'domestic' ? '차익 비과세' : t === 'holdingPeriod' ? '보유기간과세' : '과세 모름');
-  const describe = (r: Cached): string => `${r.name.slice(0, 20)} 배당 ${pct(r.divYield)} − 보수 ${r.feePct ?? '—'}%`
+  // ★ 코드를 붙인다 — 이름만 20자로 잘라 보이던 때 분석가가 노트를 임시 이름으로 적었다(9/22, 제안서도 못 쓴다)
+  const describe = (r: Cached): string => `${r.symbol} ${r.name.slice(0, 20)} 배당 ${pct(r.divYield)} − 보수 ${r.feePct ?? '—'}%`
     + ` · 1년 총 ${pct(r.total)}(가격 ${pct(r.priceRet)})`
     + (r.totalCagr !== undefined ? ` · ${r.years?.toFixed(1)}년 총 연 ${pct(r.totalCagr)}` : ` · ${r.years?.toFixed(1) ?? '?'}년치`)
     + ` · ${taxLabel(r.tax)}`;
