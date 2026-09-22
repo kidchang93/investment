@@ -389,9 +389,14 @@ async function main(): Promise<void> {
       });
     } else {
       // 막힌 것도 남긴다 — 왜 못 냈는지가 판단의 일부다.
+      // ★ 계좌 상태 관문(403)은 사유를 `verdict.violations`에 싣는다. `blockers`만 읽던 때
+      //   "계좌 상태 관문에 막혔습니다"만 남아 보유 12/12인지 알 수 없었다(9/22 회차 4139·4140).
+      const verdict = result.body.verdict as { violations?: unknown } | undefined;
       const blockers = Array.isArray(result.body.blockers)
         ? (result.body.blockers as string[])
-        : [String(result.body.message ?? `HTTP ${result.status}`)];
+        : Array.isArray(verdict?.violations)
+          ? [String(result.body.message ?? ''), ...(verdict.violations as string[])]
+          : [String(result.body.message ?? `HTTP ${result.status}`)];
       console.log(`  ✗ ${describe(d)} → ${blockers.join(' · ')}`);
       executions.push({
         symbol: d.symbol,
