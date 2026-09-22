@@ -587,7 +587,7 @@ async function main(): Promise<void> {
       noteLine(p.symbol, p.currentPrice);
     }
   } catch (error) {
-    console.log(`  ★ 계좌를 못 읽었습니다: ${(error as Error).message.slice(0, 80)}`);
+    console.log(`  ★ 계좌를 못 읽었습니다: ${(error as Error).message.slice(0, 200)}`);
     console.log('    자리 크기를 계산할 수 없으므로 이 회차에서는 매수하지 마세요.');
   }
 
@@ -604,7 +604,7 @@ async function main(): Promise<void> {
       );
     }
   } catch (error) {
-    console.log(`  (못 읽었습니다: ${(error as Error).message.slice(0, 60)})`);
+    console.log(`  (못 읽었습니다: ${(error as Error).message.slice(0, 200)})`); // 60자던 때 KIS 경로만 남았다(9/22)
   }
 
   // ── 오늘 이미 한 판단 ──

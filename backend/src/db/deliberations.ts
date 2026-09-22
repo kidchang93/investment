@@ -319,7 +319,9 @@ export async function recordDeliberation(round: DeliberationRound): Promise<numb
       JSON.stringify(round.decisions), round.falsifier,
       JSON.stringify(round.unknowns), JSON.stringify(round.sources),
       JSON.stringify(round.reference ?? { prices: {} }),
-      JSON.stringify(round.executions),
+      // ★ 집행기가 채우는 칸이다 — 분석가 JSON엔 없다. 없으면 NOT NULL에 걸려 첫 기록이 거부되고
+      //   회차 번호가 하나 버려졌다(9/22 두 번, 4150 건너뜀)
+      JSON.stringify(round.executions ?? []),
     ],
   );
   return Number(rows[0].id);
