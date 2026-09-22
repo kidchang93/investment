@@ -507,14 +507,14 @@ interface Riser {
  *   그 시각의 줄만 읽으므로, 0건인 회차에 옛 회차의 줄이 오늘 것처럼 보이지 않는다.
  * ★ 실패해도 적정가·⭐는 막지 않는다. 이 회차는 📈 없이 끝나고 `null`을 돌려준다.
  */
-async function discoverRisers(held: Set<string>, cash: number | null): Promise<Riser[] | null> {
+async function discoverRisers(held: Set<string>, equity: number | null): Promise<Riser[] | null> {
   const record = (status: 'ok' | 'failed', note: string, at: Date): Promise<unknown> => pool.query(
     'INSERT INTO trading_heartbeats (name, status, note, ran_at) VALUES ($1, $2, $3, $4)',
     [RISERS_HEARTBEAT, status, note, at],
   ).catch(() => undefined);
 
-  if (cash === null) {
-    await record('failed', '계좌를 못 읽어 예수금을 모른다 — 훑지 않았다', new Date());
+  if (equity === null) {
+    await record('failed', '계좌를 못 읽어 총자산을 모른다 — 훑지 않았다', new Date());
     return null;
   }
   const started = Date.now();
@@ -522,7 +522,7 @@ async function discoverRisers(held: Set<string>, cash: number | null): Promise<R
    * ★ **300으로 부른다** — 정식 회차가 `screenCandidates <계좌> 300`으로 부르는 그 값이다.
    *   기본값(`DEFAULT_SCREENING_LOOKUPS`)은 120이라, 첫 실행이 "거래대금 상위 120"만 봤다.
    */
-  const result = await runScreening(cash, MAX_SCREENING_LOOKUPS).catch((error: Error) => error);
+  const result = await runScreening(equity, MAX_SCREENING_LOOKUPS).catch((error: Error) => error);
   if (result instanceof Error) {
     await record('failed', result.message.slice(0, 80), new Date());
     return null;
@@ -852,13 +852,13 @@ async function main(): Promise<void> {
   // ── 대상: 보유 ──
   const symbols: string[] = [];
   const account = getKisAccount(accountId);
-  /** 📈 스크리너가 "1주도 못 산다"를 가르는 값. 계좌를 못 읽으면 모른다(`null`) */
-  let cash: number | null = null;
+  /** 📈 스크리너의 1주 상한을 정하는 총자산(9/22부터 현금이 아니다). 계좌를 못 읽으면 모른다(`null`) */
+  let equity: number | null = null;
   if (account) {
     try {
       const snap = await getKisDomesticAccountSnapshot(account);
       for (const p of snap.positions) if (p.quantity > 0) symbols.push(p.symbol);
-      cash = snap.cashBalance ?? null;
+      equity = snap.totalEvaluation ?? null;
     } catch (error) {
       console.log(`계좌를 못 읽었다 — 보유 없이 후보만 본다 (${(error as Error).message.slice(0, 50)})`);
     }
@@ -1151,7 +1151,7 @@ async function main(): Promise<void> {
    * ★ 장이 닫혔으면 훑지 않는다(`fair-value-after`가 30분마다 돈다) — 볼 판단자가
    *   없고 값도 고정이라, 훑으면 KIS 시세 10회를 그냥 쓴다.
    */
-  const risers = krxClosedNow() ? null : await discoverRisers(held, cash);
+  const risers = krxClosedNow() ? null : await discoverRisers(held, equity);
   console.log(risers === null
     ? '📈 오늘 오르는 후보 — 이번에는 없다(장이 닫혔거나 못 훑었다 · risers-scan 기록 참고)'
     : `📈 오늘 오르는 후보 ${risers.length}건을 남겼다`);

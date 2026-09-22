@@ -211,7 +211,7 @@ const WATCH_GROUP_OPTIONS: Array<{ key: WatchGroup; label: string }> = [
  */
 const SCREENING_VERDICT: Record<ScreeningVerdict, { label: string; why: string }> = {
   pass: { label: '통과', why: '자동매매가 후보로 삼을 수 있는 종목입니다' },
-  tooExpensive: { label: '1주가 예수금보다 비쌈', why: '예수금으로 1주도 살 수 없습니다' },
+  tooExpensive: { label: '1주가 종목 한도보다 비쌈', why: '1주가 총자산의 10%(종목 한도)를 넘어 규칙상 살 수 없습니다' },
   /*
    * `거래대금 부족`과 갈라 둔 자리다. 앞은 얇은 것이고 이건 아예 없는 것이라
    * 문턱을 낮춰도 살 수 없다. 말은 **잰 사실까지만** 적는다 — 정규장에서는
@@ -4621,7 +4621,7 @@ export function App(): JSX.Element {
                       <p className="screening__basis">
                         <b>{formatClock(screening.scannedAt)}</b>에 잰 값 ·
                         KIS 시세 {screening.quoteCalls}회 나감 ·
-                        예수금 {Math.floor(screening.cash).toLocaleString('ko-KR')}원 ·
+                        1주 상한 {Math.floor(screening.priceCap).toLocaleString('ko-KR')}원(총자산 10%) ·
                         장 경과 {Math.round(screening.elapsed * 100)}%
                         <small>
                           거래대금 문턱 {formatOkeanAmount(screening.thresholds.minDailyTurnover)}

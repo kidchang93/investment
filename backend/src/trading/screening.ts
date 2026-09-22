@@ -15,6 +15,7 @@
 
 import { getCategoryInstruments, getTopTurnoverInstruments } from '../db/instruments.js';
 import { getInstrumentQuotes, MULTI_QUOTE_MAX_CODES } from '../kis/rest.js';
+import { STOCK_CAP } from './buyGuard.js';
 import {
   ETF_ROUND_TRIP_COST_RATE,
   knownRangeRate,
@@ -100,7 +101,15 @@ async function buildPool(size: number): Promise<Instrument[]> {
   return pool;
 }
 
-export async function runScreening(cash: number, lookups: number): Promise<ScreeningResult> {
+/**
+ * ★★ 첫 인자는 **총자산**이다 — 현금이 아니다 (2026-09-22 사용자 결정).
+ *    "1주가 너무 비싸다"는 **종목 한도(총자산 × `STOCK_CAP`)**로 판정한다. 현금으로 거르던 때는
+ *    매수여력이 1~3만원인 날 정식 회차 스크리너는 270종목 중 227종목을 이 사유로 뺐고, 분석가의 📈
+ *    목록(거래대금 상위 300 중 41 통과)은 "오늘 오른 **1만원 이하** 종목"이 됐다. 사는 돈은 팔아서 만든다(9/21 결정) — 실제 매수여력은
+ *    집행기가 주문 직전에 KIS에 다시 묻는다(`executeDeliberation`).
+ */
+export async function runScreening(equity: number, lookups: number): Promise<ScreeningResult> {
+  const priceCap = equity * STOCK_CAP;
   const limit = Math.max(1, Math.min(MAX_SCREENING_LOOKUPS, Math.floor(lookups)));
   // 통과한 것만 세면 안 되므로 조회 수만큼만 풀을 만든다 — 안 물어본 종목을
   // 후보에서 빠진 것처럼 세면 거절 사유가 부풀려진다.
@@ -144,7 +153,7 @@ export async function runScreening(cash: number, lookups: number): Promise<Scree
        *
        * 종목을 함께 넘겨야 비용 문턱이 ETF의 거래세 면제를 본다.
        */
-      verdict: verdictFor(quote, elapsed, cash, instrument),
+      verdict: verdictFor(quote, elapsed, priceCap, instrument),
     });
   }
 
@@ -155,7 +164,7 @@ export async function runScreening(cash: number, lookups: number): Promise<Scree
      * 다시 세면 캐시·실패·묶이지 않는 종목에서 어긋난다.
      */
     quoteCalls: batch.calls,
-    cash,
+    priceCap,
     elapsed,
     poolSize: pool.length,
     lookups: limit,

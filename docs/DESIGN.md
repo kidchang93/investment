@@ -582,7 +582,10 @@ theme_instruments  (theme_code FK→themes CASCADE, symbol, instrument_id FK→i
 순서는 `backend/src/trading/universe.ts`의 `verdictFor` 한 곳에 있다. 예전에는
 `loadAutoTraderCandidates`와 `runScreening`이 각자 들고 있었다.
 
-`noOrderBook`이 `tooExpensive`보다 앞이다. 예수금은 **계좌마다 다른 사정**이라 같은
+`tooExpensive`의 기준은 **1주 상한 = 종목 한도(총자산 × 10%)**다 — 2026-09-22까지는 예수금이었다
+(`docs/USER_DECISIONS.md` "후보는 현금으로 거르지 않는다"). 측정 스크립트는 가상 현금을 넘긴다.
+
+`noOrderBook`이 `tooExpensive`보다 앞이다. 1주 상한은 **계좌마다 다른 사정**이라 같은
 종목이 계좌에 따라 다른 사유로 걸리는데, 호가가 없다는 것은 누구에게나 같은 사실이다.
 `000880 한화`가 83,800원이라 소액 계좌에서 실제로 `가격 초과`로 잡혔다 — 그렇게 적으면
 "돈을 더 넣으면 살 수 있다"로 읽히는데 거짓이다.

@@ -1713,6 +1713,16 @@ async function main(): Promise<void> {
       const found = (await Promise.all(misses.map((id) => getInstrument(id)))).filter(
         (instrument): instrument is Instrument => instrument !== null,
       );
+      /*
+       * ★ **하나도 못 알아보면 400이다** (2026-09-22). 분석가가 `000660`처럼 코드만 넘겨 `[]`를
+       *   받고 "시세가 없다"로 읽었다 — 빈 배열이 정상 응답 모양으로 왔다. 일부만 모르는 것은
+       *   그대로 둔다(관심목록에 상장폐지 종목 하나가 남아 있다고 화면 시세가 통째로 비면 안 된다).
+       */
+      if (found.length === 0 && byId.size === 0) {
+        return reply.code(400).send({
+          message: `모르는 종목 id입니다: ${misses.slice(0, 5).join(', ')} — id는 \`KR:KOSPI:005930\` 모양입니다(코드만이 아니라).`,
+        });
+      }
       const batch = await getInstrumentQuotes(found);
       for (const [id, quote] of batch.quotes) {
         // 시각은 quote가 들고 온 것을 그대로 둔다. 여기서 다시 찍으면 나이가 지워진다.
@@ -1844,14 +1854,11 @@ async function main(): Promise<void> {
       try {
         const snapshot = await getKisDomesticAccountSnapshot(account);
         /*
-         * ★ **D+2를 쓴다** — 위 층 비중 계산과 같은 이유다(2026-09-21에 여기만 D+0인 것을 봤다).
-         * `cashBalance`(D+0)에는 최근 산 주식의 결제대금이 아직 안 빠져 있어, 그 값으로
-         * 거르면 `tooExpensive`(1주가 예수금보다 비쌈) 판정이 통째로 거짓이 된다 —
-         * 그날 D+0은 23,482,484원인데 실제로 살 수 있는 돈은 10,744원이었다.
-         * 판단자가 부르는 경로가 바로 여기라(`docs/TRADING_API.md`) 조용히 틀리면 회차가 통째로 틀린다.
+         * ★ **총자산을 넘긴다** — 1주 상한은 종목 한도(총자산 10%)다(2026-09-22 사용자 결정,
+         *   `runScreening` 주석). 그 전에는 예수금(9/21에 D+0 → D+2)이었는데, 매수여력이
+         *   1~3만원인 날 후보가 거의 다 `tooExpensive`로 빠졌다. 사는 돈은 팔아서 만든다.
          */
-        const cash = snapshot.settlementCash ?? 0;
-        const result = await runScreening(cash, Number(req.body.lookups) || DEFAULT_SCREENING_LOOKUPS);
+        const result = await runScreening(snapshot.totalEvaluation ?? 0, Number(req.body.lookups) || DEFAULT_SCREENING_LOOKUPS);
         rememberScreening(account.id, result);
         return { result };
       } catch (err) {

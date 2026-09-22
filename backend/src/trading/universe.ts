@@ -256,16 +256,19 @@ export function screenQuote(
  *
  * 가격이 유동성·비용보다 앞인 것은 예전 결정 그대로다. 살 수도 없는 종목을
  * 문턱으로 거르면 사유가 뒤바뀐다.
+ *
+ * ★ `priceCap`은 1주 상한이다. 후보 스크리닝(`runScreening`)은 2026-09-22부터 현금이 아니라
+ *   **종목 한도(총자산 × `STOCK_CAP`)**를 넘긴다. 측정 스크립트는 여전히 가상 현금을 넘긴다.
  */
 export function verdictFor(
   quote: Quote,
   elapsed: number,
-  cash: number,
+  priceCap: number,
   instrument?: Pick<Instrument, 'assetType'> | null,
 ): ScreeningVerdict {
   const screened = screenQuote(quote, elapsed, instrument);
   if (screened === 'noOrderBook') return 'noOrderBook';
-  if (quote.price > cash) return 'tooExpensive';
+  if (quote.price > priceCap) return 'tooExpensive';
   return screened ?? 'pass';
 }
 

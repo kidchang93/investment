@@ -12,10 +12,9 @@
  *   이미 같은 교훈을 적어 두었는데 이 파일이 그 예가 됐다. `runScreening`을
  *   그대로 부른다.
  *
- * ★ 예수금도 인자로 받지 않고 **계좌에서 직접 읽는다.** 손으로 적은 값과 실제
- *   계좌가 어긋나면 "1주가 예수금보다 비쌈" 판정이 통째로 거짓이 된다.
- *   서버(`POST /api/trading/screening/run`)와 같은 값을 같은 방식으로 쓴다.
- *   `settlementCash`(D+2)다 — `cashBalance`(D+0)는 오늘 산 것이 아직 안 빠져 있다.
+ * ★ 총자산도 인자로 받지 않고 **계좌에서 직접 읽는다.** 서버(`POST /api/trading/screening/run`)와
+ *   같은 값을 같은 방식으로 쓴다. 1주 상한은 종목 한도(총자산 10%)다 — 2026-09-22까지는
+ *   예수금이었고, 매수여력이 1~3만원인 날 270종목 중 227종목이 "1주가 예수금보다 비쌈"으로 빠졌다.
  *
  * **주문은 내지 않는다.** 리스크 룰도 바꾸지 않는다. 읽기만 한다.
  *
@@ -30,7 +29,7 @@ import type { ScreeningRow, ScreeningVerdict } from '@invest/shared';
 
 const VERDICT_LABEL: Record<ScreeningVerdict, string> = {
   pass: '통과',
-  tooExpensive: '1주가 예수금보다 비쌈',
+  tooExpensive: '1주가 종목 한도(총자산 10%)보다 비쌈',
   noOrderBook: '호가 없음',
   illiquid: '거래대금 부족',
   costHeavy: '왕복 비용이 하루 변동폭의 절반 초과',
@@ -63,16 +62,15 @@ async function main(): Promise<void> {
   }
 
   const snapshot = await getKisDomesticAccountSnapshot(account);
-  // ★ D+2 — 서버(`af72259`)만 고치고 여기는 D+0으로 남았었다(9/22 회차 4084가 잡았다). 머리말 경고 그대로다
-  const cash = snapshot.settlementCash ?? 0;
-  const result = await runScreening(cash, lookups);
+  // ★ 총자산을 넘긴다 — 1주 상한은 종목 한도다(9/22 사용자 결정, `runScreening` 주석)
+  const result = await runScreening(snapshot.totalEvaluation ?? 0, lookups);
 
   const counts = new Map<ScreeningVerdict, number>();
   for (const row of result.rows) counts.set(row.verdict, (counts.get(row.verdict) ?? 0) + 1);
   const passed = result.rows.filter((row) => row.verdict === 'pass');
 
   console.log(
-    `계좌 ${account.id} · 예수금(D+2) ${cash.toLocaleString('ko-KR')}원`
+    `계좌 ${account.id} · 1주 상한 ${Math.floor(result.priceCap).toLocaleString('ko-KR')}원(종목 한도 = 총자산 10%)`
     + ` · 풀 ${result.poolSize}종목 · 시세 조회 ${result.quoteCalls}회`
     + ` · 장 경과 ${(result.elapsed * 100).toFixed(0)}%`,
   );

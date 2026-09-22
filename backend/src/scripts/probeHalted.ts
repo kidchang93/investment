@@ -240,7 +240,7 @@ async function probeScan(): Promise<void> {
  * 전 종목이 "모른다"로 떨어지고 판정이 조용히 사라진다.
  */
 async function probeVerify(): Promise<void> {
-  const cash = Number(process.argv[3] ?? 1_000_000);
+  const cash = Number(process.argv[3] ?? 10_000_000); // 총자산 — 1주 상한은 그 10%다
   const lookups = Number(process.argv[4] ?? 120);
   const result = await runScreening(cash, lookups);
   calls += Math.ceil(lookups / 30);
@@ -248,7 +248,7 @@ async function probeVerify(): Promise<void> {
   const counts = new Map<string, number>();
   for (const row of result.rows) counts.set(row.verdict, (counts.get(row.verdict) ?? 0) + 1);
   console.log(
-    `\n=== runScreening(현금 ${cash.toLocaleString()}원, ${lookups}종목) · 장 경과 ${(result.elapsed * 100).toFixed(1)}% ===`,
+    `\n=== runScreening(총자산 ${cash.toLocaleString()}원, ${lookups}종목) · 장 경과 ${(result.elapsed * 100).toFixed(1)}% ===`,
   );
   console.log(`  풀 ${result.poolSize} · 시세 못 받음 ${result.unresolved}`);
   for (const [verdict, count] of [...counts].sort((a, b) => b[1] - a[1])) {

@@ -697,8 +697,8 @@ export interface ScreeningResult {
    * 종목 수로 세면 안 된다 — 30종목이 1회고, 실패한 묶음도 호출은 이미 나갔다.
    */
   quoteCalls: number;
-  /** 예수금. 이 값으로 1주도 못 사면 `tooExpensive` */
-  cash: number;
+  /** 1주 상한 = 종목 한도(총자산 × 10%). 1주가 이보다 비싸면 `tooExpensive` (2026-09-22까지는 예수금이었다) */
+  priceCap: number;
   /**
    * 장 경과 비율 (0~1). 유동성 문턱은 이 비율만큼만 요구한다 —
    * 09:05에 하루치 거래대금을 요구하면 전부 걸린다. 장 밖이면 1이다.
