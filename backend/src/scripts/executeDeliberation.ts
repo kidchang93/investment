@@ -253,7 +253,8 @@ async function main(): Promise<void> {
         if (p.currentPrice) heldPrice.set(p.symbol, p.currentPrice);
       }
     } catch (err) {
-      snapshotError = `계좌를 못 읽어 매수 한도를 잴 수 없다 (${(err as Error).message.slice(0, 60)})`;
+      // ★ 60자로 자르던 때 경로만 남고 사유가 잘렸다(9/22 HJ중공업 매수 실패 — "inquire-balance 실패: "에서 끝남)
+      snapshotError = `계좌를 못 읽어 매수 한도를 잴 수 없다 (${(err as Error).message.slice(0, 200)})`;
     }
   }
   const layerValue = (layer: Layer): number => [...heldValue]
