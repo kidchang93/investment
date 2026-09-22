@@ -122,9 +122,16 @@ async function main(): Promise<void> {
     const body = await slackGet('conversations.history', {
       channel: CHANNEL,
       oldest,
-      limit: String(Math.max(limit * 3, 20)),
+      /*
+       * ★★ **창 전체를 받는다** (2026-09-22). `oldest`만 주면 슬랙은 **oldest 쪽부터** 채운다.
+       *    20건이던 때 우리 앱의 「적정가 분석」(3~5분마다, 하루 ~95건)이 24시간 전 구간으로
+       *    칸을 다 채워, 어제 18:09·오늘 08:07 브리핑이 **조회에 아예 안 들어왔다** — 판단자는
+       *    "브리핑이 24시간째 없다"고 적었다. 999는 API 상한이다.
+       */
+      limit: '999',
     });
     messages = (body.messages as SlackMessage[] | undefined) ?? [];
+    if (body.has_more) console.log(`★ ${hours}시간 안에 999건이 넘어 오래된 쪽만 받았다 — 최신 브리핑이 빠졌을 수 있다.`);
   } catch (error) {
     console.log(`브리핑을 못 읽었습니다: ${(error as Error).message}`);
     console.log('이 회차는 브리핑 없이 판단해야 하고, 그 사실을 unknowns에 적으세요.');
@@ -148,7 +155,13 @@ async function main(): Promise<void> {
    * 그러면 판단자는 가장 값어치 있는 것을 못 보고 시황만 되풀이해 읽는다.
    */
   const isIntraday = (m: SlackMessage): boolean => /장중 뉴스/.test(m.text ?? '');
-  const cloudBriefs = real.filter((m) => !isIntraday(m)).slice(0, limit);
+  /*
+   * ★ ①은 **제목으로 골라낸다**(`docs/BRIEFING_PROMPT.md`의 "데일리 한·미 주식 브리핑").
+   *   "장중 뉴스가 아닌 것"으로 고르던 때는 이 채널에 같이 올라가는 「적정가 분석」이
+   *   5칸을 먼저 차지했다(2026-09-22).
+   */
+  const isCloud = (m: SlackMessage): boolean => /주식 브리핑/.test(m.text ?? '');
+  const cloudBriefs = real.filter(isCloud).slice(0, limit);
   const intraday = real.filter(isIntraday).slice(0, 1);
   const briefs = [...cloudBriefs, ...intraday]
     .sort((a, b) => Number(b.ts) - Number(a.ts));
