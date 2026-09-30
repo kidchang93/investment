@@ -130,7 +130,14 @@ export function checkPositionGuard(input: PositionGuardInput): PositionGuardVerd
    */
 
   if (input.maxPositions > 0) {
-    const holding = new Set(input.positions.filter((p) => p.quantity > 0).map((p) => p.symbol));
+    /*
+     * ★ 전량 매도가 나가 있는 종목은 자리를 비운 것으로 센다(2026-10-01 사용자 결정).
+     *   같은 회차에서 팔고 사면 매도 체결 전에 매수가 12/12로 막혔다(9/22 두 번).
+     *   매도가 안 붙으면 잠깐 한도를 넘을 수 있다 — 그 대가를 사람이 골랐다(USER_DECISIONS).
+     */
+    const holding = new Set(input.positions
+      .filter((p) => p.quantity > 0 && sellableQuantity(p.symbol, input.positions, input.executions) > 0)
+      .map((p) => p.symbol));
     // 이미 들고 있는 종목을 더 사는 것은 자리를 새로 먹지 않는다.
     if (!holding.has(input.symbol) && holding.size >= input.maxPositions) {
       violations.push(`보유 종목이 이미 ${holding.size}개입니다 (한도 ${input.maxPositions}개).`);

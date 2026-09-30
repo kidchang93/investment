@@ -149,6 +149,31 @@ describe('포지션 관문 — 들어가는 것을 막는다', () => {
     assert.match(verdict.violations.join(' '), /보유 종목이 이미 2개/);
   });
 
+  /*
+   * ★ 전량 매도가 나가 있는 종목은 빈 자리다(2026-10-01 사용자 결정). 9/22 10:18 회차 4140이
+   *   리브스메드 20주를 팔고 현대오토에버를 사려 했는데, 매도 체결 전에 매수를 검사해
+   *   12/12로 막혔고 다음 바퀴에 샀다.
+   */
+  it('전량 매도가 나가 있는 종목은 자리를 비운 것으로 센다', () => {
+    const positions = [
+      { symbol: '000660', quantity: 3 },
+      { symbol: '035420', quantity: 5 },
+    ];
+    const selling = execution({ symbol: '035420', orderQuantity: 5, remainQuantity: 5 });
+    const verdict = checkPositionGuard(base({ positions, executions: [selling], maxPositions: 2 }));
+    assert.equal(verdict.allowed, true, verdict.violations.join(' '));
+  });
+
+  it('일부만 팔고 있으면 자리는 그대로 차 있다', () => {
+    const positions = [
+      { symbol: '000660', quantity: 3 },
+      { symbol: '035420', quantity: 5 },
+    ];
+    const selling = execution({ symbol: '035420', orderQuantity: 4, remainQuantity: 4 });
+    const verdict = checkPositionGuard(base({ positions, executions: [selling], maxPositions: 2 }));
+    assert.equal(verdict.allowed, false);
+  });
+
   /* 이미 든 종목을 더 사는 것은 자리를 새로 먹지 않는다 — 물타기까지 막을 이유가 없다. */
   it('이미 든 종목은 자리가 차 있어도 더 살 수 있다', () => {
     const positions = [
