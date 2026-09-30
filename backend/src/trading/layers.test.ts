@@ -12,6 +12,7 @@ import { describe, it } from 'node:test';
 import {
   applyTrade,
   averageCost,
+  byFillTime,
   reconcile,
   explainMismatches,
   resolveFillLayer,
@@ -19,6 +20,7 @@ import {
   tradeStampFor,
   summarizeLayers,
   fillDelta,
+  fillKey,
   foldRecordedFills,
   stampFill,
   type Layer,
@@ -355,14 +357,33 @@ describe('층 장부 — 부분체결의 나머지', () => {
       { note: 'orderNo:0000026102 20260903 누적:157@4072', quantity: '157', price: '4072' },
       { note: 'orderNo:0000026102 20260903 누적:538@4071', quantity: '381', price: '4070.6' },
     ]);
-    assert.deepEqual(found.get('0000026102'), { quantity: 538, price: 4071 });
+    assert.deepEqual(found.get(fillKey('0000026102', '20260903')), { quantity: 538, price: 4071 });
   });
 
   it('도장 없는 옛 행은 수량·금액을 더해 누적을 되짚는다', () => {
     const found = foldRecordedFills([
       { note: 'orderNo:0000026102 20260903', quantity: '157', price: '4072' },
     ]);
-    assert.deepEqual(found.get('0000026102'), { quantity: 157, price: 4072 });
+    assert.deepEqual(found.get(fillKey('0000026102', '20260903')), { quantity: 157, price: 4072 });
+  });
+
+  it('★ 주문번호가 같아도 날짜가 다르면 다른 체결이다 — 번호는 날마다 새로 시작한다', () => {
+    // 2026-09-23 LG전자 정정 매도 `0000009157`(7주)이 9/7 한전 매수 297주로 읽혀 장부에서 빠졌다.
+    const found = foldRecordedFills([
+      { note: 'orderNo:0000009157 20260907 누적:297@32000', quantity: '297', price: '32000' },
+    ]);
+    assert.equal(found.get(fillKey('0000009157', '20260923')), undefined);
+    assert.deepEqual(fillDelta(7, 212_500, found.get(fillKey('0000009157', '20260923'))), { quantity: 7, price: 212_500 });
+  });
+
+  it('★ 체결은 시간순으로 넣는다 — 증권사가 준 순서(최신 먼저)면 같은 날 매도가 매수보다 먼저 온다', () => {
+    // 2026-09-23 포스코퓨처엠: 09:45 매수 30주 → 10:57 매도 30주. 거꾸로 넣으니 매도가 0주로 잘렸다.
+    const fromBroker = [
+      { orderDate: '20260923', orderTime: '105746', orderNo: '0000016117', side: 'sell' },
+      { orderDate: '20260923', orderTime: '094549', orderNo: '0000010158', side: 'buy' },
+      { orderDate: '20260922', orderTime: '151313', orderNo: '0000033771', side: 'buy' },
+    ];
+    assert.deepEqual([...fromBroker].sort(byFillTime).map((e) => e.orderNo), ['0000033771', '0000010158', '0000016117']);
   });
 
   it('처음 보는 주문은 누적을 그대로 넣는다', () => {
@@ -396,7 +417,7 @@ describe('층 장부 — 부분체결의 나머지', () => {
 
   it('찍은 도장은 그대로 다시 읽힌다', () => {
     const note = `orderNo:0000026102 20260903 ${stampFill(538, 4071)}`;
-    assert.deepEqual(foldRecordedFills([{ note, quantity: '381', price: '4070' }]).get('0000026102'), {
+    assert.deepEqual(foldRecordedFills([{ note, quantity: '381', price: '4070' }]).get(fillKey('0000026102', '20260903')), {
       quantity: 538, price: 4071,
     });
   });

@@ -442,9 +442,11 @@ export async function getLastBuySubmittedAt(
  * ★ 같은 병이 전에도 있었다: 층 모르는 체결 82건이 장부 밖에 쌓여 있었다.
  */
 export async function layerOfOrder(orderNo: string): Promise<Layer | null> {
+  // ★ 오늘 주문에서만 찾는다 — 주문번호는 날마다 새로 시작하고, 정정·취소는 당일 주문에만 한다.
   const { rows } = await pool.query<{ layer: string | null }>(
     `SELECT layer FROM trading_broker_orders
       WHERE order_no = $1 AND layer IS NOT NULL
+        AND (created_at AT TIME ZONE 'Asia/Seoul')::date = (now() AT TIME ZONE 'Asia/Seoul')::date
       ORDER BY id DESC LIMIT 1`,
     [orderNo],
   );
@@ -454,16 +456,20 @@ export async function layerOfOrder(orderNo: string): Promise<Layer | null> {
 export async function applyOrderFill(
   accountId: string,
   orderNo: string,
+  /** 주문일 `YYYYMMDD`. 주문번호는 날마다 새로 시작해 번호만으로는 다른 날 주문을 덮는다(`fillKey`) */
+  orderDate: string,
   filledQuantity: number,
   filledPrice: number,
 ): Promise<number> {
-  if (!orderNo || !Number.isFinite(filledQuantity) || filledQuantity <= 0) return 0;
+  if (!orderNo || !/^\d{8}$/.test(orderDate)) return 0;
+  if (!Number.isFinite(filledQuantity) || filledQuantity <= 0) return 0;
   if (!Number.isFinite(filledPrice) || filledPrice <= 0) return 0;
   const { rowCount } = await pool.query(
     `UPDATE trading_broker_orders
         SET filled_quantity = $3, filled_price = $4, fills_synced_at = now()
-      WHERE account_id = $1 AND order_no = $2`,
-    [accountId, orderNo, filledQuantity, filledPrice],
+      WHERE account_id = $1 AND order_no = $2
+        AND to_char(created_at AT TIME ZONE 'Asia/Seoul', 'YYYYMMDD') = $5`,
+    [accountId, orderNo, filledQuantity, filledPrice, orderDate],
   );
   return rowCount ?? 0;
 }

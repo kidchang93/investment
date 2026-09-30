@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 
+import { kstDaysAgo, kstToday } from '../kis/normalize.js';
 import { pool } from './client.js';
 import {
   applyOrderFill,
@@ -277,7 +278,7 @@ describe('체결 되채움 — 접수값을 덮지 않는다', () => {
       orderNo,
     });
 
-    const touched = await applyOrderFill(accountId, orderNo, 10, 253_500);
+    const touched = await applyOrderFill(accountId, orderNo, kstToday(), 10, 253_500);
     assert.equal(touched, 1, '그 주문 한 줄만 바뀌어야 한다');
 
     const { rows } = await pool.query<{ q: string; p: string; oq: string; lp: string; at: string | null }>(
@@ -298,7 +299,31 @@ describe('체결 되채움 — 접수값을 덮지 않는다', () => {
   it('★ 우리 기록에 없는 주문번호면 아무것도 바꾸지 않는다 — 손으로 낸 주문이다', async (t) => {
     if (!usable) return t.skip('DB에 붙지 못해 건너뜀');
     const accountId = `test-fill-${randomUUID()}`;
-    assert.equal(await applyOrderFill(accountId, `NOPE-${randomUUID().slice(0, 8)}`, 5, 1_000), 0);
+    assert.equal(await applyOrderFill(accountId, `NOPE-${randomUUID().slice(0, 8)}`, kstToday(), 5, 1_000), 0);
+  });
+
+  it('★ 주문번호가 같아도 다른 날 주문은 덮지 않는다 — 주문번호는 날마다 새로 시작한다', async (t) => {
+    if (!usable) return t.skip('DB에 붙지 못해 건너뜀');
+    // 2026-09-23 LG전자 정정 `0000009157`의 체결(7주)이 9/7 한전 매수 `0000009157`(297주)을 덮었다.
+    const key = `test-${randomUUID()}`;
+    const accountId = `test-fill-${randomUUID()}`;
+    const orderNo = `SAME-${randomUUID().slice(0, 8)}`;
+    created.push(key);
+    await recordBrokerOrderAttempt({
+      accountId,
+      clientOrderId: key,
+      action: 'place',
+      status: 'submitted',
+      message: '시험용 기록 — 주문은 보내지 않았습니다',
+      side: 'buy',
+      symbol: '015760',
+      orderType: 'limit',
+      quantity: 297,
+      limitPrice: 32_000,
+      orderNo,
+    });
+    assert.equal(await applyOrderFill(accountId, orderNo, kstDaysAgo(1), 7, 212_500), 0, '어제 날짜로는 오늘 주문을 못 건드린다');
+    assert.equal(await applyOrderFill(accountId, orderNo, kstToday(), 297, 32_000), 1);
   });
 
   it('체결이 0이거나 단가가 0이면 쓰지 않는다 — 미체결을 "0원에 체결"로 적지 않는다', async (t) => {
@@ -322,8 +347,8 @@ describe('체결 되채움 — 접수값을 덮지 않는다', () => {
       orderNo,
     });
 
-    assert.equal(await applyOrderFill(accountId, orderNo, 0, 253_500), 0, '체결 0');
-    assert.equal(await applyOrderFill(accountId, orderNo, 10, 0), 0, '단가 0');
+    assert.equal(await applyOrderFill(accountId, orderNo, kstToday(), 0, 253_500), 0, '체결 0');
+    assert.equal(await applyOrderFill(accountId, orderNo, kstToday(), 10, 0), 0, '단가 0');
 
     const { rows } = await pool.query<{ q: string | null }>(
       `SELECT filled_quantity::text AS q FROM trading_broker_orders WHERE account_id = $1`,

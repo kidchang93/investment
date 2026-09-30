@@ -54,7 +54,7 @@ import { closeDb, pool } from '../db/client.js';
 import { ensureLayerSchema, recordLayerTrade } from '../db/layers.js';
 import { getKisDomesticExecutions } from '../kis/rest.js';
 import {
-  LAYER_LABELS, fillDelta, foldRecordedFills, resolveFillLayer, stampFill,
+  LAYER_LABELS, byFillTime, fillDelta, fillKey, foldRecordedFills, resolveFillLayer, stampFill,
   type Layer, type RecordedFill,
 } from '../trading/layers.js';
 
@@ -68,12 +68,14 @@ const won = (n: number): string => Math.round(n).toLocaleString('ko-KR');
  * 그때는 `--layer`로 사람이 정해 준다.
  */
 async function layerByOrderNo(accountId: string): Promise<Map<string, Layer>> {
-  const { rows } = await pool.query<{ order_no: string; layer: string }>(
-    `SELECT order_no, layer FROM trading_broker_orders
+  // ★ 주문번호는 날마다 새로 시작한다 — 날짜 없이 맵에 넣으면 뒤 날짜가 앞 날짜를 덮는다(`fillKey`).
+  const { rows } = await pool.query<{ order_no: string; order_date: string; layer: string }>(
+    `SELECT order_no, to_char(created_at AT TIME ZONE 'Asia/Seoul', 'YYYYMMDD') AS order_date, layer
+       FROM trading_broker_orders
       WHERE account_id = $1 AND coalesce(order_no,'') <> '' AND layer IS NOT NULL`,
     [accountId],
   );
-  return new Map(rows.map((r) => [r.order_no, r.layer as Layer]));
+  return new Map(rows.map((r) => [fillKey(r.order_no, r.order_date), r.layer as Layer]));
 }
 
 async function recordedByOrderNo(accountId: string): Promise<Map<string, RecordedFill>> {
@@ -115,7 +117,10 @@ async function main(): Promise<void> {
   const layerOf = await layerByOrderNo(accountId);
 
   // 체결 수량이 0인 것은 주문만 있고 체결이 없는 것이다 — 장부에 넣지 않는다.
-  const filled = snapshot.executions.filter((e) => e.filledQuantity > 0);
+  const filled = snapshot.executions
+    .filter((e) => e.filledQuantity > 0)
+    // ★★ 시간순으로 넣는다 — 매도가 매수보다 먼저 오면 0주로 잘린다(`byFillTime`).
+    .sort(byFillTime);
   console.log(
     `체결 내역 ${snapshot.executions.length}건 중 체결 있는 것 ${filled.length}건`
     + ` · 이미 장부에 든 주문 ${done.size}건`
@@ -134,7 +139,7 @@ async function main(): Promise<void> {
      *   "얼마에 붙었나"는 사실이고, 부분체결은 다음 회차에 늘어난 값으로 덮여야 한다.
      */
     if (apply) {
-      const touched = await applyOrderFill(accountId, e.orderNo, e.filledQuantity, price);
+      const touched = await applyOrderFill(accountId, e.orderNo, e.orderDate, e.filledQuantity, price);
       if (touched > 0) refilled += touched;
     }
 
@@ -142,10 +147,11 @@ async function main(): Promise<void> {
      * ★ **주문번호로 통째로 건너뛰지 않는다.** 이미 넣은 누적을 빼고 남은 것만
      *   넣는다 — 마감 정리가 장중 미체결을 만나면 나머지가 다음 날 붙는다.
      */
-    const delta = fillDelta(e.filledQuantity, price, done.get(e.orderNo));
+    const key = fillKey(e.orderNo, e.orderDate);
+    const delta = fillDelta(e.filledQuantity, price, done.get(key));
     if (!delta) continue;
-    const partial = done.has(e.orderNo);
-    const decision = resolveFillLayer(layerOf.get(e.orderNo), requestedLayer);
+    const partial = done.has(key);
+    const decision = resolveFillLayer(layerOf.get(key), requestedLayer);
     const head = `  ${e.orderDate} ${e.side === 'buy' ? '매수' : '매도'} ${e.symbol} ${e.name}`
       + ` ${delta.quantity}주 @ ${won(delta.price)}원`
       + (partial ? ` (누적 ${e.filledQuantity}주 중 뒤늦게 붙은 만큼)` : '');

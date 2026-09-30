@@ -207,7 +207,32 @@ export function stampFill(quantity: number, price: number): string {
 }
 
 /**
- * 주문번호 → 이미 장부에 반영한 누적 체결. **증분만 넣으려고 있다.**
+ * 체결 하나를 가리키는 키. **주문번호만으로는 안 된다** — KIS 주문번호는 날마다 새로 시작한다.
+ *
+ * ★ 2026-10-01에 드러났다: 9/23 LG전자 정정 매도 `0000009157`이 9/7 한전 매수
+ *   `0000009157`(297주)과 겹쳐 "이미 297주 넣었다"로 읽혔고, 7주 매도가 **조용히**
+ *   장부 밖에 남았다. 주문 기록 되채움도 번호만으로 찾아 9/7 행을 7주로 덮었다.
+ */
+export function fillKey(orderNo: string, orderDate: string): string {
+  return `${orderDate}:${orderNo}`;
+}
+
+/**
+ * 체결을 **시간순**으로 줄 세운다. 증권사는 최신 주문을 먼저 준다.
+ *
+ * ★ 2026-10-01: 그 순서대로 넣으니 같은 날 사고 판 종목은 매도가 먼저 와서 장부 0주에서
+ *   0주로 잘리고 도장이 찍혀 다시는 안 들어갔다 — 9/23 포스코퓨처엠 30주가 판 뒤에도 남았다.
+ */
+export function byFillTime(
+  a: { orderDate: string; orderTime?: string; orderNo: string },
+  b: { orderDate: string; orderTime?: string; orderNo: string },
+): number {
+  return `${a.orderDate}${a.orderTime ?? ''}`.localeCompare(`${b.orderDate}${b.orderTime ?? ''}`)
+    || a.orderNo.localeCompare(b.orderNo);
+}
+
+/**
+ * (체결일·주문번호) → 이미 장부에 반영한 누적 체결. **증분만 넣으려고 있다.** 키는 `fillKey`.
  *
  * ★ 도장이 있으면 그것이 곧 선언이라 뒤 행이 이긴다(`ORDER BY id`).
  * ★ 도장이 없는 옛 행(2026-09-07 이전)은 행의 수량·금액을 더해 누적을 되짚는다 —
@@ -218,23 +243,25 @@ export function foldRecordedFills(
 ): Map<string, RecordedFill> {
   const found = new Map<string, RecordedFill>();
   for (const row of rows) {
-    const orderNo = row.note.replace(/^orderNo:/, '').split(' ')[0];
-    if (!orderNo) continue;
+    // note는 `orderNo:<번호> <YYYYMMDD> 누적:…` — layerSync가 쓴 모양 그대로다.
+    const [orderNo, orderDate] = row.note.replace(/^orderNo:/, '').split(' ');
+    if (!orderNo || !orderDate) continue;
+    const key = fillKey(orderNo, orderDate);
     const stamped = FILL_STAMP.exec(row.note);
     if (stamped) {
       const quantity = Number(stamped[1]);
       const price = Number(stamped[2]);
       if (quantity > 0 && Number.isFinite(price)) {
-        found.set(orderNo, { quantity, price });
+        found.set(key, { quantity, price });
         continue;
       }
     }
-    const prev = found.get(orderNo);
+    const prev = found.get(key);
     const rowQuantity = Number(row.quantity);
     const rowPrice = Number(row.price);
     const quantity = (prev?.quantity ?? 0) + rowQuantity;
     const notional = (prev ? prev.quantity * prev.price : 0) + rowQuantity * rowPrice;
-    found.set(orderNo, { quantity, price: quantity > 0 ? notional / quantity : rowPrice });
+    found.set(key, { quantity, price: quantity > 0 ? notional / quantity : rowPrice });
   }
   return found;
 }

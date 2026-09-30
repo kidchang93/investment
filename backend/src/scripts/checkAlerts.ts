@@ -165,7 +165,9 @@ async function main(): Promise<void> {
       // 부분체결이 이어지는 동안 매 회차 값이 달라져 억제가 안 걸린다.
       digest: [...symbols].sort().join(' '),
       message: `장부와 잔고가 ${mismatches.length}종목 어긋난다 (${symbols.join(' ')})`,
-      action: 'npx tsx src/scripts/layerSync.ts 로 빠진 체결을 넣는다. 층별 손익은 그때까지 믿을 수 없다.',
+      // ★ 기본 조회는 3일이다 — 9/29에 이 경보가 9/23 체결을 짚었는데 기본값으로는 닿지 않았다.
+      action: 'npx tsx src/scripts/layerSync.ts VTS-ORDINARY --days 10 --apply 로 빠진 체결을 넣는다(미리보기는 --apply 없이).'
+        + ' 층별 손익은 그때까지 믿을 수 없다.',
     });
   }
 
