@@ -61,7 +61,7 @@ import { escapeMrkdwn, sendSlackBot, slackBotConfigured } from '../notify/slack.
 import { markAgentActivity } from '../db/agentActivity.js';
 import {
   ASSET_KIND_LABEL, ASSET_KIND_METHOD,
-  FALLING_GATE, FINANCIAL_TTL_HOURS, MOMENTUM_DAYS, NEUTRAL_BAND,
+  FALLING_GATE, MOMENTUM_DAYS, NEUTRAL_BAND,
   chartBand, classifyAsset, combine, describe, fundamentalBand, isFalling, return60,
   type AssetKind, type Bar, type FairValue,
 } from '../trading/fairValue.js';
@@ -381,11 +381,18 @@ async function ensureSchema(): Promise<void> {
   `);
 }
 
+/**
+ * 재무 — **캐시가 있으면 만료됐어도 그것을 쓴다.** 새로 받는 것은 저녁 미리받기(`warmFinancialCache`)의 일이다.
+ *
+ * ★ 2026-10-01(사용자 결정): 9/30 저녁 미리받기가 맥이 꺼져 안 돌았고, 9/23에 받은 593종목이 7일을
+ *   넘겨 한꺼번에 만료됐다. 그날 첫 바퀴가 장중에 재무를 다시 받느라 09:05부터 20분 넘게 돌았고
+ *   그동안 분석가 루프가 멈췄다. 재무는 분기마다 바뀐다 — 며칠 묵은 값은 적정가에 영향이 없지만,
+ *   바퀴가 한 시간 멈추는 것은 영향이 있다. **캐시가 아예 없는 종목만** 여기서 받는다.
+ */
 async function cachedFinancials(symbol: string): Promise<FinancialSnapshot[]> {
   const { rows } = await pool.query<{ payload: FinancialSnapshot[] }>(
-    `SELECT payload FROM trading_financial_cache
-      WHERE symbol = $1 AND fetched_at > now() - ($2 || ' hours')::interval`,
-    [symbol, String(FINANCIAL_TTL_HOURS)],
+    `SELECT payload FROM trading_financial_cache WHERE symbol = $1`,
+    [symbol],
   );
   if (rows[0]) return rows[0].payload;
   const fresh = await getFinancials(symbol, 8).catch(() => [] as FinancialSnapshot[]);

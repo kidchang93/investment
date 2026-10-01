@@ -18,7 +18,8 @@
  *   이유는 더 없다. 개장 전에 한 번 채워 두면 분석가는 **DB만 읽어** 빨라진다.
  *
  * ★ `analyzeFairValue.ts`와 **같은 표**(`trading_financial_cache`)를 쓴다.
- *   TTL도 그쪽 상수와 맞춰 12시간이다 — 여기서 채운 것을 그쪽이 그대로 읽는다.
+ *   TTL(`FINANCIAL_TTL_HOURS`, 7일)이 지난 것을 **여기서만** 다시 받는다 — 그쪽은 만료돼도
+ *   캐시를 그대로 읽는다(2026-10-01). 이 작업이 안 돈 날은 재무가 그만큼 묵을 뿐 바퀴는 안 멈춘다.
  *
  *   npx tsx src/scripts/warmFinancialCache.ts
  */
@@ -106,7 +107,7 @@ async function main(): Promise<void> {
       /*
        * ★ 실패는 **캐시하지 않는다.** 빈 응답("이 종목엔 재무가 없다")과
        *   조회 실패("지금 못 받았다")는 다른 사실이다 — 실패를 넣으면 다음
-       *   12시간 동안 있는 재무를 없다고 읽는다.
+       *   7일(TTL) 동안 있는 재무를 없다고 읽는다.
        */
       if (failed <= 3) console.log(`  ${inst.symbol} ${inst.name}: ${(error as Error).message.slice(0, 60)}`);
     }
