@@ -106,7 +106,10 @@ curl -sf -m 3 http://localhost:4000/api/health >/dev/null 2>&1 \
 # ★ **뚜껑을 닫으면 못 막는다.** 외부 모니터 없이 닫으면 caffeinate와 무관하게
 #   잔다(9/11 15:31 `Clamshell Sleep`).
 # ★ 백엔드가 이미 떠 있어도 붙인다 — 다시 부르면 빠진 차단만 채운다.
-BACKEND_PID=$(pgrep -f "tsx watch src/server.ts" | head -1)
+# ★ `-a`: macOS pgrep은 **자기 조상을 기본으로 뺀다.** 스케줄러가 부르는 개장 전
+#   브리핑은 백엔드의 자식이라 백엔드를 못 찾고 "절전을 못 막는다"고 거짓 경보를 냈다
+#   (10/6 08:12). `[t]`는 pgrep 자기 명령줄이 걸리지 않게 한다.
+BACKEND_PID=$(pgrep -af "[t]sx watch src/server.ts" | head -1)
 if [[ -z "$BACKEND_PID" ]]; then
   log "★ 백엔드 프로세스(tsx watch)를 못 찾았다 — 절전을 못 막는다. 맥이 자면 손절 감시도 멈춘다"
 elif pgrep -f "^caffeinate -i -s -w ${BACKEND_PID}\$" >/dev/null 2>&1; then

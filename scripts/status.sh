@@ -67,7 +67,8 @@ if [[ -n "$daemon_pid" ]]; then
   bad "★★ 옛 데몬이 함께 돌고 있다 (pid $daemon_pid) — 모든 작업이 두 번 나간다"
   bad "   그 파일은 2026-09-07에 지웠다 — 되살린 것이면 kill 한다"
 fi
-backend_pid=$(pgrep -f "tsx watch src/server.ts" 2>/dev/null | head -1)
+# `-a`·`[t]`: morning.sh와 같은 이유 — 백엔드 자식으로 불려도 백엔드를 찾는다
+backend_pid=$(pgrep -af "[t]sx watch src/server.ts" 2>/dev/null | head -1)
 if [[ -n "$backend_pid" ]]; then
   ok "백엔드     pid $backend_pid  :4000"
   # ★ **살아 있다는 말과 계속 돈다는 말은 다르다.** 맥이 자면 백엔드도 스케줄러도
