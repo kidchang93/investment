@@ -168,29 +168,39 @@ async function main(): Promise<void> {
    * 분석가 루프가 매 바퀴 **모든 종목**을 보되 처음부터 다시 조사하지 않게, 오늘 마지막으로
    * 남긴 결론을 종목 줄마다 붙인다(`prompts/analyst.md` 6절). 노트는 회차 `findings`에
    * `agent: 'analyst-note'`로 들어간다 — 표를 새로 만들지 않았다.
+   *
+   * ── ⚖️ 정식 회차가 그 종목을 본 것 (2026-10-06) ──
+   * 10/2 정식 회차가 S-Oil을 국감·담합으로 거절했는데, 8분 뒤 분석가는 그것을 모른 채
+   * "뚜렷한 악재 없이 −8%"라 적고 샀다. 판단자가 남긴 `judge-note`를 **참고로만** 붙인다 —
+   * 📝처럼 이어 쓰는 노트가 아니다(사용자 결정: 결론은 분석가가 스스로 낸다).
    */
   interface NoteRow { symbol: string; verdict: string; reason: string; recheck: string; price: number | null; at: string }
-  const notes = new Map((await pool.query<NoteRow>(
+  const notesOf = async (agent: string): Promise<Map<string, NoteRow>> => new Map((await pool.query<NoteRow>(
     `SELECT DISTINCT ON (f->>'symbol')
-            f->>'symbol' AS symbol, f->>'verdict' AS verdict, f->>'reason' AS reason,
+            f->>'symbol' AS symbol, f->>'verdict' AS verdict,
+            coalesce(f->>'reason', f->>'summary', '') AS reason,
             coalesce(f->>'recheckIf', '') AS recheck, (f->>'price')::float8 AS price,
             to_char(d.created_at AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS at
        FROM trading_deliberations d, jsonb_array_elements(d.findings) f
       WHERE d.account_id = $1
         AND d.trading_day = (now() AT TIME ZONE 'Asia/Seoul')::date
-        AND f->>'agent' = 'analyst-note'
+        AND f->>'agent' = $2
       ORDER BY f->>'symbol', d.id DESC`,
-    [accountId],
+    [accountId, agent],
   ).catch(() => ({ rows: [] as NoteRow[] }))).rows.map((n) => [n.symbol, n]));
+  const notes = await notesOf('analyst-note');
+  const judgeNotes = await notesOf('judge-note');
   const noteLine = (symbol: string, price: number | undefined): void => {
+    const moved = (from: number | null): string =>
+      from && price ? ` → 지금 ${price >= from ? '+' : ''}${((price / from - 1) * 100).toFixed(1)}%` : '';
     const n = notes.get(symbol);
-    if (!n) {
-      console.log('      📝 노트 없음 — 오늘 처음 봅니다');
-      return;
+    if (!n) console.log('      📝 노트 없음 — 오늘 처음 봅니다');
+    else {
+      console.log(`      📝 ${n.at} ${n.verdict}${n.price ? ` @${won(n.price)}` : ''}${moved(n.price)} · ${n.reason}`
+        + `${n.recheck ? ` · 다시 볼 조건: ${n.recheck}` : ''}`);
     }
-    const moved = n.price && price ? ` → 지금 ${price >= n.price ? '+' : ''}${((price / n.price - 1) * 100).toFixed(1)}%` : '';
-    console.log(`      📝 ${n.at} ${n.verdict}${n.price ? ` @${won(n.price)}` : ''}${moved} · ${n.reason}`
-      + `${n.recheck ? ` · 다시 볼 조건: ${n.recheck}` : ''}`);
+    const j = judgeNotes.get(symbol);
+    if (j) console.log(`      ⚖️ 정식 회차 ${j.at} ${j.verdict}${j.price ? ` @${won(j.price)}` : ''}${moved(j.price)} · ${j.reason}`);
   };
 
   /*

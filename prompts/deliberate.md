@@ -268,6 +268,20 @@ npx tsx src/scripts/markActivity.ts judge <활동> "<한 줄 설명>"
 cat round.json | npx tsx src/scripts/recordDeliberation.ts
 ```
 
+### 후보마다 한 줄 — 분석가 루프가 읽습니다 (2026-10-06)
+
+후보로 **조사한 종목마다**(산 것·안 산 것 모두) `findings`에 한 줄을 남깁니다. 분석가 루프가
+그 종목 줄에 `⚖️ 정식 회차`로 붙여 읽습니다. 10/2에 이 회차가 S-Oil을 국감·담합으로 거절했는데,
+8분 뒤 분석가는 그것을 모른 채 *"뚜렷한 악재 없이"*라 적고 샀습니다.
+
+```json
+{ "agent": "judge-note", "symbol": "010950", "name": "S-Oil", "verdict": "pass", "price": 159400,
+  "summary": "9/30 정유 4사 CEO 국감 증인 채택 조율 · 담합은 7월 기소 — EV −0.6%" }
+```
+
+- `verdict`: `buy` · `pass`. `price`는 그때 현재가(원, **숫자**)
+- 회차 요약 finding들 **뒤에** 둡니다 — 화면은 첫 finding을 회차 제목으로 씁니다
+
 ## ★ 당신은 주문을 내지 않습니다 — 그러나 적은 것은 실제로 나갑니다
 
 이 회차의 일은 **판단을 기록하는 것까지**입니다. `--execute`가 붙은 명령을
