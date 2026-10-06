@@ -52,7 +52,9 @@ import { getKisAccount } from '../config.js';
 import { applyOrderFill } from '../db/brokerOrders.js';
 import { closeDb, pool } from '../db/client.js';
 import { ensureLayerSchema, recordLayerTrade } from '../db/layers.js';
+import { kstToday } from '../kis/normalize.js';
 import { getKisDomesticExecutions } from '../kis/rest.js';
+import { escapeMrkdwn, sellOutcome, sendSlackBot } from '../notify/slack.js';
 import {
   LAYER_LABELS, byFillTime, fillDelta, fillKey, foldRecordedFills, resolveFillLayer, stampFill,
   type Layer, type RecordedFill,
@@ -131,6 +133,9 @@ async function main(): Promise<void> {
   let added = 0;
   let refilled = 0;
   const skipped: string[] = [];
+  // 오늘 매도 체결 — 주문 알림은 지정가 기준이라, 실제로 얼마에 팔려 얼마가 남았나를 여기서 알린다
+  const today = kstToday();
+  const soldToday: string[] = [];
   for (const e of filled) {
     const price = e.averageFilledPrice > 0 ? e.averageFilledPrice : e.orderPrice;
 
@@ -188,10 +193,19 @@ async function main(): Promise<void> {
     }
     if (result.realizedPnl !== null) {
       console.log(`    실현손익 ${result.realizedPnl >= 0 ? '+' : ''}${won(result.realizedPnl)}원`);
+      if (e.orderDate === today && result.shortfall === 0) {
+        // 장부 평단 = 체결가 − 주당 실현손익 (fee 0)
+        const averagePrice = delta.price - result.realizedPnl / delta.quantity;
+        soldToday.push(`• ${escapeMrkdwn(e.name)} (${e.symbol}) ${delta.quantity}주 — `
+          + sellOutcome(averagePrice, delta.price, delta.quantity));
+      }
     }
     added += 1;
   }
 
+  if (soldToday.length > 0) {
+    await sendSlackBot([`:receipt: *오늘 매도 체결 ${soldToday.length}건* · ${accountId}`, ...soldToday].join('\n'), 'trade');
+  }
   if (!apply) {
     console.log(`\n미리보기다. 실제로 넣으려면 --apply를 붙인다.`);
   } else {

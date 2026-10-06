@@ -80,6 +80,19 @@ export function signedWon(n: number): string {
 }
 
 /**
+ * 매도 한 줄 — 평단에서 얼마에 팔아 얼마가 남았나 (2026-10-06, 사용자가 정했다).
+ * *"얼마에 매도했는지 손절인지 익절인지 얼마나 손해인지"* — "몇 주를 지정가로"만으로는
+ * 산 값과 얼마나 차이 나는지 모른다. 수수료·세금은 빼지 않았다(장부도 fee 0).
+ */
+export function sellOutcome(averagePrice: number, price: number, quantity: number): string {
+  const pnl = (price - averagePrice) * quantity;
+  const rate = (price / averagePrice - 1) * 100;
+  const verdict = pnl > 0 ? '익절' : pnl < 0 ? '손절' : '본전';
+  return `평단 ${won(averagePrice)} → ${won(price)} · *${verdict} ${signedWon(pnl)}*`
+    + ` (${rate >= 0 ? '+' : ''}${rate.toFixed(2)}%, 비용 전)`;
+}
+
+/**
  * 슬랙 mrkdwn에서 뜻을 갖는 글자를 막는다.
  *
  * 종목명에 `&`가 들어가는 일이 실제로 있다(`S&T모티브`). 슬랙은 `&`·`<`·`>`를

@@ -44,7 +44,7 @@ import {
   type DeliberationDecision,
   type DeliberationExecution,
 } from '../db/deliberations.js';
-import { escapeMrkdwn, sendSlackBot, won as slackWon } from '../notify/slack.js';
+import { escapeMrkdwn, sellOutcome, sendSlackBot, won as slackWon } from '../notify/slack.js';
 import { markAgentActivity } from '../db/agentActivity.js';
 import { pool } from '../db/client.js';
 import { getKisDomesticAccountSnapshot, getKisDomesticOrderability, getQuote } from '../kis/rest.js';
@@ -229,10 +229,15 @@ async function main(): Promise<void> {
    * 층 장부는 바뀌지 않는다(체결이 들어와야 바뀌고 그건 마감 뒤 `layerSync`다).
    */
   const holdingLayers = new Map<string, Layer[]>();
+  // 매도 알림의 평단. 층이 둘이면 합친다 — 증권사 앱의 평단과 같은 값이다.
+  // ponytail: 장부는 마감 뒤에 바뀌므로 오늘 산 것은 빠진다. 그런 매도는 손익 줄이 안 붙는다
+  const book = new Map<string, { quantity: number; cost: number }>();
   for (const position of await getLayerPositions(account.id)) {
     const layers = holdingLayers.get(position.symbol) ?? [];
     layers.push(position.layer);
     holdingLayers.set(position.symbol, layers);
+    const held = book.get(position.symbol) ?? { quantity: 0, cost: 0 };
+    book.set(position.symbol, { quantity: held.quantity + position.quantity, cost: held.cost + position.cost });
   }
 
   /*
@@ -429,9 +434,13 @@ async function main(): Promise<void> {
       ...placed.map((e) => {
         const d = round.decisions.find((x) => x.symbol === e.symbol && x.action === e.action);
         const price = e.estimatedPrice > 0 ? `지정가 ${slackWon(e.estimatedPrice)}` : '시장가';
+        const held = e.action === 'sell' ? book.get(e.symbol) : undefined;
         return `• ${e.side === 'buy' ? '매수' : '매도'} ${escapeMrkdwn(d?.name ?? e.symbol)}`
           + ` (${e.symbol}) ${e.quantity}주 · ${price}`
           + `${d?.layer ? ` · ${d.layer} 층` : ''} · \`${e.orderNo}\``
+          + (held && held.quantity > 0 && e.estimatedPrice > 0
+            ? `\n  ↳ ${sellOutcome(held.cost / held.quantity, e.estimatedPrice, e.quantity)} — 지정가 기준, 체결가는 15:40에`
+            : '')
           // ETF 층은 목표가·손절가가 없다(2026-09-21 — 장기 목적, 손절선 없음).
           + (d?.plan ? `\n  ↳ 목표 ${d.plan.targetPrice ? slackWon(d.plan.targetPrice) : '없음'}`
             + ` / 손절 ${d.plan.stopPrice ? slackWon(d.plan.stopPrice) : '없음(ETF)'}`

@@ -41,7 +41,7 @@ import { getLatestStopPrices } from '../db/deliberations.js';
 import { getKoreanInstrumentBySymbol } from '../db/instruments.js';
 import { getLayerPositions } from '../db/layers.js';
 import { getDomesticQuotes, getKisDomesticAccountSnapshot, getKisDomesticExecutions } from '../kis/rest.js';
-import { escapeMrkdwn, sendSlack, sendSlackBot, won as slackWon } from '../notify/slack.js';
+import { escapeMrkdwn, sellOutcome, sendSlack, sendSlackBot, won as slackWon } from '../notify/slack.js';
 import { parseLayer } from '../trading/layers.js';
 import type { Layer } from '../trading/layers.js';
 import { canSendStopOrder, checkStops, type StopRule } from '../trading/stopLoss.js';
@@ -349,11 +349,15 @@ async function main(): Promise<void> {
        * ★ 값을 잘 받는 것이 목적이 아니라 빠져나오는 것이 목적인 주문이라
        *   시장가로 나갔다는 사실도 함께 적는다.
        */
+      const averagePrice = positions.find((p) => p.symbol === b.symbol)?.averagePrice ?? 0;
       await sendSlackBot(
         `:rotating_light: *손절 집행* — ${escapeMrkdwn(b.name)} (${b.symbol})\n`
         + `${b.quantity}주 *시장가 전량 매도* · 주문번호 \`${order.orderNo}\`\n`
         + `현재가 ${slackWon(b.price)} ≤ 손절 ${slackWon(b.stop)} (회차 ${b.round})`
-        + `${b.layer ? ` · ${b.layer} 층` : ' · ★ 층 없음 — 장부에 안 들어간다'}`,
+        + `${b.layer ? ` · ${b.layer} 층` : ' · ★ 층 없음 — 장부에 안 들어간다'}`
+        + (averagePrice > 0
+          ? `\n↳ ${sellOutcome(averagePrice, b.price, b.quantity)} — 현재가 기준, 체결가는 15:40에`
+          : ''),
         'trade',
       );
     } else {

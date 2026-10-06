@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 
-import { escapeMrkdwn, sendSlack, signedWon, won } from './slack.js';
+import { escapeMrkdwn, sellOutcome, sendSlack, signedWon, won } from './slack.js';
 
 const KEY = 'SLACK_WEBHOOK_URL';
 const HOOK = 'https://hooks.slack.com/services/T000/B000/xxxx';
@@ -61,6 +61,12 @@ describe('알림 문자열', () => {
   it('손익은 부호가 먼저 읽힌다', () => {
     assert.equal(signedWon(-505_000), '-505,000원');
     assert.equal(signedWon(37_370), '+37,370원');
+  });
+
+  it('매도는 평단과 견준 손익으로 손절·익절을 가른다', () => {
+    // S-Oil 30주 평단 159,400 — 손절가 149,000에 팔면
+    assert.equal(sellOutcome(159_400, 149_000, 30), '평단 159,400원 → 149,000원 · *손절 -312,000원* (-6.52%, 비용 전)');
+    assert.equal(sellOutcome(182_040, 182_100, 52), '평단 182,040원 → 182,100원 · *익절 +3,120원* (+0.03%, 비용 전)');
   });
 
   it('★ 종목명의 &를 막는다 — S&T모티브가 깨져서 나가면 안 된다', () => {
